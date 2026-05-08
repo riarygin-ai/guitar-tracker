@@ -33,6 +33,20 @@ export async function getInventoryItems() {
   return supabase.from('inventory_items').select('*');
 }
 
+export async function searchInventoryItems(query: string) {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return supabase.from('inventory_items').select('*').order('created_at', { ascending: false }).limit(20);
+  }
+  // Search model, color, and year (cast to text) via ilike OR filters
+  return supabase
+    .from('inventory_items')
+    .select('*')
+    .or(`model.ilike.%${trimmed}%,color.ilike.%${trimmed}%,year::text.ilike.%${trimmed}%`)
+    .order('created_at', { ascending: false })
+    .limit(20);
+}
+
 export async function getInventoryItemById(id: number) {
   return supabase.from('inventory_items').select('*').eq('id', id).single();
 }
@@ -69,5 +83,15 @@ export async function getCashFlows() {
 
 export async function createCashFlow(cashFlow: NewCashFlow) {
   return supabase.from('cash_flow').insert(cashFlow).select().single();
+}
+
+export async function getLatestCashFlow() {
+  return supabase
+    .from('cash_flow')
+    .select('*')
+    .order('transaction_date', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 }
 

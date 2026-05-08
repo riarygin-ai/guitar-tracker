@@ -14,13 +14,16 @@ interface InventoryCardProps {
 }
 
 export default function InventoryCard({ item, brandName }: InventoryCardProps) {
+  const title = [item.year, brandName, item.model].filter(Boolean).join(' ');
+  const subtitle = item.color ? `${title} — ${item.color}` : title;
+
   return (
     <Link href={`/inventory/${item.id}`} className="block rounded-3xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{item.item_type}</p>
           <h3 className="text-lg font-semibold text-slate-900">
-            {brandName} {item.model}
+            {subtitle}
           </h3>
           <p className="mt-1 text-sm text-slate-600">{item.collection_type ?? 'No collection type'}</p>
         </div>
@@ -30,10 +33,6 @@ export default function InventoryCard({ item, brandName }: InventoryCardProps) {
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-700">
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Acquired</p>
-          <p>{item.date_acquired ?? '—'}</p>
-        </div>
         <div className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-700">
           <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Listed</p>
           <p>{item.date_listed ?? '—'}</p>

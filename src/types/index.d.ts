@@ -16,7 +16,6 @@ export interface InventoryItem {
   brand_id: number;
   item_type: ItemType;
   model: string;
-  date_acquired: string | null;
   date_listed: string | null;
   sold_date: string | null;
   estimated_sold_value: number | null;
@@ -24,6 +23,8 @@ export interface InventoryItem {
   condition: Condition | null;
   status: Status;
   notes: string | null;
+  year: number | null;
+  color: string | null;
   created_at: string;
   updated_at: string;
 }
