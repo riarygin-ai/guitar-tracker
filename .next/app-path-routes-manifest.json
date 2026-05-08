@@ -1,0 +1,9 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/inventory/[id]/page": "/inventory/[id]",
+  "/inventory/new/page": "/inventory/new",
+  "/inventory/page": "/inventory",
+  "/operations/page": "/operations",
+  "/page": "/"
+}
