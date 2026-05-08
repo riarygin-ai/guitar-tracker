@@ -16,7 +16,13 @@ export default function HomePage() {
             href="/inventory"
             className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
           >
-            View inventory
+            Inventory
+          </Link>
+          <Link
+            href="/operations"
+            className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+          >
+            Insert deal
           </Link>
         </div>
       </section>

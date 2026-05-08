@@ -68,6 +68,7 @@ export default function InventoryForm({
   hideHeader = false,
   hideSidebar = false,
 }: InventoryFormProps) {
+  console.log('InventoryForm itemId:', itemId);
   const router = useRouter();
   const [brands, setBrands] = useState<Brand[]>([]);
   const [brandSuggestions, setBrandSuggestions] = useState<Brand[]>([]);
@@ -136,11 +137,12 @@ export default function InventoryForm({
   }, [brandInput, brands]);
 
   useEffect(() => {
-    if (!itemId) {
+    if (!itemId || brands.length === 0) {
       return;
     }
 
     async function loadItem() {
+      console.log('Loading item with id:', itemId);
       setLoading(true);
       const result = await getInventoryItemById(Number(itemId));
       setLoading(false);
@@ -149,19 +151,33 @@ export default function InventoryForm({
         return;
       }
       const item = result.data;
+      console.log('Loaded item:', item);
       setItemType(item.item_type);
       setModel(item.model);
-      setDateAcquired(item.date_acquired ?? '');
+      setDateAcquired(item.date_acquired ? item.date_acquired.slice(0, 10) : '');
       setEstimatedSoldValue(item.estimated_sold_value?.toString() ?? '');
       setCondition(item.condition ?? '');
       setCollectionType(item.collection_type ?? '');
       setSelectedBrandId(item.brand_id);
-      setBrandInput('');
+      // Find the brand name from loaded brands
+      const brand = brands.find((b) => b.id === item.brand_id);
+      setBrandInput(brand ? brand.name : '');
       setNotes(item.notes ?? '');
+      console.log('Form values after population:', {
+        itemType: item.item_type,
+        model: item.model,
+        dateAcquired: item.date_acquired ? item.date_acquired.slice(0, 10) : '',
+        estimatedSoldValue: item.estimated_sold_value?.toString() ?? '',
+        condition: item.condition ?? '',
+        collectionType: item.collection_type ?? '',
+        selectedBrandId: item.brand_id,
+        brandInput: brand ? brand.name : '',
+        notes: item.notes ?? ''
+      });
     }
 
     loadItem();
-  }, [itemId]);
+  }, [itemId, brands]);
 
   useEffect(() => {
     if (!existingBrand) {
@@ -171,6 +187,17 @@ export default function InventoryForm({
 
     setSelectedBrandId(existingBrand.id);
   }, [existingBrand]);
+
+  useEffect(() => {
+    if (!selectedBrandId || brands.length === 0) {
+      return;
+    }
+
+    const brand = brands.find((b) => b.id === selectedBrandId);
+    if (brand) {
+      setBrandInput(brand.name);
+    }
+  }, [selectedBrandId, brands]);
 
   const handleCreateBrand = async () => {
     if (!brandInput.trim()) {

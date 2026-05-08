@@ -58,6 +58,20 @@ export type NewInventoryItem = Omit<InventoryItem, 'id' | 'created_at' | 'update
 export type NewDeal = Omit<Deal, 'id' | 'created_at'>;
 export type NewDealItem = Omit<DealItem, 'id' | 'created_at'>;
 
+export interface CashFlow {
+  id: number;
+  deal_id: number | null;
+  transaction_date: string;
+  opening_balance: number;
+  cash_in: number;
+  cash_out: number;
+  closing_balance: number;
+  description: string | null;
+  created_at: string;
+}
+
+export type NewCashFlow = Omit<CashFlow, 'id' | 'created_at'>;
+
 export type UpdateInventoryItem = Partial<Omit<InventoryItem, 'id' | 'created_at' | 'updated_at'>> & {
   id: number;
 };

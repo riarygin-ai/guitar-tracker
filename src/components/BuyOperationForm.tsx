@@ -6,9 +6,8 @@ import {
   createDeal,
   createDealItem,
   getBrands,
-  getInventoryItems,
 } from '@/lib/supabase';
-import type { Brand, DealType, Direction, InventoryItem, NewDeal, NewDealItem } from '@/types';
+import type { Brand, DealType, Direction, NewDeal, NewDealItem } from '@/types';
 
 const channelOptions = [
   'Kijiji',
@@ -18,13 +17,11 @@ const channelOptions = [
 ];
 
 export default function BuyOperationForm() {
-  const [items, setItems] = useState<InventoryItem[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [dealDate, setDealDate] = useState('');
   const [cashPaid, setCashPaid] = useState('');
   const [channel, setChannel] = useState('');
-  const [showNewItem, setShowNewItem] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,37 +32,25 @@ export default function BuyOperationForm() {
     [brands]
   );
 
-  const itemOptions = useMemo(
-    () =>
-      items.map((item) => ({
-        id: item.id,
-        label: `${brandMap[item.brand_id] ?? 'Unknown'} ${item.model}`,
-      })),
-    [items, brandMap]
-  );
-
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [brandResult, itemResult] = await Promise.all([getBrands(), getInventoryItems()]);
+      const brandResult = await getBrands();
       setLoading(false);
 
-      if (brandResult.error || itemResult.error) {
-        setError('Could not load inventory items. Please try again.');
+      if (brandResult.error) {
+        setError('Could not load brands. Please try again.');
         return;
       }
 
       setBrands(brandResult.data || []);
-      setItems(itemResult.data || []);
     }
 
     loadData();
   }, []);
 
   const handleItemCreated = (item: InventoryItem) => {
-    setItems((current) => [...current, item]);
     setSelectedItemId(item.id);
-    setShowNewItem(false);
     setSuccessMessage('New inventory item created and selected.');
     setError(null);
   };
@@ -147,29 +132,19 @@ export default function BuyOperationForm() {
             <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Operations</p>
             <h2 className="mt-2 text-2xl font-semibold text-slate-900">Buy operation</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Record a purchase and attach an inventory item. You can select an existing item or add a new one.
+              Record a purchase and create a new inventory item for this operation.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowNewItem((current) => !current)}
-            className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            {showNewItem ? 'Close new item form' : 'Add New Item'}
-          </button>
         </div>
       </div>
 
-      {showNewItem && (
-        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
-          <InventoryForm
-            onCreated={handleItemCreated}
-            onClose={() => setShowNewItem(false)}
-            hideHeader
-            hideSidebar
-          />
-        </div>
-      )}
+      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
+        <InventoryForm
+          onCreated={handleItemCreated}
+          hideHeader
+          hideSidebar
+        />
+      </div>
 
       <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid gap-6 lg:grid-cols-3">
@@ -216,29 +191,13 @@ export default function BuyOperationForm() {
                 ))}
               </select>
             </div>
-
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700">Inventory item</label>
-              <select
-                value={selectedItemId ?? ''}
-                onChange={(event) => setSelectedItemId(Number(event.target.value) || null)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-              >
-                <option value="">Select existing inventory item</option>
-                {itemOptions.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
 
           <div className="space-y-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
             <div>
               <p className="text-sm font-semibold text-slate-900">Buy operation details</p>
               <p className="mt-2 text-sm text-slate-600">
-                Record a single purchase deal and attach one inventory item to this operation.
+                Create a new inventory item first, then record the purchase deal for this operation.
               </p>
             </div>
             <div className="grid gap-3 text-sm text-slate-600">

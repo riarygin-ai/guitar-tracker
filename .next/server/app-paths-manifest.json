@@ -1,9 +1,0 @@
-{
-  "/_global-error/page": "app/_global-error/page.js",
-  "/_not-found/page": "app/_not-found/page.js",
-  "/inventory/[id]/page": "app/inventory/[id]/page.js",
-  "/inventory/new/page": "app/inventory/new/page.js",
-  "/inventory/page": "app/inventory/page.js",
-  "/operations/page": "app/operations/page.js",
-  "/page": "app/page.js"
-}

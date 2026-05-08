@@ -62,3 +62,12 @@ export async function createDeal(deal: NewDeal) {
 export async function createDealItem(dealItem: NewDealItem) {
   return supabase.from('deal_items').insert(dealItem).select().single();
 }
+
+export async function getCashFlows() {
+  return supabase.from('cash_flow').select('*').order('transaction_date', { ascending: false });
+}
+
+export async function createCashFlow(cashFlow: NewCashFlow) {
+  return supabase.from('cash_flow').insert(cashFlow).select().single();
+}
+
