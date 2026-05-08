@@ -6,15 +6,10 @@ import {
   Brand,
   CollectionType,
   Condition,
-  Deal,
-  Direction,
   ItemType,
   InventoryItem,
   NewBrand,
   NewInventoryItem,
-  NewDealItem,
-  NewDeal,
-  Status,
 } from '@/types';
 import {
   createBrand,
@@ -46,13 +41,6 @@ const collectionOptions: Array<{ label: string; value: CollectionType }> = [
   { label: 'Business', value: 'Business' },
 ];
 
-const acquisitionChannelOptions = [
-  'Kijiji',
-  'Marketplace',
-  'Reverb',
-  'Regular Buyer / Seller',
-];
-
 interface InventoryFormProps {
   itemId?: string;
   onCreated?: (item: InventoryItem) => void;
@@ -78,21 +66,17 @@ export default function InventoryForm({
   const [brandSearchLoading, setBrandSearchLoading] = useState(false);
   const [itemType, setItemType] = useState<ItemType>('guitar');
   const [model, setModel] = useState('');
-  const [dateAcquired, setDateAcquired] = useState('');
   const [estimatedSoldValue, setEstimatedSoldValue] = useState('');
   const [condition, setCondition] = useState<Condition | ''>('');
   const [collectionType, setCollectionType] = useState<CollectionType | ''>('');
-  const [acquisitionChannel, setAcquisitionChannel] = useState('');
   const [notes, setNotes] = useState('');
+  const [year, setYear] = useState('');
+  const [color, setColor] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [creatingBrand, setCreatingBrand] = useState(false);
-
-  const currentDate = useMemo(() => {
-    return new Date().toISOString().slice(0, 10);
-  }, []);
 
   const existingBrand = useMemo(
     () => brands.find((brand) => brand.name.toLowerCase() === brandInput.trim().toLowerCase()),
@@ -154,7 +138,6 @@ export default function InventoryForm({
       console.log('Loaded item:', item);
       setItemType(item.item_type);
       setModel(item.model);
-      setDateAcquired(item.date_acquired ? item.date_acquired.slice(0, 10) : '');
       setEstimatedSoldValue(item.estimated_sold_value?.toString() ?? '');
       setCondition(item.condition ?? '');
       setCollectionType(item.collection_type ?? '');
@@ -163,10 +146,11 @@ export default function InventoryForm({
       const brand = brands.find((b) => b.id === item.brand_id);
       setBrandInput(brand ? brand.name : '');
       setNotes(item.notes ?? '');
+      setYear(item.year != null ? String(item.year) : '');
+      setColor(item.color ?? '');
       console.log('Form values after population:', {
         itemType: item.item_type,
         model: item.model,
-        dateAcquired: item.date_acquired ? item.date_acquired.slice(0, 10) : '',
         estimatedSoldValue: item.estimated_sold_value?.toString() ?? '',
         condition: item.condition ?? '',
         collectionType: item.collection_type ?? '',
@@ -254,6 +238,15 @@ export default function InventoryForm({
       return;
     }
 
+    if (year) {
+      const yearNum = Number(year);
+      const maxYear = new Date().getFullYear() + 1;
+      if (!Number.isInteger(yearNum) || yearNum < 1900 || yearNum > maxYear) {
+        setError(`Year must be between 1900 and ${maxYear}.`);
+        return;
+      }
+    }
+
     setSaving(true);
 
     let brandId = selectedBrandId;
@@ -272,7 +265,6 @@ export default function InventoryForm({
       brand_id: brandId!,
       item_type: itemType,
       model: model.trim(),
-      date_acquired: dateAcquired || currentDate,
       estimated_sold_value: estimatedSoldValue ? Number(estimatedSoldValue) : null,
       condition: condition || null,
       collection_type: collectionType || null,
@@ -280,9 +272,10 @@ export default function InventoryForm({
       sold_date: null,
       status: 'owned',
       notes: notes.trim() || null,
+      year: year ? Number(year) : null,
+      color: color.trim() || null,
     };
 
-    // TODO: save acquisitionChannel into deals / deal_items when we add acquisition tracking.
     const result = itemId
       ? await updateInventoryItem({ id: Number(itemId), ...payload })
       : await createInventoryItem(payload);
@@ -304,12 +297,12 @@ export default function InventoryForm({
       setBrandInput('');
       setSelectedBrandId(null);
       setModel('');
-      setDateAcquired('');
       setEstimatedSoldValue('');
       setCondition('');
       setCollectionType('');
-      setAcquisitionChannel('');
       setNotes('');
+      setYear('');
+      setColor('');
     }
   };
 
@@ -456,42 +449,33 @@ export default function InventoryForm({
                   />
                   <p className="text-xs text-slate-500">Use a short model name for faster scanning.</p>
                 </div>
-              </div>
 
-              {/* Acquisition Section */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="mb-6">
-                  <h2 className="text-lg font-semibold text-slate-900">Acquisition</h2>
-                  <p className="mt-1 text-sm text-slate-600">When and how you acquired this item.</p>
-                </div>
-
-                <div className="grid gap-6 sm:grid-cols-2">
+                <div className="mt-6 grid gap-6 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="block text-sm font-medium text-slate-700">Date acquired</label>
+                    <label className="block text-sm font-medium text-slate-700">Year</label>
                     <input
-                      type="date"
-                      value={dateAcquired}
-                      onChange={(event) => setDateAcquired(event.target.value)}
+                      type="number"
+                      min="1900"
+                      max={new Date().getFullYear() + 1}
+                      value={year}
+                      onChange={(event) => setYear(event.target.value)}
                       disabled={disabled}
+                      placeholder="e.g. 2023"
                       className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                     />
+                    <p className="text-xs text-slate-500">Year of manufacture (optional).</p>
                   </div>
 
                   <div className="space-y-2">
-                    <label className="block text-sm font-medium text-slate-700">Acquisition channel</label>
-                    <select
-                      value={acquisitionChannel}
-                      onChange={(event) => setAcquisitionChannel(event.target.value)}
+                    <label className="block text-sm font-medium text-slate-700">Color</label>
+                    <input
+                      value={color}
+                      onChange={(event) => setColor(event.target.value)}
                       disabled={disabled}
+                      placeholder="e.g. Seafoam Green"
                       className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                    >
-                      <option value="">Select channel</option>
-                      {acquisitionChannelOptions.map((channel) => (
-                        <option key={channel} value={channel}>
-                          {channel}
-                        </option>
-                      ))}
-                    </select>
+                    />
+                    <p className="text-xs text-slate-500">Finish or color name (optional).</p>
                   </div>
                 </div>
               </div>
@@ -642,14 +626,6 @@ export default function InventoryForm({
                       <span className="text-sm text-slate-600">Est. Value</span>
                       <span className="text-sm font-medium text-slate-900">
                         ${Number(estimatedSoldValue).toLocaleString()}
-                      </span>
-                    </div>
-                  )}
-                  {dateAcquired && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-600">Acquired</span>
-                      <span className="text-sm font-medium text-slate-900">
-                        {new Date(dateAcquired).toLocaleDateString()}
                       </span>
                     </div>
                   )}
