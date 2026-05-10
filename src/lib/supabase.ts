@@ -10,6 +10,7 @@ import type {
   NewInventoryItem,
   UpdateDeal,
   UpdateInventoryItem,
+  NewCashFlow 
 } from '@/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
