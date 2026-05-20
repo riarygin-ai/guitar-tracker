@@ -1,6 +1,6 @@
 import React from 'react';
 import './globals.css';
-import AuthGuard from '@/components/AuthGuard'
+//import AuthGuard from '@/components/AuthGuard'
 // import LogoutButton from '@/components/LogoutButton'
 
 export const metadata = {
@@ -24,9 +24,9 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
             </nav>
           </div>
         </header>
-        <AuthGuard>
+        {/* { <AuthGuard> */}
           <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
-        </AuthGuard>
+        {/* </AuthGuard> */}
       </body>
     </html>
   );
