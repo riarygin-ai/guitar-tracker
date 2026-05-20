@@ -1,7 +1,7 @@
 import React from 'react';
 import './globals.css';
 import AuthGuard from '@/components/AuthGuard'
-import LogoutButton from '@/components/LogoutButton'
+// import LogoutButton from '@/components/LogoutButton'
 
 export const metadata = {
   title: 'guitar_tracker',
@@ -20,7 +20,7 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
             <nav className="flex flex-wrap gap-3 text-sm font-medium text-slate-600">
               <a href="/" className="hover:text-slate-900">Home</a>
               <a href="/inventory" className="hover:text-slate-900">Inventory</a>
-              <LogoutButton />
+              {/* <LogoutButton /> */}
             </nav>
           </div>
         </header>
