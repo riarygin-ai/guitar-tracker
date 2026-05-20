@@ -1,5 +1,7 @@
 import React from 'react';
 import './globals.css';
+import AuthGuard from '@/components/AuthGuard'
+import LogoutButton from '@/components/LogoutButton'
 
 export const metadata = {
   title: 'guitar_tracker',
@@ -18,10 +20,13 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
             <nav className="flex flex-wrap gap-3 text-sm font-medium text-slate-600">
               <a href="/" className="hover:text-slate-900">Home</a>
               <a href="/inventory" className="hover:text-slate-900">Inventory</a>
+              <LogoutButton />
             </nav>
           </div>
         </header>
-        <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
+        <AuthGuard>
+          <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
+        </AuthGuard>
       </body>
     </html>
   );
