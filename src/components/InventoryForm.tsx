@@ -277,7 +277,7 @@ export default function InventoryForm({
     };
 
     const result = itemId
-      ? await updateInventoryItem({ id: Number(itemId), ...payload })
+      ? await updateInventoryItem(Number(itemId),{ id: Number(itemId), ...payload })
       : await createInventoryItem(payload);
 
     setSaving(false);
