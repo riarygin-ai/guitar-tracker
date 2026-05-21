@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import BuyOperationForm from '@/components/BuyOperationForm';
+import SellOperationForm from '@/components/SellOperationForm';
 
 const tabs = [
   { id: 'buy', label: 'Buy' },
@@ -23,7 +24,7 @@ export default function OperationsPage() {
               <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Operations</p>
               <h1 className="mt-2 text-3xl font-semibold text-slate-900">Transactions</h1>
               <p className="mt-3 text-sm leading-6 text-slate-600">
-                Record a purchase operation for your inventory. Sell and Trade are coming later.
+                Record buy, sell, and trade operations for your inventory.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -48,6 +49,8 @@ export default function OperationsPage() {
         <div className="mt-6 space-y-6">
           {activeTab === 'buy' ? (
             <BuyOperationForm />
+          ) : activeTab === 'sell' ? (
+            <SellOperationForm />
           ) : (
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">Coming later</h2>

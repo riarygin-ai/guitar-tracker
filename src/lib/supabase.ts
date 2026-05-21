@@ -45,13 +45,20 @@ export async function getInventoryItems() {
 
 export async function searchInventoryItems(query: string) {
   const trimmed = query.trim();
+
   if (!trimmed) {
-    return supabase.from('inventory_items').select('*').order('created_at', { ascending: false }).limit(20);
+    return supabase
+      .from('inventory_items')
+      .select('*')
+      .neq('status', 'sold')
+      .order('created_at', { ascending: false })
+      .limit(20);
   }
-  // Search model, color, and year (cast to text) via ilike OR filters
+
   return supabase
     .from('inventory_items')
     .select('*')
+    .neq('status', 'sold')
     .or(`model.ilike.%${trimmed}%,color.ilike.%${trimmed}%,year::text.ilike.%${trimmed}%`)
     .order('created_at', { ascending: false })
     .limit(20);
@@ -65,8 +72,9 @@ export async function createInventoryItem(item: NewInventoryItem) {
   return supabase.from('inventory_items').insert(item).select().single();
 }
 
-export async function updateInventoryItem(item: UpdateInventoryItem) {
-  const { id, ...payload } = item;
+export async function updateInventoryItem(id: number, item: UpdateInventoryItem) {
+  const { id: _ignoredId, ...payload } = item;
+
   return supabase
     .from('inventory_items')
     .update(payload)
