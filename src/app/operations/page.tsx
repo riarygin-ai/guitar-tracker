@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import BuyOperationForm from '@/components/BuyOperationForm';
 import SellOperationForm from '@/components/SellOperationForm';
+import TradeOperationForm from '@/components/TradeOperationForm';
 
 const tabs = [
   { id: 'buy', label: 'Buy' },
@@ -52,12 +53,7 @@ export default function OperationsPage() {
           ) : activeTab === 'sell' ? (
             <SellOperationForm />
           ) : (
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">Coming later</h2>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                The {activeTab} operation is not implemented yet. For now, you can record purchases using the Buy tab.
-              </p>
-            </div>
+            <TradeOperationForm />
           )}
         </div>
       </div>

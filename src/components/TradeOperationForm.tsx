@@ -1,0 +1,824 @@
+'use client'
+
+import { useEffect, useMemo, useRef, useState } from 'react'
+import InventoryForm from '@/components/InventoryForm'
+import { createDeal, createDealItem, getBrands, searchInventoryItems, updateInventoryItem, createCashFlow, getLatestCashFlow } from '@/lib/supabase'
+import type { Brand, InventoryItem, NewDeal, NewDealItem } from '@/types'
+
+
+const channelOptions = [
+    'Kijiji',
+    'Marketplace',
+    'Reverb',
+    'Regular Buyer / Seller',
+]
+
+export default function TradeOperationForm() {
+    const [brands, setBrands] = useState<Brand[]>([])
+
+    const [outgoingItem, setOutgoingItem] = useState<InventoryItem | null>(null)
+    const [outgoingValue, setOutgoingValue] = useState('')
+
+    const [incomingItem, setIncomingItem] = useState<InventoryItem | null>(null)
+    const [showIncomingForm, setShowIncomingForm] = useState(false)
+    const [incomingValue, setIncomingValue] = useState('')
+
+    const [incomingSearchQuery, setIncomingSearchQuery] = useState('')
+    const [incomingSearchResults, setIncomingSearchResults] = useState<InventoryItem[]>([])
+    const [incomingSearching, setIncomingSearching] = useState(false)
+    const [incomingHasSearched, setIncomingHasSearched] = useState(false)
+
+    const incomingSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    const [searchQuery, setSearchQuery] = useState('')
+    const [searchResults, setSearchResults] = useState<InventoryItem[]>([])
+    const [searching, setSearching] = useState(false)
+    const [hasSearched, setHasSearched] = useState(false)
+
+    const [dealDate, setDealDate] = useState('')
+    const [channel, setChannel] = useState('')
+    const [error, setError] = useState<string | null>(null)
+    const [successMessage, setSuccessMessage] = useState<string | null>(null)
+
+    const [saving, setSaving] = useState(false)
+
+    const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    const [cashOut, setCashOut] = useState('')
+    const [cashIn, setCashIn] = useState('')
+
+    const brandMap = useMemo(
+        () => Object.fromEntries(brands.map((brand) => [brand.id, brand.name])),
+        [brands]
+    )
+
+    const formatItemLabel = (item: InventoryItem) => {
+        const parts: string[] = []
+        if (item.year) parts.push(String(item.year))
+        const brandName = brandMap[item.brand_id]
+        if (brandName) parts.push(brandName)
+        if (item.model) parts.push(item.model)
+
+        const label = parts.join(' ')
+        return item.color ? `${label} — ${item.color}` : label
+    }
+
+    const outgoingTotal = Number(outgoingValue || 0)
+    const incomingTotal = Number(incomingValue || 0)
+    const cashOutTotal = Number(cashOut || 0)
+    const cashInTotal = Number(cashIn || 0)
+
+    const totalGiven = outgoingTotal + cashOutTotal
+    const totalReceived = incomingTotal + cashInTotal
+    const difference = totalReceived - totalGiven
+
+    const isBalanced = difference === 0
+
+    useEffect(() => {
+        async function loadData() {
+            const brandResult = await getBrands()
+
+            if (brandResult.error) {
+                setError('Could not load brands. Please try again.')
+                return
+            }
+
+            setBrands(brandResult.data || [])
+        }
+
+        loadData()
+    }, [])
+
+    const handleSearchChange = (value: string) => {
+        setSearchQuery(value)
+
+        if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+
+        if (!value.trim()) {
+            setSearchResults([])
+            setHasSearched(false)
+            return
+        }
+
+        searchTimerRef.current = setTimeout(async () => {
+            setSearching(true)
+
+            const result = await searchInventoryItems(value)
+            let items = result.data ?? []
+
+            const q = value.trim().toLowerCase()
+            const brandMatchIds = brands
+                .filter((brand) => brand.name.toLowerCase().includes(q))
+                .map((brand) => brand.id)
+
+            if (brandMatchIds.length > 0) {
+                const allResult = await searchInventoryItems('')
+                const allItems = allResult.data ?? []
+
+                const brandMatched = allItems.filter(
+                    (item) =>
+                        brandMatchIds.includes(item.brand_id) &&
+                        !items.some((existing) => existing.id === item.id)
+                )
+
+                items = [...items, ...brandMatched]
+            }
+
+            setSearchResults(items)
+            setHasSearched(true)
+            setSearching(false)
+        }, 300)
+    }
+
+    const handleIncomingItemCreated = async (item: InventoryItem) => {
+        const brandResult = await getBrands()
+
+        if (!brandResult.error) {
+            setBrands(brandResult.data || [])
+        }
+
+        setIncomingItem(item)
+        setShowIncomingForm(false)
+        setSuccessMessage('Incoming item created and selected.')
+        setError(null)
+    }
+
+    const handleIncomingSearchChange = (value: string) => {
+        setIncomingSearchQuery(value)
+
+        if (incomingSearchTimerRef.current) {
+            clearTimeout(incomingSearchTimerRef.current)
+        }
+
+        if (!value.trim()) {
+            setIncomingSearchResults([])
+            setIncomingHasSearched(false)
+            return
+        }
+
+        incomingSearchTimerRef.current = setTimeout(async () => {
+            setIncomingSearching(true)
+
+            const result = await searchInventoryItems(value)
+            let items = result.data ?? []
+
+            const q = value.trim().toLowerCase()
+            const brandMatchIds = brands
+                .filter((brand) => brand.name.toLowerCase().includes(q))
+                .map((brand) => brand.id)
+
+            if (brandMatchIds.length > 0) {
+                const allResult = await searchInventoryItems('')
+                const allItems = allResult.data ?? []
+
+                const brandMatched = allItems.filter(
+                    (item) =>
+                        brandMatchIds.includes(item.brand_id) &&
+                        !items.some((existing) => existing.id === item.id)
+                )
+
+                items = [...items, ...brandMatched]
+            }
+
+            if (outgoingItem) {
+                items = items.filter((item) => item.id !== outgoingItem.id)
+            }
+
+            setIncomingSearchResults(items)
+            setIncomingHasSearched(true)
+            setIncomingSearching(false)
+        }, 300)
+    }
+
+    async function handleSubmit() {
+        setError(null)
+        setSuccessMessage(null)
+
+        if (!outgoingItem) {
+            setError('Select the item you are giving.')
+            return
+        }
+
+        if (!incomingItem) {
+            setError('Add the item you received.')
+            return
+        }
+
+        if (!channel) {
+            setError('Select a channel.')
+            return
+        }
+
+        const parsedOutgoingValue = Number(outgoingValue)
+        const parsedIncomingValue = Number(incomingValue)
+
+        if (
+            Number.isNaN(parsedOutgoingValue) ||
+            parsedOutgoingValue <= 0 ||
+            Number.isNaN(parsedIncomingValue) ||
+            parsedIncomingValue <= 0
+        ) {
+            setError('Both trade values must be greater than 0.')
+            return
+        }
+
+        const parsedCashOut = Number(cashOut || 0)
+        const parsedCashIn = Number(cashIn || 0)
+
+        if (Number.isNaN(parsedCashOut) || parsedCashOut < 0) {
+            setError('Cash out must be 0 or greater.')
+            return
+        }
+
+        if (Number.isNaN(parsedCashIn) || parsedCashIn < 0) {
+            setError('Cash in must be 0 or greater.')
+            return
+        }
+
+        const totalGiven = parsedOutgoingValue + parsedCashOut
+        const totalReceived = parsedIncomingValue + parsedCashIn
+
+        if (totalGiven !== totalReceived) {
+            setError(
+                'Trade must balance: value out + cash out must equal value in + cash in.'
+            )
+            return
+        }
+
+        setSaving(true)
+
+        const dealDateValue = dealDate || new Date().toISOString().slice(0, 10)
+
+        const dealPayload: NewDeal = {
+            deal_type: 'trade',
+            deal_date: dealDateValue,
+            channel,
+            cash_paid: parsedCashOut,
+            cash_received: parsedCashIn,
+            fees: 0,
+            notes: null,
+        }
+
+        const dealResult = await createDeal(dealPayload)
+
+        if (dealResult.error || !dealResult.data) {
+            setSaving(false)
+            setError('Could not create trade deal.')
+            return
+        }
+
+        const deal = dealResult.data
+
+        const outgoingDealItem: NewDealItem = {
+            deal_id: deal.id,
+            item_id: outgoingItem.id,
+            direction: 'out',
+            cash_value: 0,
+            trade_value: parsedOutgoingValue,
+            total_value: parsedOutgoingValue,
+            notes: null,
+        }
+
+        const incomingDealItem: NewDealItem = {
+            deal_id: deal.id,
+            item_id: incomingItem.id,
+            direction: 'in',
+            cash_value: 0,
+            trade_value: parsedIncomingValue,
+            total_value: parsedIncomingValue,
+            notes: null,
+        }
+
+        const outgoingResult = await createDealItem(outgoingDealItem)
+
+        if (outgoingResult.error) {
+            setSaving(false)
+            setError('Trade deal created, but outgoing item was not linked.')
+            return
+        }
+
+        const incomingResult = await createDealItem(incomingDealItem)
+
+        if (incomingResult.error) {
+            setSaving(false)
+            setError('Trade deal created, but incoming item was not linked.')
+            return
+        }
+
+        const updateOutgoingResult = await updateInventoryItem(outgoingItem.id, {
+            ...outgoingItem,
+            status: 'traded',
+            sold_date: dealDateValue,
+        })
+
+        if (updateOutgoingResult.error) {
+            setSaving(false)
+            setError('Trade saved, but outgoing item status was not updated.')
+            return
+        }
+
+        if (parsedCashOut > 0 || parsedCashIn > 0) {
+            const latestCashFlowResult = await getLatestCashFlow()
+
+            const openingBalance =
+                latestCashFlowResult.data?.closing_balance != null
+                    ? Number(latestCashFlowResult.data.closing_balance)
+                    : 0
+
+            const cashFlowResult = await createCashFlow({
+                deal_id: deal.id,
+                transaction_date: dealDateValue,
+                opening_balance: openingBalance,
+                cash_in: parsedCashIn,
+                cash_out: parsedCashOut,
+                closing_balance: openingBalance - parsedCashOut + parsedCashIn,
+                description: 'Trade cash adjustment',
+            })
+
+            if (cashFlowResult.error) {
+                setSaving(false)
+                setError('Trade saved, but cash flow was not created.')
+                return
+            }
+        }
+
+        setSaving(false)
+        setSuccessMessage('Trade operation saved successfully.')
+
+        setOutgoingItem(null)
+        setOutgoingValue('')
+        setCashOut('')
+
+        setIncomingItem(null)
+        setIncomingValue('')
+        setCashIn('')
+
+        setIncomingSearchQuery('')
+        setIncomingSearchResults([])
+        setIncomingHasSearched(false)
+
+        setShowIncomingForm(false)
+        setSearchQuery('')
+        setSearchResults([])
+        setHasSearched(false)
+        setDealDate('')
+        setChannel('')
+    }
+
+    return (
+        <div className="space-y-6">
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Operations</p>
+                <h2 className="mt-2 text-2xl font-semibold text-slate-900">Trade operation</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Trade v1: select one outgoing inventory item and create one incoming item.
+                </p>
+            </div>
+
+            <div className="grid gap-6">
+                {/* What I give */}
+                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="text-lg font-semibold text-slate-900">What I give</h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                        Select an existing inventory item going out.
+                    </p>
+
+                    {!outgoingItem ? (
+                        <div className="mt-5 space-y-4">
+                            <label className="text-sm font-medium text-slate-700">Search inventory</label>
+
+                            <div className="relative">
+                                <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(event) => handleSearchChange(event.target.value)}
+                                    placeholder="Search by brand, model, year, or color..."
+                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                />
+
+                                {searching && (
+                                    <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                                    </div>
+                                )}
+                            </div>
+
+                            {hasSearched && searchResults.length === 0 && (
+                                <p className="text-sm text-slate-500">No items found.</p>
+                            )}
+
+                            {searchResults.length > 0 && (
+                                <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                    {searchResults.map((item) => (
+                                        <button
+                                            key={item.id}
+                                            type="button"
+                                            onClick={() => {
+                                                setOutgoingItem(item)
+                                                setOutgoingValue(
+                                                    item.estimated_sold_value != null
+                                                        ? String(item.estimated_sold_value)
+                                                        : ''
+                                                )
+                                                setSearchQuery('')
+                                                setSearchResults([])
+                                                setHasSearched(false)
+                                            }}
+                                            className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                                        >
+                                            <p className="text-sm font-medium text-slate-900">
+                                                {formatItemLabel(item)}
+                                            </p>
+                                            <div className="mt-1 flex flex-wrap gap-2">
+                                                {item.condition && (
+                                                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                        {item.condition}
+                                                    </span>
+                                                )}
+                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                    {item.item_type}
+                                                </span>
+                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                    {item.status}
+                                                </span>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="mt-5 space-y-4">
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                    <div>
+                                        <p className="text-sm font-semibold text-slate-900">
+                                            {formatItemLabel(outgoingItem)}
+                                        </p>
+
+                                        <div className="mt-2 flex flex-wrap gap-2">
+                                            <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
+                                                {outgoingItem.status}
+                                            </span>
+
+                                            {outgoingItem.condition && (
+                                                <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                                    {outgoingItem.condition}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="w-full sm:w-40">
+                                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">
+                                            Value out
+                                        </label>
+
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={outgoingValue}
+                                            onChange={(event) => setOutgoingValue(event.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setOutgoingItem(null)
+                                    setOutgoingValue('')
+                                    setCashOut('')
+                                }}
+                                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                            >
+                                Change outgoing item
+                            </button>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-slate-700">Cash out</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={cashOut}
+                                    onChange={(event) => setCashOut(event.target.value)}
+                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                    placeholder="0.00"
+                                />
+                            </div>
+                        </div>
+                    )}
+                </section>
+
+                {/* What I receive */}
+                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="text-lg font-semibold text-slate-900">What I receive</h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                        Create the incoming item received in trade.
+                    </p>
+
+                    <div className="mt-5 space-y-4">
+                        <label className="text-sm font-medium text-slate-700">
+                            Search existing received item
+                        </label>
+
+                        <div className="relative">
+                            <input
+                                type="text"
+                                value={incomingSearchQuery}
+                                onChange={(event) => handleIncomingSearchChange(event.target.value)}
+                                placeholder="Search existing item..."
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                            />
+
+                            {incomingSearching && (
+                                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                                </div>
+                            )}
+                        </div>
+
+                        {incomingHasSearched && incomingSearchResults.length === 0 && (
+                            <p className="text-sm text-slate-500">No existing items found.</p>
+                        )}
+
+                        {incomingSearchResults.length > 0 && (
+                            <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                {incomingSearchResults.map((item) => (
+                                    <button
+                                        key={item.id}
+                                        type="button"
+                                        onClick={() => {
+                                            setIncomingItem(item)
+                                            setIncomingValue(
+                                                item.estimated_sold_value != null
+                                                    ? String(item.estimated_sold_value)
+                                                    : ''
+                                            )
+                                            setIncomingSearchQuery('')
+                                            setIncomingSearchResults([])
+                                            setIncomingHasSearched(false)
+                                        }}
+                                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                                    >
+                                        <p className="text-sm font-medium text-slate-900">
+                                            {formatItemLabel(item)}
+                                        </p>
+
+                                        <div className="mt-1 flex flex-wrap gap-2">
+                                            {item.condition && (
+                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                    {item.condition}
+                                                </span>
+                                            )}
+
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                {item.item_type}
+                                            </span>
+
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                {item.status}
+                                            </span>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {!incomingItem ? (
+                        <div className="mt-5 space-y-4">
+                            {showIncomingForm ? (
+                                <>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                                        <InventoryForm
+                                            onCreated={handleIncomingItemCreated}
+                                            hideHeader
+                                            hideSidebar
+                                        />
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowIncomingForm(false)}
+                                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                    >
+                                        Cancel
+                                    </button>
+                                </>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowIncomingForm(true)}
+                                    className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+                                >
+                                    Add received item
+                                </button>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="mt-5 space-y-4">
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                    <div>
+                                        <p className="text-sm font-semibold text-slate-900">
+                                            {formatItemLabel(incomingItem)}
+                                        </p>
+
+                                        <div className="mt-2 flex flex-wrap gap-2">
+                                            <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
+                                                {incomingItem.status}
+                                            </span>
+
+                                            {incomingItem.condition && (
+                                                <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                                    {incomingItem.condition}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="w-full sm:w-40">
+                                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">
+                                            Value in
+                                        </label>
+
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={incomingValue}
+                                            onChange={(event) => setIncomingValue(event.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setIncomingItem(null)
+                                    setIncomingValue('')
+                                    setCashIn('')
+
+                                    setIncomingSearchQuery('')
+                                    setIncomingSearchResults([])
+                                    setIncomingHasSearched(false)
+                                }}
+                                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                            >
+                                Change received item
+                            </button>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-slate-700">Cash in</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={cashIn}
+                                    onChange={(event) => setCashIn(event.target.value)}
+                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                    placeholder="0.00"
+                                />
+                            </div>
+                        </div>
+                    )}
+                </section>
+            </div>
+
+            <form className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="grid gap-6 lg:grid-cols-3">
+                    <div className="space-y-6 lg:col-span-2">
+                        <div className="space-y-3">
+                            <label className="text-sm font-medium text-slate-700">Deal date</label>
+                            <input
+                                type="date"
+                                value={dealDate}
+                                onChange={(event) => setDealDate(event.target.value)}
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                            />
+                            <p className="text-xs text-slate-500">Optional. If empty, today's date will be used.</p>
+                        </div>
+
+                        <div className="space-y-3">
+                            <label className="text-sm font-medium text-slate-700">Channel</label>
+                            <select
+                                value={channel}
+                                onChange={(event) => setChannel(event.target.value)}
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                            >
+                                <option value="">Select channel</option>
+                                {channelOptions.map((option) => (
+                                    <option key={option} value={option}>
+                                        {option}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="space-y-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                        <p className="text-sm font-semibold text-slate-900">Trade summary</p>
+
+                        <div className="grid gap-3 text-sm text-slate-600">
+                            <div className="rounded-2xl bg-white p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Value out</p>
+                                <p className="mt-2 font-medium text-slate-900">${outgoingTotal.toFixed(2)}</p>
+                            </div>
+
+                            <div className="rounded-2xl bg-white p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash out</p>
+                                <p className="mt-2 font-medium text-slate-900">${cashOutTotal.toFixed(2)}</p>
+                            </div>
+
+                            <div className="rounded-2xl bg-white p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Total given</p>
+                                <p className="mt-2 font-semibold text-slate-900">${totalGiven.toFixed(2)}</p>
+                            </div>
+
+                            <div className="rounded-2xl bg-white p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Value in</p>
+                                <p className="mt-2 font-medium text-slate-900">${incomingTotal.toFixed(2)}</p>
+                            </div>
+
+                            <div className="rounded-2xl bg-white p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash in</p>
+                                <p className="mt-2 font-medium text-slate-900">${cashInTotal.toFixed(2)}</p>
+                            </div>
+
+                            <div className="rounded-2xl bg-white p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Total received</p>
+                                <p className="mt-2 font-semibold text-slate-900">${totalReceived.toFixed(2)}</p>
+                            </div>
+
+                            <div className="rounded-2xl bg-white p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Trade balance</p>
+
+                                <p
+                                    className={`mt-2 font-semibold ${isBalanced ? 'text-emerald-700' : 'text-rose-700'
+                                        }`}
+                                >
+                                    {isBalanced ? 'Balanced' : `$${difference.toFixed(2)}`}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {error && (
+                    <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                        {error}
+                    </div>
+                )}
+
+                {successMessage && (
+                    <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+                        {successMessage}
+                    </div>
+                )}
+
+                <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setOutgoingItem(null)
+                            setOutgoingValue('')
+                            setIncomingItem(null)
+                            setIncomingValue('')
+                            setShowIncomingForm(false)
+                            setSearchQuery('')
+                            setSearchResults([])
+                            setHasSearched(false)
+                            setDealDate('')
+                            setChannel('')
+                            setError(null)
+                            setSuccessMessage(null)
+                            setCashOut('')
+                            setCashIn('')
+                        }}
+                        className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+                    >
+                        Reset
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={handleSubmit}
+                        disabled={saving}
+                        className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                    >
+                        {saving ? 'Saving...' : 'Save trade'}
+                    </button>
+                </div>
+            </form>
+        </div>
+    )
+}

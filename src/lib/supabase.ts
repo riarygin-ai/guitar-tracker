@@ -50,7 +50,7 @@ export async function searchInventoryItems(query: string) {
     return supabase
       .from('inventory_items')
       .select('*')
-      .neq('status', 'sold')
+      .not('status', 'in', '("sold","traded")')
       .order('created_at', { ascending: false })
       .limit(20);
   }
@@ -58,7 +58,7 @@ export async function searchInventoryItems(query: string) {
   return supabase
     .from('inventory_items')
     .select('*')
-    .neq('status', 'sold')
+    .not('status', 'in', '("sold","traded")')
     .or(`model.ilike.%${trimmed}%,color.ilike.%${trimmed}%,year::text.ilike.%${trimmed}%`)
     .order('created_at', { ascending: false })
     .limit(20);

@@ -11,6 +11,7 @@ import {
   NewBrand,
   NewInventoryItem,
 } from '@/types';
+
 import {
   createBrand,
   createInventoryItem,
@@ -77,6 +78,7 @@ export default function InventoryForm({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [creatingBrand, setCreatingBrand] = useState(false);
+  const [existingItem, setExistingItem] = useState<InventoryItem | null>(null);
 
   const existingBrand = useMemo(
     () => brands.find((brand) => brand.name.toLowerCase() === brandInput.trim().toLowerCase()),
@@ -135,6 +137,7 @@ export default function InventoryForm({
         return;
       }
       const item = result.data;
+      setExistingItem(item);
       console.log('Loaded item:', item);
       setItemType(item.item_type);
       setModel(item.model);
@@ -205,12 +208,12 @@ export default function InventoryForm({
       setSelectedBrandId(created.id);
       setError(null);
       setSuccessMessage('Brand created successfully!');
-      
+
       // Reset success message after 3 seconds
       setTimeout(() => {
         setSuccessMessage(null);
       }, 3000);
-      
+
     } catch (error) {
       setError('An unexpected error occurred while creating the brand.');
     } finally {
@@ -270,14 +273,14 @@ export default function InventoryForm({
       collection_type: collectionType || null,
       date_listed: null,
       sold_date: null,
-      status: 'owned',
+      status: existingItem?.status ?? 'owned',
       notes: notes.trim() || null,
       year: year ? Number(year) : null,
       color: color.trim() || null,
     };
 
     const result = itemId
-      ? await updateInventoryItem(Number(itemId),{ id: Number(itemId), ...payload })
+      ? await updateInventoryItem(Number(itemId), { id: Number(itemId), ...payload })
       : await createInventoryItem(payload);
 
     setSaving(false);
@@ -311,6 +314,13 @@ export default function InventoryForm({
   const saveLabel = saving ? 'Saving...' : itemId ? 'Update item' : 'Save item';
   const disabled = loading || saving;
   const brandCreateDisabled = !brandInput.trim() || !!existingBrand || disabled || creatingBrand;
+
+  const statusStyles: Record<string, string> = {
+    owned: 'bg-green-100 text-green-800',
+    listed: 'bg-yellow-100 text-yellow-800',
+    sold: 'bg-slate-100 text-slate-800',
+    traded: 'bg-indigo-100 text-indigo-800',
+  };
 
   return (
     <div className={hideHeader ? '' : 'min-h-screen bg-slate-50'}>
@@ -385,9 +395,8 @@ export default function InventoryForm({
                           }}
                           disabled={disabled}
                           placeholder="Search or add brand"
-                          className={`min-w-0 w-full rounded-xl border px-3 py-2.5 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 ${
-                            brandError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
-                          }`}
+                          className={`min-w-0 w-full rounded-xl border px-3 py-2.5 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 ${brandError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
+                            }`}
                         />
                         {brandSearchLoading && (
                           <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
@@ -443,9 +452,8 @@ export default function InventoryForm({
                     onChange={(event) => setModel(event.target.value)}
                     disabled={disabled}
                     placeholder="Fender Stratocaster"
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-100 ${
-                      modelError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
-                    }`}
+                    className={`w-full rounded-xl border px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-100 ${modelError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
+                      }`}
                   />
                   <p className="text-xs text-slate-500">Use a short model name for faster scanning.</p>
                 </div>
@@ -611,47 +619,47 @@ export default function InventoryForm({
           {!hideSidebar && (
             <div className="hidden lg:block lg:col-span-1">
               <div className="sticky top-6 space-y-6">
-              {/* Status Summary */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-semibold text-slate-900">Item Summary</h3>
-                <div className="mt-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-600">Status</span>
-                    <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
-                      Owned
-                    </span>
-                  </div>
-                  {estimatedSoldValue && (
+                {/* Status Summary */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 className="text-sm font-semibold text-slate-900">Item Summary</h3>
+                  <div className="mt-4 space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-600">Est. Value</span>
-                      <span className="text-sm font-medium text-slate-900">
-                        ${Number(estimatedSoldValue).toLocaleString()}
+                      <span className="text-sm text-slate-600">Status</span>
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${statusStyles[existingItem?.status ?? 'owned'] ?? 'bg-slate-100 text-slate-700'}`}>{existingItem?.status ?? 'owned'}
                       </span>
                     </div>
-                  )}
-                  {condition && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-600">Condition</span>
-                      <span className="text-sm font-medium text-slate-900">{condition}</span>
-                    </div>
-                  )}
+                    {estimatedSoldValue && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-slate-600">Est. Value</span>
+                        <span className="text-sm font-medium text-slate-900">
+                          ${Number(estimatedSoldValue).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                    {condition && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-slate-600">Condition</span>
+                        <span className="text-sm font-medium text-slate-900">{condition}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quick Tips */}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
+                  <h3 className="text-sm font-semibold text-slate-900">Quick Tips</h3>
+                  <ul className="mt-3 space-y-2 text-xs text-slate-600">
+                    <li>• Use clear, descriptive model names</li>
+                    <li>• Set realistic estimated values</li>
+                    <li>• Keep notes brief but informative</li>
+                    <li>• Regular condition updates help tracking</li>
+                  </ul>
                 </div>
               </div>
-
-              {/* Quick Tips */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
-                <h3 className="text-sm font-semibold text-slate-900">Quick Tips</h3>
-                <ul className="mt-3 space-y-2 text-xs text-slate-600">
-                  <li>• Use clear, descriptive model names</li>
-                  <li>• Set realistic estimated values</li>
-                  <li>• Keep notes brief but informative</li>
-                  <li>• Regular condition updates help tracking</li>
-                </ul>
-              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
         {!hideHeader && (
           <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 p-4 backdrop-blur-sm lg:hidden">
