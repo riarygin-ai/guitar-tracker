@@ -12,7 +12,8 @@ export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItemWithValue[]>([])
   const [brands, setBrands] = useState<Brand[]>([]);
   const [search, setSearch] = useState('');
-  const [filterStatus, setFilterStatus] = useState<Status | 'all'>('all');
+  const [selectedStatuses, setSelectedStatuses] = useState<Status[]>(['owned', 'listed']);
+  const [selectedItemTypes, setSelectedItemTypes] = useState<string[]>(['guitar']);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,10 +51,15 @@ export default function InventoryPage() {
         brandName.toLowerCase().includes(normalizedSearch) ||
         item.model.toLowerCase().includes(normalizedSearch);
 
-      const matchesStatus = filterStatus === 'all' || item.status === filterStatus;
-      return matchesSearch && matchesStatus;
+      const matchesStatus =
+        selectedStatuses.length === 0 || selectedStatuses.includes(item.status);
+
+      const matchesItemType =
+        selectedItemTypes.length === 0 || selectedItemTypes.includes(item.item_type);
+
+      return matchesSearch && matchesStatus && matchesItemType;
     });
-  }, [brandMap, filterStatus, items, search]);
+  }, [brandMap, selectedStatuses, selectedItemTypes, items, search]);
 
   return (
     <div className="space-y-6">
@@ -89,33 +95,59 @@ export default function InventoryPage() {
         </div>
       </div>
 
-     <div className="space-y-4">
+      <div className="space-y-4">
         <div className="space-y-4">
           <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">Search</span>
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search brand or model"
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">Status</span>
-                <select
-                  value={filterStatus}
-                  onChange={(event) => setFilterStatus(event.target.value as Status | 'all')}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-                >
-                  {statusOptions.map((status) => (
-                    <option key={status} value={status}>
-                      {status === 'all' ? 'All statuses' : status}
-                    </option>
+            <div className="space-y-4">
+              <div>
+                <p className="mb-2 text-sm font-medium text-slate-700">Status</p>
+
+                <div className="flex flex-wrap gap-2">
+                  {(['owned', 'listed', 'sold', 'traded'] as Status[]).map((status) => (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => {
+                        setSelectedStatuses((current) =>
+                          current.includes(status)
+                            ? current.filter((value) => value !== status)
+                            : [...current, status]
+                        )
+                      }}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${selectedStatuses.includes(status)
+                        ? 'bg-slate-950 text-white'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
+                    >
+                      {status}
+                    </button>
                   ))}
-                </select>
-              </label>
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-sm font-medium text-slate-700">Item Type</p>
+                <div className="flex flex-wrap gap-2">
+                  {(['guitar', 'amp', 'pedal', 'cab', 'pickups'] as const).map((itemType) => (
+                    <button
+                      key={itemType}
+                      type="button"
+                      onClick={() => {
+                        setSelectedItemTypes((current) =>
+                          current.includes(itemType)
+                            ? current.filter((value) => value !== itemType)
+                            : [...current, itemType]
+                        );
+                      }}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${selectedItemTypes.includes(itemType)
+                          ? 'bg-slate-950 text-white'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
+                    >
+                      {itemType}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
 
