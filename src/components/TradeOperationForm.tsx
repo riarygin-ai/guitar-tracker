@@ -5,6 +5,10 @@ import InventoryForm from '@/components/InventoryForm'
 import { createDeal, createDealItem, getBrands, searchInventoryItems, updateInventoryItem, createCashFlow, getLatestCashFlow } from '@/lib/supabase'
 import type { Brand, InventoryItem, NewDeal, NewDealItem } from '@/types'
 
+type TradeItem = {
+    item: InventoryItem
+    value: string
+}
 
 const channelOptions = [
     'Kijiji',
@@ -19,9 +23,8 @@ export default function TradeOperationForm() {
     const [outgoingItem, setOutgoingItem] = useState<InventoryItem | null>(null)
     const [outgoingValue, setOutgoingValue] = useState('')
 
-    const [incomingItem, setIncomingItem] = useState<InventoryItem | null>(null)
+    const [incomingItems, setIncomingItems] = useState<TradeItem[]>([])
     const [showIncomingForm, setShowIncomingForm] = useState(false)
-    const [incomingValue, setIncomingValue] = useState('')
 
     const [incomingSearchQuery, setIncomingSearchQuery] = useState('')
     const [incomingSearchResults, setIncomingSearchResults] = useState<InventoryItem[]>([])
@@ -64,7 +67,7 @@ export default function TradeOperationForm() {
     }
 
     const outgoingTotal = Number(outgoingValue || 0)
-    const incomingTotal = Number(incomingValue || 0)
+    const incomingTotal = incomingItems.reduce((sum, tradeItem) => sum + Number(tradeItem.value || 0), 0)
     const cashOutTotal = Number(cashOut || 0)
     const cashInTotal = Number(cashIn || 0)
 
@@ -137,7 +140,16 @@ export default function TradeOperationForm() {
             setBrands(brandResult.data || [])
         }
 
-        setIncomingItem(item)
+        setIncomingItems((current) => [
+            ...current,
+            {
+                item,
+                value:
+                    item.estimated_sold_value != null
+                        ? String(item.estimated_sold_value)
+                        : '',
+            },])
+
         setShowIncomingForm(false)
         setSuccessMessage('Incoming item created and selected.')
         setError(null)
@@ -183,6 +195,10 @@ export default function TradeOperationForm() {
             if (outgoingItem) {
                 items = items.filter((item) => item.id !== outgoingItem.id)
             }
+            if (incomingItems.length > 0) {
+                const selectedIncomingIds = incomingItems.map((tradeItem) => tradeItem.item.id)
+                items = items.filter((item) => !selectedIncomingIds.includes(item.id))
+            }
 
             setIncomingSearchResults(items)
             setIncomingHasSearched(true)
@@ -199,8 +215,8 @@ export default function TradeOperationForm() {
             return
         }
 
-        if (!incomingItem) {
-            setError('Add the item you received.')
+        if (incomingItems.length === 0) {
+            setError('Add at least one item you received.')
             return
         }
 
@@ -210,15 +226,13 @@ export default function TradeOperationForm() {
         }
 
         const parsedOutgoingValue = Number(outgoingValue)
-        const parsedIncomingValue = Number(incomingValue)
+        // const parsedIncomingValue = Number(incomingValue)
 
         if (
             Number.isNaN(parsedOutgoingValue) ||
-            parsedOutgoingValue <= 0 ||
-            Number.isNaN(parsedIncomingValue) ||
-            parsedIncomingValue <= 0
+            parsedOutgoingValue <= 0
         ) {
-            setError('Both trade values must be greater than 0.')
+            setError('Outgoing trade value must be greater than 0.')
             return
         }
 
@@ -236,7 +250,7 @@ export default function TradeOperationForm() {
         }
 
         const totalGiven = parsedOutgoingValue + parsedCashOut
-        const totalReceived = parsedIncomingValue + parsedCashIn
+        // const totalReceived = parsedIncomingValue + parsedCashIn
 
         if (totalGiven !== totalReceived) {
             setError(
@@ -279,16 +293,6 @@ export default function TradeOperationForm() {
             notes: null,
         }
 
-        const incomingDealItem: NewDealItem = {
-            deal_id: deal.id,
-            item_id: incomingItem.id,
-            direction: 'in',
-            cash_value: 0,
-            trade_value: parsedIncomingValue,
-            total_value: parsedIncomingValue,
-            notes: null,
-        }
-
         const outgoingResult = await createDealItem(outgoingDealItem)
 
         if (outgoingResult.error) {
@@ -297,12 +301,26 @@ export default function TradeOperationForm() {
             return
         }
 
-        const incomingResult = await createDealItem(incomingDealItem)
+        for (const tradeItem of incomingItems) {
+            const parsedValue = Number(tradeItem.value || 0)
 
-        if (incomingResult.error) {
-            setSaving(false)
-            setError('Trade deal created, but incoming item was not linked.')
-            return
+            const incomingDealItem: NewDealItem = {
+                deal_id: deal.id,
+                item_id: tradeItem.item.id,
+                direction: 'in',
+                cash_value: 0,
+                trade_value: parsedValue,
+                total_value: parsedValue,
+                notes: null,
+            }
+
+            const incomingResult = await createDealItem(incomingDealItem)
+
+            if (incomingResult.error) {
+                setSaving(false)
+                setError('Trade deal created, but one received item was not linked.')
+                return
+            }
         }
 
         const updateOutgoingResult = await updateInventoryItem(outgoingItem.id, {
@@ -349,8 +367,7 @@ export default function TradeOperationForm() {
         setOutgoingValue('')
         setCashOut('')
 
-        setIncomingItem(null)
-        setIncomingValue('')
+        setIncomingItems([])
         setCashIn('')
 
         setIncomingSearchQuery('')
@@ -519,7 +536,7 @@ export default function TradeOperationForm() {
                 <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                     <h3 className="text-lg font-semibold text-slate-900">What I receive</h3>
                     <p className="mt-1 text-sm text-slate-600">
-                        Create the incoming item received in trade.
+                        Search existing received items or create new ones.
                     </p>
 
                     <div className="mt-5 space-y-4">
@@ -527,21 +544,13 @@ export default function TradeOperationForm() {
                             Search existing received item
                         </label>
 
-                        <div className="relative">
-                            <input
-                                type="text"
-                                value={incomingSearchQuery}
-                                onChange={(event) => handleIncomingSearchChange(event.target.value)}
-                                placeholder="Search existing item..."
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                            />
-
-                            {incomingSearching && (
-                                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                                </div>
-                            )}
-                        </div>
+                        <input
+                            type="text"
+                            value={incomingSearchQuery}
+                            onChange={(event) => handleIncomingSearchChange(event.target.value)}
+                            placeholder="Search existing item..."
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                        />
 
                         {incomingHasSearched && incomingSearchResults.length === 0 && (
                             <p className="text-sm text-slate-500">No existing items found.</p>
@@ -554,12 +563,17 @@ export default function TradeOperationForm() {
                                         key={item.id}
                                         type="button"
                                         onClick={() => {
-                                            setIncomingItem(item)
-                                            setIncomingValue(
-                                                item.estimated_sold_value != null
-                                                    ? String(item.estimated_sold_value)
-                                                    : ''
-                                            )
+                                            setIncomingItems((current) => [
+                                                ...current,
+                                                {
+                                                    item,
+                                                    value:
+                                                        item.estimated_sold_value != null
+                                                            ? String(item.estimated_sold_value)
+                                                            : '',
+                                                },
+                                            ])
+
                                             setIncomingSearchQuery('')
                                             setIncomingSearchResults([])
                                             setIncomingHasSearched(false)
@@ -569,18 +583,15 @@ export default function TradeOperationForm() {
                                         <p className="text-sm font-medium text-slate-900">
                                             {formatItemLabel(item)}
                                         </p>
-
                                         <div className="mt-1 flex flex-wrap gap-2">
                                             {item.condition && (
                                                 <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
                                                     {item.condition}
                                                 </span>
                                             )}
-
                                             <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
                                                 {item.item_type}
                                             </span>
-
                                             <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
                                                 {item.status}
                                             </span>
@@ -589,108 +600,117 @@ export default function TradeOperationForm() {
                                 ))}
                             </div>
                         )}
-                    </div>
 
-                    {!incomingItem ? (
-                        <div className="mt-5 space-y-4">
-                            {showIncomingForm ? (
-                                <>
-                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                                        <InventoryForm
-                                            onCreated={handleIncomingItemCreated}
-                                            hideHeader
-                                            hideSidebar
-                                        />
-                                    </div>
+                        {showIncomingForm ? (
+                            <>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                                    <InventoryForm
+                                        onCreated={handleIncomingItemCreated}
+                                        hideHeader
+                                        hideSidebar
+                                    />
+                                </div>
 
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowIncomingForm(false)}
-                                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                                    >
-                                        Cancel
-                                    </button>
-                                </>
-                            ) : (
                                 <button
                                     type="button"
-                                    onClick={() => setShowIncomingForm(true)}
-                                    className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+                                    onClick={() => setShowIncomingForm(false)}
+                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                                 >
-                                    Add received item
+                                    Cancel
                                 </button>
-                            )}
-                        </div>
-                    ) : (
-                        <div className="mt-5 space-y-4">
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                                    <div>
-                                        <p className="text-sm font-semibold text-slate-900">
-                                            {formatItemLabel(incomingItem)}
-                                        </p>
-
-                                        <div className="mt-2 flex flex-wrap gap-2">
-                                            <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
-                                                {incomingItem.status}
-                                            </span>
-
-                                            {incomingItem.condition && (
-                                                <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                                                    {incomingItem.condition}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    <div className="w-full sm:w-40">
-                                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">
-                                            Value in
-                                        </label>
-
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            value={incomingValue}
-                                            onChange={(event) => setIncomingValue(event.target.value)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                                            placeholder="0.00"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
+                            </>
+                        ) : (
                             <button
                                 type="button"
-                                onClick={() => {
-                                    setIncomingItem(null)
-                                    setIncomingValue('')
-                                    setCashIn('')
-
-                                    setIncomingSearchQuery('')
-                                    setIncomingSearchResults([])
-                                    setIncomingHasSearched(false)
-                                }}
-                                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                onClick={() => setShowIncomingForm(true)}
+                                className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
                             >
-                                Change received item
+                                Add received item
                             </button>
+                        )}
 
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium text-slate-700">Cash in</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={cashIn}
-                                    onChange={(event) => setCashIn(event.target.value)}
-                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                                    placeholder="0.00"
-                                />
+                        {incomingItems.length > 0 && (
+                            <div className="space-y-3">
+                                {incomingItems.map((tradeItem, index) => (
+                                    <div
+                                        key={`${tradeItem.item.id}-${index}`}
+                                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                                    >
+                                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                            <div>
+                                                <p className="text-sm font-semibold text-slate-900">
+                                                    {formatItemLabel(tradeItem.item)}
+                                                </p>
+
+                                                <div className="mt-2 flex flex-wrap gap-2">
+                                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
+                                                        {tradeItem.item.status}
+                                                    </span>
+
+                                                    {tradeItem.item.condition && (
+                                                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                                            {tradeItem.item.condition}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex w-full gap-2 sm:w-48">
+                                                <div className="flex-1">
+                                                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">
+                                                        Value in
+                                                    </label>
+
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={tradeItem.value}
+                                                        onChange={(event) => {
+                                                            const value = event.target.value
+
+                                                            setIncomingItems((current) =>
+                                                                current.map((entry, entryIndex) =>
+                                                                    entryIndex === index ? { ...entry, value } : entry
+                                                                )
+                                                            )
+                                                        }}
+                                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                                        placeholder="0.00"
+                                                    />
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setIncomingItems((current) =>
+                                                            current.filter((_, entryIndex) => entryIndex !== index)
+                                                        )
+                                                    }}
+                                                    className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                                                >
+                                                    ×
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
+                        )}
+
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium text-slate-700">Cash in</label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={cashIn}
+                                onChange={(event) => setCashIn(event.target.value)}
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                placeholder="0.00"
+                            />
                         </div>
-                    )}
+                    </div>
                 </section>
             </div>
 
@@ -791,8 +811,10 @@ export default function TradeOperationForm() {
                         onClick={() => {
                             setOutgoingItem(null)
                             setOutgoingValue('')
-                            setIncomingItem(null)
-                            setIncomingValue('')
+                            setIncomingItems([])
+                            setIncomingSearchQuery('')
+                            setIncomingSearchResults([])
+                            setIncomingHasSearched(false)
                             setShowIncomingForm(false)
                             setSearchQuery('')
                             setSearchResults([])
