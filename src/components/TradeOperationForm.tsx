@@ -20,8 +20,7 @@ const channelOptions = [
 export default function TradeOperationForm() {
     const [brands, setBrands] = useState<Brand[]>([])
 
-    const [outgoingItem, setOutgoingItem] = useState<InventoryItem | null>(null)
-    const [outgoingValue, setOutgoingValue] = useState('')
+    const [outgoingItems, setOutgoingItems] = useState<TradeItem[]>([])
 
     const [incomingItems, setIncomingItems] = useState<TradeItem[]>([])
     const [showIncomingForm, setShowIncomingForm] = useState(false)
@@ -66,7 +65,7 @@ export default function TradeOperationForm() {
         return item.color ? `${label} — ${item.color}` : label
     }
 
-    const outgoingTotal = Number(outgoingValue || 0)
+    const outgoingTotal = outgoingItems.reduce((sum, tradeItem) => sum + Number(tradeItem.value || 0), 0)
     const incomingTotal = incomingItems.reduce((sum, tradeItem) => sum + Number(tradeItem.value || 0), 0)
     const cashOutTotal = Number(cashOut || 0)
     const cashInTotal = Number(cashIn || 0)
@@ -125,6 +124,16 @@ export default function TradeOperationForm() {
                 )
 
                 items = [...items, ...brandMatched]
+            }
+
+            if (outgoingItems.length > 0) {
+                const selectedOutgoingIds = outgoingItems.map((tradeItem) => tradeItem.item.id)
+                items = items.filter((item) => !selectedOutgoingIds.includes(item.id))
+            }
+
+            if (incomingItems.length > 0) {
+                const selectedIncomingIds = incomingItems.map((tradeItem) => tradeItem.item.id)
+                items = items.filter((item) => !selectedIncomingIds.includes(item.id))
             }
 
             setSearchResults(items)
@@ -192,8 +201,24 @@ export default function TradeOperationForm() {
                 items = [...items, ...brandMatched]
             }
 
-            if (outgoingItem) {
-                items = items.filter((item) => item.id !== outgoingItem.id)
+            if (outgoingItems.length > 0) {
+                const selectedOutgoingIds = outgoingItems.map(
+                    (tradeItem) => tradeItem.item.id
+                )
+
+                items = items.filter(
+                    (item) => !selectedOutgoingIds.includes(item.id)
+                )
+            }
+
+            if (incomingItems.length > 0) {
+                const selectedIncomingIds = incomingItems.map(
+                    (tradeItem) => tradeItem.item.id
+                )
+
+                items = items.filter(
+                    (item) => !selectedIncomingIds.includes(item.id)
+                )
             }
             if (incomingItems.length > 0) {
                 const selectedIncomingIds = incomingItems.map((tradeItem) => tradeItem.item.id)
@@ -210,8 +235,8 @@ export default function TradeOperationForm() {
         setError(null)
         setSuccessMessage(null)
 
-        if (!outgoingItem) {
-            setError('Select the item you are giving.')
+        if (outgoingItems.length === 0) {
+            setError('Add at least one item you are giving.')
             return
         }
 
@@ -225,15 +250,13 @@ export default function TradeOperationForm() {
             return
         }
 
-        const parsedOutgoingValue = Number(outgoingValue)
-        // const parsedIncomingValue = Number(incomingValue)
+        for (const tradeItem of outgoingItems) {
+            const parsedValue = Number(tradeItem.value || 0)
 
-        if (
-            Number.isNaN(parsedOutgoingValue) ||
-            parsedOutgoingValue <= 0
-        ) {
-            setError('Outgoing trade value must be greater than 0.')
-            return
+            if (Number.isNaN(parsedValue) || parsedValue <= 0) {
+                setError('All outgoing item values must be greater than 0.')
+                return
+            }
         }
 
         const parsedCashOut = Number(cashOut || 0)
@@ -249,8 +272,8 @@ export default function TradeOperationForm() {
             return
         }
 
-        const totalGiven = parsedOutgoingValue + parsedCashOut
-        // const totalReceived = parsedIncomingValue + parsedCashIn
+        const totalGiven = outgoingTotal + parsedCashOut
+        // const totalReceived = incomingTotal   + parsedCashIn
 
         if (totalGiven !== totalReceived) {
             setError(
@@ -283,22 +306,26 @@ export default function TradeOperationForm() {
 
         const deal = dealResult.data
 
-        const outgoingDealItem: NewDealItem = {
-            deal_id: deal.id,
-            item_id: outgoingItem.id,
-            direction: 'out',
-            cash_value: 0,
-            trade_value: parsedOutgoingValue,
-            total_value: parsedOutgoingValue,
-            notes: null,
-        }
+        for (const tradeItem of outgoingItems) {
+            const parsedValue = Number(tradeItem.value || 0)
 
-        const outgoingResult = await createDealItem(outgoingDealItem)
+            const outgoingDealItem: NewDealItem = {
+                deal_id: deal.id,
+                item_id: tradeItem.item.id,
+                direction: 'out',
+                cash_value: 0,
+                trade_value: parsedValue,
+                total_value: parsedValue,
+                notes: null,
+            }
 
-        if (outgoingResult.error) {
-            setSaving(false)
-            setError('Trade deal created, but outgoing item was not linked.')
-            return
+            const outgoingResult = await createDealItem(outgoingDealItem)
+
+            if (outgoingResult.error) {
+                setSaving(false)
+                setError('Trade deal created, but one outgoing item was not linked.')
+                return
+            }
         }
 
         for (const tradeItem of incomingItems) {
@@ -323,16 +350,18 @@ export default function TradeOperationForm() {
             }
         }
 
-        const updateOutgoingResult = await updateInventoryItem(outgoingItem.id, {
-            ...outgoingItem,
-            status: 'traded',
-            sold_date: dealDateValue,
-        })
+        for (const tradeItem of outgoingItems) {
+            const updateOutgoingResult = await updateInventoryItem(tradeItem.item.id, {
+                ...tradeItem.item,
+                status: 'traded',
+                sold_date: dealDateValue,
+            })
 
-        if (updateOutgoingResult.error) {
-            setSaving(false)
-            setError('Trade saved, but outgoing item status was not updated.')
-            return
+            if (updateOutgoingResult.error) {
+                setSaving(false)
+                setError('Trade saved, but one outgoing item status was not updated.')
+                return
+            }
         }
 
         if (parsedCashOut > 0 || parsedCashIn > 0) {
@@ -363,8 +392,7 @@ export default function TradeOperationForm() {
         setSaving(false)
         setSuccessMessage('Trade operation saved successfully.')
 
-        setOutgoingItem(null)
-        setOutgoingValue('')
+        setOutgoingItems([])
         setCashOut('')
 
         setIncomingItems([])
@@ -397,139 +425,162 @@ export default function TradeOperationForm() {
                 <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                     <h3 className="text-lg font-semibold text-slate-900">What I give</h3>
                     <p className="mt-1 text-sm text-slate-600">
-                        Select an existing inventory item going out.
+                        Search existing inventory items going out.
                     </p>
 
-                    {!outgoingItem ? (
-                        <div className="mt-5 space-y-4">
-                            <label className="text-sm font-medium text-slate-700">Search inventory</label>
+                    <div className="mt-5 space-y-4">
+                        <label className="text-sm font-medium text-slate-700">Search inventory</label>
 
-                            <div className="relative">
-                                <input
-                                    type="text"
-                                    value={searchQuery}
-                                    onChange={(event) => handleSearchChange(event.target.value)}
-                                    placeholder="Search by brand, model, year, or color..."
-                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                                />
+                        <div className="relative">
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(event) => handleSearchChange(event.target.value)}
+                                placeholder="Search by brand, model, year, or color..."
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                            />
 
-                                {searching && (
-                                    <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
-                                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                                    </div>
-                                )}
-                            </div>
-
-                            {hasSearched && searchResults.length === 0 && (
-                                <p className="text-sm text-slate-500">No items found.</p>
-                            )}
-
-                            {searchResults.length > 0 && (
-                                <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                                    {searchResults.map((item) => (
-                                        <button
-                                            key={item.id}
-                                            type="button"
-                                            onClick={() => {
-                                                setOutgoingItem(item)
-                                                setOutgoingValue(
-                                                    item.estimated_sold_value != null
-                                                        ? String(item.estimated_sold_value)
-                                                        : ''
-                                                )
-                                                setSearchQuery('')
-                                                setSearchResults([])
-                                                setHasSearched(false)
-                                            }}
-                                            className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
-                                        >
-                                            <p className="text-sm font-medium text-slate-900">
-                                                {formatItemLabel(item)}
-                                            </p>
-                                            <div className="mt-1 flex flex-wrap gap-2">
-                                                {item.condition && (
-                                                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                                                        {item.condition}
-                                                    </span>
-                                                )}
-                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                                                    {item.item_type}
-                                                </span>
-                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                                                    {item.status}
-                                                </span>
-                                            </div>
-                                        </button>
-                                    ))}
+                            {searching && (
+                                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
                                 </div>
                             )}
                         </div>
-                    ) : (
-                        <div className="mt-5 space-y-4">
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                                    <div>
-                                        <p className="text-sm font-semibold text-slate-900">
-                                            {formatItemLabel(outgoingItem)}
+
+                        {hasSearched && searchResults.length === 0 && (
+                            <p className="text-sm text-slate-500">No items found.</p>
+                        )}
+
+                        {searchResults.length > 0 && (
+                            <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                {searchResults.map((item) => (
+                                    <button
+                                        key={item.id}
+                                        type="button"
+                                        onClick={() => {
+                                            setOutgoingItems((current) => [
+                                                ...current,
+                                                {
+                                                    item,
+                                                    value:
+                                                        item.estimated_sold_value != null
+                                                            ? String(item.estimated_sold_value)
+                                                            : '',
+                                                },
+                                            ])
+
+                                            setSearchQuery('')
+                                            setSearchResults([])
+                                            setHasSearched(false)
+                                        }}
+                                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                                    >
+                                        <p className="text-sm font-medium text-slate-900">
+                                            {formatItemLabel(item)}
                                         </p>
 
-                                        <div className="mt-2 flex flex-wrap gap-2">
-                                            <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
-                                                {outgoingItem.status}
-                                            </span>
-
-                                            {outgoingItem.condition && (
-                                                <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                                                    {outgoingItem.condition}
+                                        <div className="mt-1 flex flex-wrap gap-2">
+                                            {item.condition && (
+                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                    {item.condition}
                                                 </span>
                                             )}
+
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                {item.item_type}
+                                            </span>
+
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                {item.status}
+                                            </span>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {outgoingItems.length > 0 && (
+                            <div className="space-y-3">
+                                {outgoingItems.map((tradeItem, index) => (
+                                    <div
+                                        key={`${tradeItem.item.id}-${index}`}
+                                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                                    >
+                                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                            <div>
+                                                <p className="text-sm font-semibold text-slate-900">
+                                                    {formatItemLabel(tradeItem.item)}
+                                                </p>
+
+                                                <div className="mt-2 flex flex-wrap gap-2">
+                                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
+                                                        {tradeItem.item.status}
+                                                    </span>
+
+                                                    {tradeItem.item.condition && (
+                                                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                                            {tradeItem.item.condition}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex w-full gap-2 sm:w-48">
+                                                <div className="flex-1">
+                                                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">
+                                                        Value out
+                                                    </label>
+
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={tradeItem.value}
+                                                        onChange={(event) => {
+                                                            const value = event.target.value
+
+                                                            setOutgoingItems((current) =>
+                                                                current.map((entry, entryIndex) =>
+                                                                    entryIndex === index ? { ...entry, value } : entry
+                                                                )
+                                                            )
+                                                        }}
+                                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                                        placeholder="0.00"
+                                                    />
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setOutgoingItems((current) =>
+                                                            current.filter((_, entryIndex) => entryIndex !== index)
+                                                        )
+                                                    }}
+                                                    className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                                                >
+                                                    ×
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
-
-                                    <div className="w-full sm:w-40">
-                                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">
-                                            Value out
-                                        </label>
-
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            value={outgoingValue}
-                                            onChange={(event) => setOutgoingValue(event.target.value)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                                            placeholder="0.00"
-                                        />
-                                    </div>
-                                </div>
+                                ))}
                             </div>
+                        )}
 
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setOutgoingItem(null)
-                                    setOutgoingValue('')
-                                    setCashOut('')
-                                }}
-                                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                            >
-                                Change outgoing item
-                            </button>
-
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium text-slate-700">Cash out</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={cashOut}
-                                    onChange={(event) => setCashOut(event.target.value)}
-                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                                    placeholder="0.00"
-                                />
-                            </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium text-slate-700">Cash out</label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={cashOut}
+                                onChange={(event) => setCashOut(event.target.value)}
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                placeholder="0.00"
+                            />
                         </div>
-                    )}
+                    </div>
                 </section>
 
                 {/* What I receive */}
@@ -809,8 +860,7 @@ export default function TradeOperationForm() {
                     <button
                         type="button"
                         onClick={() => {
-                            setOutgoingItem(null)
-                            setOutgoingValue('')
+                            setOutgoingItems([])
                             setIncomingItems([])
                             setIncomingSearchQuery('')
                             setIncomingSearchResults([])
