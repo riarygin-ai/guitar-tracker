@@ -3,13 +3,13 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { getBrands, getInventoryItems } from '@/lib/supabase';
-import type { Brand, InventoryItem, Status } from '@/types';
+import type { Brand, InventoryItemWithValue, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
 
 const statusOptions: Array<Status | 'all'> = ['all', 'owned', 'listed', 'sold', 'traded'];
 
 export default function InventoryPage() {
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [items, setItems] = useState<InventoryItemWithValue[]>([])
   const [brands, setBrands] = useState<Brand[]>([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<Status | 'all'>('all');
@@ -28,7 +28,7 @@ export default function InventoryPage() {
       }
 
       setBrands(brandResult.data || []);
-      setItems(itemResult.data || []);
+      setItems((itemResult.data as InventoryItemWithValue[]) || []);
       setLoading(false);
     }
 
@@ -139,27 +139,6 @@ export default function InventoryPage() {
             </div>
           )}
         </div>
-
-        {/* <aside className="space-y-4">
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm uppercase tracking-[0.24em] text-slate-500">Quick tips</p>
-            <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
-              <li>Search by brand or model for a fast lookup.</li>
-              <li>Filter by status to see owned, listed, sold, or traded items.</li>
-              <li>Tap an item card to view details and update it later.</li>
-            </ul>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm uppercase tracking-[0.24em] text-slate-500">Statuses</p>
-            <div className="mt-4 grid gap-3 text-sm text-slate-700">
-              <div className="rounded-2xl bg-green-50 p-3">owned - guitars you currently keep</div>
-              <div className="rounded-2xl bg-yellow-50 p-3">listed - guitars currently for sale</div>
-              <div className="rounded-2xl bg-slate-50 p-3">sold - finished sales</div>
-              <div className="rounded-2xl bg-indigo-50 p-3">traded - item exchanged</div>
-            </div>
-          </div>
-        </aside> */}
       </div>
     </div>
   );

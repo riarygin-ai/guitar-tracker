@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { InventoryItem } from '@/types';
+import type { InventoryItemWithValue } from '@/types';
 
 const statusClasses: Record<string, string> = {
   owned: 'bg-green-100 text-green-800',
@@ -9,7 +9,7 @@ const statusClasses: Record<string, string> = {
 };
 
 interface InventoryCardProps {
-  item: InventoryItem;
+  item: InventoryItemWithValue;
   brandName: string;
 }
 
@@ -43,7 +43,8 @@ export default function InventoryCard({ item, brandName }: InventoryCardProps) {
 
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700">
         <span>
-          <span className="text-slate-500">Value In:</span> —
+          <span className="text-slate-500">Value In:</span>{' '}
+          ${item.value_in?.toFixed(0) ?? '—'}
         </span>
 
         <span>

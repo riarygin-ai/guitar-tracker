@@ -40,7 +40,7 @@ export async function createBrand(brand: NewBrand) {
 }
 
 export async function getInventoryItems() {
-  return supabase.from('inventory_items').select('*');
+  return supabase.from('inventory_items_with_value').select('*');
 }
 
 export async function searchInventoryItems(query: string) {

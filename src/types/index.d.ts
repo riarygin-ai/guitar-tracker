@@ -29,6 +29,10 @@ export interface InventoryItem {
   updated_at: string;
 }
 
+export type InventoryItemWithValue = InventoryItem & {
+  value_in: number | null;
+};
+
 export interface Deal {
   id: number;
   deal_date: string;
