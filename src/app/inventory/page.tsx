@@ -89,7 +89,7 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-[1fr_280px]">
+     <div className="space-y-4">
         <div className="space-y-4">
           <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -140,7 +140,7 @@ export default function InventoryPage() {
           )}
         </div>
 
-        <aside className="space-y-4">
+        {/* <aside className="space-y-4">
           <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
             <p className="text-sm uppercase tracking-[0.24em] text-slate-500">Quick tips</p>
             <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
@@ -159,7 +159,7 @@ export default function InventoryPage() {
               <div className="rounded-2xl bg-indigo-50 p-3">traded - item exchanged</div>
             </div>
           </div>
-        </aside>
+        </aside> */}
       </div>
     </div>
   );
