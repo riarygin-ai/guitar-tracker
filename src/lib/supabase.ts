@@ -10,7 +10,8 @@ import type {
   NewInventoryItem,
   UpdateDeal,
   UpdateInventoryItem,
-  NewCashFlow 
+  NewCashFlow,
+  NewInventoryExpense 
 } from '@/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -48,7 +49,7 @@ export async function searchInventoryItems(query: string) {
 
   if (!trimmed) {
     return supabase
-      .from('inventory_items')
+      .from('inventory_items_search')
       .select('*')
       .not('status', 'in', '("sold","traded")')
       .order('created_at', { ascending: false })
@@ -56,10 +57,10 @@ export async function searchInventoryItems(query: string) {
   }
 
   return supabase
-    .from('inventory_items')
+    .from('inventory_items_search')
     .select('*')
     .not('status', 'in', '("sold","traded")')
-    .or(`model.ilike.%${trimmed}%,color.ilike.%${trimmed}%,year::text.ilike.%${trimmed}%`)
+    .or(`brand_name.ilike.%${trimmed}%,model.ilike.%${trimmed}%,color.ilike.%${trimmed}%`)
     .order('created_at', { ascending: false })
     .limit(20);
 }
@@ -113,3 +114,19 @@ export async function getLatestCashFlow() {
     .maybeSingle();
 }
 
+export async function createInventoryExpense(
+  expense: NewInventoryExpense
+) {
+  return supabase
+    .from('inventory_expenses')
+    .insert(expense)
+    .select()
+    .single();
+}
+
+export async function getInventoryExpenses() {
+  return supabase
+    .from('inventory_expenses')
+    .select('*')
+    .order('expense_date', { ascending: false });
+}

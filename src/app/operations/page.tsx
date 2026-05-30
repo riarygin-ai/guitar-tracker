@@ -4,11 +4,13 @@ import { useState } from 'react';
 import BuyOperationForm from '@/components/BuyOperationForm';
 import SellOperationForm from '@/components/SellOperationForm';
 import TradeOperationForm from '@/components/TradeOperationForm';
+import ExpenseOperationForm from '@/components/ExpenseOperationForm';
 
 const tabs = [
   { id: 'buy', label: 'Buy' },
   { id: 'sell', label: 'Sell' },
   { id: 'trade', label: 'Trade' },
+  { id: 'expense', label: 'Expense' },
 ] as const;
 
 type OperationTab = (typeof tabs)[number]['id'];
@@ -34,11 +36,10 @@ export default function OperationsPage() {
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
-                  className={`rounded-full px-5 py-2.5 text-sm font-semibold transition ${
-                    activeTab === tab.id
+                  className={`rounded-full px-5 py-2.5 text-sm font-semibold transition ${activeTab === tab.id
                       ? 'bg-slate-950 text-white'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
+                    }`}
                 >
                   {tab.label}
                 </button>
@@ -46,14 +47,15 @@ export default function OperationsPage() {
             </div>
           </div>
         </div>
-
         <div className="mt-6 space-y-6">
           {activeTab === 'buy' ? (
             <BuyOperationForm />
           ) : activeTab === 'sell' ? (
             <SellOperationForm />
-          ) : (
+          ) : activeTab === 'trade' ? (
             <TradeOperationForm />
+          ) : (
+            <ExpenseOperationForm />
           )}
         </div>
       </div>

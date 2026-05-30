@@ -57,6 +57,20 @@ export interface DealItem {
   created_at: string;
 }
 
+export interface InventoryExpense {
+  id: number;
+  item_id: number | null;
+  expense_date: string;
+  amount: number;
+  notes: string;
+  created_at: string;
+}
+
+export type NewInventoryExpense = Omit<
+  InventoryExpense,
+  'id' | 'created_at'
+>;
+
 export type NewBrand = Pick<Brand, 'name'>;
 
 export type NewInventoryItem = Omit<InventoryItem, 'id' | 'created_at' | 'updated_at'>;
@@ -84,3 +98,6 @@ export type UpdateInventoryItem = Partial<Omit<InventoryItem, 'id' | 'created_at
 export type UpdateDeal = Partial<Omit<Deal, 'id' | 'created_at'>> & {
   id: number;
 };
+export interface InventorySearchItem extends InventoryItem {
+  brand_name: string;
+}
