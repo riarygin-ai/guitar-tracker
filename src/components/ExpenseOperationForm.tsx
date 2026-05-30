@@ -1,8 +1,8 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { createInventoryExpense, searchInventoryItems } from '@/lib/supabase';
-import type { InventoryItem, InventorySearchItem } from '@/types';
+import { createInventoryExpense, searchInventoryItems, createCashFlow, getLatestCashFlow } from '@/lib/supabase';
+import type { InventorySearchItem } from '@/types';
 
 export default function ExpenseOperationForm() {
     const [expenseDate, setExpenseDate] = useState('');
@@ -87,9 +87,41 @@ export default function ExpenseOperationForm() {
             return;
         }
 
+        const latestCashFlowResult = await getLatestCashFlow()
+
+        const openingBalance =
+            latestCashFlowResult.data?.closing_balance != null
+                ? Number(latestCashFlowResult.data.closing_balance)
+                : 0
+
+        const parsedAmount = Number(amount)
+
+        const expenseDateValue =
+            expenseDate || new Date().toISOString().slice(0, 10)
+
+        const cashFlowResult = await createCashFlow({
+            deal_id: null,
+            transaction_date: expenseDateValue,
+            opening_balance: openingBalance,
+            cash_in: 0,
+            cash_out: parsedAmount,
+            closing_balance: openingBalance - parsedAmount,
+            description: notes.trim(),
+        })
+
+        if (cashFlowResult.error) {
+            setError('Expense saved, but cash flow entry failed.')
+            return
+        }
+
         setAmount('');
         setNotes('');
         setExpenseDate('');
+
+        setSelectedItem(null);
+        setSearchQuery('');
+        setSearchResults([]);
+        setHasSearched(false);
 
         setSuccessMessage('Expense saved successfully.');
     };
