@@ -44,6 +44,12 @@ export async function getInventoryItems() {
   return supabase.from('inventory_items_with_value').select('*');
 }
 
+export async function getInventoryItemsWithValue() {
+  return supabase
+    .from('inventory_items_with_value')
+    .select('*')
+}
+
 export async function searchInventoryItems(query: string) {
   const trimmed = query.trim();
 
@@ -129,4 +135,9 @@ export async function getInventoryExpenses() {
     .from('inventory_expenses')
     .select('*')
     .order('expense_date', { ascending: false });
+}
+
+
+export async function getDealItems() {
+  return supabase.from('deal_items').select('*')
 }
