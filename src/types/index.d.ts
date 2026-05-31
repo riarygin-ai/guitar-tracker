@@ -101,3 +101,12 @@ export type UpdateDeal = Partial<Omit<Deal, 'id' | 'created_at'>> & {
 export interface InventorySearchItem extends InventoryItem {
   brand_name: string;
 }
+export interface InventoryExpense {
+  id: number;
+  deal_id: number | null;
+  item_id: number | null;
+  expense_date: string;
+  amount: number;
+  notes: string;
+  created_at: string;
+}

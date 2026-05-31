@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { createInventoryExpense, searchInventoryItems, createCashFlow, getLatestCashFlow } from '@/lib/supabase';
+import { createInventoryExpense, searchInventoryItems, createCashFlow, getLatestCashFlow, createDeal } from '@/lib/supabase';
 import type { InventorySearchItem } from '@/types';
 
 export default function ExpenseOperationForm() {
@@ -72,14 +72,34 @@ export default function ExpenseOperationForm() {
 
         setSaving(true);
 
-        const result = await createInventoryExpense({
-            item_id: selectedItem?.id ?? null,
-            expense_date:
-                expenseDate || new Date().toISOString().slice(0, 10),
-            amount: Number(amount),
-            notes,
-        });
+        const parsedAmount = Number(amount)
+        const expenseDateValue = expenseDate || new Date().toISOString().slice(0, 10)
 
+        const dealResult = await createDeal({
+            deal_type: 'expense',
+            deal_date: expenseDateValue,
+            channel: null,
+            cash_received: 0,
+            cash_paid: parsedAmount,
+            fees: 0,
+            notes: notes.trim(),
+        })
+
+        if (dealResult.error || !dealResult.data) {
+            setSaving(false)
+            setError('Could not create expense deal.')
+            return
+        }
+
+        const deal = dealResult.data
+
+        const result = await createInventoryExpense({
+            deal_id: deal.id,
+            item_id: selectedItem?.id ?? null,
+            expense_date: expenseDateValue,
+            amount: parsedAmount,
+            notes: notes.trim(),
+        })
         setSaving(false);
 
         if (result.error) {
@@ -94,13 +114,8 @@ export default function ExpenseOperationForm() {
                 ? Number(latestCashFlowResult.data.closing_balance)
                 : 0
 
-        const parsedAmount = Number(amount)
-
-        const expenseDateValue =
-            expenseDate || new Date().toISOString().slice(0, 10)
-
         const cashFlowResult = await createCashFlow({
-            deal_id: null,
+            deal_id: deal.id,
             transaction_date: expenseDateValue,
             opening_balance: openingBalance,
             cash_in: 0,
