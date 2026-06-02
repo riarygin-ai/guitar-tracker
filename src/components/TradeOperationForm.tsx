@@ -352,7 +352,7 @@ export default function TradeOperationForm() {
 
         for (const tradeItem of outgoingItems) {
             const updateOutgoingResult = await updateInventoryItem(tradeItem.item.id, {
-                ...tradeItem.item,
+                id: tradeItem.item.id,
                 status: 'traded',
                 sold_date: dealDateValue,
             })
