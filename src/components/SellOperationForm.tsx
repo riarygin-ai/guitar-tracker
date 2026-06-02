@@ -11,6 +11,7 @@ import {
   getLatestCashFlow,
   searchInventoryItems,
   updateInventoryItem,
+  recalculateCashFlowBalancesFrom,
 } from '@/lib/supabase';
 import type { Brand, DealType, Direction, InventoryItem, NewCashFlow, NewDeal, NewDealItem } from '@/types';
 
@@ -138,7 +139,7 @@ export default function SellOperationForm() {
 
     if (!selectedItem) {
       setError('Inventory item is required.');
-      return; 
+      return;
     }
 
     setSaving(true);
@@ -173,18 +174,18 @@ export default function SellOperationForm() {
 
     const dealItemResult = await createDealItem(itemPayload);
 
-  const updateItemResult = await updateInventoryItem(selectedItem.id, {
-  id: selectedItem.id,
-  status: 'sold',
-  sold_date: dealDateValue,
-});
+    const updateItemResult = await updateInventoryItem(selectedItem.id, {
+      id: selectedItem.id,
+      status: 'sold',
+      sold_date: dealDateValue,
+    });
 
-  if (updateItemResult.error) {
-  console.error('Update item error:', updateItemResult.error);
-  setSaving(false);
-  setError(`Sale saved but could not update inventory item status: ${updateItemResult.error.message}`);
-  return;
-}
+    if (updateItemResult.error) {
+      console.error('Update item error:', updateItemResult.error);
+      setSaving(false);
+      setError(`Sale saved but could not update inventory item status: ${updateItemResult.error.message}`);
+      return;
+    }
 
     if (dealItemResult.error || !dealItemResult.data) {
       setSaving(false);
@@ -227,6 +228,19 @@ export default function SellOperationForm() {
     if (cfResult.error || !cfResult.data) {
       console.error('Cash flow insert failed:', cfResult.error);
       setError('Sale saved but could not create cash flow record.');
+      return;
+    }
+
+    const recalcResult = await recalculateCashFlowBalancesFrom(cfResult.data.id);
+
+    if (recalcResult.error) {
+      console.error(
+        'Cash flow recalculation failed:',
+        recalcResult.error
+      );
+      setError(
+        'Sale saved, but cash flow balance recalculation failed.'
+      );
       return;
     }
 

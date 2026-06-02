@@ -10,6 +10,7 @@ import {
   getInventoryItemById,
   getLatestCashFlow,
   searchInventoryItems,
+  recalculateCashFlowBalancesFrom,
 } from '@/lib/supabase';
 import type { Brand, DealType, Direction, InventoryItem, NewCashFlow, NewDeal, NewDealItem } from '@/types';
 
@@ -213,6 +214,14 @@ export default function BuyOperationForm() {
     if (cfResult.error || !cfResult.data) {
       console.error('Cash flow insert failed:', cfResult.error);
       setError('Purchase saved but could not create cash flow record.');
+      return;
+    }
+
+    const recalcResult = await recalculateCashFlowBalancesFrom(cfResult.data.id);
+
+    if (recalcResult.error) {
+      console.error('Cash flow recalculation failed:', recalcResult.error);
+      setError('Purchase saved, but cash flow balance recalculation failed.');
       return;
     }
 

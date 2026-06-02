@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import InventoryForm from '@/components/InventoryForm'
-import { createDeal, createDealItem, getBrands, searchInventoryItems, updateInventoryItem, createCashFlow, getLatestCashFlow } from '@/lib/supabase'
+import { createDeal, createDealItem, getBrands, searchInventoryItems, updateInventoryItem, createCashFlow, getLatestCashFlow, recalculateCashFlowBalancesFrom } from '@/lib/supabase'
 import type { Brand, InventoryItem, NewDeal, NewDealItem } from '@/types'
 
 type TradeItem = {
@@ -382,9 +382,19 @@ export default function TradeOperationForm() {
                 description: 'Trade cash adjustment',
             })
 
-            if (cashFlowResult.error) {
+            if (cashFlowResult.error || !cashFlowResult.data) {
                 setSaving(false)
                 setError('Trade saved, but cash flow was not created.')
+                return
+            }
+
+            const recalcResult = await recalculateCashFlowBalancesFrom(
+                cashFlowResult.data.id
+            )
+
+            if (recalcResult.error) {
+                setSaving(false)
+                setError('Trade saved, but cash flow balance recalculation failed.')
                 return
             }
         }

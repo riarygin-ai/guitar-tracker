@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { createInventoryExpense, searchInventoryItems, createCashFlow, getLatestCashFlow, createDeal } from '@/lib/supabase';
+import { createInventoryExpense, searchInventoryItems, createCashFlow, getLatestCashFlow, createDeal, recalculateCashFlowBalancesFrom } from '@/lib/supabase';
 import type { InventorySearchItem } from '@/types';
 
 export default function ExpenseOperationForm() {
@@ -124,12 +124,21 @@ export default function ExpenseOperationForm() {
             description: notes.trim(),
         })
 
-        if (cashFlowResult.error) {
+        if (cashFlowResult.error || !cashFlowResult.data) {
             setError('Expense saved, but cash flow entry failed.')
             return
         }
 
-        setAmount('');
+        const recalcResult = await recalculateCashFlowBalancesFrom(
+            cashFlowResult.data.id
+        )
+
+        if (recalcResult.error) {
+            setError('Expense saved, but cash flow balance recalculation failed.')
+            return
+        }
+
+        setAmount('')
         setNotes('');
         setExpenseDate('');
 
