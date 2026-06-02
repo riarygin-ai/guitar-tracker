@@ -174,7 +174,7 @@ export default function SellOperationForm() {
     const dealItemResult = await createDealItem(itemPayload);
 
   const updateItemResult = await updateInventoryItem(selectedItem.id, {
-  ...selectedItem,
+  id: selectedItem.id,
   status: 'sold',
   sold_date: dealDateValue,
 });
