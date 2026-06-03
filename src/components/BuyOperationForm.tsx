@@ -184,335 +184,335 @@ export default function BuyOperationForm() {
     let description = 'Purchase';
     if (itemResult.data) {
       const item = itemResult.data;
-      const brandName = brandMap[item.brand_id] ?? '';
-      description = ['Purchase', brandName, item.model, item.year, item.color]
+      const brandName = brandMap[item.brand_id] ?? ''; 
+      description = 'Purchase: ' + [brandName, item.model, item.year, item.color]
         .filter(Boolean)
-        .join(' ');
-    }
+    .join(' ');
+}
 
-    const latestCfResult = await getLatestCashFlow();
-    const openingBalance = latestCfResult.data?.closing_balance ?? 0;
-    const cashIn = 0;
-    const cashOut = parsedCashPaid;
-    const closingBalance = openingBalance - cashOut + cashIn;
+const latestCfResult = await getLatestCashFlow();
+const openingBalance = latestCfResult.data?.closing_balance ?? 0;
+const cashIn = 0;
+const cashOut = parsedCashPaid;
+const closingBalance = openingBalance - cashOut + cashIn;
 
-    console.log('Cash flow insert:', { openingBalance, closingBalance, description });
+console.log('Cash flow insert:', { openingBalance, closingBalance, description });
 
-    const cfPayload: NewCashFlow = {
-      deal_id: dealId,
-      transaction_date: dealDateValue,
-      opening_balance: openingBalance,
-      cash_in: cashIn,
-      cash_out: cashOut,
-      closing_balance: closingBalance,
-      description,
-    };
+const cfPayload: NewCashFlow = {
+  deal_id: dealId,
+  transaction_date: dealDateValue,
+  opening_balance: openingBalance,
+  cash_in: cashIn,
+  cash_out: cashOut,
+  closing_balance: closingBalance,
+  description,
+};
 
-    const cfResult = await createCashFlow(cfPayload);
-    setSaving(false);
+const cfResult = await createCashFlow(cfPayload);
+setSaving(false);
 
-    if (cfResult.error || !cfResult.data) {
-      console.error('Cash flow insert failed:', cfResult.error);
-      setError('Purchase saved but could not create cash flow record.');
-      return;
-    }
+if (cfResult.error || !cfResult.data) {
+  console.error('Cash flow insert failed:', cfResult.error);
+  setError('Purchase saved but could not create cash flow record.');
+  return;
+}
 
-    const recalcResult = await recalculateCashFlowBalancesFrom(cfResult.data.id);
+const recalcResult = await recalculateCashFlowBalancesFrom(cfResult.data.id);
 
-    if (recalcResult.error) {
-      console.error('Cash flow recalculation failed:', recalcResult.error);
-      setError('Purchase saved, but cash flow balance recalculation failed.');
-      return;
-    }
+if (recalcResult.error) {
+  console.error('Cash flow recalculation failed:', recalcResult.error);
+  setError('Purchase saved, but cash flow balance recalculation failed.');
+  return;
+}
 
-    setSuccessMessage('Buy operation saved successfully.');
-    setDealDate('');
-    setCashPaid('');
-    setChannel('');
-    setSelectedItem(null);
+setSuccessMessage('Buy operation saved successfully.');
+setDealDate('');
+setCashPaid('');
+setChannel('');
+setSelectedItem(null);
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Operations</p>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-900">Buy operation</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              Record a purchase and create a new inventory item for this operation.
-            </p>
-          </div>
+return (
+  <div className="space-y-6">
+    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Operations</p>
+          <h2 className="mt-2 text-2xl font-semibold text-slate-900">Buy operation</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Record a purchase and create a new inventory item for this operation.
+          </p>
         </div>
       </div>
+    </div>
 
-      {/* Item Section */}
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4">
-          <h3 className="text-lg font-semibold text-slate-900">Item</h3>
-          <p className="mt-1 text-sm text-slate-600">Search for an existing item or create a new one for this purchase.</p>
-        </div>
-
-        {selectedItem ? (
-          /* ── Selected item read-only display ── */
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Selected item</p>
-              <p className="text-sm font-semibold text-slate-900">{formatItemLabel(selectedItem)}</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Brand</p>
-                  <p className="mt-1 text-sm font-medium text-slate-900">{brandMap[selectedItem.brand_id] ?? 'Unknown'}</p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Model</p>
-                  <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.model}</p>
-                </div>
-                {selectedItem.year && (
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Year</p>
-                    <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.year}</p>
-                  </div>
-                )}
-                {selectedItem.color && (
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Color</p>
-                    <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.color}</p>
-                  </div>
-                )}
-                {selectedItem.condition && (
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Condition</p>
-                    <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.condition}</p>
-                  </div>
-                )}
-                {selectedItem.estimated_sold_value != null && (
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Estimated Value</p>
-                    <p className="mt-1 text-sm font-medium text-slate-900">${selectedItem.estimated_sold_value.toFixed(2)}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedItem(null);
-                setShowItemForm(false);
-                setSearchQuery('');
-                setSearchResults([]);
-                setHasSearched(false);
-              }}
-              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-            >
-              Change item
-            </button>
-          </div>
-        ) : showItemForm ? (
-          /* ── Add new item form ── */
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-              <InventoryForm
-                onCreated={handleItemCreated}
-                hideHeader
-                hideSidebar
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowItemForm(false)}
-              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          /* ── Search + Add New ── */
-          <div className="space-y-4">
-            {/* Search input */}
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700">Search existing items</label>
-              <div className="relative">
-                <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  placeholder="Search by brand, model, year, or color..."
-                  className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                />
-                {searching && (
-                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Search results */}
-            {hasSearched && searchResults.length === 0 && (
-              <p className="text-sm text-slate-500">No items found matching &ldquo;{searchQuery}&rdquo;</p>
-            )}
-
-            {searchResults.length > 0 && (
-              <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                {searchResults.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedItem(item);
-                      setSearchQuery('');
-                      setSearchResults([]);
-                      setHasSearched(false);
-                      setSuccessMessage(null);
-                    }}
-                    className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
-                  >
-                    <p className="text-sm font-medium text-slate-900">{formatItemLabel(item)}</p>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      {item.condition && (
-                        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.condition}</span>
-                      )}
-                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.item_type}</span>
-                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.status}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Divider + Add New Item */}
-            <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-slate-200" />
-              <span className="text-xs text-slate-400">or</span>
-              <div className="h-px flex-1 bg-slate-200" />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowItemForm(true)}
-              className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
-            >
-              Add new item
-            </button>
-          </div>
-        )}
+    {/* Item Section */}
+    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mb-4">
+        <h3 className="text-lg font-semibold text-slate-900">Item</h3>
+        <p className="mt-1 text-sm text-slate-600">Search for an existing item or create a new one for this purchase.</p>
       </div>
 
-      <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700">Deal date</label>
-              <input
-                type="date"
-                value={dealDate}
-                onChange={(event) => setDealDate(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-              />
-              <p className="text-xs text-slate-500">Optional. If empty, today's date will be used.</p>
-            </div>
-
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700">Cash Paid</label>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={cashPaid}
-                  onChange={(event) => setCashPaid(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pl-10 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                  placeholder="0.00"
-                />
+      {selectedItem ? (
+        /* ── Selected item read-only display ── */
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Selected item</p>
+            <p className="text-sm font-semibold text-slate-900">{formatItemLabel(selectedItem)}</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Brand</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">{brandMap[selectedItem.brand_id] ?? 'Unknown'}</p>
               </div>
-            </div>
-
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700">Channel</label>
-              <select
-                value={channel}
-                onChange={(event) => setChannel(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-              >
-                <option value="">Select channel</option>
-                {channelOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
+              <div>
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Model</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.model}</p>
+              </div>
+              {selectedItem.year && (
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Year</p>
+                  <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.year}</p>
+                </div>
+              )}
+              {selectedItem.color && (
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Color</p>
+                  <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.color}</p>
+                </div>
+              )}
+              {selectedItem.condition && (
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Condition</p>
+                  <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.condition}</p>
+                </div>
+              )}
+              {selectedItem.estimated_sold_value != null && (
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Estimated Value</p>
+                  <p className="mt-1 text-sm font-medium text-slate-900">${selectedItem.estimated_sold_value.toFixed(2)}</p>
+                </div>
+              )}
             </div>
           </div>
-
-          <div className="space-y-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Buy operation details</p>
-              <p className="mt-2 text-sm text-slate-600">
-                Create a new inventory item first, then record the purchase deal for this operation.
-              </p>
-            </div>
-            <div className="grid gap-3 text-sm text-slate-600">
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Deal type</p>
-                <p className="mt-2 font-medium text-slate-900">Purchase</p>
-              </div>
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Direction</p>
-                <p className="mt-2 font-medium text-slate-900">In</p>
-              </div>
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash received</p>
-                <p className="mt-2 font-medium text-slate-900">$0.00</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {error && (
-          <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-            {error}
-          </div>
-        )}
-
-        {successMessage && (
-          <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
-            {successMessage}
-          </div>
-        )}
-
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
           <button
             type="button"
             onClick={() => {
-              setDealDate('');
-              setCashPaid('');
-              setChannel('');
               setSelectedItem(null);
               setShowItemForm(false);
               setSearchQuery('');
               setSearchResults([]);
               setHasSearched(false);
-              setError(null);
-              setSuccessMessage(null);
             }}
-            className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+            className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
           >
-            Reset
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
-          >
-            {saving ? 'Saving...' : 'Save purchase'}
+            Change item
           </button>
         </div>
-      </form>
+      ) : showItemForm ? (
+        /* ── Add new item form ── */
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+            <InventoryForm
+              onCreated={handleItemCreated}
+              hideHeader
+              hideSidebar
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowItemForm(false)}
+            className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        /* ── Search + Add New ── */
+        <div className="space-y-4">
+          {/* Search input */}
+          <div className="space-y-3">
+            <label className="text-sm font-medium text-slate-700">Search existing items</label>
+            <div className="relative">
+              <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="Search by brand, model, year, or color..."
+                className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              />
+              {searching && (
+                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Search results */}
+          {hasSearched && searchResults.length === 0 && (
+            <p className="text-sm text-slate-500">No items found matching &ldquo;{searchQuery}&rdquo;</p>
+          )}
+
+          {searchResults.length > 0 && (
+            <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              {searchResults.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedItem(item);
+                    setSearchQuery('');
+                    setSearchResults([]);
+                    setHasSearched(false);
+                    setSuccessMessage(null);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  <p className="text-sm font-medium text-slate-900">{formatItemLabel(item)}</p>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {item.condition && (
+                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.condition}</span>
+                    )}
+                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.item_type}</span>
+                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.status}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Divider + Add New Item */}
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-200" />
+            <span className="text-xs text-slate-400">or</span>
+            <div className="h-px flex-1 bg-slate-200" />
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowItemForm(true)}
+            className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+          >
+            Add new item
+          </button>
+        </div>
+      )}
     </div>
-  );
+
+    <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-6">
+          <div className="space-y-3">
+            <label className="text-sm font-medium text-slate-700">Deal date</label>
+            <input
+              type="date"
+              value={dealDate}
+              onChange={(event) => setDealDate(event.target.value)}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            />
+            <p className="text-xs text-slate-500">Optional. If empty, today's date will be used.</p>
+          </div>
+
+          <div className="space-y-3">
+            <label className="text-sm font-medium text-slate-700">Cash Paid</label>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={cashPaid}
+                onChange={(event) => setCashPaid(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pl-10 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                placeholder="0.00"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <label className="text-sm font-medium text-slate-700">Channel</label>
+            <select
+              value={channel}
+              onChange={(event) => setChannel(event.target.value)}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            >
+              <option value="">Select channel</option>
+              {channelOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="space-y-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Buy operation details</p>
+            <p className="mt-2 text-sm text-slate-600">
+              Create a new inventory item first, then record the purchase deal for this operation.
+            </p>
+          </div>
+          <div className="grid gap-3 text-sm text-slate-600">
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Deal type</p>
+              <p className="mt-2 font-medium text-slate-900">Purchase</p>
+            </div>
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Direction</p>
+              <p className="mt-2 font-medium text-slate-900">In</p>
+            </div>
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash received</p>
+              <p className="mt-2 font-medium text-slate-900">$0.00</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          {error}
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+          {successMessage}
+        </div>
+      )}
+
+      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+        <button
+          type="button"
+          onClick={() => {
+            setDealDate('');
+            setCashPaid('');
+            setChannel('');
+            setSelectedItem(null);
+            setShowItemForm(false);
+            setSearchQuery('');
+            setSearchResults([]);
+            setHasSearched(false);
+            setError(null);
+            setSuccessMessage(null);
+          }}
+          className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+        >
+          Reset
+        </button>
+        <button
+          type="submit"
+          disabled={saving}
+          className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+        >
+          {saving ? 'Saving...' : 'Save purchase'}
+        </button>
+      </div>
+    </form>
+  </div>
+);
 }

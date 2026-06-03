@@ -199,9 +199,11 @@ export default function SellOperationForm() {
     if (itemResult.data) {
       const item = itemResult.data;
       const brandName = brandMap[item.brand_id] ?? '';
-      description = ['Sale', brandName, item.model, item.year, item.color]
-        .filter(Boolean)
-        .join(' ');
+      description =
+        'Sale: ' +
+        [brandName, item.model, item.year, item.color]
+          .filter(Boolean)
+          .join(' ');
     }
 
     const latestCfResult = await getLatestCashFlow();

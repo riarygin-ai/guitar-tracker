@@ -121,7 +121,7 @@ export default function ExpenseOperationForm() {
             cash_in: 0,
             cash_out: parsedAmount,
             closing_balance: openingBalance - parsedAmount,
-            description: notes.trim(),
+            description: `Expense: ${notes.trim()}`,
         })
 
         if (cashFlowResult.error || !cashFlowResult.data) {
