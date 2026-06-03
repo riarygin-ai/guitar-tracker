@@ -26,6 +26,8 @@ const itemTypeOptions: Array<{ label: string; value: ItemType }> = [
   { label: 'Cab', value: 'cab' },
   { label: 'Pedal', value: 'pedal' },
   { label: 'Pickups', value: 'pickups' },
+  { label: 'Bass', value: 'bass' },
+  { label: 'Processor', value: 'prossesor' },  
 ];
 
 const conditionOptions: Array<{ label: string; value: Condition }> = [
