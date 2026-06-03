@@ -70,8 +70,13 @@ export default function DashboardPage() {
         inventoryItems.map((item) => [item.id, Number(item.value_in ?? 0)])
     )
 
-    const dealById = Object.fromEntries(
-        deals.map((deal) => [deal.id, deal])
+    const dealItemsByDealId = dealItems.reduce<Record<number, any[]>>(
+        (map, item) => {
+            map[item.deal_id] ??= []
+            map[item.deal_id].push(item)
+            return map
+        },
+        {}
     )
 
     const monthlyRowsMap: Record<
@@ -84,52 +89,57 @@ export default function DashboardPage() {
         }
     > = {}
 
+    const getMonthRow = (month: string) => {
+        monthlyRowsMap[month] ??= {
+            month,
+            cashReceived: 0,
+            profit: 0,
+            expenses: 0,
+        }
+
+        return monthlyRowsMap[month]
+    }
+
+    // Cash received
     cashFlows.forEach((row) => {
         const month = row.transaction_date?.slice(0, 7)
         if (!month) return
 
-        monthlyRowsMap[month] ??= {
-            month,
-            cashReceived: 0,
-            profit: 0,
-            expenses: 0,
-        }
-
-        monthlyRowsMap[month].cashReceived += Number(row.cash_in ?? 0)
+        getMonthRow(month).cashReceived += Number(row.cash_in ?? 0)
     })
 
-    dealItems
-        .filter((item) => item.direction === 'out')
-        .forEach((item) => {
-            const deal = dealById[item.deal_id]
-            const month = deal?.deal_date?.slice(0, 7)
-            if (!month) return
+    // Profit by deal
+    deals.forEach((deal) => {
+        const month = deal.deal_date?.slice(0, 7)
+        if (!month) return
 
-            monthlyRowsMap[month] ??= {
-                month,
-                cashReceived: 0,
-                profit: 0,
-                expenses: 0,
-            }
+        if (deal.deal_type !== 'sale' && deal.deal_type !== 'trade') {
+            return
+        }
 
-            const soldValue = Number(item.total_value ?? 0)
-            const valueIn = valueInByItemId[item.item_id] ?? 0
+        const items = dealItemsByDealId[deal.id] ?? []
 
-            monthlyRowsMap[month].profit += soldValue - valueIn
-        })
+        const outgoingItems = items.filter((item) => item.direction === 'out')
 
+        const outgoingValue = outgoingItems.reduce(
+            (sum, item) => sum + Number(item.total_value ?? 0),
+            0
+        )
+
+        const outgoingCost = outgoingItems.reduce(
+            (sum, item) => sum + Number(valueInByItemId[item.item_id] ?? 0),
+            0
+        )
+
+        getMonthRow(month).profit += outgoingValue - outgoingCost
+    })
+
+    // Expenses
     inventoryExpenses.forEach((expense) => {
         const month = expense.expense_date?.slice(0, 7)
         if (!month) return
 
-        monthlyRowsMap[month] ??= {
-            month,
-            cashReceived: 0,
-            profit: 0,
-            expenses: 0,
-        }
-
-        monthlyRowsMap[month].expenses += Number(expense.amount ?? 0)
+        getMonthRow(month).expenses += Number(expense.amount ?? 0)
     })
 
     const monthlyRows = Object.values(monthlyRowsMap)
@@ -138,25 +148,6 @@ export default function DashboardPage() {
             netProfit: row.profit - row.expenses,
         }))
         .sort((a, b) => b.month.localeCompare(a.month))
-
-    const monthlyCashReceived = cashFlows.reduce<Record<string, number>>(
-        (months, row) => {
-            const month = row.transaction_date?.slice(0, 7) ?? 'Unknown'
-
-            months[month] = (months[month] ?? 0) + Number(row.cash_in ?? 0)
-
-            return months
-        },
-        {}
-    )
-
-    const monthlyCashRows = Object.entries(monthlyCashReceived)
-        .map(([month, cashReceived]) => ({
-            month,
-            cashReceived,
-        }))
-        .sort((a, b) => b.month.localeCompare(a.month))
-
     return (
         <div className="space-y-6">
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -246,7 +237,7 @@ export default function DashboardPage() {
                         </thead>
 
                         <tbody className="divide-y divide-slate-100">
-                           {monthlyRows.map((row) => (
+                            {monthlyRows.map((row) => (
                                 <tr key={row.month}>
                                     <td className="px-4 py-3 font-medium text-slate-900">
                                         {row.month}
