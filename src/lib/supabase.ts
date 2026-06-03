@@ -106,6 +106,12 @@ export async function getCashFlows() {
   return supabase.from('cash_flow').select('*').order('transaction_date', { ascending: false });
 }
 
+export async function recalculateCashFlowBalancesFrom(cashFlowId: number) {
+  return supabase.rpc('recalculate_cash_flow_balances_from', {
+    p_start_id: cashFlowId,
+  })
+}
+
 export async function createCashFlow(cashFlow: NewCashFlow) {
   return supabase.from('cash_flow').insert(cashFlow).select().single();
 }
@@ -141,3 +147,6 @@ export async function getInventoryExpenses() {
 export async function getDealItems() {
   return supabase.from('deal_items').select('*')
 }
+
+
+
