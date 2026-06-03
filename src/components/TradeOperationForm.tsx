@@ -367,6 +367,16 @@ export default function TradeOperationForm() {
         if (parsedCashOut > 0 || parsedCashIn > 0) {
             const latestCashFlowResult = await getLatestCashFlow()
 
+            const firstOutgoingItem = outgoingItems[0];
+            const firstIncomingItem = incomingItems[0];
+
+            const tradeDescription =
+                firstOutgoingItem && firstIncomingItem
+                    ? `Trade: ${firstOutgoingItem.item.model} → ${firstIncomingItem.item.model}`
+                    : firstOutgoingItem
+                        ? `Trade: ${firstOutgoingItem.item.model}`
+                        : 'Trade cash adjustment';
+
             const openingBalance =
                 latestCashFlowResult.data?.closing_balance != null
                     ? Number(latestCashFlowResult.data.closing_balance)
@@ -379,7 +389,7 @@ export default function TradeOperationForm() {
                 cash_in: parsedCashIn,
                 cash_out: parsedCashOut,
                 closing_balance: openingBalance - parsedCashOut + parsedCashIn,
-                description: 'Trade cash adjustment',
+                description: tradeDescription,
             })
 
             if (cashFlowResult.error || !cashFlowResult.data) {
