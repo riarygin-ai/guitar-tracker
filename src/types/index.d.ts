@@ -1,4 +1,4 @@
-export type ItemType = 'guitar' | 'amp' | 'pedal' | 'cab' | 'pickups';
+export type ItemType = 'guitar' | 'amp' | 'pedal' | 'cab' | 'pickups' | 'bass' | 'prossesor';
 export type Status = 'owned' | 'listed' | 'sold' | 'traded';
 export type DealType = 'purchase' | 'sale' | 'trade' | 'expense';
 export type Direction = 'in' | 'out';
