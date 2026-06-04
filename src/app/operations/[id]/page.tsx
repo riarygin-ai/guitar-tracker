@@ -14,6 +14,7 @@ import {
   updateCashFlow,
   updateInventoryExpense,
   recalculateCashFlowBalancesFrom,
+  editTradeOperation,
 } from '@/lib/supabase';
 import type { Brand, Deal, DealItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
 
@@ -38,6 +39,7 @@ export default function OperationDetailPage() {
   const [editedDeal, setEditedDeal] = useState<Partial<Deal> | null>(null);
   const [editedCashFlows, setEditedCashFlows] = useState<Record<number, Partial<CashFlow>>>({});
   const [editedExpenses, setEditedExpenses] = useState<Record<number, Partial<InventoryExpense>>>({});
+  const [editedDealItems, setEditedDealItems] = useState<Record<number, { trade_value: number; total_value: number }>>({});
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -80,6 +82,7 @@ export default function OperationDetailPage() {
       setEditedDeal(null);
       setEditedCashFlows({});
       setEditedExpenses({});
+      setEditedDealItems({});
     } else {
       setEditMode(true);
       setSuccessMessage(null);
@@ -89,6 +92,12 @@ export default function OperationDetailPage() {
       });
       expenses.forEach((exp) => {
         setEditedExpenses((prev) => ({ ...prev, [exp.id]: { ...exp } }));
+      });
+      dealItems.forEach((di) => {
+        setEditedDealItems((prev) => ({
+          ...prev,
+          [di.id]: { trade_value: Number(di.trade_value ?? 0), total_value: Number(di.total_value ?? 0) },
+        }));
       });
     }
   };
@@ -100,89 +109,141 @@ export default function OperationDetailPage() {
     setError(null);
 
     try {
-      // Track if we need to recalculate cash flow
-      const cashFlowsWithDateChange: { id: number; oldDate: string; newDate: string }[] = [];
+      if (deal.deal_type === 'trade') {
+        const outgoing = dealItems.filter((di) => di.direction === 'out');
+        const incoming = dealItems.filter((di) => di.direction === 'in');
+        const cashFlowRow = cashFlows[0] ?? null;
 
-      // Update deal if changed
-      if (editedDeal && (editedDeal.deal_date !== deal.deal_date || editedDeal.channel !== deal.channel || editedDeal.notes !== deal.notes)) {
-        const dealUpdates: Partial<Deal> = {};
-        if (editedDeal.deal_date !== deal.deal_date) dealUpdates.deal_date = editedDeal.deal_date;
-        if (editedDeal.channel !== deal.channel) dealUpdates.channel = editedDeal.channel;
-        if (editedDeal.notes !== deal.notes) dealUpdates.notes = editedDeal.notes;
+        const cashPaid = Number(editedDeal?.cash_paid ?? deal.cash_paid ?? 0);
+        const cashReceived = Number(editedDeal?.cash_received ?? deal.cash_received ?? 0);
 
-        const dealResult = await updateDeal(deal.id, dealUpdates);
-        if (dealResult.error) {
+        const outgoingTotal = outgoing.reduce(
+          (sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)),
+          0
+        );
+        const incomingTotal = incoming.reduce(
+          (sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)),
+          0
+        );
+
+        if (Math.round((outgoingTotal + cashPaid) * 100) !== Math.round((incomingTotal + cashReceived) * 100)) {
           setSaving(false);
-          setError('Could not update deal.');
+          setError('Trade does not balance. Total given must equal total received.');
           return;
         }
-        setDeal(dealResult.data || deal);
-      }
 
-      // Update cash flows
-      for (const [cfIdStr, edits] of Object.entries(editedCashFlows)) {
-        const cfId = Number(cfIdStr);
-        const original = cashFlows.find((cf) => cf.id === cfId);
-        if (!original) continue;
+        const result = await editTradeOperation({
+          dealId: deal.id,
+          dealDate: editedDeal?.deal_date ?? deal.deal_date,
+          channel: editedDeal?.channel ?? deal.channel ?? null,
+          notes: editedDeal?.notes ?? deal.notes ?? null,
+          cashPaid,
+          cashReceived,
+          outgoingItems: outgoing.map((di) => ({
+            item_id: di.item_id,
+            trade_value: editedDealItems[di.id]?.total_value ?? Number(di.trade_value ?? 0),
+            total_value: editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0),
+          })),
+          incomingItems: incoming.map((di) => ({
+            item_id: di.item_id,
+            trade_value: editedDealItems[di.id]?.total_value ?? Number(di.trade_value ?? 0),
+            total_value: editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0),
+          })),
+          cfTransactionDate: cashFlowRow
+            ? (editedCashFlows[cashFlowRow.id]?.transaction_date ?? cashFlowRow.transaction_date)
+            : null,
+          cfDescription: cashFlowRow
+            ? (editedCashFlows[cashFlowRow.id]?.description ?? cashFlowRow.description ?? null)
+            : null,
+        });
 
-        if (edits.transaction_date !== original.transaction_date || edits.description !== original.description) {
-          const cfUpdates: Partial<CashFlow> = {};
-          if (edits.transaction_date && edits.transaction_date !== original.transaction_date) {
-            cfUpdates.transaction_date = edits.transaction_date;
-            cashFlowsWithDateChange.push({
-              id: cfId,
-              oldDate: original.transaction_date,
-              newDate: edits.transaction_date,
-            });
-          }
-          if (edits.description !== original.description) cfUpdates.description = edits.description;
+        if (result.error) {
+          setSaving(false);
+          setError('Could not save trade: ' + result.error.message);
+          return;
+        }
+      } else {
+        // Purchase / sale / expense: individual field updates
+        const cashFlowsWithDateChange: { id: number; oldDate: string; newDate: string }[] = [];
 
-          const cfResult = await updateCashFlow(cfId, cfUpdates);
-          if (cfResult.error) {
+        if (editedDeal && (editedDeal.deal_date !== deal.deal_date || editedDeal.channel !== deal.channel || editedDeal.notes !== deal.notes)) {
+          const dealUpdates: Partial<Deal> = {};
+          if (editedDeal.deal_date !== deal.deal_date) dealUpdates.deal_date = editedDeal.deal_date;
+          if (editedDeal.channel !== deal.channel) dealUpdates.channel = editedDeal.channel;
+          if (editedDeal.notes !== deal.notes) dealUpdates.notes = editedDeal.notes;
+
+          const dealResult = await updateDeal(deal.id, dealUpdates);
+          if (dealResult.error) {
             setSaving(false);
-            setError('Could not update cash flow.');
+            setError('Could not update deal.');
             return;
           }
-
-          setCashFlows((prev) =>
-            prev.map((cf) => (cf.id === cfId ? cfResult.data || cf : cf))
-          );
+          setDeal(dealResult.data || deal);
         }
-      }
 
-      // Update expenses
-      for (const [expIdStr, edits] of Object.entries(editedExpenses)) {
-        const expId = Number(expIdStr);
-        const original = expenses.find((exp) => exp.id === expId);
-        if (!original) continue;
+        for (const [cfIdStr, edits] of Object.entries(editedCashFlows)) {
+          const cfId = Number(cfIdStr);
+          const original = cashFlows.find((cf) => cf.id === cfId);
+          if (!original) continue;
 
-        if (edits.expense_date !== original.expense_date || edits.notes !== original.notes) {
-          const expUpdates: Partial<InventoryExpense> = {};
-          if (edits.expense_date !== original.expense_date) expUpdates.expense_date = edits.expense_date;
-          if (edits.notes !== original.notes) expUpdates.notes = edits.notes;
+          if (edits.transaction_date !== original.transaction_date || edits.description !== original.description) {
+            const cfUpdates: Partial<CashFlow> = {};
+            if (edits.transaction_date && edits.transaction_date !== original.transaction_date) {
+              cfUpdates.transaction_date = edits.transaction_date;
+              cashFlowsWithDateChange.push({
+                id: cfId,
+                oldDate: original.transaction_date,
+                newDate: edits.transaction_date,
+              });
+            }
+            if (edits.description !== original.description) cfUpdates.description = edits.description;
 
-          const expResult = await updateInventoryExpense(expId, expUpdates);
-          if (expResult.error) {
-            setSaving(false);
-            setError('Could not update expense.');
-            return;
+            const cfResult = await updateCashFlow(cfId, cfUpdates);
+            if (cfResult.error) {
+              setSaving(false);
+              setError('Could not update cash flow.');
+              return;
+            }
+
+            setCashFlows((prev) =>
+              prev.map((cf) => (cf.id === cfId ? cfResult.data || cf : cf))
+            );
           }
-
-          setExpenses((prev) =>
-            prev.map((exp) => (exp.id === expId ? expResult.data || exp : exp))
-          );
         }
-      }
 
-      // Recalculate cash flow balances if any transaction dates changed
-      for (const { id: cfId } of cashFlowsWithDateChange) {
-        await recalculateCashFlowBalancesFrom(cfId);
+        for (const [expIdStr, edits] of Object.entries(editedExpenses)) {
+          const expId = Number(expIdStr);
+          const original = expenses.find((exp) => exp.id === expId);
+          if (!original) continue;
+
+          if (edits.expense_date !== original.expense_date || edits.notes !== original.notes) {
+            const expUpdates: Partial<InventoryExpense> = {};
+            if (edits.expense_date !== original.expense_date) expUpdates.expense_date = edits.expense_date;
+            if (edits.notes !== original.notes) expUpdates.notes = edits.notes;
+
+            const expResult = await updateInventoryExpense(expId, expUpdates);
+            if (expResult.error) {
+              setSaving(false);
+              setError('Could not update expense.');
+              return;
+            }
+
+            setExpenses((prev) =>
+              prev.map((exp) => (exp.id === expId ? expResult.data || exp : exp))
+            );
+          }
+        }
+
+        for (const { id: cfId } of cashFlowsWithDateChange) {
+          await recalculateCashFlowBalancesFrom(cfId);
+        }
       }
 
       await loadData();
       setEditedDeal(null);
       setEditedCashFlows({});
       setEditedExpenses({});
+      setEditedDealItems({});
       setSaving(false);
       setEditMode(false);
       setSuccessMessage('Changes saved successfully.');
@@ -245,6 +306,20 @@ export default function OperationDetailPage() {
   const outgoingItems = dealItems.filter((di) => di.direction === 'out');
   const incomingItems = dealItems.filter((di) => di.direction === 'in');
 
+  const tradeEditCashPaid = Number(editedDeal?.cash_paid ?? deal.cash_paid ?? 0);
+  const tradeEditCashReceived = Number(editedDeal?.cash_received ?? deal.cash_received ?? 0);
+  const tradeEditOutgoingTotal = outgoingItems.reduce(
+    (sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)),
+    0
+  );
+  const tradeEditIncomingTotal = incomingItems.reduce(
+    (sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)),
+    0
+  );
+  const tradeGiven = tradeEditOutgoingTotal + tradeEditCashPaid;
+  const tradeReceived = tradeEditIncomingTotal + tradeEditCashReceived;
+  const tradeIsBalanced = Math.round(tradeGiven * 100) === Math.round(tradeReceived * 100);
+
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
@@ -278,7 +353,7 @@ export default function OperationDetailPage() {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || (editMode && deal.deal_type === 'trade' && !tradeIsBalanced)}
                   className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:bg-slate-400"
                 >
                   {saving ? 'Saving...' : 'Save changes'}
@@ -335,12 +410,34 @@ export default function OperationDetailPage() {
 
               <div>
                 <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Cash Paid</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(deal.cash_paid)}</p>
+                {editMode && deal.deal_type === 'trade' ? (
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={Number(editedDeal?.cash_paid ?? deal.cash_paid ?? 0)}
+                    onChange={(e) => setEditedDeal({ ...editedDeal, cash_paid: e.target.value === '' ? 0 : Number(e.target.value) })}
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  />
+                ) : (
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(deal.cash_paid)}</p>
+                )}
               </div>
 
               <div>
                 <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Cash Received</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(deal.cash_received)}</p>
+                {editMode && deal.deal_type === 'trade' ? (
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={Number(editedDeal?.cash_received ?? deal.cash_received ?? 0)}
+                    onChange={(e) => setEditedDeal({ ...editedDeal, cash_received: e.target.value === '' ? 0 : Number(e.target.value) })}
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  />
+                ) : (
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(deal.cash_received)}</p>
+                )}
               </div>
 
               <div>
@@ -357,6 +454,24 @@ export default function OperationDetailPage() {
                 )}
               </div>
             </div>
+            {editMode && deal.deal_type === 'trade' && (
+              <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.1em]">Total given</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(tradeGiven)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.1em]">Total received</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(tradeReceived)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.1em]">Trade balance</p>
+                  <p className={`mt-1 text-sm font-semibold ${tradeIsBalanced ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {tradeIsBalanced ? 'Balanced' : `$${Math.abs(tradeGiven - tradeReceived).toFixed(2)} off`}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Gave / Outgoing Items */}
@@ -369,7 +484,9 @@ export default function OperationDetailPage() {
                   if (!item) return null;
                   const brand = brandMap[item.brand_id] || 'Unknown';
                   const valueIn = Number(item.value_in ?? 0);
-                  const valueOut = Number(di.total_value ?? 0);
+                  const valueOut = editMode && deal.deal_type === 'trade'
+                    ? (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0))
+                    : Number(di.total_value ?? 0);
                   const realizedGain = valueOut - valueIn;
                   return (
                     <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -390,7 +507,23 @@ export default function OperationDetailPage() {
                         </div>
                         <div>
                           <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Value Out</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueOut)}</p>
+                          {editMode && deal.deal_type === 'trade' ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
+                              onChange={(e) =>
+                                setEditedDealItems((prev) => ({
+                                  ...prev,
+                                  [di.id]: { trade_value: Number(e.target.value), total_value: Number(e.target.value) },
+                                }))
+                              }
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                            />
+                          ) : (
+                            <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueOut)}</p>
+                          )}
                         </div>
                         <div>
                           <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Realized Gain</p>
@@ -415,7 +548,9 @@ export default function OperationDetailPage() {
                   const item = itemMap[di.item_id];
                   if (!item) return null;
                   const brand = brandMap[item.brand_id] || 'Unknown';
-                  const valueIn = Number(di.total_value ?? 0);
+                  const valueIn = editMode && deal.deal_type === 'trade'
+                    ? (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0))
+                    : Number(di.total_value ?? 0);
                   const estimatedSold = Number(item.estimated_sold_value ?? 0);
                   const potentialReward = estimatedSold - valueIn;
                   return (
@@ -433,7 +568,23 @@ export default function OperationDetailPage() {
                       <div className="grid gap-3 sm:grid-cols-3">
                         <div>
                           <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Value In</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueIn)}</p>
+                          {editMode && deal.deal_type === 'trade' ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
+                              onChange={(e) =>
+                                setEditedDealItems((prev) => ({
+                                  ...prev,
+                                  [di.id]: { trade_value: Number(e.target.value), total_value: Number(e.target.value) },
+                                }))
+                              }
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                            />
+                          ) : (
+                            <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueIn)}</p>
+                          )}
                         </div>
                         <div>
                           <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Estimated Sold</p>

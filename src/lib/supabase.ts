@@ -196,5 +196,31 @@ export async function updateInventoryExpense(id: number, updates: Partial<Invent
     .single();
 }
 
+export async function editTradeOperation(params: {
+  dealId: number;
+  dealDate: string;
+  channel: string | null;
+  notes: string | null;
+  cashPaid: number;
+  cashReceived: number;
+  outgoingItems: { item_id: number; trade_value: number; total_value: number }[];
+  incomingItems: { item_id: number; trade_value: number; total_value: number }[];
+  cfTransactionDate: string | null;
+  cfDescription: string | null;
+}) {
+  return supabase.rpc('edit_trade_operation', {
+    p_deal_id:             params.dealId,
+    p_deal_date:           params.dealDate,
+    p_channel:             params.channel,
+    p_notes:               params.notes,
+    p_cash_paid:           params.cashPaid,
+    p_cash_received:       params.cashReceived,
+    p_outgoing_items:      params.outgoingItems,
+    p_incoming_items:      params.incomingItems,
+    p_cf_transaction_date: params.cfTransactionDate,
+    p_cf_description:      params.cfDescription,
+  });
+}
+
 
 
