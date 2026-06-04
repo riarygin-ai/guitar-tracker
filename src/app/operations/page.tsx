@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getDeals, getBrands, getInventoryItems, getDealItems } from '@/lib/supabase';
-import type { Brand, Deal, DealItem, InventoryItem } from '@/types';
+import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems } from '@/lib/supabase';
+import type { Brand, Deal, DealItem, InventoryItemWithValue } from '@/types';
 
 const defaultDealTypes = ['sale', 'purchase', 'trade', 'expense'];
 
@@ -13,7 +13,7 @@ export default function OperationsPage() {
   const searchParams = useSearchParams();
   const [deals, setDeals] = useState<Deal[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
-  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItemWithValue[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +28,7 @@ export default function OperationsPage() {
       const [dealsResult, dealItemsResult, itemsResult, brandsResult] = await Promise.all([
         getDeals(),
         getDealItems(),
-        getInventoryItems(),
+        getInventoryItemsWithValue(),
         getBrands(),
       ]);
       setLoading(false);
@@ -81,6 +81,11 @@ export default function OperationsPage() {
     return map;
   }, [dealItems]);
 
+  const valueInByItemId = useMemo(
+    () => Object.fromEntries(inventoryItems.map((item) => [item.id, Number(item.value_in ?? 0)])),
+    [inventoryItems]
+  );
+
   const getItemDescription = (deal: Deal): string => {
     const itemsForDeal = dealItemsByDealId[deal.id] || [];
 
@@ -127,6 +132,39 @@ export default function OperationsPage() {
   const formatCurrency = (value: number | null) => {
     if (value === null) return '$0.00';
     return `$${Math.abs(value).toFixed(2)}`;
+  };
+
+  const getCashForDeal = (deal: Deal): number => {
+    if (deal.deal_type === 'sale') {
+      return deal.cash_received ?? 0;
+    } else if (deal.deal_type === 'purchase') {
+      return -(deal.cash_paid ?? 0);
+    } else if (deal.deal_type === 'trade') {
+      const received = deal.cash_received ?? 0;
+      const paid = deal.cash_paid ?? 0;
+      return received - paid;
+    } else if (deal.deal_type === 'expense') {
+      return -(deal.cash_paid ?? 0);
+    }
+    return 0;
+  };
+
+  const getProfitForDeal = (deal: Deal): number | null => {
+    if (deal.deal_type !== 'sale' && deal.deal_type !== 'trade') {
+      return null;
+    }
+
+    const items = dealItemsByDealId[deal.id] ?? [];
+    const outgoingItems = items.filter((item) => item.direction === 'out');
+    const outgoingValue = outgoingItems.reduce((sum, item) => sum + Number(item.total_value ?? 0), 0);
+    const outgoingCost = outgoingItems.reduce((sum, item) => sum + Number(valueInByItemId[item.item_id] ?? 0), 0);
+    return outgoingValue - outgoingCost;
+  };
+
+  const getCashColor = (value: number): string => {
+    if (value > 0) return 'text-green-600';
+    if (value < 0) return 'text-red-600';
+    return 'text-slate-600';
   };
 
   const updateQueryParams = (params: Record<string, string | undefined>) => {
@@ -187,15 +225,15 @@ export default function OperationsPage() {
 
         const description = getItemDescription(deal).toLowerCase();
         const dealType = deal.deal_type.toLowerCase();
-        const channel = (deal.channel || '').toLowerCase();
-        const amount = deal.cash_paid ? formatCurrency(deal.cash_paid).toLowerCase() : '';
+        const cash = formatCurrency(getCashForDeal(deal)).toLowerCase();
+        const profit = getProfitForDeal(deal) !== null ? formatCurrency(getProfitForDeal(deal)!).toLowerCase() : '';
         const notes = (deal.notes || '').toLowerCase();
 
         return (
           description.includes(normalizedQuery) ||
           dealType.includes(normalizedQuery) ||
-          channel.includes(normalizedQuery) ||
-          amount.includes(normalizedQuery) ||
+          cash.includes(normalizedQuery) ||
+          profit.includes(normalizedQuery) ||
           notes.includes(normalizedQuery)
         );
       })
@@ -270,7 +308,7 @@ export default function OperationsPage() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by item, type, channel, amount, or notes..."
+            placeholder="Search by item, type, cash, profit, or notes..."
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
           />
         </div>
@@ -307,7 +345,7 @@ export default function OperationsPage() {
                   href={`/operations/${deal.id}`}
                   className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-400 hover:shadow-md block"
                 >
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
                     <div>
                       <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Type</p>
                       <div
@@ -323,27 +361,26 @@ export default function OperationsPage() {
                     </div>
 
                     <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Channel</p>
-                      <p className="mt-2 text-sm text-slate-900">{deal.channel || 'N/A'}</p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Amount</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">
-                        {deal.cash_paid !== null && deal.cash_paid > 0
-                          ? `Paid: ${formatCurrency(deal.cash_paid)}`
-                          : deal.cash_received !== null && deal.cash_received > 0
-                            ? `Received: ${formatCurrency(deal.cash_received)}`
-                            : '—'}
+                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Cash</p>
+                      <p className={`mt-2 text-sm font-semibold ${getCashColor(getCashForDeal(deal))}`}>
+                        {formatCurrency(getCashForDeal(deal))}
                       </p>
                     </div>
 
-                    <div className="flex items-end justify-between">
-                      <div>
-                        <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Item/Description</p>
-                        <p className="mt-2 text-sm text-slate-900 line-clamp-2">{getItemDescription(deal)}</p>
-                      </div>
-                      <div className="ml-2 inline-flex items-center justify-center rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Profit</p>
+                      <p className={`mt-2 text-sm font-semibold ${getProfitForDeal(deal) !== null ? getCashColor(getProfitForDeal(deal)!) : 'text-slate-600'}`}>
+                        {getProfitForDeal(deal) !== null ? formatCurrency(getProfitForDeal(deal)!) : '—'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]\">Item/Description</p>
+                      <p className="mt-2 text-sm text-slate-900 line-clamp-2">{getItemDescription(deal)}</p>
+                    </div>
+
+                    <div className="flex items-end justify-end">
+                      <div className="inline-flex items-center justify-center rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white">
                         View
                       </div>
                     </div>
