@@ -59,37 +59,29 @@ export default function InventoryCard({ item, brandName }: InventoryCardProps) {
           ${item.value_in?.toFixed(0) ?? '—'}
         </span>
 
-        <span>
-          <span className="text-slate-500">Est. Sold:</span>{' '}
-          ${item.estimated_sold_value?.toFixed(0) ?? '0'}
-        </span>
-
-        <span>
-          <span className="text-slate-500">Listed:</span>{' '}
-          {item.date_listed ?? '—'}
-        </span>
-
-        <span>
-          <span className="text-slate-500">Collection:</span>{' '}
-          {item.collection_type ?? '—'}
-        </span>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700">
-        {potentialReward != null ? (
+        {item.status === 'owned' || item.status === 'listed' ? (
           <span>
-            <span className="text-slate-500">Potential Reward:</span>{' '}
-            ${potentialReward.toFixed(0)}
-          </span>
-        ) : realizedGain != null ? (
-          <span>
-            <span className="text-slate-500">Realized Gain:</span>{' '}
-            ${realizedGain.toFixed(0)}
+            <span className="text-slate-500">Est. Sold:</span>{' '}
+            ${item.estimated_sold_value?.toFixed(0) ?? '0'}
           </span>
         ) : (
           <span>
+            <span className="text-slate-500">Value Out:</span>{' '}
+            ${item.value_out?.toFixed(0) ?? '—'}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700">
+        {item.status === 'owned' || item.status === 'listed' ? (
+          <span>
             <span className="text-slate-500">Potential Reward:</span>{' '}
-            —
+            {potentialReward != null ? `$${potentialReward.toFixed(0)}` : '—'}
+          </span>
+        ) : (
+          <span>
+            <span className="text-slate-500">Realized Gain:</span>{' '}
+            {realizedGain != null ? `$${realizedGain.toFixed(0)}` : '—'}
           </span>
         )}
       </div>
