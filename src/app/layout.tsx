@@ -18,12 +18,11 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
               Guitar Tracker
             </a>
             <nav className="flex flex-wrap gap-3 text-sm font-medium text-slate-600">
-              <a href="/" className="hover:text-slate-900">Home</a>
-              <a href="/dashboard" className="hover:text-slate-900">Dashboard</a>
+              <a href="/" className="hover:text-slate-900">Dashboard</a>
               <a href="/inventory" className="hover:text-slate-900">Inventory</a>
               <a href="/operations" className="hover:text-slate-900">Operations</a>
               <a href="/cash-flow" className="hover:text-slate-900">Cash Flow</a>
-              </nav>
+            </nav>
               <LogoutButton />       
           </div>
         </header>
