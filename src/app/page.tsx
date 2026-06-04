@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses } from '@/lib/supabase'
 
 export default function HomePage() {
+  const router = useRouter()
   const [cashFlows, setCashFlows] = useState<any[]>([])
   const [inventoryItems, setInventoryItems] = useState<any[]>([])
   const [deals, setDeals] = useState<any[]>([])
@@ -66,10 +68,10 @@ export default function HomePage() {
     return map
   }, {})
 
-  const monthlyRowsMap: Record<string, { month: string; cashReceived: number; profit: number; expenses: number }> = {}
+  const monthlyRowsMap: Record<string, { month: string; cashReceived: number; profit: number; expenses: number; dealsCount: number }> = {}
 
   const getMonthRow = (month: string) => {
-    monthlyRowsMap[month] ??= { month, cashReceived: 0, profit: 0, expenses: 0 }
+    monthlyRowsMap[month] ??= { month, cashReceived: 0, profit: 0, expenses: 0, dealsCount: 0 }
     return monthlyRowsMap[month]
   }
 
@@ -82,6 +84,9 @@ export default function HomePage() {
   deals.forEach((deal) => {
     const month = deal.deal_date?.slice(0, 7)
     if (!month) return
+    if (!['sale', 'purchase', 'trade'].includes(deal.deal_type)) return
+
+    getMonthRow(month).dealsCount += 1
     if (deal.deal_type !== 'sale' && deal.deal_type !== 'trade') return
 
     const items = dealItemsByDealId[deal.id] ?? []
@@ -99,12 +104,14 @@ export default function HomePage() {
   })
 
   const monthlyRows = Object.values(monthlyRowsMap)
-    .map((row) => ({
-      ...row,
-      netProfit: row.profit - row.expenses,
-    }))
     .filter((row) => row.profit !== 0 || row.expenses !== 0)
     .sort((a, b) => b.month.localeCompare(a.month))
+
+  const navigateToMonthOperations = (month: string) => {
+    const [year, monthNumber] = month.split('-').map(Number)
+    const lastDay = new Date(year, monthNumber, 0).getDate()
+    router.push(`/operations?from=${month}-01&to=${month}-${String(lastDay).padStart(2, '0')}&dealTypes=sale,trade,purchase`)
+  }
 
   const inventoryCountByType = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -303,19 +310,29 @@ export default function HomePage() {
                   <tr>
                     <th className="px-4 py-3">Month</th>
                     <th className="px-4 py-3 text-right">Cash Received</th>
+                    <th className="px-4 py-3 text-right">Deals Count</th>
                     <th className="px-4 py-3 text-right">Profit</th>
-                    <th className="px-4 py-3 text-right">Expenses</th>
-                    <th className="px-4 py-3 text-right">Net Profit</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {monthlyRows.map((row) => (
-                    <tr key={row.month}>
+                    <tr
+                    key={row.month}
+                    role="button"
+                    tabIndex={0}
+                    className="cursor-pointer transition hover:bg-slate-50"
+                    onClick={() => navigateToMonthOperations(row.month)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        navigateToMonthOperations(row.month)
+                      }
+                    }}
+                  >
                       <td className="px-4 py-3 font-medium text-slate-900">{row.month}</td>
                       <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.cashReceived)}</td>
+                      <td className="px-4 py-3 text-right text-slate-900">{row.dealsCount}</td>
                       <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.profit)}</td>
-                      <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.expenses)}</td>
-                      <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.netProfit)}</td>
                     </tr>
                   ))}
                 </tbody>

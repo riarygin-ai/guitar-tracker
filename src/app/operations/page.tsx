@@ -2,10 +2,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { getDeals, getBrands, getInventoryItems, getDealItems } from '@/lib/supabase';
 import type { Brand, Deal, DealItem, InventoryItem } from '@/types';
 
+const defaultDealTypes = ['sale', 'purchase', 'trade', 'expense'];
+
 export default function OperationsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [deals, setDeals] = useState<Deal[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -13,6 +18,9 @@ export default function OperationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>(defaultDealTypes);
 
   useEffect(() => {
     async function loadData() {
@@ -38,6 +46,21 @@ export default function OperationsPage() {
 
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!searchParams) return;
+
+    const from = searchParams.get('from') || '';
+    const to = searchParams.get('to') || '';
+    const typesParam = searchParams.get('dealTypes') || '';
+    const types = typesParam
+      ? typesParam.split(',').map((value) => value.trim().toLowerCase()).filter((value) => defaultDealTypes.includes(value))
+      : defaultDealTypes;
+
+    setFromDate(from);
+    setToDate(to);
+    setSelectedDealTypes(types.length > 0 ? types : defaultDealTypes);
+  }, [searchParams]);
 
   const brandMap = useMemo(
     () => Object.fromEntries(brands.map((brand) => [brand.id, brand.name])),
@@ -106,13 +129,59 @@ export default function OperationsPage() {
     return `$${Math.abs(value).toFixed(2)}`;
   };
 
+  const updateQueryParams = (params: Record<string, string | undefined>) => {
+    const query = new URLSearchParams();
+
+    if (params.from) query.set('from', params.from);
+    if (params.to) query.set('to', params.to);
+    if (params.dealTypes) query.set('dealTypes', params.dealTypes);
+
+    const queryString = query.toString();
+    router.replace(`/operations${queryString ? `?${queryString}` : ''}`);
+  };
+
+  const handleFromDateChange = (value: string) => {
+    setFromDate(value);
+    updateQueryParams({
+      from: value || undefined,
+      to: toDate || undefined,
+      dealTypes: selectedDealTypes.length === defaultDealTypes.length ? undefined : selectedDealTypes.join(','),
+    });
+  };
+
+  const handleToDateChange = (value: string) => {
+    setToDate(value);
+    updateQueryParams({
+      from: fromDate || undefined,
+      to: value || undefined,
+      dealTypes: selectedDealTypes.length === defaultDealTypes.length ? undefined : selectedDealTypes.join(','),
+    });
+  };
+
+  const handleDealTypeToggle = (dealType: string) => {
+    const newDealTypes = selectedDealTypes.includes(dealType)
+      ? selectedDealTypes.filter((type) => type !== dealType)
+      : [...selectedDealTypes, dealType];
+
+    setSelectedDealTypes(newDealTypes.length > 0 ? newDealTypes : defaultDealTypes);
+    updateQueryParams({
+      from: fromDate || undefined,
+      to: toDate || undefined,
+      dealTypes: newDealTypes.length === defaultDealTypes.length ? undefined : newDealTypes.join(','),
+    });
+  };
+
   // Filter and sort deals
   const filteredAndSortedDeals = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
-    const validDealTypes: Array<string> = ['purchase', 'sale', 'trade', 'expense'];
 
     return deals
-      .filter((deal) => validDealTypes.includes(deal.deal_type))
+      .filter((deal) => selectedDealTypes.includes(deal.deal_type))
+      .filter((deal) => {
+        if (fromDate && deal.deal_date < fromDate) return false;
+        if (toDate && deal.deal_date > toDate) return false;
+        return true;
+      })
       .filter((deal) => {
         if (!normalizedQuery) return true;
 
@@ -131,7 +200,7 @@ export default function OperationsPage() {
         );
       })
       .sort((a, b) => new Date(b.deal_date).getTime() - new Date(a.deal_date).getTime());
-  }, [deals, searchQuery, dealItemsByDealId, brandMap, itemMap]);
+  }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap]);
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -155,7 +224,47 @@ export default function OperationsPage() {
           </div>
         </div>
 
-        {/* Search box */}
+        <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+            <label className="block text-sm font-medium text-slate-700">Date From</label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => handleFromDateChange(e.target.value)}
+              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            />
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+            <label className="block text-sm font-medium text-slate-700">Date To</label>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => handleToDateChange(e.target.value)}
+              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            />
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-medium text-slate-700">Deal type filter</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {defaultDealTypes.map((dealType) => (
+              <button
+                key={dealType}
+                type="button"
+                onClick={() => handleDealTypeToggle(dealType)}
+                className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${selectedDealTypes.includes(dealType)
+                    ? 'bg-slate-950 text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+              >
+                {dealType}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="mt-6">
           <input
             type="text"
