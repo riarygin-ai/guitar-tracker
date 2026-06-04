@@ -16,6 +16,18 @@ interface InventoryCardProps {
 export default function InventoryCard({ item, brandName }: InventoryCardProps) {
   const title = [item.year, brandName, item.model].filter(Boolean).join(' ');
   const subtitle = item.color ? `${title} — ${item.color}` : title;
+  const potentialReward =
+    item.status === 'owned' || item.status === 'listed'
+      ? item.estimated_sold_value != null && item.value_in != null
+        ? item.estimated_sold_value - item.value_in
+        : null
+      : null;
+  const realizedGain =
+    item.status === 'sold' || item.status === 'traded'
+      ? item.value_out != null && item.value_in != null
+        ? item.value_out - item.value_in
+        : null
+      : null;
 
   return (
     <Link
@@ -61,6 +73,25 @@ export default function InventoryCard({ item, brandName }: InventoryCardProps) {
           <span className="text-slate-500">Collection:</span>{' '}
           {item.collection_type ?? '—'}
         </span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700">
+        {potentialReward != null ? (
+          <span>
+            <span className="text-slate-500">Potential Reward:</span>{' '}
+            ${potentialReward.toFixed(0)}
+          </span>
+        ) : realizedGain != null ? (
+          <span>
+            <span className="text-slate-500">Realized Gain:</span>{' '}
+            ${realizedGain.toFixed(0)}
+          </span>
+        ) : (
+          <span>
+            <span className="text-slate-500">Potential Reward:</span>{' '}
+            —
+          </span>
+        )}
       </div>
     </Link>
   );

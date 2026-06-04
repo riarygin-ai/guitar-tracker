@@ -31,6 +31,7 @@ export interface InventoryItem {
 
 export type InventoryItemWithValue = InventoryItem & {
   value_in: number | null;
+  value_out?: number | null;
 };
 
 export interface Deal {
