@@ -11,7 +11,9 @@ import type {
   UpdateDeal,
   UpdateInventoryItem,
   NewCashFlow,
-  NewInventoryExpense 
+  NewInventoryExpense,
+  CashFlow,
+  InventoryExpense,
 } from '@/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -146,6 +148,52 @@ export async function getInventoryExpenses() {
 
 export async function getDealItems() {
   return supabase.from('deal_items').select('*')
+}
+
+export async function getDealById(id: number) {
+  return supabase.from('deals').select('*').eq('id', id).single();
+}
+
+export async function getDealItemsForDeal(dealId: number) {
+  return supabase.from('deal_items').select('*').eq('deal_id', dealId);
+}
+
+export async function getCashFlowsForDeal(dealId: number) {
+  return supabase.from('cash_flow').select('*').eq('deal_id', dealId).order('transaction_date', { ascending: true });
+}
+
+export async function getInventoryExpensesForDeal(dealId: number) {
+  return supabase.from('inventory_expenses').select('*').eq('deal_id', dealId);
+}
+
+export async function updateDeal(id: number, updates: Partial<Deal>) {
+  const { id: _ignoredId, created_at: _ignoredCreated, ...payload } = updates as any;
+  return supabase
+    .from('deals')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+}
+
+export async function updateCashFlow(id: number, updates: Partial<CashFlow>) {
+  const { id: _ignoredId, created_at: _ignoredCreated, ...payload } = updates as any;
+  return supabase
+    .from('cash_flow')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+}
+
+export async function updateInventoryExpense(id: number, updates: Partial<InventoryExpense>) {
+  const { id: _ignoredId, created_at: _ignoredCreated, ...payload } = updates as any;
+  return supabase
+    .from('inventory_expenses')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
 }
 
 

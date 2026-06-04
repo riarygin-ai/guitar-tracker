@@ -193,9 +193,10 @@ export default function OperationsPage() {
           ) : (
             <div className="space-y-3">
               {filteredAndSortedDeals.map((deal) => (
-                <div
+                <Link
                   key={deal.id}
-                  className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300"
+                  href={`/operations/${deal.id}`}
+                  className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-400 hover:shadow-md block"
                 >
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
                     <div>
@@ -228,12 +229,17 @@ export default function OperationsPage() {
                       </p>
                     </div>
 
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Item/Description</p>
-                      <p className="mt-2 text-sm text-slate-900 line-clamp-2">{getItemDescription(deal)}</p>
+                    <div className="flex items-end justify-between">
+                      <div>
+                        <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Item/Description</p>
+                        <p className="mt-2 text-sm text-slate-900 line-clamp-2">{getItemDescription(deal)}</p>
+                      </div>
+                      <div className="ml-2 inline-flex items-center justify-center rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white">
+                        View
+                      </div>
                     </div>
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           )}
