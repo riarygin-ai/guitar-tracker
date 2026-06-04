@@ -127,7 +127,7 @@ export default function InventoryPage() {
               <div>
                 <p className="mb-2 text-sm font-medium text-slate-700">Item Type</p>
                 <div className="flex flex-wrap gap-2">
-                  {(['guitar', 'amp', 'pedal', 'cab', 'pickups', 'bass', 'prossesor'] as const).map((itemType) => (
+                  {(['guitar', 'amp', 'pedal', 'cab', 'pickups', 'bass', 'processor', 'acoustic guitar'] as const).map((itemType) => (
                     <button
                       key={itemType}
                       type="button"

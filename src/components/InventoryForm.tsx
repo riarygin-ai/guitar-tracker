@@ -27,7 +27,8 @@ const itemTypeOptions: Array<{ label: string; value: ItemType }> = [
   { label: 'Pedal', value: 'pedal' },
   { label: 'Pickups', value: 'pickups' },
   { label: 'Bass', value: 'bass' },
-  { label: 'Processor', value: 'prossesor' },  
+  { label: 'Processor', value: 'processor' },
+  { label: 'Acoustic Guitar', value: 'acoustic guitar' }
 ];
 
 const conditionOptions: Array<{ label: string; value: Condition }> = [
