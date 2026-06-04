@@ -1,3 +1,30 @@
+# AI Development Notes
+
+Business Rules
+
+- Value In = acquisition cost
+- Estimated Sold = expected future sale value
+- Potential Reward = Estimated Sold - Value In
+- Realized Gain = Value Out - Value In
+
+Operations
+
+- Cash flow balances must never be updated manually.
+- Always use recalculateCashFlowBalancesFrom().
+- Deal edits affecting cash must trigger balance recalculation.
+
+Inventory
+
+- owned/listed => show Potential Reward
+- sold/traded => show Realized Gain
+
+Development Rules
+
+- Read architecture.md first
+- Read database-schema.md before DB changes
+- Read PROJECT_STATUS.md before implementing features
+- Explain implementation plan before modifying files
+
 # Project Status
 
 Last Updated: 2026-06-02

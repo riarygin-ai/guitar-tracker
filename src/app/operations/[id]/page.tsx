@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -32,43 +32,44 @@ export default function OperationDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Edit state
   const [editedDeal, setEditedDeal] = useState<Partial<Deal> | null>(null);
   const [editedCashFlows, setEditedCashFlows] = useState<Record<number, Partial<CashFlow>>>({});
   const [editedExpenses, setEditedExpenses] = useState<Record<number, Partial<InventoryExpense>>>({});
 
-  useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      setError(null);
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
 
-      const [dealResult, brandsResult, itemsResult, dealItemsResult, cashFlowsResult, expensesResult] = await Promise.all([
-        getDealById(dealId),
-        getBrands(),
-        getInventoryItemsWithValue(),
-        getDealItemsForDeal(dealId),
-        getCashFlowsForDeal(dealId),
-        getInventoryExpensesForDeal(dealId),
-      ]);
+    const [dealResult, brandsResult, itemsResult, dealItemsResult, cashFlowsResult, expensesResult] = await Promise.all([
+      getDealById(dealId),
+      getBrands(),
+      getInventoryItemsWithValue(),
+      getDealItemsForDeal(dealId),
+      getCashFlowsForDeal(dealId),
+      getInventoryExpensesForDeal(dealId),
+    ]);
 
-      setLoading(false);
+    setLoading(false);
 
-      if (dealResult.error || !dealResult.data) {
-        setError('Could not load operation details.');
-        return;
-      }
-
-      setDeal(dealResult.data);
-      setBrands(brandsResult.data || []);
-      setItems(itemsResult.data || []);
-      setDealItems(dealItemsResult.data || []);
-      setCashFlows(cashFlowsResult.data || []);
-      setExpenses(expensesResult.data || []);
+    if (dealResult.error || !dealResult.data) {
+      setError('Could not load operation details.');
+      return;
     }
 
-    loadData();
+    setDeal(dealResult.data);
+    setBrands(brandsResult.data || []);
+    setItems(itemsResult.data || []);
+    setDealItems(dealItemsResult.data || []);
+    setCashFlows(cashFlowsResult.data || []);
+    setExpenses(expensesResult.data || []);
   }, [dealId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const brandMap = Object.fromEntries(brands.map((b) => [b.id, b.name]));
   const itemMap = Object.fromEntries(items.map((i) => [i.id, i]));
@@ -81,6 +82,7 @@ export default function OperationDetailPage() {
       setEditedExpenses({});
     } else {
       setEditMode(true);
+      setSuccessMessage(null);
       if (deal) setEditedDeal({ ...deal });
       cashFlows.forEach((cf) => {
         setEditedCashFlows((prev) => ({ ...prev, [cf.id]: { ...cf } }));
@@ -177,8 +179,13 @@ export default function OperationDetailPage() {
         await recalculateCashFlowBalancesFrom(cfId);
       }
 
+      await loadData();
+      setEditedDeal(null);
+      setEditedCashFlows({});
+      setEditedExpenses({});
       setSaving(false);
       setEditMode(false);
+      setSuccessMessage('Changes saved successfully.');
     } catch (err) {
       setSaving(false);
       setError('An error occurred while saving.');
@@ -284,6 +291,12 @@ export default function OperationDetailPage() {
         {error && (
           <div className="mt-6 rounded-3xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 shadow-sm">
             {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="mt-6 rounded-3xl border border-green-200 bg-green-50 p-4 text-sm text-green-700 shadow-sm">
+            {successMessage}
           </div>
         )}
 
