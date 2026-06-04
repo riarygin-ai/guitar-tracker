@@ -147,6 +147,11 @@ export default function DashboardPage() {
             ...row,
             netProfit: row.profit - row.expenses,
         }))
+        .filter(
+            (row) =>
+                row.profit !== 0 ||
+                row.expenses !== 0
+        )
         .sort((a, b) => b.month.localeCompare(a.month))
     return (
         <div className="space-y-6">
