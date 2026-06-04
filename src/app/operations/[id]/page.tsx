@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import {
   getDealById,
   getBrands,
-  getInventoryItems,
+  getInventoryItemsWithValue,
   getDealItemsForDeal,
   getCashFlowsForDeal,
   getInventoryExpensesForDeal,
@@ -15,7 +15,7 @@ import {
   updateInventoryExpense,
   recalculateCashFlowBalancesFrom,
 } from '@/lib/supabase';
-import type { Brand, Deal, DealItem, InventoryItem, CashFlow, InventoryExpense } from '@/types';
+import type { Brand, Deal, DealItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
 
 export default function OperationDetailPage() {
   const params = useParams();
@@ -24,7 +24,7 @@ export default function OperationDetailPage() {
 
   const [deal, setDeal] = useState<Deal | null>(null);
   const [brands, setBrands] = useState<Brand[]>([]);
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [items, setItems] = useState<InventoryItemWithValue[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [cashFlows, setCashFlows] = useState<CashFlow[]>([]);
   const [expenses, setExpenses] = useState<InventoryExpense[]>([]);
@@ -46,7 +46,7 @@ export default function OperationDetailPage() {
       const [dealResult, brandsResult, itemsResult, dealItemsResult, cashFlowsResult, expensesResult] = await Promise.all([
         getDealById(dealId),
         getBrands(),
-        getInventoryItems(),
+        getInventoryItemsWithValue(),
         getDealItemsForDeal(dealId),
         getCashFlowsForDeal(dealId),
         getInventoryExpensesForDeal(dealId),
@@ -235,6 +235,9 @@ export default function OperationDetailPage() {
     return `$${Math.abs(value).toFixed(2)}`;
   };
 
+  const outgoingItems = dealItems.filter((di) => di.direction === 'out');
+  const incomingItems = dealItems.filter((di) => di.direction === 'in');
+
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
@@ -285,108 +288,157 @@ export default function OperationDetailPage() {
         )}
 
         {/* Deal Details */}
-        <div className="mt-6 grid gap-6 lg:grid-cols-3">
-          <div className="space-y-6 lg:col-span-2">
-            {/* Transaction Details */}
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900">Transaction details</h2>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Date</label>
-                  {editMode ? (
-                    <input
-                      type="date"
-                      value={editedDeal?.deal_date || deal.deal_date}
-                      onChange={(e) => setEditedDeal({ ...editedDeal, deal_date: e.target.value })}
-                      className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                    />
-                  ) : (
-                    <p className="mt-2 text-sm text-slate-900">{new Date(deal.deal_date).toLocaleDateString()}</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Channel</label>
-                  {editMode ? (
-                    <input
-                      type="text"
-                      value={editedDeal?.channel || deal.channel || ''}
-                      onChange={(e) => setEditedDeal({ ...editedDeal, channel: e.target.value })}
-                      className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                    />
-                  ) : (
-                    <p className="mt-2 text-sm text-slate-900">{deal.channel || '—'}</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Cash paid</label>
-                  <p className="mt-2 text-sm text-slate-900">{formatCurrency(deal.cash_paid)}</p>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Cash received</label>
-                  <p className="mt-2 text-sm text-slate-900">{formatCurrency(deal.cash_received)}</p>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Fees</label>
-                  <p className="mt-2 text-sm text-slate-900">{formatCurrency(deal.fees)}</p>
-                </div>
+        <div className="mt-6 space-y-6">
+          {/* Compact Transaction Header */}
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Date</p>
+                {editMode ? (
+                  <input
+                    type="date"
+                    value={editedDeal?.deal_date || deal.deal_date}
+                    onChange={(e) => setEditedDeal({ ...editedDeal, deal_date: e.target.value })}
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  />
+                ) : (
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{new Date(deal.deal_date).toLocaleDateString()}</p>
+                )}
               </div>
 
-              <div className="mt-4">
-                <label className="text-sm font-medium text-slate-700">Notes</label>
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Channel</p>
+                {editMode ? (
+                  <input
+                    type="text"
+                    value={editedDeal?.channel || deal.channel || ''}
+                    onChange={(e) => setEditedDeal({ ...editedDeal, channel: e.target.value })}
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  />
+                ) : (
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{deal.channel || '—'}</p>
+                )}
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Cash Paid</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(deal.cash_paid)}</p>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Cash Received</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(deal.cash_received)}</p>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Notes</p>
                 {editMode ? (
                   <textarea
                     value={editedDeal?.notes || deal.notes || ''}
                     onChange={(e) => setEditedDeal({ ...editedDeal, notes: e.target.value })}
-                    rows={3}
+                    rows={2}
                     className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                   />
                 ) : (
-                  <p className="mt-2 text-sm text-slate-900">{deal.notes || '—'}</p>
+                  <p className="mt-2 text-sm text-slate-900 line-clamp-2">{deal.notes || '—'}</p>
                 )}
               </div>
             </div>
+          </div>
 
-            {/* Deal Items */}
-            {dealItems.length > 0 && (
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-slate-900">Items in operation</h2>
-                <div className="mt-4 space-y-3">
-                  {dealItems.map((di) => {
-                    const item = itemMap[di.item_id];
-                    if (!item) return null;
-                    const brand = brandMap[item.brand_id] || 'Unknown';
-                    return (
-                      <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-900">
-                              {brand} {item.model}
-                            </p>
-                            <p className="text-xs text-slate-600 mt-1">
-                              {item.year && `${item.year} • `}
-                              {item.color && `${item.color} • `}
-                              {item.condition}
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <div className="inline-flex items-center rounded-full bg-white border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-900">
-                              {di.direction === 'in' ? 'Incoming' : 'Outgoing'}
-                            </div>
-                          </div>
-                        </div>
-                        {di.cash_value && (
-                          <p className="mt-2 text-sm text-slate-700">Cash value: {formatCurrency(di.cash_value)}</p>
-                        )}
+          {/* Gave / Outgoing Items */}
+          {outgoingItems.length > 0 && (
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900">Gave / Outgoing</h2>
+              <div className="mt-4 space-y-3">
+                {outgoingItems.map((di) => {
+                  const item = itemMap[di.item_id];
+                  if (!item) return null;
+                  const brand = brandMap[item.brand_id] || 'Unknown';
+                  const valueIn = Number(item.value_in ?? 0);
+                  const valueOut = Number(di.total_value ?? 0);
+                  const realizedGain = valueOut - valueIn;
+                  return (
+                    <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="mb-3">
+                        <p className="text-sm font-semibold text-slate-900">
+                          {brand} {item.model}
+                        </p>
+                        <p className="text-xs text-slate-600 mt-1">
+                          {item.year && `${item.year} • `}
+                          {item.color && `${item.color} • `}
+                          {item.condition}
+                        </p>
                       </div>
-                    );
-                  })}
-                </div>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Value In</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueIn)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Value Out</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueOut)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Realized Gain</p>
+                          <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                            {formatCurrency(realizedGain)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            )}
+            </div>
+          )}
+
+          {/* Received / Incoming Items */}
+          {incomingItems.length > 0 && (
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900">Received / Incoming</h2>
+              <div className="mt-4 space-y-3">
+                {incomingItems.map((di) => {
+                  const item = itemMap[di.item_id];
+                  if (!item) return null;
+                  const brand = brandMap[item.brand_id] || 'Unknown';
+                  const valueIn = Number(di.total_value ?? 0);
+                  const estimatedSold = Number(item.estimated_sold_value ?? 0);
+                  const potentialReward = estimatedSold - valueIn;
+                  return (
+                    <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="mb-3">
+                        <p className="text-sm font-semibold text-slate-900">
+                          {brand} {item.model}
+                        </p>
+                        <p className="text-xs text-slate-600 mt-1">
+                          {item.year && `${item.year} • `}
+                          {item.color && `${item.color} • `}
+                          {item.condition}
+                        </p>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Value In</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueIn)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Estimated Sold</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(estimatedSold)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Potential Reward</p>
+                          <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                            {formatCurrency(potentialReward)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
             {/* Cash Flow */}
             {cashFlows.length > 0 && (
@@ -512,32 +564,6 @@ export default function OperationDetailPage() {
                 </div>
               </div>
             )}
-          </div>
-
-          {/* Summary Sidebar */}
-          <div className="space-y-6">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-sm font-semibold text-slate-900">Summary</h3>
-              <div className="mt-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-600">Type</span>
-                  <span className="text-sm font-medium text-slate-900">{getDealTypeLabel(deal.deal_type)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-600">Cash paid</span>
-                  <span className="text-sm font-medium text-slate-900">{formatCurrency(deal.cash_paid)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-600">Cash received</span>
-                  <span className="text-sm font-medium text-slate-900">{formatCurrency(deal.cash_received)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-600">Fees</span>
-                  <span className="text-sm font-medium text-slate-900">{formatCurrency(deal.fees)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>
