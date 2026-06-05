@@ -64,20 +64,24 @@ export async function searchInventoryItems(query: string) {
       .limit(20);
   }
 
-  return supabase
+  const terms = trimmed.split(/\s+/).filter(Boolean);
+  let q = supabase
     .from('inventory_items_search')
     .select('*')
-    .not('status', 'in', '("sold","traded")')
-    .or(
-      `brand_name.ilike.%${trimmed}%,` +
-      `model.ilike.%${trimmed}%,` +
-      `color.ilike.%${trimmed}%,` +
-      `year::text.ilike.%${trimmed}%,` +
-      `serial_number.ilike.%${trimmed}%,` +
-      `notes.ilike.%${trimmed}%`
-    )
-    .order('created_at', { ascending: false })
-    .limit(20);
+    .not('status', 'in', '("sold","traded")');
+
+  for (const term of terms) {
+    q = q.or(
+      `brand_name.ilike.%${term}%,` +
+      `model.ilike.%${term}%,` +
+      `color.ilike.%${term}%,` +
+      `year::text.ilike.%${term}%,` +
+      `serial_number.ilike.%${term}%,` +
+      `notes.ilike.%${term}%`
+    );
+  }
+
+  return q.order('created_at', { ascending: false }).limit(20);
 }
 
 export async function getInventoryItemById(id: number) {

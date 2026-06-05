@@ -123,17 +123,20 @@ export default function InventoryPage() {
 
   const filteredItems = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
+    const searchTerms = normalizedSearch ? normalizedSearch.split(/\s+/).filter(Boolean) : [];
 
     return itemsWithComputedValues.filter((item) => {
       const brandName = brandMap[item.brand_id] ?? 'Unknown';
       const matchesSearch =
-        normalizedSearch === '' ||
-        brandName.toLowerCase().includes(normalizedSearch) ||
-        item.model.toLowerCase().includes(normalizedSearch) ||
-        (item.color ?? '').toLowerCase().includes(normalizedSearch) ||
-        String(item.year ?? '').toLowerCase().includes(normalizedSearch) ||
-        (item.serial_number ?? '').toLowerCase().includes(normalizedSearch) ||
-        (item.notes ?? '').toLowerCase().includes(normalizedSearch);
+        searchTerms.length === 0 ||
+        searchTerms.every((term) =>
+          brandName.toLowerCase().includes(term) ||
+          item.model.toLowerCase().includes(term) ||
+          (item.color ?? '').toLowerCase().includes(term) ||
+          String(item.year ?? '').toLowerCase().includes(term) ||
+          (item.serial_number ?? '').toLowerCase().includes(term) ||
+          (item.notes ?? '').toLowerCase().includes(term)
+        );
 
       const matchesStatus =
         selectedStatuses.length === 0 || selectedStatuses.includes(item.status);
