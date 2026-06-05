@@ -1,79 +1,101 @@
 'use client';
 
-export const dynamic = 'force-dynamic'
+export const dynamic = 'force-dynamic';
 
 import { useEffect, useMemo, useState } from 'react';
-import { createCashFlow, getCashFlows, getDeals } from '@/lib/supabase';
-import type { CashFlow, Deal } from '@/types';
-import CashFlowForm from '@/components/CashFlowForm';
+import { getCashFlows } from '@/lib/supabase';
+import type { CashFlow } from '@/types';
 import CashFlowTable from '@/components/CashFlowTable';
 
 export default function CashFlowPage() {
   const [rows, setRows] = useState<CashFlow[]>([]);
-  const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [cashFlowResult, dealResult] = await Promise.all([getCashFlows(), getDeals()]);
+      const result = await getCashFlows();
       setLoading(false);
-
-      if (cashFlowResult.error || dealResult.error) {
+      if (result.error) {
         setError('Could not load cash flow data. Please try again.');
         return;
       }
-
-      setRows(cashFlowResult.data || []);
-      setDeals(dealResult.data || []);
+      setRows(result.data || []);
     }
-
     loadData();
   }, []);
 
-  const latestBalance = useMemo(() => {
-    return rows.length > 0 ? rows[0].closing_balance : 0;
-  }, [rows]);
+  const sortedRows = useMemo(
+    () =>
+      [...rows].sort((a, b) => {
+        const dateDiff = b.transaction_date.localeCompare(a.transaction_date);
+        if (dateDiff !== 0) return dateDiff;
+        return b.id - a.id;
+      }),
+    [rows],
+  );
 
-  const handleSaved = async (cashFlow: CashFlow) => {
-    setSuccess('Cash flow row saved successfully.');
-    setError(null);
-    setRows((current) => [cashFlow, ...current]);
-  };
+  const filteredRows = useMemo(() => {
+    return sortedRows.filter((row) => {
+      if (dateFrom && row.transaction_date < dateFrom) return false;
+      if (dateTo && row.transaction_date > dateTo) return false;
+      return true;
+    });
+  }, [sortedRows, dateFrom, dateTo]);
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Cash flow</p>
-              <h1 className="mt-2 text-3xl font-semibold text-slate-900">Cash movement</h1>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                Track cash moving in and out of the business, separated from inventory and deal item details.
-              </p>
-            </div>
+          <div>
+            <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Cash flow</p>
+            <h1 className="mt-2 text-3xl font-semibold text-slate-900">Cash movement</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              Track cash moving in and out of the business, separated from inventory and deal item details.
+            </p>
           </div>
         </div>
 
-        <div className="mt-6 space-y-6">
-          <CashFlowForm latestBalance={latestBalance} deals={deals} onSaved={handleSaved} />
-
-          {success && (
-            <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-700 shadow-sm">
-              {success}
-            </div>
-          )}
-
+        <div className="mt-6">
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mb-6 flex items-center justify-between">
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-slate-900">Cash flow history</h2>
-                <p className="mt-2 text-sm text-slate-600">Showing latest transactions first.</p>
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-slate-600">Date from</label>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-slate-600">Date to</label>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  />
+                </div>
+                {(dateFrom || dateTo) && (
+                  <button
+                    type="button"
+                    onClick={() => { setDateFrom(''); setDateTo(''); }}
+                    className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-600 transition hover:bg-slate-50"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
             </div>
+
             {loading ? (
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-500">
                 Loading cash flow...
@@ -82,12 +104,12 @@ export default function CashFlowPage() {
               <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-700">
                 {error}
               </div>
-            ) : rows.length === 0 ? (
+            ) : filteredRows.length === 0 ? (
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
-                No cash flow records yet.
+                {rows.length === 0 ? 'No cash flow records yet.' : 'No records match the selected date range.'}
               </div>
             ) : (
-              <CashFlowTable rows={rows} />
+              <CashFlowTable rows={filteredRows} />
             )}
           </div>
         </div>
