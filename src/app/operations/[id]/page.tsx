@@ -385,7 +385,7 @@ export default function OperationDetailPage() {
                 {editMode ? (
                   <input
                     type="date"
-                    value={editedDeal?.deal_date || deal.deal_date}
+                    value={editedDeal?.deal_date ?? deal.deal_date}
                     onChange={(e) => setEditedDeal({ ...editedDeal, deal_date: e.target.value })}
                     className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                   />
@@ -399,7 +399,7 @@ export default function OperationDetailPage() {
                 {editMode ? (
                   <input
                     type="text"
-                    value={editedDeal?.channel || deal.channel || ''}
+                    value={editedDeal?.channel ?? deal.channel ?? ''}
                     onChange={(e) => setEditedDeal({ ...editedDeal, channel: e.target.value })}
                     className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                   />
@@ -444,7 +444,7 @@ export default function OperationDetailPage() {
                 <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Notes</p>
                 {editMode ? (
                   <textarea
-                    value={editedDeal?.notes || deal.notes || ''}
+                    value={editedDeal?.notes ?? deal.notes ?? ''}
                     onChange={(e) => setEditedDeal({ ...editedDeal, notes: e.target.value })}
                     rows={2}
                     className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
@@ -617,7 +617,7 @@ export default function OperationDetailPage() {
                           {editMode ? (
                             <input
                               type="date"
-                              value={editedCashFlows[cf.id]?.transaction_date || cf.transaction_date}
+                              value={editedCashFlows[cf.id]?.transaction_date ?? cf.transaction_date}
                               onChange={(e) =>
                                 setEditedCashFlows({
                                   ...editedCashFlows,
@@ -636,7 +636,7 @@ export default function OperationDetailPage() {
                           {editMode ? (
                             <input
                               type="text"
-                              value={editedCashFlows[cf.id]?.description || cf.description || ''}
+                              value={editedCashFlows[cf.id]?.description ?? cf.description ?? ''}
                               onChange={(e) =>
                                 setEditedCashFlows({
                                   ...editedCashFlows,
@@ -685,7 +685,7 @@ export default function OperationDetailPage() {
                           {editMode ? (
                             <input
                               type="date"
-                              value={editedExpenses[exp.id]?.expense_date || exp.expense_date}
+                              value={editedExpenses[exp.id]?.expense_date ?? exp.expense_date}
                               onChange={(e) =>
                                 setEditedExpenses({
                                   ...editedExpenses,
@@ -708,7 +708,7 @@ export default function OperationDetailPage() {
                           <label className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Notes</label>
                           {editMode ? (
                             <textarea
-                              value={editedExpenses[exp.id]?.notes || exp.notes || ''}
+                              value={editedExpenses[exp.id]?.notes ?? exp.notes ?? ''}
                               onChange={(e) =>
                                 setEditedExpenses({
                                   ...editedExpenses,
