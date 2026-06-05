@@ -77,6 +77,14 @@ export async function getInventoryItemById(id: number) {
   return supabase.from('inventory_items').select('*').eq('id', id).single();
 }
 
+export async function getInventoryItemWithValueById(id: number) {
+  return supabase.from('inventory_items_with_value').select('*').eq('id', id).single();
+}
+
+export async function getDealItemsByItemId(itemId: number) {
+  return supabase.from('deal_items').select('*').eq('item_id', itemId);
+}
+
 export async function createInventoryItem(item: NewInventoryItem) {
   return supabase.from('inventory_items').insert(item).select().single();
 }

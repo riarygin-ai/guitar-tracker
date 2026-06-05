@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
+import type {
   Brand,
   CollectionType,
   Condition,
@@ -11,12 +11,13 @@ import {
   NewBrand,
   NewInventoryItem,
 } from '@/types';
-
 import {
   createBrand,
   createInventoryItem,
   getBrands,
   getInventoryItemById,
+  getInventoryItemWithValueById,
+  getDealItemsByItemId,
   updateInventoryItem,
 } from '@/lib/supabase';
 
@@ -28,7 +29,7 @@ const itemTypeOptions: Array<{ label: string; value: ItemType }> = [
   { label: 'Pickups', value: 'pickups' },
   { label: 'Bass', value: 'bass' },
   { label: 'Processor', value: 'processor' },
-  { label: 'Acoustic Guitar', value: 'acoustic guitar' }
+  { label: 'Acoustic Guitar', value: 'acoustic guitar' },
 ];
 
 const conditionOptions: Array<{ label: string; value: Condition }> = [
@@ -60,8 +61,9 @@ export default function InventoryForm({
   hideHeader = false,
   hideSidebar = false,
 }: InventoryFormProps) {
-  console.log('InventoryForm itemId:', itemId);
   const router = useRouter();
+
+  // Form state
   const [brands, setBrands] = useState<Brand[]>([]);
   const [brandSuggestions, setBrandSuggestions] = useState<Brand[]>([]);
   const [brandInput, setBrandInput] = useState('');
@@ -70,12 +72,13 @@ export default function InventoryForm({
   const [brandSearchLoading, setBrandSearchLoading] = useState(false);
   const [itemType, setItemType] = useState<ItemType>('guitar');
   const [model, setModel] = useState('');
-  const [estimatedSoldValue, setEstimatedSoldValue] = useState('');
-  const [condition, setCondition] = useState<Condition | ''>('');
-  const [collectionType, setCollectionType] = useState<CollectionType | ''>('');
-  const [notes, setNotes] = useState('');
+  const [serialNumber, setSerialNumber] = useState('');
   const [year, setYear] = useState('');
   const [color, setColor] = useState('');
+  const [condition, setCondition] = useState<Condition | ''>('');
+  const [collectionType, setCollectionType] = useState<CollectionType | ''>('');
+  const [estimatedSoldValue, setEstimatedSoldValue] = useState('');
+  const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -83,142 +86,115 @@ export default function InventoryForm({
   const [creatingBrand, setCreatingBrand] = useState(false);
   const [existingItem, setExistingItem] = useState<InventoryItem | null>(null);
 
+  // Metrics state (edit mode only)
+  const [valueIn, setValueIn] = useState<number | null>(null);
+  const [valueOut, setValueOut] = useState<number | null>(null);
+
   const existingBrand = useMemo(
-    () => brands.find((brand) => brand.name.toLowerCase() === brandInput.trim().toLowerCase()),
-    [brandInput, brands]
+    () => brands.find((b) => b.name.toLowerCase() === brandInput.trim().toLowerCase()),
+    [brandInput, brands],
   );
 
+  // Load all brands on mount
   useEffect(() => {
     async function loadBrands() {
       setLoading(true);
       const result = await getBrands();
       setLoading(false);
-      if (result.error) {
-        setError('Could not load brands.');
-        return;
-      }
-      const fetchedBrands = result.data || [];
-      setBrands(fetchedBrands);
-      setBrandSuggestions(fetchedBrands);
+      if (result.error) { setError('Could not load brands.'); return; }
+      const fetched = result.data || [];
+      setBrands(fetched);
+      setBrandSuggestions(fetched);
     }
-
     loadBrands();
   }, []);
 
+  // Brand search debounce
   useEffect(() => {
-    if (!brandInput.trim()) {
-      setBrandSuggestions(brands);
-      return;
-    }
-
+    if (!brandInput.trim()) { setBrandSuggestions(brands); return; }
     const handler = window.setTimeout(async () => {
       setBrandSearchLoading(true);
       const result = await getBrands(brandInput.trim());
       setBrandSearchLoading(false);
-      if (result.error) {
-        setError('Could not search brands.');
-        return;
-      }
-      setBrandSuggestions(result.data || []);
+      if (!result.error) setBrandSuggestions(result.data || []);
     }, 250);
-
     return () => window.clearTimeout(handler);
   }, [brandInput, brands]);
 
+  // Load existing item when editing
   useEffect(() => {
-    if (!itemId || brands.length === 0) {
-      return;
-    }
+    if (!itemId || brands.length === 0) return;
 
     async function loadItem() {
-      console.log('Loading item with id:', itemId);
       setLoading(true);
-      const result = await getInventoryItemById(Number(itemId));
+      const [itemResult, withValueResult, dealItemsResult] = await Promise.all([
+        getInventoryItemById(Number(itemId)),
+        getInventoryItemWithValueById(Number(itemId)),
+        getDealItemsByItemId(Number(itemId)),
+      ]);
       setLoading(false);
-      if (result.error || !result.data) {
+
+      if (itemResult.error || !itemResult.data) {
         setError('Could not load the inventory item.');
         return;
       }
-      const item = result.data;
+
+      const item = itemResult.data;
       setExistingItem(item);
-      console.log('Loaded item:', item);
       setItemType(item.item_type);
       setModel(item.model);
-      setEstimatedSoldValue(item.estimated_sold_value?.toString() ?? '');
-      setCondition(item.condition ?? '');
-      setCollectionType(item.collection_type ?? '');
-      setSelectedBrandId(item.brand_id);
-      // Find the brand name from loaded brands
-      const brand = brands.find((b) => b.id === item.brand_id);
-      setBrandInput(brand ? brand.name : '');
-      setNotes(item.notes ?? '');
+      setSerialNumber(item.serial_number ?? '');
       setYear(item.year != null ? String(item.year) : '');
       setColor(item.color ?? '');
-      console.log('Form values after population:', {
-        itemType: item.item_type,
-        model: item.model,
-        estimatedSoldValue: item.estimated_sold_value?.toString() ?? '',
-        condition: item.condition ?? '',
-        collectionType: item.collection_type ?? '',
-        selectedBrandId: item.brand_id,
-        brandInput: brand ? brand.name : '',
-        notes: item.notes ?? ''
-      });
+      setCondition(item.condition ?? '');
+      setCollectionType(item.collection_type ?? '');
+      setEstimatedSoldValue(item.estimated_sold_value?.toString() ?? '');
+      setNotes(item.notes ?? '');
+      setSelectedBrandId(item.brand_id);
+      const brand = brands.find((b) => b.id === item.brand_id);
+      setBrandInput(brand?.name ?? '');
+
+      // Metrics
+      if (!withValueResult.error && withValueResult.data) {
+        setValueIn((withValueResult.data as any).value_in ?? null);
+      }
+      if (!dealItemsResult.error && dealItemsResult.data) {
+        const outSum = dealItemsResult.data
+          .filter((di) => di.direction === 'out')
+          .reduce((s, di) => s + Number(di.total_value ?? 0), 0);
+        setValueOut(outSum > 0 ? outSum : null);
+      }
     }
 
     loadItem();
   }, [itemId, brands]);
 
+  // Sync selected brand id when user types an existing brand name
   useEffect(() => {
-    if (!existingBrand) {
-      setSelectedBrandId(null);
-      return;
-    }
-
-    setSelectedBrandId(existingBrand.id);
+    setSelectedBrandId(existingBrand ? existingBrand.id : null);
   }, [existingBrand]);
 
+  // Sync brand input when brand id is set externally
   useEffect(() => {
-    if (!selectedBrandId || brands.length === 0) {
-      return;
-    }
-
+    if (!selectedBrandId || brands.length === 0) return;
     const brand = brands.find((b) => b.id === selectedBrandId);
-    if (brand) {
-      setBrandInput(brand.name);
-    }
+    if (brand) setBrandInput(brand.name);
   }, [selectedBrandId, brands]);
 
   const handleCreateBrand = async () => {
-    if (!brandInput.trim()) {
-      setError('Brand name is required to create a new brand.');
-      return;
-    }
-
+    if (!brandInput.trim()) { setError('Brand name is required.'); return; }
     setCreatingBrand(true);
-
     try {
-      const brandPayload: NewBrand = { name: brandInput.trim() };
-      const result = await createBrand(brandPayload);
-
-      if (result.error || !result.data) {
-        setError('Could not create brand.');
-        return;
-      }
-
+      const result = await createBrand({ name: brandInput.trim() } as NewBrand);
+      if (result.error || !result.data) { setError('Could not create brand.'); return; }
       const created = result.data;
-      setBrands((current) => [...current, created]);
+      setBrands((prev) => [...prev, created]);
       setSelectedBrandId(created.id);
       setError(null);
-      setSuccessMessage('Brand created successfully!');
-
-      // Reset success message after 3 seconds
-      setTimeout(() => {
-        setSuccessMessage(null);
-      }, 3000);
-
-    } catch (error) {
-      setError('An unexpected error occurred while creating the brand.');
+      setSuccessMessage('Brand created.');
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch {
+      setError('An unexpected error occurred.');
     } finally {
       setCreatingBrand(false);
     }
@@ -229,26 +205,14 @@ export default function InventoryForm({
     setError(null);
     setSuccessMessage(null);
 
-    if (!model.trim()) {
-      setError('Model is required.');
-      return;
-    }
-
-    if (!brandInput.trim() && !selectedBrandId) {
-      setError('Brand is required.');
-      return;
-    }
-
-    if (!itemType) {
-      setError('Item type is required.');
-      return;
-    }
-
+    if (!model.trim()) { setError('Model is required.'); return; }
+    if (!brandInput.trim() && !selectedBrandId) { setError('Brand is required.'); return; }
+    if (!itemType) { setError('Item type is required.'); return; }
     if (year) {
-      const yearNum = Number(year);
-      const maxYear = new Date().getFullYear() + 1;
-      if (!Number.isInteger(yearNum) || yearNum < 1900 || yearNum > maxYear) {
-        setError(`Year must be between 1900 and ${maxYear}.`);
+      const n = Number(year);
+      const max = new Date().getFullYear() + 1;
+      if (!Number.isInteger(n) || n < 1900 || n > max) {
+        setError(`Year must be between 1900 and ${max}.`);
         return;
       }
     }
@@ -264,22 +228,23 @@ export default function InventoryForm({
         return;
       }
       brandId = brandResult.data.id;
-      setBrands((current) => [...current, brandResult.data]);
+      setBrands((prev) => [...prev, brandResult.data]);
     }
 
     const payload: NewInventoryItem = {
       brand_id: brandId!,
       item_type: itemType,
       model: model.trim(),
-      estimated_sold_value: estimatedSoldValue ? Number(estimatedSoldValue) : null,
+      serial_number: serialNumber.trim() || null,
+      year: year ? Number(year) : null,
+      color: color.trim() || null,
       condition: condition || null,
       collection_type: collectionType || null,
+      estimated_sold_value: estimatedSoldValue ? Number(estimatedSoldValue) : null,
+      notes: notes.trim() || null,
       date_listed: null,
       sold_date: null,
       status: existingItem?.status ?? 'owned',
-      notes: notes.trim() || null,
-      year: year ? Number(year) : null,
-      color: color.trim() || null,
     };
 
     const result = itemId
@@ -287,28 +252,23 @@ export default function InventoryForm({
       : await createInventoryItem(payload);
 
     setSaving(false);
-    if (result.error || !result.data) {
-      setError('Could not save inventory item.');
-      return;
-    }
+    if (result.error || !result.data) { setError('Could not save inventory item.'); return; }
 
-    const createdItem = result.data;
     setSuccessMessage('Inventory item saved successfully.');
     setError(null);
-    if (!itemId && onCreated) {
-      onCreated(createdItem);
-    }
 
     if (!itemId) {
+      if (onCreated) onCreated(result.data);
       setBrandInput('');
       setSelectedBrandId(null);
       setModel('');
-      setEstimatedSoldValue('');
-      setCondition('');
-      setCollectionType('');
-      setNotes('');
+      setSerialNumber('');
       setYear('');
       setColor('');
+      setCondition('');
+      setCollectionType('');
+      setEstimatedSoldValue('');
+      setNotes('');
     }
   };
 
@@ -318,69 +278,62 @@ export default function InventoryForm({
   const disabled = loading || saving;
   const brandCreateDisabled = !brandInput.trim() || !!existingBrand || disabled || creatingBrand;
 
-  const statusStyles: Record<string, string> = {
-    owned: 'bg-green-100 text-green-800',
-    listed: 'bg-yellow-100 text-yellow-800',
-    sold: 'bg-slate-100 text-slate-800',
-    traded: 'bg-indigo-100 text-indigo-800',
-  };
+  // Metrics
+  const parsedEstimated = estimatedSoldValue ? Number(estimatedSoldValue) : null;
+  const potentialReward = parsedEstimated != null && valueIn != null ? parsedEstimated - valueIn : null;
+  const realizedGain = valueOut != null && valueIn != null ? valueOut - valueIn : null;
+  const isOwned = existingItem?.status === 'owned' || existingItem?.status === 'listed';
+  const isSoldOrTraded = existingItem?.status === 'sold' || existingItem?.status === 'traded';
+  const showMetrics = !!itemId && !!existingItem && !hideSidebar;
+  const fmt = (v: number | null) => (v != null ? `$${v.toFixed(2)}` : '—');
+
+  const inputClass = 'h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100';
 
   return (
     <div className={hideHeader ? '' : 'min-h-screen bg-slate-50'}>
-      <div className={hideHeader ? '' : 'mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8'}>
-        {/* Header */}
+      <div className={hideHeader ? '' : 'mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8'}>
+
         {!hideHeader && (
-          <div className="mb-8">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Inventory</p>
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
-                {itemId ? 'Update item' : 'Add inventory item'}
-              </h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-                Enter the details for this guitar or gear item. The form is optimized for both mobile and desktop experiences.
-              </p>
-            </div>
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Inventory</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+              {itemId ? 'Update item' : 'Add inventory item'}
+            </h1>
           </div>
         )}
 
         {loading && (
-          <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600 shadow-sm">
-            Loading inventory details...
+          <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            Loading...
           </div>
         )}
 
-        {/* Desktop: 2-column layout, Mobile: single column */}
-        <div className="grid gap-8 lg:grid-cols-3">
-          {/* Main Form */}
-          <div className="lg:col-span-2">
-            <form onSubmit={handleSubmit} className="space-y-6" aria-busy={disabled}>
-              {/* Basic Info Section */}
+        <div className={`gap-6 ${showMetrics ? 'lg:grid lg:grid-cols-3' : ''}`}>
+          {/* Main form card */}
+          <div className={showMetrics ? 'lg:col-span-2' : ''}>
+            <form onSubmit={handleSubmit} aria-busy={disabled}>
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="mb-6">
-                  <h2 className="text-lg font-semibold text-slate-900">Basic Info</h2>
-                  <p className="mt-1 text-sm text-slate-600">Core details for this inventory item.</p>
-                </div>
+                <div className="grid gap-5 sm:grid-cols-2">
 
-                <div className="grid gap-6 sm:grid-cols-2">
-                  <div className="space-y-2">
+                  {/* Item type */}
+                  <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">
                       Item type <span className="text-rose-500">*</span>
                     </label>
                     <select
                       value={itemType}
-                      onChange={(event) => setItemType(event.target.value as ItemType)}
+                      onChange={(e) => setItemType(e.target.value as ItemType)}
                       disabled={disabled}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                      className={inputClass}
                     >
-                      {itemTypeOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
+                      {itemTypeOptions.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
                       ))}
                     </select>
                   </div>
 
-                  <div className="space-y-2">
+                  {/* Brand */}
+                  <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">
                       Brand <span className="text-rose-500">*</span>
                     </label>
@@ -388,32 +341,27 @@ export default function InventoryForm({
                       <div className="relative flex-1">
                         <input
                           value={brandInput}
-                          onChange={(event) => {
-                            setBrandInput(event.target.value);
-                            setShowBrandSuggestions(true);
-                          }}
+                          onChange={(e) => { setBrandInput(e.target.value); setShowBrandSuggestions(true); }}
                           onFocus={() => setShowBrandSuggestions(true)}
-                          onBlur={() => {
-                            window.setTimeout(() => setShowBrandSuggestions(false), 120);
-                          }}
+                          onBlur={() => window.setTimeout(() => setShowBrandSuggestions(false), 120)}
                           disabled={disabled}
                           placeholder="Search or add brand"
-                          className={`min-w-0 w-full rounded-xl border px-3 py-2.5 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 ${brandError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
-                            }`}
+                          className={`min-w-0 w-full rounded-xl border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 ${
+                            brandError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
+                          }`}
                         />
                         {brandSearchLoading && (
                           <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
                             Searching...
                           </div>
                         )}
-
                         {showBrandSuggestions && brandSuggestions.length > 0 && (
-                          <ul className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-auto rounded-2xl border border-slate-200 bg-white text-sm shadow-lg">
+                          <ul className="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-auto rounded-2xl border border-slate-200 bg-white text-sm shadow-lg">
                             {brandSuggestions.map((brand) => (
                               <li
                                 key={brand.id}
-                                onMouseDown={(event) => {
-                                  event.preventDefault();
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
                                   setBrandInput(brand.name);
                                   setSelectedBrandId(brand.id);
                                   setShowBrandSuggestions(false);
@@ -426,124 +374,106 @@ export default function InventoryForm({
                           </ul>
                         )}
                       </div>
-
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleCreateBrand();
-                        }}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCreateBrand(); }}
                         disabled={brandCreateDisabled}
-                        className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                        className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
                       >
                         {creatingBrand ? 'Creating...' : 'Create'}
                       </button>
                     </div>
-                    <p className="text-xs text-slate-500">
-                      Start typing to search brands, or create a new one if it doesn't exist.
-                    </p>
                   </div>
-                </div>
 
-                <div className="mt-6 space-y-2">
-                  <label className="block text-sm font-medium text-slate-700">
-                    Model <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    value={model}
-                    onChange={(event) => setModel(event.target.value)}
-                    disabled={disabled}
-                    placeholder="Fender Stratocaster"
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-100 ${modelError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
+                  {/* Model */}
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="block text-sm font-medium text-slate-700">
+                      Model <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      disabled={disabled}
+                      placeholder="e.g. Stratocaster"
+                      className={`w-full rounded-xl border px-3 py-2 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-100 ${
+                        modelError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
                       }`}
-                  />
-                  <p className="text-xs text-slate-500">Use a short model name for faster scanning.</p>
-                </div>
+                    />
+                  </div>
 
-                <div className="mt-6 grid gap-6 sm:grid-cols-2">
-                  <div className="space-y-2">
+                  {/* Year */}
+                  <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">Year</label>
                     <input
                       type="number"
                       min="1900"
                       max={new Date().getFullYear() + 1}
                       value={year}
-                      onChange={(event) => setYear(event.target.value)}
+                      onChange={(e) => setYear(e.target.value)}
                       disabled={disabled}
                       placeholder="e.g. 2023"
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                      className={inputClass}
                     />
-                    <p className="text-xs text-slate-500">Year of manufacture (optional).</p>
                   </div>
 
-                  <div className="space-y-2">
+                  {/* Color */}
+                  <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">Color</label>
                     <input
                       value={color}
-                      onChange={(event) => setColor(event.target.value)}
+                      onChange={(e) => setColor(e.target.value)}
                       disabled={disabled}
                       placeholder="e.g. Seafoam Green"
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                      className={inputClass}
                     />
-                    <p className="text-xs text-slate-500">Finish or color name (optional).</p>
                   </div>
-                </div>
-              </div>
 
-              {/* Listing / Sale Section */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="mb-6">
-                  <h2 className="text-lg font-semibold text-slate-900">Listing & Sale</h2>
-                  <p className="mt-1 text-sm text-slate-600">Current status and condition information.</p>
-                </div>
+                  {/* Serial number */}
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium text-slate-700">Serial number</label>
+                    <input
+                      value={serialNumber}
+                      onChange={(e) => setSerialNumber(e.target.value)}
+                      disabled={disabled}
+                      placeholder="e.g. MX22345678"
+                      className={inputClass}
+                    />
+                  </div>
 
-                <div className="grid gap-6 sm:grid-cols-2">
-                  <div className="space-y-2">
+                  {/* Condition */}
+                  <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">Condition</label>
                     <select
                       value={condition}
-                      onChange={(event) => setCondition(event.target.value as Condition)}
+                      onChange={(e) => setCondition(e.target.value as Condition)}
                       disabled={disabled}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                      className={inputClass}
                     >
                       <option value="">Choose condition</option>
-                      {conditionOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
+                      {conditionOptions.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
                       ))}
                     </select>
                   </div>
 
-                  <div className="space-y-2">
+                  {/* Collection */}
+                  <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">Purpose / collection</label>
                     <select
                       value={collectionType}
-                      onChange={(event) => setCollectionType(event.target.value as CollectionType)}
+                      onChange={(e) => setCollectionType(e.target.value as CollectionType)}
                       disabled={disabled}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                      className={inputClass}
                     >
                       <option value="">Choose type</option>
-                      {collectionOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
+                      {collectionOptions.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
                       ))}
                     </select>
                   </div>
-                </div>
-              </div>
 
-              {/* Financials Section */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="mb-6">
-                  <h2 className="text-lg font-semibold text-slate-900">Financials</h2>
-                  <p className="mt-1 text-sm text-slate-600">Estimated values to help track potential returns.</p>
-                </div>
-
-                <div className="grid gap-6 sm:grid-cols-2">
-                  <div className="space-y-2">
+                  {/* Estimated sold value */}
+                  <div className="space-y-1.5">
                     <label className="block text-sm font-medium text-slate-700">Estimated sold value</label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">$</span>
@@ -552,121 +482,112 @@ export default function InventoryForm({
                         min="0"
                         step="0.01"
                         value={estimatedSoldValue}
-                        onChange={(event) => setEstimatedSoldValue(event.target.value)}
+                        onChange={(e) => setEstimatedSoldValue(e.target.value)}
                         disabled={disabled}
                         placeholder="0.00"
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                       />
                     </div>
+                    <p className="text-xs text-slate-500">Estimated values help track potential returns.</p>
+                  </div>
+
+                  {/* Notes */}
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="block text-sm font-medium text-slate-700">Notes</label>
+                    <textarea
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      disabled={disabled}
+                      placeholder="Add any additional notes..."
+                      rows={3}
+                      className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                    />
                   </div>
                 </div>
-              </div>
 
-              {/* Notes Section */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="mb-6">
-                  <h2 className="text-lg font-semibold text-slate-900">Notes</h2>
-                  <p className="mt-1 text-sm text-slate-600">Additional details about this item.</p>
-                </div>
+                {error && (
+                  <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                    {error}
+                  </div>
+                )}
+                {successMessage && (
+                  <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+                    {successMessage}
+                  </div>
+                )}
 
-                <div className="space-y-2">
-                  <textarea
-                    value={notes}
-                    onChange={(event) => setNotes(event.target.value)}
+                <div className="mt-6 hidden lg:flex lg:items-center lg:justify-end lg:gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { if (onClose) { onClose(); return; } router.push('/inventory'); }}
+                    className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-6 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
                     disabled={disabled}
-                    placeholder="Add any additional notes about this item..."
-                    rows={4}
-                    className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                  />
+                    className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-6 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                  >
+                    {saveLabel}
+                  </button>
                 </div>
-              </div>
-
-              {/* Error/Success Messages */}
-              {error && (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-                  {error}
-                </div>
-              )}
-              {successMessage && (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
-                  {successMessage}
-                </div>
-              )}
-
-              {/* Desktop Action Buttons */}
-              <div className="hidden lg:flex lg:items-center lg:justify-end lg:gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (onClose) {
-                      onClose();
-                      return;
-                    }
-                    router.push('/inventory');
-                  }}
-                  className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-6 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={disabled}
-                  className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-6 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
-                >
-                  {saveLabel}
-                </button>
               </div>
             </form>
           </div>
 
-          {!hideSidebar && (
-            <div className="hidden lg:block lg:col-span-1">
-              <div className="sticky top-6 space-y-6">
-                {/* Status Summary */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold text-slate-900">Item Summary</h3>
-                  <div className="mt-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-600">Status</span>
-                      <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${statusStyles[existingItem?.status ?? 'owned'] ?? 'bg-slate-100 text-slate-700'}`}>{existingItem?.status ?? 'owned'}
-                      </span>
-                    </div>
-                    {estimatedSoldValue && (
+          {/* Value metrics card (edit only) */}
+          {showMetrics && (
+            <div className="mt-6 lg:col-span-1 lg:mt-0">
+              <div className="sticky top-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-semibold text-slate-900">Value metrics</h3>
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Value In</span>
+                    <span className="text-sm font-medium text-slate-900">{fmt(valueIn)}</span>
+                  </div>
+
+                  {isOwned && (
+                    <>
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-600">Est. Value</span>
-                        <span className="text-sm font-medium text-slate-900">
-                          ${Number(estimatedSoldValue).toLocaleString()}
+                        <span className="text-sm text-slate-600">Estimated Sold</span>
+                        <span className="text-sm font-medium text-slate-900">{fmt(parsedEstimated)}</span>
+                      </div>
+                      <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+                        <span className="text-sm font-medium text-slate-700">Potential Reward</span>
+                        <span className={`text-sm font-semibold ${
+                          potentialReward != null && potentialReward > 0 ? 'text-emerald-600' :
+                          potentialReward != null && potentialReward < 0 ? 'text-rose-600' :
+                          'text-slate-900'
+                        }`}>
+                          {fmt(potentialReward)}
                         </span>
                       </div>
-                    )}
-                    {condition && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-600">Condition</span>
-                        <span className="text-sm font-medium text-slate-900">{condition}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                    </>
+                  )}
 
-                {/* Quick Tips */}
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold text-slate-900">Quick Tips</h3>
-                  <ul className="mt-3 space-y-2 text-xs text-slate-600">
-                    <li>• Use clear, descriptive model names</li>
-                    <li>• Set realistic estimated values</li>
-                    <li>• Keep notes brief but informative</li>
-                    <li>• Regular condition updates help tracking</li>
-                  </ul>
+                  {isSoldOrTraded && (
+                    <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+                      <span className="text-sm font-medium text-slate-700">Realized Gain</span>
+                      <span className={`text-sm font-semibold ${
+                        realizedGain != null && realizedGain > 0 ? 'text-emerald-600' :
+                        realizedGain != null && realizedGain < 0 ? 'text-rose-600' :
+                        'text-slate-900'
+                      }`}>
+                        {fmt(realizedGain)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           )}
         </div>
 
+        {/* Mobile sticky footer */}
         {!hideHeader && (
           <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 p-4 backdrop-blur-sm lg:hidden">
-            <div className="mx-auto flex max-w-7xl items-center gap-3">
+            <div className="mx-auto flex max-w-6xl items-center gap-3">
               <button
                 type="button"
                 onClick={() => router.push('/inventory')}

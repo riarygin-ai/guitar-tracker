@@ -16,6 +16,7 @@ export interface InventoryItem {
   brand_id: number;
   item_type: ItemType;
   model: string;
+  serial_number: string | null;
   date_listed: string | null;
   sold_date: string | null;
   estimated_sold_value: number | null;
