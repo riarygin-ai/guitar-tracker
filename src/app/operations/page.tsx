@@ -117,15 +117,15 @@ export default function OperationsPage() {
   const getDealTypeColor = (dealType: string) => {
     switch (dealType) {
       case 'purchase':
-        return 'bg-blue-50 text-blue-700 border-blue-200';
+        return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700';
       case 'sale':
-        return 'bg-green-50 text-green-700 border-green-200';
+        return 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700';
       case 'trade':
-        return 'bg-purple-50 text-purple-700 border-purple-200';
+        return 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700';
       case 'expense':
-        return 'bg-red-50 text-red-700 border-red-200';
+        return 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700';
       default:
-        return 'bg-slate-50 text-slate-700 border-slate-200';
+        return 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:border-slate-600';
     }
   };
 
@@ -241,21 +241,21 @@ export default function OperationsPage() {
   }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap]);
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
+    <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Operations</p>
-              <h1 className="mt-2 text-3xl font-semibold text-slate-900">Transactions</h1>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
+              <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Operations</p>
+              <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-white">Transactions</h1>
+              <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
                 View all your buy, sell, trade, and expense operations.
               </p>
             </div>
             <Link
               href="/operations/new"
-              className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+              className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
             >
               New operation
             </Link>
@@ -263,29 +263,29 @@ export default function OperationsPage() {
         </div>
 
         <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-            <label className="block text-sm font-medium text-slate-700">Date From</label>
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date From</label>
             <input
               type="date"
               value={fromDate}
               onChange={(e) => handleFromDateChange(e.target.value)}
-              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
             />
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-            <label className="block text-sm font-medium text-slate-700">Date To</label>
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date To</label>
             <input
               type="date"
               value={toDate}
               onChange={(e) => handleToDateChange(e.target.value)}
-              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
             />
           </div>
         </div>
 
-        <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-medium text-slate-700">Deal type filter</p>
+        <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Deal type filter</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {defaultDealTypes.map((dealType) => (
               <button
@@ -293,8 +293,8 @@ export default function OperationsPage() {
                 type="button"
                 onClick={() => handleDealTypeToggle(dealType)}
                 className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${selectedDealTypes.includes(dealType)
-                    ? 'bg-slate-950 text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
                   }`}
               >
                 {dealType}
@@ -309,14 +309,14 @@ export default function OperationsPage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search by item, type, cash, profit, or notes..."
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-slate-600"
           />
         </div>
 
         {/* Content */}
         <div className="mt-6">
           {loading ? (
-            <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
+            <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
               Loading operations...
             </div>
           ) : error ? (
@@ -324,14 +324,14 @@ export default function OperationsPage() {
               {error}
             </div>
           ) : filteredAndSortedDeals.length === 0 ? (
-            <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-              <p className="text-slate-600">
+            <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-700 dark:bg-slate-800">
+              <p className="text-slate-600 dark:text-slate-300">
                 {searchQuery ? 'No operations match your search.' : 'No operations yet. Start by creating a new operation.'}
               </p>
               {!searchQuery && (
                 <Link
                   href="/operations/new"
-                  className="mt-4 inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                  className="mt-4 inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                 >
                   Create operation
                 </Link>
@@ -343,11 +343,11 @@ export default function OperationsPage() {
                 <Link
                   key={deal.id}
                   href={`/operations/${deal.id}`}
-                  className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-400 hover:shadow-md block"
+                  className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-400 hover:shadow-md dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
                 >
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
                     <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Type</p>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Type</p>
                       <div
                         className={`mt-2 inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${getDealTypeColor(deal.deal_type)}`}
                       >
@@ -356,31 +356,31 @@ export default function OperationsPage() {
                     </div>
 
                     <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Date</p>
-                      <p className="mt-2 text-sm text-slate-900">{new Date(deal.deal_date).toLocaleDateString()}</p>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Date</p>
+                      <p className="mt-2 text-sm text-slate-900 dark:text-slate-100">{new Date(deal.deal_date).toLocaleDateString()}</p>
                     </div>
 
                     <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Cash</p>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Cash</p>
                       <p className={`mt-2 text-sm font-semibold ${getCashColor(getCashForDeal(deal))}`}>
                         {formatCurrency(getCashForDeal(deal))}
                       </p>
                     </div>
 
                     <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]">Profit</p>
-                      <p className={`mt-2 text-sm font-semibold ${getProfitForDeal(deal) !== null ? getCashColor(getProfitForDeal(deal)!) : 'text-slate-600'}`}>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Profit</p>
+                      <p className={`mt-2 text-sm font-semibold ${getProfitForDeal(deal) !== null ? getCashColor(getProfitForDeal(deal)!) : 'text-slate-600 dark:text-slate-300'}`}>
                         {getProfitForDeal(deal) !== null ? formatCurrency(getProfitForDeal(deal)!) : '—'}
                       </p>
                     </div>
 
                     <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.2em]\">Item/Description</p>
-                      <p className="mt-2 text-sm text-slate-900 line-clamp-2">{getItemDescription(deal)}</p>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Item/Description</p>
+                      <p className="mt-2 text-sm text-slate-900 line-clamp-2 dark:text-slate-100">{getItemDescription(deal)}</p>
                     </div>
 
                     <div className="flex items-end justify-end">
-                      <div className="inline-flex items-center justify-center rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white">
+                      <div className="inline-flex items-center justify-center rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white dark:bg-white dark:text-slate-900">
                         View
                       </div>
                     </div>

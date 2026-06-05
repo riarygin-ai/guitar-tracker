@@ -364,14 +364,14 @@ export default function TradeOperationForm() {
         <div className="space-y-6">
             <div className="grid gap-6">
                 {/* What I give */}
-                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                    <h3 className="text-lg font-semibold text-slate-900">What I give</h3>
-                    <p className="mt-1 text-sm text-slate-600">
+                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">What I give</h3>
+                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
                         Search existing inventory items going out.
                     </p>
 
                     <div className="mt-5 space-y-4">
-                        <label className="text-sm font-medium text-slate-700">Search inventory</label>
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Search inventory</label>
 
                         <div className="relative">
                             <input
@@ -379,7 +379,7 @@ export default function TradeOperationForm() {
                                 value={searchQuery}
                                 onChange={(event) => handleSearchChange(event.target.value)}
                                 placeholder="Search by brand, model, year, or color..."
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                             />
 
                             {searching && (
@@ -390,11 +390,11 @@ export default function TradeOperationForm() {
                         </div>
 
                         {hasSearched && searchResults.length === 0 && (
-                            <p className="text-sm text-slate-500">No items found.</p>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">No items found.</p>
                         )}
 
                         {searchResults.length > 0 && (
-                            <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-700">
                                 {searchResults.map((item) => (
                                     <button
                                         key={item.id}
@@ -415,24 +415,24 @@ export default function TradeOperationForm() {
                                             setSearchResults([])
                                             setHasSearched(false)
                                         }}
-                                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
                                     >
-                                        <p className="text-sm font-medium text-slate-900">
+                                        <p className="text-sm font-medium text-slate-900 dark:text-white">
                                             {formatItemLabel(item)}
                                         </p>
 
                                         <div className="mt-1 flex flex-wrap gap-2">
                                             {item.condition && (
-                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                     {item.condition}
                                                 </span>
                                             )}
 
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                 {item.item_type}
                                             </span>
 
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                 {item.status}
                                             </span>
                                         </div>
@@ -446,21 +446,21 @@ export default function TradeOperationForm() {
                                 {outgoingItems.map((tradeItem, index) => (
                                     <div
                                         key={`${tradeItem.item.id}-${index}`}
-                                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700"
                                     >
                                         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                                             <div>
-                                                <p className="text-sm font-semibold text-slate-900">
+                                                <p className="text-sm font-semibold text-slate-900 dark:text-white">
                                                     {formatItemLabel(tradeItem.item)}
                                                 </p>
 
                                                 <div className="mt-2 flex flex-wrap gap-2">
-                                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
+                                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
                                                         {tradeItem.item.status}
                                                     </span>
 
                                                     {tradeItem.item.condition && (
-                                                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
                                                             {tradeItem.item.condition}
                                                         </span>
                                                     )}
@@ -469,7 +469,7 @@ export default function TradeOperationForm() {
 
                                             <div className="flex w-full gap-2 sm:w-48">
                                                 <div className="flex-1">
-                                                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">
+                                                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                                                         Value out
                                                     </label>
 
@@ -487,7 +487,7 @@ export default function TradeOperationForm() {
                                                                 )
                                                             )
                                                         }}
-                                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
                                                         placeholder="0.00"
                                                     />
                                                 </div>
@@ -499,7 +499,7 @@ export default function TradeOperationForm() {
                                                             current.filter((_, entryIndex) => entryIndex !== index)
                                                         )
                                                     }}
-                                                    className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                                                    className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
                                                 >
                                                     ×
                                                 </button>
@@ -512,7 +512,7 @@ export default function TradeOperationForm() {
 
                         {showOutgoingForm ? (
                             <>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
                                     <InventoryForm
                                         onCreated={handleOutgoingItemCreated}
                                         hideHeader
@@ -522,7 +522,7 @@ export default function TradeOperationForm() {
                                 <button
                                     type="button"
                                     onClick={() => setShowOutgoingForm(false)}
-                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
                                 >
                                     Cancel
                                 </button>
@@ -531,21 +531,21 @@ export default function TradeOperationForm() {
                             <button
                                 type="button"
                                 onClick={() => setShowOutgoingForm(true)}
-                                className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+                                className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                             >
                                 Add item
                             </button>
                         )}
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">Cash out</label>
+                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Cash out</label>
                             <input
                                 type="number"
                                 step="0.01"
                                 min="0"
                                 value={cashOut}
                                 onChange={(event) => setCashOut(event.target.value)}
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                                 placeholder="0.00"
                             />
                         </div>
@@ -553,14 +553,14 @@ export default function TradeOperationForm() {
                 </section>
 
                 {/* What I receive */}
-                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                    <h3 className="text-lg font-semibold text-slate-900">What I receive</h3>
-                    <p className="mt-1 text-sm text-slate-600">
+                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">What I receive</h3>
+                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
                         Search existing received items or create new ones.
                     </p>
 
                     <div className="mt-5 space-y-4">
-                        <label className="text-sm font-medium text-slate-700">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
                             Search existing received item
                         </label>
 
@@ -569,15 +569,15 @@ export default function TradeOperationForm() {
                             value={incomingSearchQuery}
                             onChange={(event) => handleIncomingSearchChange(event.target.value)}
                             placeholder="Search existing item..."
-                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                         />
 
                         {incomingHasSearched && incomingSearchResults.length === 0 && (
-                            <p className="text-sm text-slate-500">No existing items found.</p>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">No existing items found.</p>
                         )}
 
                         {incomingSearchResults.length > 0 && (
-                            <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-700">
                                 {incomingSearchResults.map((item) => (
                                     <button
                                         key={item.id}
@@ -598,21 +598,21 @@ export default function TradeOperationForm() {
                                             setIncomingSearchResults([])
                                             setIncomingHasSearched(false)
                                         }}
-                                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
                                     >
-                                        <p className="text-sm font-medium text-slate-900">
+                                        <p className="text-sm font-medium text-slate-900 dark:text-white">
                                             {formatItemLabel(item)}
                                         </p>
                                         <div className="mt-1 flex flex-wrap gap-2">
                                             {item.condition && (
-                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                     {item.condition}
                                                 </span>
                                             )}
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                 {item.item_type}
                                             </span>
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                 {item.status}
                                             </span>
                                         </div>
@@ -623,7 +623,7 @@ export default function TradeOperationForm() {
 
                         {showIncomingForm ? (
                             <>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
                                     <InventoryForm
                                         onCreated={handleIncomingItemCreated}
                                         hideHeader
@@ -634,7 +634,7 @@ export default function TradeOperationForm() {
                                 <button
                                     type="button"
                                     onClick={() => setShowIncomingForm(false)}
-                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
                                 >
                                     Cancel
                                 </button>
@@ -643,7 +643,7 @@ export default function TradeOperationForm() {
                             <button
                                 type="button"
                                 onClick={() => setShowIncomingForm(true)}
-                                className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+                                className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                             >
                                 Add received item
                             </button>
@@ -654,21 +654,21 @@ export default function TradeOperationForm() {
                                 {incomingItems.map((tradeItem, index) => (
                                     <div
                                         key={`${tradeItem.item.id}-${index}`}
-                                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700"
                                     >
                                         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                                             <div>
-                                                <p className="text-sm font-semibold text-slate-900">
+                                                <p className="text-sm font-semibold text-slate-900 dark:text-white">
                                                     {formatItemLabel(tradeItem.item)}
                                                 </p>
 
                                                 <div className="mt-2 flex flex-wrap gap-2">
-                                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
+                                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
                                                         {tradeItem.item.status}
                                                     </span>
 
                                                     {tradeItem.item.condition && (
-                                                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
                                                             {tradeItem.item.condition}
                                                         </span>
                                                     )}
@@ -677,7 +677,7 @@ export default function TradeOperationForm() {
 
                                             <div className="flex w-full gap-2 sm:w-48">
                                                 <div className="flex-1">
-                                                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">
+                                                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                                                         Value in
                                                     </label>
 
@@ -695,7 +695,7 @@ export default function TradeOperationForm() {
                                                                 )
                                                             )
                                                         }}
-                                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
                                                         placeholder="0.00"
                                                     />
                                                 </div>
@@ -707,7 +707,7 @@ export default function TradeOperationForm() {
                                                             current.filter((_, entryIndex) => entryIndex !== index)
                                                         )
                                                     }}
-                                                    className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                                                    className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
                                                 >
                                                     ×
                                                 </button>
@@ -719,14 +719,14 @@ export default function TradeOperationForm() {
                         )}
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">Cash in</label>
+                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Cash in</label>
                             <input
                                 type="number"
                                 step="0.01"
                                 min="0"
                                 value={cashIn}
                                 onChange={(event) => setCashIn(event.target.value)}
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                                 placeholder="0.00"
                             />
                         </div>
@@ -734,26 +734,26 @@ export default function TradeOperationForm() {
                 </section>
             </div>
 
-            <form className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <form className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
                 <div className="grid gap-6 lg:grid-cols-3">
                     <div className="space-y-6 lg:col-span-2">
                         <div className="space-y-3">
-                            <label className="text-sm font-medium text-slate-700">Deal date</label>
+                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Deal date</label>
                             <input
                                 type="date"
                                 value={dealDate}
                                 onChange={(event) => setDealDate(event.target.value)}
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                             />
-                            <p className="text-xs text-slate-500">Optional. If empty, today's date will be used.</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Optional. If empty, today&apos;s date will be used.</p>
                         </div>
 
                         <div className="space-y-3">
-                            <label className="text-sm font-medium text-slate-700">Channel</label>
+                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Channel</label>
                             <select
                                 value={channel}
                                 onChange={(event) => setChannel(event.target.value)}
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                             >
                                 <option value="">Select channel</option>
                                 {channelOptions.map((option) => (
@@ -765,22 +765,22 @@ export default function TradeOperationForm() {
                         </div>
                     </div>
 
-                    <div className="space-y-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                        <p className="text-sm font-semibold text-slate-900">Trade summary</p>
+                    <div className="space-y-5 rounded-3xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-white">Trade summary</p>
 
                         <div className="grid gap-3 text-sm text-slate-600">
-                            <div className="rounded-2xl bg-white p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Total given</p>
-                                <p className="mt-2 font-semibold text-slate-900">${totalGiven.toFixed(2)}</p>
+                            <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total given</p>
+                                <p className="mt-2 font-semibold text-slate-900 dark:text-white">${totalGiven.toFixed(2)}</p>
                             </div>
 
-                            <div className="rounded-2xl bg-white p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Total received</p>
-                                <p className="mt-2 font-semibold text-slate-900">${totalReceived.toFixed(2)}</p>
+                            <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total received</p>
+                                <p className="mt-2 font-semibold text-slate-900 dark:text-white">${totalReceived.toFixed(2)}</p>
                             </div>
 
-                            <div className="rounded-2xl bg-white p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Trade balance</p>
+                            <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Trade balance</p>
                                 <p className={`mt-2 font-semibold ${isBalanced ? 'text-emerald-700' : 'text-rose-700'}`}>
                                     {isBalanced ? 'Balanced' : `Off by $${Math.abs(difference).toFixed(2)}`}
                                 </p>
@@ -828,7 +828,7 @@ export default function TradeOperationForm() {
                             setCashOut('')
                             setCashIn('')
                         }}
-                        className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+                        className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
                     >
                         Reset
                     </button>
@@ -837,7 +837,7 @@ export default function TradeOperationForm() {
                         type="button"
                         onClick={handleSubmit}
                         disabled={saving || !isBalanced}
-                        className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                        className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                     >
                         {saving ? 'Saving...' : 'Save trade'}
                     </button>

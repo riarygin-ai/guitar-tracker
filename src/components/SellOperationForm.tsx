@@ -182,54 +182,54 @@ export default function SellOperationForm() {
   const fmt = (v: number | null) => v != null ? `$${v.toFixed(2)}` : '—';
   const fmtPct = (v: number | null) => v != null ? `${v.toFixed(2)}%` : '—';
   const metricColor = (v: number | null) =>
-    v == null ? 'text-slate-900' : v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-slate-900';
+    v == null ? 'text-slate-900 dark:text-slate-100' : v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-slate-900 dark:text-slate-100';
 
   return (
     <div className="space-y-6">
       {/* Item Section */}
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <div className="mb-4">
-          <h3 className="text-lg font-semibold text-slate-900">Item</h3>
-          <p className="mt-1 text-sm text-slate-600">Search for an existing item or create a new one for this sale.</p>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Item</h3>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Search for an existing item or create a new one for this sale.</p>
         </div>
 
         {selectedItem ? (
           /* ── Selected item read-only display ── */
           <div className="space-y-4">
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Selected item</p>
-              <p className="text-sm font-semibold text-slate-900">{formatItemLabel(selectedItem)}</p>
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-700 dark:bg-emerald-900/20">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400">Selected item</p>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">{formatItemLabel(selectedItem)}</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Brand</p>
-                  <p className="mt-1 text-sm font-medium text-slate-900">{brandMap[selectedItem.brand_id] ?? 'Unknown'}</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Brand</p>
+                  <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{brandMap[selectedItem.brand_id] ?? 'Unknown'}</p>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Model</p>
-                  <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.model}</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Model</p>
+                  <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.model}</p>
                 </div>
                 {selectedItem.year && (
                   <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Year</p>
-                    <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.year}</p>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Year</p>
+                    <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.year}</p>
                   </div>
                 )}
                 {selectedItem.color && (
                   <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Color</p>
-                    <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.color}</p>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Color</p>
+                    <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.color}</p>
                   </div>
                 )}
                 {selectedItem.condition && (
                   <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Condition</p>
-                    <p className="mt-1 text-sm font-medium text-slate-900">{selectedItem.condition}</p>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Condition</p>
+                    <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.condition}</p>
                   </div>
                 )}
                 {selectedItem.estimated_sold_value != null && (
                   <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Estimated Value</p>
-                    <p className="mt-1 text-sm font-medium text-slate-900">${selectedItem.estimated_sold_value.toFixed(2)}</p>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Estimated Value</p>
+                    <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">${selectedItem.estimated_sold_value.toFixed(2)}</p>
                   </div>
                 )}
               </div>
@@ -243,7 +243,7 @@ export default function SellOperationForm() {
                 setSearchResults([]);
                 setHasSearched(false);
               }}
-              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
             >
               Change item
             </button>
@@ -251,7 +251,7 @@ export default function SellOperationForm() {
         ) : showItemForm ? (
           /* ── Add new item form ── */
           <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
               <InventoryForm
                 onCreated={handleItemCreated}
                 hideHeader
@@ -261,7 +261,7 @@ export default function SellOperationForm() {
             <button
               type="button"
               onClick={() => setShowItemForm(false)}
-              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
             >
               Cancel
             </button>
@@ -271,7 +271,7 @@ export default function SellOperationForm() {
           <div className="space-y-4">
             {/* Search input */}
             <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700">Search existing items</label>
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Search existing items</label>
               <div className="relative">
                 <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -281,7 +281,7 @@ export default function SellOperationForm() {
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   placeholder="Search by brand, model, year, or color..."
-                  className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                 />
                 {searching && (
                   <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
@@ -293,11 +293,11 @@ export default function SellOperationForm() {
 
             {/* Search results */}
             {hasSearched && searchResults.length === 0 && (
-              <p className="text-sm text-slate-500">No items found matching &ldquo;{searchQuery}&rdquo;</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">No items found matching &ldquo;{searchQuery}&rdquo;</p>
             )}
 
             {searchResults.length > 0 && (
-              <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-700">
                 {searchResults.map((item) => (
                   <button
                     key={item.id}
@@ -309,15 +309,15 @@ export default function SellOperationForm() {
                       setHasSearched(false);
                       setSuccessMessage(null);
                     }}
-                    className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                    className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
                   >
-                    <p className="text-sm font-medium text-slate-900">{formatItemLabel(item)}</p>
+                    <p className="text-sm font-medium text-slate-900 dark:text-white">{formatItemLabel(item)}</p>
                     <div className="mt-1 flex flex-wrap gap-2">
                       {item.condition && (
-                        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.condition}</span>
+                        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.condition}</span>
                       )}
-                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.item_type}</span>
-                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.status}</span>
+                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.item_type}</span>
+                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.status}</span>
                     </div>
                   </button>
                 ))}
@@ -326,15 +326,15 @@ export default function SellOperationForm() {
 
             {/* Divider + Add New Item */}
             <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-slate-200" />
-              <span className="text-xs text-slate-400">or</span>
-              <div className="h-px flex-1 bg-slate-200" />
+              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-600" />
+              <span className="text-xs text-slate-400 dark:text-slate-500">or</span>
+              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-600" />
             </div>
 
             <button
               type="button"
               onClick={() => setShowItemForm(true)}
-              className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+              className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
             >
               Add new item
             </button>
@@ -342,42 +342,42 @@ export default function SellOperationForm() {
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2 space-y-6">
             <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700">Deal date</label>
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Deal date</label>
               <input
                 type="date"
                 value={dealDate}
                 onChange={(event) => setDealDate(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
               />
-              <p className="text-xs text-slate-500">Optional. If empty, today's date will be used.</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Optional. If empty, today&apos;s date will be used.</p>
             </div>
 
             <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700">Sold for</label>
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Sold for</label>
               <div className="relative">
-                <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
+                <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400">$</span>
                 <input
                   type="number"
                   step="0.01"
                   min="0"
                   value={cashReceived}
                   onChange={(event) => setCashReceived(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pl-10 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pl-10 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                   placeholder="0.00"
                 />
               </div>
             </div>
 
             <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700">Channel</label>
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Channel</label>
               <select
                 value={channel}
                 onChange={(event) => setChannel(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
               >
                 <option value="">Select channel</option>
                 {channelOptions.map((option) => (
@@ -389,23 +389,23 @@ export default function SellOperationForm() {
             </div>
           </div>
 
-          <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
-            <p className="text-sm font-semibold text-slate-900">Value metrics</p>
+          <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">Value metrics</p>
             <div className="grid gap-3">
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Value In</p>
-                <p className="mt-2 text-sm font-medium text-slate-900">{fmt(valueIn)}</p>
+              <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Value In</p>
+                <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{fmt(valueIn)}</p>
               </div>
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Value Out</p>
-                <p className="mt-2 text-sm font-medium text-slate-900">{valueOutNum > 0 ? fmt(valueOutNum) : '—'}</p>
+              <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Value Out</p>
+                <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{valueOutNum > 0 ? fmt(valueOutNum) : '—'}</p>
               </div>
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Realized Gain</p>
+              <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Realized Gain</p>
                 <p className={`mt-2 text-sm font-semibold ${metricColor(realizedGain)}`}>{fmt(realizedGain)}</p>
               </div>
-              <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Realized ROI</p>
+              <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Realized ROI</p>
                 <p className={`mt-2 text-sm font-semibold ${metricColor(realizedRoi)}`}>{fmtPct(realizedRoi)}</p>
               </div>
             </div>
@@ -439,14 +439,14 @@ export default function SellOperationForm() {
               setError(null);
               setSuccessMessage(null);
             }}
-            className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+            className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
           >
             Reset
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+            className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
             {saving ? 'Saving...' : 'Save sale'}
           </button>

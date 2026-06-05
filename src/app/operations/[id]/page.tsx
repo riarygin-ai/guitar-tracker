@@ -253,9 +253,9 @@ export default function OperationDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 py-8">
+      <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-          <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
+          <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
             Loading operation details...
           </div>
         </div>
@@ -265,7 +265,7 @@ export default function OperationDetailPage() {
 
   if (error && !deal) {
     return (
-      <div className="min-h-screen bg-slate-50 py-8">
+      <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
           <div className="rounded-3xl border border-rose-200 bg-rose-50 p-8 text-center text-rose-700 shadow-sm">
             {error}
@@ -284,15 +284,15 @@ export default function OperationDetailPage() {
   const getDealTypeColor = (dealType: string) => {
     switch (dealType) {
       case 'purchase':
-        return 'bg-blue-50 border-blue-200 text-blue-700';
+        return 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700 dark:text-blue-300';
       case 'sale':
-        return 'bg-green-50 border-green-200 text-green-700';
+        return 'bg-green-50 border-green-200 text-green-700 dark:bg-green-900/30 dark:border-green-700 dark:text-green-300';
       case 'trade':
-        return 'bg-purple-50 border-purple-200 text-purple-700';
+        return 'bg-purple-50 border-purple-200 text-purple-700 dark:bg-purple-900/30 dark:border-purple-700 dark:text-purple-300';
       case 'expense':
-        return 'bg-red-50 border-red-200 text-red-700';
+        return 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/30 dark:border-red-700 dark:text-red-300';
       default:
-        return 'bg-slate-50 border-slate-200 text-slate-700';
+        return 'bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-700 dark:border-slate-600 dark:text-slate-200';
     }
   };
 
@@ -319,20 +319,20 @@ export default function OperationDetailPage() {
   const tradeIsBalanced = Math.round(tradeGiven * 100) === Math.round(tradeReceived * 100);
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
+    <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <Link href="/operations" className="text-sm text-slate-500 hover:text-slate-700">
+              <Link href="/operations" className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
                 ← Back to operations
               </Link>
               <div className="mt-3 flex items-center gap-3">
                 <div className={`inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${getDealTypeColor(deal.deal_type)}`}>
                   {getDealTypeLabel(deal.deal_type)}
                 </div>
-                <h1 className="text-3xl font-semibold text-slate-900">Operation #{deal.id}</h1>
+                <h1 className="text-3xl font-semibold text-slate-900 dark:text-white">Operation #{deal.id}</h1>
               </div>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -341,8 +341,8 @@ export default function OperationDetailPage() {
                 onClick={handleEditMode}
                 className={`inline-flex items-center justify-center rounded-2xl px-5 py-2 text-sm font-semibold transition ${
                   editMode
-                    ? 'bg-slate-200 text-slate-900 hover:bg-slate-300'
-                    : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+                    ? 'bg-slate-200 text-slate-900 hover:bg-slate-300 dark:bg-slate-600 dark:text-white dark:hover:bg-slate-500'
+                    : 'bg-slate-100 text-slate-900 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600'
                 }`}
               >
                 {editMode ? 'Cancel edit' : 'Edit'}
@@ -352,7 +352,7 @@ export default function OperationDetailPage() {
                   type="button"
                   onClick={handleSave}
                   disabled={saving || (editMode && deal.deal_type === 'trade' && !tradeIsBalanced)}
-                  className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:bg-slate-400"
+                  className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
                 >
                   {saving ? 'Saving...' : 'Save changes'}
                 </button>
@@ -376,38 +376,38 @@ export default function OperationDetailPage() {
         {/* Deal Details */}
         <div className="mt-6 space-y-6">
           {/* Compact Transaction Header */}
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <div>
-                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Date</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Date</p>
                 {editMode ? (
                   <input
                     type="date"
                     value={editedDeal?.deal_date ?? deal.deal_date}
                     onChange={(e) => setEditedDeal({ ...editedDeal, deal_date: e.target.value })}
-                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                   />
                 ) : (
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{new Date(deal.deal_date).toLocaleDateString()}</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{new Date(deal.deal_date).toLocaleDateString()}</p>
                 )}
               </div>
 
               <div>
-                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Channel</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Channel</p>
                 {editMode ? (
                   <input
                     type="text"
                     value={editedDeal?.channel ?? deal.channel ?? ''}
                     onChange={(e) => setEditedDeal({ ...editedDeal, channel: e.target.value })}
-                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                   />
                 ) : (
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{deal.channel || '—'}</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{deal.channel || '—'}</p>
                 )}
               </div>
 
               <div>
-                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Cash Paid</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Cash Paid</p>
                 {editMode && deal.deal_type === 'trade' ? (
                   <input
                     type="number"
@@ -415,15 +415,15 @@ export default function OperationDetailPage() {
                     min="0"
                     value={Number(editedDeal?.cash_paid ?? deal.cash_paid ?? 0)}
                     onChange={(e) => setEditedDeal({ ...editedDeal, cash_paid: e.target.value === '' ? 0 : Number(e.target.value) })}
-                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                   />
                 ) : (
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(deal.cash_paid)}</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(deal.cash_paid)}</p>
                 )}
               </div>
 
               <div>
-                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Cash Received</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Cash Received</p>
                 {editMode && deal.deal_type === 'trade' ? (
                   <input
                     type="number"
@@ -431,39 +431,39 @@ export default function OperationDetailPage() {
                     min="0"
                     value={Number(editedDeal?.cash_received ?? deal.cash_received ?? 0)}
                     onChange={(e) => setEditedDeal({ ...editedDeal, cash_received: e.target.value === '' ? 0 : Number(e.target.value) })}
-                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                   />
                 ) : (
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(deal.cash_received)}</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(deal.cash_received)}</p>
                 )}
               </div>
 
               <div>
-                <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Notes</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Notes</p>
                 {editMode ? (
                   <textarea
                     value={editedDeal?.notes ?? deal.notes ?? ''}
                     onChange={(e) => setEditedDeal({ ...editedDeal, notes: e.target.value })}
                     rows={2}
-                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                   />
                 ) : (
-                  <p className="mt-2 text-sm text-slate-900 line-clamp-2">{deal.notes || '—'}</p>
+                  <p className="mt-2 text-sm text-slate-900 line-clamp-2 dark:text-white">{deal.notes || '—'}</p>
                 )}
               </div>
             </div>
             {editMode && deal.deal_type === 'trade' && (
-              <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-3">
+              <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700 sm:grid-cols-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.1em]">Total given</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(tradeGiven)}</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">Total given</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(tradeGiven)}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.1em]">Total received</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(tradeReceived)}</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">Total received</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(tradeReceived)}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase text-slate-500 tracking-[0.1em]">Trade balance</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">Trade balance</p>
                   <p className={`mt-1 text-sm font-semibold ${tradeIsBalanced ? 'text-emerald-600' : 'text-rose-600'}`}>
                     {tradeIsBalanced ? 'Balanced' : `$${Math.abs(tradeGiven - tradeReceived).toFixed(2)} off`}
                   </p>
@@ -474,8 +474,8 @@ export default function OperationDetailPage() {
 
           {/* Gave / Outgoing Items */}
           {outgoingItems.length > 0 && (
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900">Gave / Outgoing</h2>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Gave / Outgoing</h2>
               <div className="mt-4 space-y-3">
                 {outgoingItems.map((di) => {
                   const item = itemMap[di.item_id];
@@ -487,12 +487,12 @@ export default function OperationDetailPage() {
                     : Number(di.total_value ?? 0);
                   const realizedGain = valueOut - valueIn;
                   return (
-                    <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
                       <div className="mb-3">
-                        <p className="text-sm font-semibold text-slate-900">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-white">
                           {brand} {item.model}
                         </p>
-                        <p className="text-xs text-slate-600 mt-1">
+                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
                           {item.year && `${item.year} • `}
                           {item.color && `${item.color} • `}
                           {item.condition}
@@ -500,11 +500,11 @@ export default function OperationDetailPage() {
                       </div>
                       <div className="grid gap-3 sm:grid-cols-3">
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Value In</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueIn)}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Value Out</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value Out</p>
                           {editMode && deal.deal_type === 'trade' ? (
                             <input
                               type="number"
@@ -517,15 +517,15 @@ export default function OperationDetailPage() {
                                   [di.id]: { total_value: Number(e.target.value) },
                                 }))
                               }
-                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
                             />
                           ) : (
-                            <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueOut)}</p>
+                            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueOut)}</p>
                           )}
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Realized Gain</p>
-                          <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Realized Gain</p>
+                          <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
                             {formatCurrency(realizedGain)}
                           </p>
                         </div>
@@ -539,8 +539,8 @@ export default function OperationDetailPage() {
 
           {/* Received / Incoming Items */}
           {incomingItems.length > 0 && (
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900">Received / Incoming</h2>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Received / Incoming</h2>
               <div className="mt-4 space-y-3">
                 {incomingItems.map((di) => {
                   const item = itemMap[di.item_id];
@@ -552,12 +552,12 @@ export default function OperationDetailPage() {
                   const estimatedSold = Number(item.estimated_sold_value ?? 0);
                   const potentialReward = estimatedSold - valueIn;
                   return (
-                    <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
                       <div className="mb-3">
-                        <p className="text-sm font-semibold text-slate-900">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-white">
                           {brand} {item.model}
                         </p>
-                        <p className="text-xs text-slate-600 mt-1">
+                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
                           {item.year && `${item.year} • `}
                           {item.color && `${item.color} • `}
                           {item.condition}
@@ -565,7 +565,7 @@ export default function OperationDetailPage() {
                       </div>
                       <div className="grid gap-3 sm:grid-cols-3">
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Value In</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
                           {editMode && deal.deal_type === 'trade' ? (
                             <input
                               type="number"
@@ -578,19 +578,19 @@ export default function OperationDetailPage() {
                                   [di.id]: { total_value: Number(e.target.value) },
                                 }))
                               }
-                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
                             />
                           ) : (
-                            <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(valueIn)}</p>
+                            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
                           )}
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Estimated Sold</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(estimatedSold)}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Estimated Sold</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(estimatedSold)}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.08em]">Potential Reward</p>
-                          <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Potential Reward</p>
+                          <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
                             {formatCurrency(potentialReward)}
                           </p>
                         </div>
@@ -604,14 +604,14 @@ export default function OperationDetailPage() {
 
             {/* Cash Flow */}
             {cashFlows.length > 0 && (
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-slate-900">Cash flow records</h2>
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Cash flow records</h2>
                 <div className="mt-4 space-y-4">
                   {cashFlows.map((cf) => (
-                    <div key={cf.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div key={cf.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
                       <div className="grid gap-4 sm:grid-cols-2">
                         <div>
-                          <label className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Transaction date</label>
+                          <label className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Transaction date</label>
                           {editMode ? (
                             <input
                               type="date"
@@ -622,15 +622,15 @@ export default function OperationDetailPage() {
                                   [cf.id]: { ...editedCashFlows[cf.id], transaction_date: e.target.value },
                                 })
                               }
-                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
                             />
                           ) : (
-                            <p className="mt-2 text-sm text-slate-900">{new Date(cf.transaction_date).toLocaleDateString()}</p>
+                            <p className="mt-2 text-sm text-slate-900 dark:text-white">{new Date(cf.transaction_date).toLocaleDateString()}</p>
                           )}
                         </div>
 
                         <div>
-                          <label className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Description</label>
+                          <label className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Description</label>
                           {editMode ? (
                             <input
                               type="text"
@@ -641,27 +641,27 @@ export default function OperationDetailPage() {
                                   [cf.id]: { ...editedCashFlows[cf.id], description: e.target.value },
                                 })
                               }
-                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
                             />
                           ) : (
-                            <p className="mt-2 text-sm text-slate-900">{cf.description || '—'}</p>
+                            <p className="mt-2 text-sm text-slate-900 dark:text-white">{cf.description || '—'}</p>
                           )}
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Cash in</p>
-                          <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(cf.cash_in)}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Cash in</p>
+                          <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(cf.cash_in)}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Cash out</p>
-                          <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(cf.cash_out)}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Cash out</p>
+                          <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(cf.cash_out)}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Opening balance</p>
-                          <p className="mt-2 text-sm text-slate-900">{formatCurrency(cf.opening_balance)}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Opening balance</p>
+                          <p className="mt-2 text-sm text-slate-900 dark:text-white">{formatCurrency(cf.opening_balance)}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Closing balance</p>
-                          <p className="mt-2 text-sm text-slate-900">{formatCurrency(cf.closing_balance)}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Closing balance</p>
+                          <p className="mt-2 text-sm text-slate-900 dark:text-white">{formatCurrency(cf.closing_balance)}</p>
                         </div>
                       </div>
                     </div>
@@ -672,14 +672,14 @@ export default function OperationDetailPage() {
 
             {/* Expenses */}
             {expenses.length > 0 && (
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-slate-900">Expenses</h2>
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Expenses</h2>
                 <div className="mt-4 space-y-4">
                   {expenses.map((exp) => (
-                    <div key={exp.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div key={exp.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
                       <div className="grid gap-4 sm:grid-cols-2">
                         <div>
-                          <label className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Expense date</label>
+                          <label className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Expense date</label>
                           {editMode ? (
                             <input
                               type="date"
@@ -690,20 +690,20 @@ export default function OperationDetailPage() {
                                   [exp.id]: { ...editedExpenses[exp.id], expense_date: e.target.value },
                                 })
                               }
-                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
                             />
                           ) : (
-                            <p className="mt-2 text-sm text-slate-900">{new Date(exp.expense_date).toLocaleDateString()}</p>
+                            <p className="mt-2 text-sm text-slate-900 dark:text-white">{new Date(exp.expense_date).toLocaleDateString()}</p>
                           )}
                         </div>
 
                         <div>
-                          <p className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Amount</p>
-                          <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(exp.amount)}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Amount</p>
+                          <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(exp.amount)}</p>
                         </div>
 
                         <div className="sm:col-span-2">
-                          <label className="text-xs font-semibold uppercase text-slate-600 tracking-[0.1em]">Notes</label>
+                          <label className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Notes</label>
                           {editMode ? (
                             <textarea
                               value={editedExpenses[exp.id]?.notes ?? exp.notes ?? ''}
@@ -714,10 +714,10 @@ export default function OperationDetailPage() {
                                 })
                               }
                               rows={2}
-                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
                             />
                           ) : (
-                            <p className="mt-2 text-sm text-slate-900">{exp.notes || '—'}</p>
+                            <p className="mt-2 text-sm text-slate-900 dark:text-white">{exp.notes || '—'}</p>
                           )}
                         </div>
                       </div>

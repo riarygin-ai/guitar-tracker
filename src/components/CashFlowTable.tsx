@@ -16,9 +16,9 @@ const formatMoney = (value: number) =>
 
 export default function CashFlowTable({ rows }: CashFlowTableProps) {
   return (
-    <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-        <thead className="bg-slate-50 text-slate-600">
+    <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
+      <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-700">
+        <thead className="bg-slate-50 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
           <tr>
             <th className="px-4 py-3 font-semibold">Date</th>
             <th className="px-4 py-3 font-semibold">Opening</th>
@@ -28,15 +28,15 @@ export default function CashFlowTable({ rows }: CashFlowTableProps) {
             <th className="px-4 py-3 font-semibold">Description</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-200 bg-white">
+        <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-700 dark:bg-slate-800">
           {rows.map((row) => (
-            <tr key={row.id} className="hover:bg-slate-50">
-              <td className="px-4 py-4 text-slate-700">{row.transaction_date}</td>
-              <td className="px-4 py-4 text-slate-700">{formatMoney(row.opening_balance)}</td>
-              <td className="px-4 py-4 text-slate-700">{formatMoney(row.cash_in)}</td>
-              <td className="px-4 py-4 text-slate-700">{formatMoney(row.cash_out)}</td>
-              <td className="px-4 py-4 text-slate-700">{formatMoney(row.closing_balance)}</td>
-              <td className="px-4 py-4 text-slate-700">{row.description || '—'}</td>
+            <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-700">
+              <td className="px-4 py-4 text-slate-700 dark:text-slate-200">{row.transaction_date}</td>
+              <td className="px-4 py-4 text-slate-700 dark:text-slate-200">{formatMoney(row.opening_balance)}</td>
+              <td className="px-4 py-4 text-slate-700 dark:text-slate-200">{formatMoney(row.cash_in)}</td>
+              <td className="px-4 py-4 text-slate-700 dark:text-slate-200">{formatMoney(row.cash_out)}</td>
+              <td className="px-4 py-4 text-slate-700 dark:text-slate-200">{formatMoney(row.closing_balance)}</td>
+              <td className="px-4 py-4 text-slate-700 dark:text-slate-200">{row.description || '—'}</td>
             </tr>
           ))}
         </tbody>

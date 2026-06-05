@@ -42,12 +42,6 @@ export default function ExpenseOperationForm() {
 
             const result = await searchInventoryItems(value)
 
-            // console.log('Expense search:', {
-            //     value,
-            //     data: result.data,
-            //     error: result.error,
-            // })
-
             setSearchResults(result.data ?? [])
             setHasSearched(true)
             setSearching(false)
@@ -104,14 +98,14 @@ export default function ExpenseOperationForm() {
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="text-xl font-semibold text-slate-900">
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">
                     Expense
                 </h2>
 
                 <div className="mt-6 grid gap-4 md:grid-cols-2">
                     <label className="space-y-2">
-                        <span className="text-sm font-medium text-slate-700">
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
                             Expense Date
                         </span>
 
@@ -119,12 +113,12 @@ export default function ExpenseOperationForm() {
                             type="date"
                             value={expenseDate}
                             onChange={(e) => setExpenseDate(e.target.value)}
-                            className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                         />
                     </label>
 
                     <label className="space-y-2">
-                        <span className="text-sm font-medium text-slate-700">
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
                             Amount
                         </span>
 
@@ -134,7 +128,7 @@ export default function ExpenseOperationForm() {
                             min="0"
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
-                            className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                             placeholder="0.00"
                         />
                     </label>
@@ -142,7 +136,7 @@ export default function ExpenseOperationForm() {
                 {!selectedItem && (
                     <>
                         <div className="mt-4 space-y-2">
-                            <label className="text-sm font-medium text-slate-700">
+                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
                                 Inventory Item (Optional)
                             </label>
 
@@ -151,12 +145,12 @@ export default function ExpenseOperationForm() {
                                 value={searchQuery}
                                 onChange={(event) => handleSearchChange(event.target.value)}
                                 placeholder="Search inventory..."
-                                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                             />
                         </div>
 
                         {hasSearched && searchResults.length > 0 && (
-                            <div className="max-h-64 space-y-1 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                            <div className="max-h-64 space-y-1 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-600 dark:bg-slate-700">
                                 {searchResults.map((item) => (
                                     <button
                                         key={item.id}
@@ -167,24 +161,24 @@ export default function ExpenseOperationForm() {
                                             setSearchResults([])
                                             setHasSearched(false)
                                         }}
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
                                     >
-                                        <p className="text-sm font-medium text-slate-900">
+                                        <p className="text-sm font-medium text-slate-900 dark:text-white">
                                             {[item.year, item.brand_name, item.model].filter(Boolean).join(' ')}
                                         </p>
 
                                         <div className="mt-1 flex gap-2">
                                             {item.condition && (
-                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                     {item.condition}
                                                 </span>
                                             )}
 
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                 {item.item_type}
                                             </span>
 
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                 {item.status}
                                             </span>
                                         </div>
@@ -196,14 +190,14 @@ export default function ExpenseOperationForm() {
                 )}
 
                 {selectedItem && (
-                    <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-900/20">
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <p className="text-xs uppercase tracking-[0.25em] text-emerald-700">
+                                <p className="text-xs uppercase tracking-[0.25em] text-emerald-700 dark:text-emerald-400">
                                     Selected item
                                 </p>
 
-                                <p className="mt-2 font-semibold text-slate-900">
+                                <p className="mt-2 font-semibold text-slate-900 dark:text-white">
                                     {[selectedItem.year, selectedItem.brand_name, selectedItem.model]
                                         .filter(Boolean)
                                         .join(' ')}
@@ -211,16 +205,16 @@ export default function ExpenseOperationForm() {
 
                                 <div className="mt-2 flex flex-wrap gap-2">
                                     {selectedItem.condition && (
-                                        <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700">
+                                        <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">
                                             {selectedItem.condition}
                                         </span>
                                     )}
 
-                                    <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700">
+                                    <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">
                                         {selectedItem.item_type}
                                     </span>
 
-                                    <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700">
+                                    <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">
                                         {selectedItem.status}
                                     </span>
                                 </div>
@@ -234,7 +228,7 @@ export default function ExpenseOperationForm() {
                                     setSearchResults([])
                                     setHasSearched(false)
                                 }}
-                                className="rounded-xl border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-emerald-100"
+                                className="rounded-xl border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
                             >
                                 Change
                             </button>
@@ -243,7 +237,7 @@ export default function ExpenseOperationForm() {
                 )}
                 <div className="mt-4">
                     <label className="space-y-2">
-                        <span className="text-sm font-medium text-slate-700">
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
                             Description
                         </span>
 
@@ -251,20 +245,20 @@ export default function ExpenseOperationForm() {
                             value={notes}
                             onChange={(e) => setNotes(e.target.value)}
                             rows={4}
-                            className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                             placeholder="Tube replacement, owner withdrawal, amp repair..."
                         />
                     </label>
                 </div>
 
                 {error && (
-                    <div className="mt-4 rounded-2xl bg-red-50 p-4 text-red-700">
+                    <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
                         {error}
                     </div>
                 )}
 
                 {successMessage && (
-                    <div className="mt-4 rounded-2xl bg-green-50 p-4 text-green-700">
+                    <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
                         {successMessage}
                     </div>
                 )}
@@ -273,7 +267,7 @@ export default function ExpenseOperationForm() {
                     <button
                         type="submit"
                         disabled={saving}
-                        className="rounded-2xl bg-slate-950 px-5 py-3 font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                        className="rounded-2xl bg-slate-950 px-5 py-3 font-medium text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                     >
                         {saving ? 'Saving...' : 'Save Expense'}
                     </button>

@@ -264,34 +264,34 @@ export default function HomePage() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Dashboard</p>
-        <h1 className="mt-2 text-3xl font-semibold text-slate-900">Business overview</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-600">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Dashboard</p>
+        <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-white">Business overview</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
           Track cash, inventory, and business performance.
         </p>
       </section>
 
       {loading ? (
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-600 shadow-sm">Loading dashboard...</div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">Loading dashboard...</div>
       ) : error ? (
         <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6 text-rose-700 shadow-sm">{error}</div>
       ) : (
         <>
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Current Inventory</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900">By item type</h2>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Current Inventory</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">By item type</h2>
               </div>
               <div className="text-right">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash Balance</p>
-                <p className="mt-2 text-2xl font-semibold text-slate-900">{formatMoney(currentCash)}</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Cash Balance</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{formatMoney(currentCash)}</p>
               </div>
             </div>
-            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
               <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500">
+                <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                   <tr>
                     <th className="px-4 py-3">Item Type</th>
                     <th className="px-4 py-3 text-right">Count</th>
@@ -300,26 +300,26 @@ export default function HomePage() {
                     <th className="px-4 py-3 text-right">Equity</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                   {inventoryValueTypes.map((type) => {
                     const v = inventoryValueByType[type]
                     const equity = v.estimatedValue - v.costBasis
                     return (
                       <tr key={type}>
-                        <td className="px-4 py-3 font-medium text-slate-900">{type}</td>
-                        <td className="px-4 py-3 text-right text-slate-900">{v.count}</td>
-                        <td className="px-4 py-3 text-right text-slate-900">{formatMoney(v.costBasis)}</td>
-                        <td className="px-4 py-3 text-right text-slate-900">{formatMoney(v.estimatedValue)}</td>
-                        <td className="px-4 py-3 text-right text-slate-900">{formatMoney(equity)}</td>
+                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{type}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{v.count}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(v.costBasis)}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(v.estimatedValue)}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(equity)}</td>
                       </tr>
                     )
                   })}
-                  <tr className="bg-slate-50 font-semibold">
-                    <td className="px-4 py-3 text-slate-900">Total</td>
-                    <td className="px-4 py-3 text-right text-slate-900">{totalInventoryCount}</td>
-                    <td className="px-4 py-3 text-right text-slate-900">{formatMoney(totalCostBasis)}</td>
-                    <td className="px-4 py-3 text-right text-slate-900">{formatMoney(totalEstimatedValue)}</td>
-                    <td className="px-4 py-3 text-right text-slate-900">{formatMoney(totalEstimatedValue - totalCostBasis)}</td>
+                  <tr className="bg-slate-50 font-semibold dark:bg-slate-700">
+                    <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{totalInventoryCount}</td>
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(totalCostBasis)}</td>
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(totalEstimatedValue)}</td>
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(totalEstimatedValue - totalCostBasis)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -327,37 +327,37 @@ export default function HomePage() {
           </section>
 
           {businessInventoryTypes.length > 0 && (
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Business Inventory</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900">Status by item type</h2>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Business Inventory</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Status by item type</h2>
               </div>
-              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
                 <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                     <tr>
                       <th className="px-4 py-3">Item Type</th>
                       <th className="px-4 py-3 text-right">Listed</th>
                       <th className="px-4 py-3 text-right">Unlisted</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                     {businessInventoryTypes.map((type) => {
                       const v = businessInventoryByType[type]
                       return (
                         <tr key={type}>
-                          <td className="px-4 py-3 font-medium text-slate-900">{type}</td>
-                          <td className="px-4 py-3 text-right text-slate-900">{v.listed}</td>
-                          <td className={`px-4 py-3 text-right font-semibold ${v.unlisted > 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                          <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{type}</td>
+                          <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{v.listed}</td>
+                          <td className={`px-4 py-3 text-right font-semibold ${v.unlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-slate-100'}`}>
                             {v.unlisted}
                           </td>
                         </tr>
                       )
                     })}
-                    <tr className="bg-slate-50 font-semibold">
-                      <td className="px-4 py-3 text-slate-900">Total</td>
-                      <td className="px-4 py-3 text-right text-slate-900">{totalBusinessListed}</td>
-                      <td className={`px-4 py-3 text-right ${totalBusinessUnlisted > 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                    <tr className="bg-slate-50 font-semibold dark:bg-slate-700">
+                      <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
+                      <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{totalBusinessListed}</td>
+                      <td className={`px-4 py-3 text-right ${totalBusinessUnlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
                         {totalBusinessUnlisted}
                       </td>
                     </tr>
@@ -367,25 +367,25 @@ export default function HomePage() {
             </section>
           )}
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Monthly performance</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900">Monthly performance</h2>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Monthly performance</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Monthly performance</h2>
               </div>
               <select
                 value={selectedYear}
                 onChange={(e) => setSelectedYear(Number(e.target.value))}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
               >
                 {availableYears.map((year) => (
                   <option key={year} value={year}>{year}</option>
                 ))}
               </select>
             </div>
-            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
               <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500">
+                <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                   <tr>
                     <th className="px-4 py-3">Month</th>
                     <th className="px-4 py-3 text-right">Cash Received</th>
@@ -393,13 +393,13 @@ export default function HomePage() {
                     <th className="px-4 py-3 text-right">Profit</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                   {filteredMonthlyRows.map((row) => (
                     <tr
                       key={row.month}
                       role="button"
                       tabIndex={0}
-                      className="cursor-pointer transition hover:bg-slate-50"
+                      className="cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-700"
                       onClick={() => navigateToMonthOperations(row.month)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
@@ -408,31 +408,31 @@ export default function HomePage() {
                         }
                       }}
                     >
-                      <td className="px-4 py-3 font-medium text-slate-900">{row.month}</td>
-                      <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.cashReceived)}</td>
-                      <td className="px-4 py-3 text-right text-slate-900">{row.dealsCount}</td>
-                      <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.profit)}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{row.month}</td>
+                      <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(row.cashReceived)}</td>
+                      <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.dealsCount}</td>
+                      <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(row.profit)}</td>
                     </tr>
                   ))}
-                  <tr className="bg-slate-50 font-semibold">
-                    <td className="px-4 py-3 text-slate-900">Total</td>
-                    <td className="px-4 py-3 text-right text-slate-900">{formatMoney(monthlyTotals.cashReceived)}</td>
-                    <td className="px-4 py-3 text-right text-slate-900">{monthlyTotals.dealsCount}</td>
-                    <td className="px-4 py-3 text-right text-slate-900">{formatMoney(monthlyTotals.profit)}</td>
+                  <tr className="bg-slate-50 font-semibold dark:bg-slate-700">
+                    <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(monthlyTotals.cashReceived)}</td>
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{monthlyTotals.dealsCount}</td>
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(monthlyTotals.profit)}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
           </section>
           {brandPerformance.length > 0 && (
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Brand Performance</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900">Top brands by ROI</h2>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Brand Performance</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Top brands by ROI</h2>
               </div>
-              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
                 <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                     <tr>
                       <th className="px-4 py-3">Brand</th>
                       <th className="px-4 py-3 text-right">Sold Qty</th>
@@ -441,14 +441,14 @@ export default function HomePage() {
                       <th className="px-4 py-3 text-right">Avg Days Held</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                     {brandPerformance.map((row) => (
                       <tr key={row.name}>
-                        <td className="px-4 py-3 font-medium text-slate-900">{row.name}</td>
-                        <td className="px-4 py-3 text-right text-slate-900">{row.soldQty}</td>
-                        <td className="px-4 py-3 text-right text-slate-900">{row.avgRoi.toFixed(1)}%</td>
-                        <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.avgProfit)}</td>
-                        <td className="px-4 py-3 text-right text-slate-900">{row.avgDaysHeld}</td>
+                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{row.name}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.soldQty}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.avgRoi.toFixed(1)}%</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(row.avgProfit)}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.avgDaysHeld}</td>
                       </tr>
                     ))}
                   </tbody>

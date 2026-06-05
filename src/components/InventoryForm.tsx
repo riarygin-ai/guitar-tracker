@@ -292,25 +292,25 @@ export default function InventoryForm({
   const fmt = (v: number | null) => (v != null ? `$${v.toFixed(2)}` : '—');
   const fmtPct = (v: number | null) => (v != null ? `${v.toFixed(1)}%` : '—');
   const metricColor = (v: number | null) =>
-    v == null ? 'text-slate-900' : v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-slate-900';
+    v == null ? 'text-slate-900 dark:text-slate-100' : v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-slate-900 dark:text-slate-100';
 
-  const inputClass = 'h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100';
+  const inputClass = 'h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600';
 
   return (
-    <div className={hideHeader ? '' : 'min-h-screen bg-slate-50'}>
+    <div className={hideHeader ? '' : 'min-h-screen bg-slate-50 dark:bg-slate-900'}>
       <div className={hideHeader ? '' : 'mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8'}>
 
         {!hideHeader && (
-          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Inventory</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+            <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-slate-400">Inventory</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">
               {itemId ? 'Update item' : 'Add inventory item'}
             </h1>
           </div>
         )}
 
         {loading && (
-          <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
             Loading...
           </div>
         )}
@@ -319,12 +319,12 @@ export default function InventoryForm({
           {/* Main form card */}
           <div className={showMetrics ? 'lg:col-span-2' : ''}>
             <form onSubmit={handleSubmit} aria-busy={disabled}>
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
                 <div className="grid gap-5 sm:grid-cols-2">
 
                   {/* Item type */}
                   <div className="space-y-1.5">
-                    <label className="block text-sm font-medium text-slate-700">
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                       Item type <span className="text-rose-500">*</span>
                     </label>
                     <select
@@ -341,7 +341,7 @@ export default function InventoryForm({
 
                   {/* Brand */}
                   <div className="space-y-1.5">
-                    <label className="block text-sm font-medium text-slate-700">
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                       Brand <span className="text-rose-500">*</span>
                     </label>
                     <div className="flex gap-2">
@@ -353,17 +353,19 @@ export default function InventoryForm({
                           onBlur={() => window.setTimeout(() => setShowBrandSuggestions(false), 120)}
                           disabled={disabled}
                           placeholder="Search or add brand"
-                          className={`min-w-0 w-full rounded-xl border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 ${
-                            brandError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
+                          className={`min-w-0 w-full rounded-xl border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 dark:focus:ring-slate-600 ${
+                            brandError
+                              ? 'border-rose-300 bg-rose-50 focus:border-rose-400 dark:border-rose-700 dark:bg-rose-900/20'
+                              : 'border-slate-200 bg-white focus:border-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100'
                           }`}
                         />
                         {brandSearchLoading && (
-                          <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
+                          <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 dark:text-slate-400">
                             Searching...
                           </div>
                         )}
                         {showBrandSuggestions && brandSuggestions.length > 0 && (
-                          <ul className="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-auto rounded-2xl border border-slate-200 bg-white text-sm shadow-lg">
+                          <ul className="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-auto rounded-2xl border border-slate-200 bg-white text-sm shadow-lg dark:border-slate-600 dark:bg-slate-800">
                             {brandSuggestions.map((brand) => (
                               <li
                                 key={brand.id}
@@ -373,7 +375,7 @@ export default function InventoryForm({
                                   setSelectedBrandId(brand.id);
                                   setShowBrandSuggestions(false);
                                 }}
-                                className="cursor-pointer px-3 py-2 text-slate-700 hover:bg-slate-100"
+                                className="cursor-pointer px-3 py-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
                               >
                                 {brand.name}
                               </li>
@@ -385,7 +387,7 @@ export default function InventoryForm({
                         type="button"
                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCreateBrand(); }}
                         disabled={brandCreateDisabled}
-                        className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                        className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
                       >
                         {creatingBrand ? 'Creating...' : 'Create'}
                       </button>
@@ -394,7 +396,7 @@ export default function InventoryForm({
 
                   {/* Model */}
                   <div className="space-y-1.5 sm:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700">
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                       Model <span className="text-rose-500">*</span>
                     </label>
                     <input
@@ -402,15 +404,17 @@ export default function InventoryForm({
                       onChange={(e) => setModel(e.target.value)}
                       disabled={disabled}
                       placeholder="e.g. Stratocaster"
-                      className={`w-full rounded-xl border px-3 py-2 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-100 ${
-                        modelError ? 'border-rose-300 bg-rose-50 focus:border-rose-400' : 'border-slate-200 bg-white focus:border-slate-400'
+                      className={`w-full rounded-xl border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 dark:focus:ring-slate-600 ${
+                        modelError
+                          ? 'border-rose-300 bg-rose-50 text-slate-900 focus:border-rose-400 dark:border-rose-700 dark:bg-rose-900/20 dark:text-slate-100'
+                          : 'border-slate-200 bg-white text-slate-900 focus:border-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100'
                       }`}
                     />
                   </div>
 
                   {/* Year */}
                   <div className="space-y-1.5">
-                    <label className="block text-sm font-medium text-slate-700">Year</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Year</label>
                     <input
                       type="number"
                       min="1900"
@@ -425,7 +429,7 @@ export default function InventoryForm({
 
                   {/* Color */}
                   <div className="space-y-1.5">
-                    <label className="block text-sm font-medium text-slate-700">Color</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Color</label>
                     <input
                       value={color}
                       onChange={(e) => setColor(e.target.value)}
@@ -437,7 +441,7 @@ export default function InventoryForm({
 
                   {/* Serial number */}
                   <div className="space-y-1.5">
-                    <label className="block text-sm font-medium text-slate-700">Serial number</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Serial number</label>
                     <input
                       value={serialNumber}
                       onChange={(e) => setSerialNumber(e.target.value)}
@@ -449,7 +453,7 @@ export default function InventoryForm({
 
                   {/* Condition */}
                   <div className="space-y-1.5">
-                    <label className="block text-sm font-medium text-slate-700">Condition</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condition</label>
                     <select
                       value={condition}
                       onChange={(e) => setCondition(e.target.value as Condition)}
@@ -465,7 +469,7 @@ export default function InventoryForm({
 
                   {/* Collection */}
                   <div className="space-y-1.5">
-                    <label className="block text-sm font-medium text-slate-700">Purpose / collection</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Purpose / collection</label>
                     <select
                       value={collectionType}
                       onChange={(e) => setCollectionType(e.target.value as CollectionType)}
@@ -481,9 +485,9 @@ export default function InventoryForm({
 
                   {/* Estimated sold value */}
                   <div className="space-y-1.5">
-                    <label className="block text-sm font-medium text-slate-700">Estimated sold value</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Estimated sold value</label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">$</span>
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">$</span>
                       <input
                         type="number"
                         min="0"
@@ -492,22 +496,22 @@ export default function InventoryForm({
                         onChange={(e) => setEstimatedSoldValue(e.target.value)}
                         disabled={disabled}
                         placeholder="0.00"
-                        className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                       />
                     </div>
-                    <p className="text-xs text-slate-500">Estimated values help track potential returns.</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Estimated values help track potential returns.</p>
                   </div>
 
                   {/* Notes */}
                   <div className="space-y-1.5 sm:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700">Notes</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Notes</label>
                     <textarea
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
                       disabled={disabled}
                       placeholder="Add any additional notes..."
                       rows={3}
-                      className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                      className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                     />
                   </div>
                 </div>
@@ -527,14 +531,14 @@ export default function InventoryForm({
                   <button
                     type="button"
                     onClick={() => { if (onClose) { onClose(); return; } router.push('/inventory'); }}
-                    className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-6 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+                    className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-6 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={disabled}
-                    className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-6 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                    className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-6 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
                   >
                     {saveLabel}
                   </button>
@@ -546,29 +550,29 @@ export default function InventoryForm({
           {/* Value metrics card (edit only) */}
           {showMetrics && (
             <div className="mt-6 lg:col-span-1 lg:mt-0">
-              <div className="sticky top-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-semibold text-slate-900">Value metrics</h3>
+              <div className="sticky top-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Value metrics</h3>
                 <div className="mt-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-600">Value In</span>
-                    <span className="text-sm font-medium text-slate-900">{fmt(valueIn)}</span>
+                    <span className="text-sm text-slate-600 dark:text-slate-300">Value In</span>
+                    <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{fmt(valueIn)}</span>
                   </div>
 
                   {isOwned && (
                     <>
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-600">Estimated Sold</span>
-                        <span className="text-sm font-medium text-slate-900">{fmt(parsedEstimated)}</span>
+                        <span className="text-sm text-slate-600 dark:text-slate-300">Estimated Sold</span>
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{fmt(parsedEstimated)}</span>
                       </div>
-                      <div className="space-y-3 border-t border-slate-100 pt-3">
+                      <div className="space-y-3 border-t border-slate-100 pt-3 dark:border-slate-700">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-slate-700">Potential Reward</span>
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Potential Reward</span>
                           <span className={`text-sm font-semibold ${metricColor(potentialReward)}`}>
                             {fmt(potentialReward)}
                           </span>
                         </div>
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-slate-700">Potential ROI</span>
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Potential ROI</span>
                           <span className={`text-sm font-semibold ${metricColor(potentialRoi)}`}>
                             {fmtPct(potentialRoi)}
                           </span>
@@ -580,18 +584,18 @@ export default function InventoryForm({
                   {isSoldOrTraded && (
                     <>
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-600">Value Out</span>
-                        <span className="text-sm font-medium text-slate-900">{fmt(valueOut)}</span>
+                        <span className="text-sm text-slate-600 dark:text-slate-300">Value Out</span>
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{fmt(valueOut)}</span>
                       </div>
-                      <div className="space-y-3 border-t border-slate-100 pt-3">
+                      <div className="space-y-3 border-t border-slate-100 pt-3 dark:border-slate-700">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-slate-700">Realized Gain</span>
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Realized Gain</span>
                           <span className={`text-sm font-semibold ${metricColor(realizedGain)}`}>
                             {fmt(realizedGain)}
                           </span>
                         </div>
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-slate-700">Realized ROI</span>
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Realized ROI</span>
                           <span className={`text-sm font-semibold ${metricColor(realizedRoi)}`}>
                             {fmtPct(realizedRoi)}
                           </span>
@@ -607,12 +611,12 @@ export default function InventoryForm({
 
         {/* Mobile sticky footer */}
         {!hideHeader && (
-          <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 p-4 backdrop-blur-sm lg:hidden">
+          <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 p-4 backdrop-blur-sm lg:hidden dark:border-slate-700 dark:bg-slate-900/95">
             <div className="mx-auto flex max-w-6xl items-center gap-3">
               <button
                 type="button"
                 onClick={() => router.push('/inventory')}
-                className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+                className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
               >
                 Cancel
               </button>
@@ -620,7 +624,7 @@ export default function InventoryForm({
                 type="submit"
                 onClick={() => document.querySelector('form')?.requestSubmit()}
                 disabled={disabled}
-                className="flex-1 rounded-xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                className="flex-1 rounded-xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
               >
                 {saveLabel}
               </button>
