@@ -35,7 +35,7 @@ export default function NewOperationPage() {
               href="/operations"
               className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
             >
-              Back to operations
+              Operation history
             </Link>
           </div>
         </div>
