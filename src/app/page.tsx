@@ -46,7 +46,12 @@ export default function HomePage() {
   const activeInventory = inventoryItems.filter((item) => item.status === 'owned' || item.status === 'listed')
   const businessInventory = inventoryItems.filter((item) => item.collection_type === 'Business' || item.collection_type === 'Hybrid')
 
-  const currentCash = cashFlows.length > 0 ? Number(cashFlows[0].closing_balance ?? 0) : 0
+  const latestCashFlow = [...cashFlows].sort((a, b) => {
+    const dateDiff = b.transaction_date.localeCompare(a.transaction_date)
+    if (dateDiff !== 0) return dateDiff
+    return b.id - a.id
+  })[0]
+  const currentCash = latestCashFlow ? Number(latestCashFlow.closing_balance ?? 0) : 0
 
   const inventoryCostBasis = activeInventory.reduce((sum, item) => sum + Number(item.value_in ?? 0), 0)
   const inventoryEstimatedValue = activeInventory.reduce((sum, item) => sum + Number(item.estimated_sold_value ?? 0), 0)
@@ -177,11 +182,6 @@ export default function HomePage() {
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Inventory Count</p>
-              <p className="mt-3 text-2xl font-semibold text-slate-900">{activeInventory.length}</p>
-            </div>
-
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Cash Balance</p>
               <p className="mt-3 text-2xl font-semibold text-slate-900">{formatMoney(currentCash)}</p>
             </div>
@@ -218,7 +218,7 @@ export default function HomePage() {
 
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Inventory Value</p>
+              <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Current Inventory</p>
               <h2 className="mt-2 text-xl font-semibold text-slate-900">By item type</h2>
             </div>
             <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
@@ -248,7 +248,7 @@ export default function HomePage() {
                   })}
                   <tr className="bg-slate-50 font-semibold">
                     <td className="px-4 py-3 text-slate-900">Total</td>
-                    <td className="px-4 py-3 text-right text-slate-900">{Object.keys(inventoryValueByType).length}</td>
+                    <td className="px-4 py-3 text-right text-slate-900">{totalInventoryCount}</td>
                     <td className="px-4 py-3 text-right text-slate-900">{formatMoney(totalCostBasis)}</td>
                     <td className="px-4 py-3 text-right text-slate-900">{formatMoney(totalEstimatedValue)}</td>
                     <td className="px-4 py-3 text-right text-slate-900">{formatMoney(totalEstimatedValue - totalCostBasis)}</td>
