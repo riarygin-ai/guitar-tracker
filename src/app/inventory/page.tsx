@@ -148,7 +148,7 @@ export default function InventoryPage() {
           <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
             <p className="mb-2 text-sm font-medium text-slate-700">Item Type</p>
             <div className="flex flex-wrap gap-2">
-              {(['guitar', 'amp', 'pedal', 'cab', 'pickups', 'bass', 'processor', 'acoustic guitar'] as const).map((itemType) => (
+              {(['guitar', 'amp', 'pedal', 'cab', 'parts', 'bass', 'processor', 'acoustic guitar'] as const).map((itemType) => (
                 <button
                   key={itemType}
                   type="button"

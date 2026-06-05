@@ -26,7 +26,7 @@ const itemTypeOptions: Array<{ label: string; value: ItemType }> = [
   { label: 'Amp', value: 'amp' },
   { label: 'Cab', value: 'cab' },
   { label: 'Pedal', value: 'pedal' },
-  { label: 'Pickups', value: 'pickups' },
+  { label: 'Parts', value: 'parts' },
   { label: 'Bass', value: 'bass' },
   { label: 'Processor', value: 'processor' },
   { label: 'Acoustic Guitar', value: 'acoustic guitar' },
