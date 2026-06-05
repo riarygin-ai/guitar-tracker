@@ -8,6 +8,7 @@ import {
   createCashFlow,
   getBrands,
   getInventoryItemById,
+  getInventoryItemWithValueById,
   getLatestCashFlow,
   searchInventoryItems,
   updateInventoryItem,
@@ -37,6 +38,7 @@ export default function SellOperationForm() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [valueIn, setValueIn] = useState<number | null>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const brandMap = useMemo(
@@ -72,6 +74,14 @@ export default function SellOperationForm() {
 
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!selectedItem) { setValueIn(null); return; }
+    getInventoryItemWithValueById(selectedItem.id).then((r) => {
+      if (!r.error && r.data) setValueIn((r.data as any).value_in ?? null);
+      else setValueIn(null);
+    });
+  }, [selectedItem]);
 
   /** Debounced search: queries DB for model/year/color, then also matches brand name client-side */
   const handleSearchChange = (value: string) => {
@@ -253,20 +263,16 @@ export default function SellOperationForm() {
     setSelectedItem(null);
   };
 
+  const valueOutNum = Number(cashReceived) || 0;
+  const realizedGain = valueIn != null ? valueOutNum - valueIn : null;
+  const realizedRoi = realizedGain != null && valueIn != null && valueIn > 0 ? (realizedGain / valueIn) * 100 : null;
+  const fmt = (v: number | null) => v != null ? `$${v.toFixed(2)}` : '—';
+  const fmtPct = (v: number | null) => v != null ? `${v.toFixed(2)}%` : '—';
+  const metricColor = (v: number | null) =>
+    v == null ? 'text-slate-900' : v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-slate-900';
+
   return (
     <div className="space-y-6">
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Operations</p>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-900">Sell operation</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              Record a sale and update the inventory item for this operation.
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* Item Section */}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-4">
@@ -470,25 +476,24 @@ export default function SellOperationForm() {
             </div>
           </div>
 
-          <div className="space-y-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Buy operation details</p>
-              <p className="mt-2 text-sm text-slate-600">
-                Create a new inventory item first, then record the purchase deal for this operation.
-              </p>
-            </div>
-            <div className="grid gap-3 text-sm text-slate-600">
+          <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <p className="text-sm font-semibold text-slate-900">Value metrics</p>
+            <div className="grid gap-3">
               <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Deal type</p>
-                <p className="mt-2 font-medium text-slate-900">Sale</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Value In</p>
+                <p className="mt-2 text-sm font-medium text-slate-900">{fmt(valueIn)}</p>
               </div>
               <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Direction</p>
-                <p className="mt-2 font-medium text-slate-900">Out</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Value Out</p>
+                <p className="mt-2 text-sm font-medium text-slate-900">{valueOutNum > 0 ? fmt(valueOutNum) : '—'}</p>
               </div>
               <div className="rounded-2xl bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash received</p>
-                <p className="mt-2 font-medium text-slate-900">$0.00</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Realized Gain</p>
+                <p className={`mt-2 text-sm font-semibold ${metricColor(realizedGain)}`}>{fmt(realizedGain)}</p>
+              </div>
+              <div className="rounded-2xl bg-white p-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Realized ROI</p>
+                <p className={`mt-2 text-sm font-semibold ${metricColor(realizedRoi)}`}>{fmtPct(realizedRoi)}</p>
               </div>
             </div>
           </div>

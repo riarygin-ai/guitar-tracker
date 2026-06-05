@@ -232,20 +232,17 @@ setChannel('');
 setSelectedItem(null);
   };
 
+  const buyValueIn = Number(cashPaid) || 0;
+  const estimatedSold = selectedItem?.estimated_sold_value ?? null;
+  const potentialReward = estimatedSold != null ? estimatedSold - buyValueIn : null;
+  const potentialRoi = potentialReward != null && buyValueIn > 0 ? (potentialReward / buyValueIn) * 100 : null;
+  const fmt = (v: number | null) => v != null ? `$${v.toFixed(2)}` : '—';
+  const fmtPct = (v: number | null) => v != null ? `${v.toFixed(2)}%` : '—';
+  const metricColor = (v: number | null) =>
+    v == null ? 'text-slate-900' : v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-slate-900';
+
 return (
   <div className="space-y-6">
-    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Operations</p>
-          <h2 className="mt-2 text-2xl font-semibold text-slate-900">Buy operation</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Record a purchase and create a new inventory item for this operation.
-          </p>
-        </div>
-      </div>
-    </div>
-
     {/* Item Section */}
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4">
@@ -449,25 +446,24 @@ return (
           </div>
         </div>
 
-        <div className="space-y-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
-          <div>
-            <p className="text-sm font-semibold text-slate-900">Buy operation details</p>
-            <p className="mt-2 text-sm text-slate-600">
-              Create a new inventory item first, then record the purchase deal for this operation.
-            </p>
-          </div>
-          <div className="grid gap-3 text-sm text-slate-600">
+        <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+          <p className="text-sm font-semibold text-slate-900">Value metrics</p>
+          <div className="grid gap-3">
             <div className="rounded-2xl bg-white p-4">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Deal type</p>
-              <p className="mt-2 font-medium text-slate-900">Purchase</p>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Value In</p>
+              <p className="mt-2 text-sm font-medium text-slate-900">{buyValueIn > 0 ? fmt(buyValueIn) : '—'}</p>
             </div>
             <div className="rounded-2xl bg-white p-4">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Direction</p>
-              <p className="mt-2 font-medium text-slate-900">In</p>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Estimated Sold</p>
+              <p className="mt-2 text-sm font-medium text-slate-900">{fmt(estimatedSold)}</p>
             </div>
             <div className="rounded-2xl bg-white p-4">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash received</p>
-              <p className="mt-2 font-medium text-slate-900">$0.00</p>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Potential Reward</p>
+              <p className={`mt-2 text-sm font-semibold ${metricColor(potentialReward)}`}>{fmt(potentialReward)}</p>
+            </div>
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Potential ROI</p>
+              <p className={`mt-2 text-sm font-semibold ${metricColor(potentialRoi)}`}>{fmtPct(potentialRoi)}</p>
             </div>
           </div>
         </div>
