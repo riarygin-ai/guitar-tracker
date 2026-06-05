@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses } from '@/lib/supabase'
+import { getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses } from '@/lib/supabase'
 
 export default function HomePage() {
   const router = useRouter()
@@ -11,6 +11,7 @@ export default function HomePage() {
   const [deals, setDeals] = useState<any[]>([])
   const [dealItems, setDealItems] = useState<any[]>([])
   const [inventoryExpenses, setInventoryExpenses] = useState<any[]>([])
+  const [brands, setBrands] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
@@ -19,15 +20,16 @@ export default function HomePage() {
     async function loadData() {
       setLoading(true)
 
-      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult] = await Promise.all([
+      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, brandsResult] = await Promise.all([
         getCashFlows(),
         getInventoryItemsWithValue(),
         getDeals(),
         getDealItems(),
         getInventoryExpenses(),
+        getBrands(),
       ])
 
-      if (cashFlowResult.error || inventoryResult.error || dealsResult.error || dealItemsResult.error || inventoryExpensesResult.error) {
+      if (cashFlowResult.error || inventoryResult.error || dealsResult.error || dealItemsResult.error || inventoryExpensesResult.error || brandsResult.error) {
         setError('Could not load dashboard data.')
         setLoading(false)
         return
@@ -38,6 +40,7 @@ export default function HomePage() {
       setDeals(dealsResult.data || [])
       setDealItems(dealItemsResult.data || [])
       setInventoryExpenses(inventoryExpensesResult.data || [])
+      setBrands(brandsResult.data || [])
       setLoading(false)
     }
 
@@ -184,6 +187,80 @@ export default function HomePage() {
   const totalEstimatedValue = Object.values(inventoryValueByType).reduce((sum, v) => sum + v.estimatedValue, 0)
   const totalBusinessListed = Object.values(businessInventoryByType).reduce((sum, v) => sum + v.listed, 0)
   const totalBusinessUnlisted = Object.values(businessInventoryByType).reduce((sum, v) => sum + v.unlisted, 0)
+
+  const brandPerformance = useMemo(() => {
+    const brandNameById: Record<number, string> = Object.fromEntries(
+      brands.map((b: any) => [b.id, b.name])
+    )
+
+    // Most recent direction='in' deal_item per item (by deal_id)
+    const inDealItemByItemId: Record<number, any> = {}
+    dealItems.forEach((di) => {
+      if (di.direction !== 'in') return
+      const existing = inDealItemByItemId[di.item_id]
+      if (!existing || di.deal_id > existing.deal_id) inDealItemByItemId[di.item_id] = di
+    })
+
+    // Most recent direction='out' deal_item per item (by deal_id)
+    const outDealItemByItemId: Record<number, any> = {}
+    dealItems.forEach((di) => {
+      if (di.direction !== 'out') return
+      const existing = outDealItemByItemId[di.item_id]
+      if (!existing || di.deal_id > existing.deal_id) outDealItemByItemId[di.item_id] = di
+    })
+
+    const dealById: Record<number, any> = Object.fromEntries(deals.map((d) => [d.id, d]))
+
+    const brandData: Record<number, {
+      name: string
+      items: { roi: number; profit: number; daysHeld: number }[]
+    }> = {}
+
+    inventoryItems.forEach((item) => {
+      if (item.status !== 'sold') return
+
+      const valueIn = Number(item.value_in ?? 0)
+      if (valueIn <= 0) return
+
+      const outDi = outDealItemByItemId[item.id]
+      if (!outDi) return
+      const valueOut = Number(outDi.total_value ?? 0)
+
+      const inDi = inDealItemByItemId[item.id]
+      if (!inDi) return
+      const acquisitionDeal = dealById[inDi.deal_id]
+      if (!acquisitionDeal?.deal_date) return
+
+      if (!item.sold_date) return
+
+      const daysHeld = Math.round(
+        (new Date(item.sold_date).getTime() - new Date(acquisitionDeal.deal_date).getTime()) /
+        (1000 * 60 * 60 * 24)
+      )
+      if (daysHeld < 0) return
+
+      const roi = ((valueOut - valueIn) / valueIn) * 100
+      const profit = valueOut - valueIn
+      const brandId = item.brand_id
+
+      if (!brandData[brandId]) {
+        brandData[brandId] = { name: brandNameById[brandId] ?? `Brand ${brandId}`, items: [] }
+      }
+      brandData[brandId].items.push({ roi, profit, daysHeld })
+    })
+
+    return Object.values(brandData)
+      .filter((b) => b.items.length >= 2)
+      .map((b) => {
+        const soldQty = b.items.length
+        const avgRoi = b.items.reduce((sum, i) => sum + i.roi, 0) / soldQty
+        const avgProfit = b.items.reduce((sum, i) => sum + i.profit, 0) / soldQty
+        const avgDaysHeld = Math.round(b.items.reduce((sum, i) => sum + i.daysHeld, 0) / soldQty)
+        return { name: b.name, soldQty, avgRoi, avgProfit, avgDaysHeld }
+      })
+      .sort((a, b) => b.avgRoi - a.avgRoi)
+      .slice(0, 15)
+  }, [inventoryItems, dealItems, deals, brands])
 
   return (
     <div className="space-y-6">
@@ -347,6 +424,38 @@ export default function HomePage() {
               </table>
             </div>
           </section>
+          {brandPerformance.length > 0 && (
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Brand Performance</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900">Top brands by ROI</h2>
+              </div>
+              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3">Brand</th>
+                      <th className="px-4 py-3 text-right">Sold Qty</th>
+                      <th className="px-4 py-3 text-right">Avg ROI</th>
+                      <th className="px-4 py-3 text-right">Avg Profit</th>
+                      <th className="px-4 py-3 text-right">Avg Days Held</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {brandPerformance.map((row) => (
+                      <tr key={row.name}>
+                        <td className="px-4 py-3 font-medium text-slate-900">{row.name}</td>
+                        <td className="px-4 py-3 text-right text-slate-900">{row.soldQty}</td>
+                        <td className="px-4 py-3 text-right text-slate-900">{row.avgRoi.toFixed(1)}%</td>
+                        <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.avgProfit)}</td>
+                        <td className="px-4 py-3 text-right text-slate-900">{row.avgDaysHeld}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </>
       )}
     </div>
