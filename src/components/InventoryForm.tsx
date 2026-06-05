@@ -281,11 +281,18 @@ export default function InventoryForm({
   // Metrics
   const parsedEstimated = estimatedSoldValue ? Number(estimatedSoldValue) : null;
   const potentialReward = parsedEstimated != null && valueIn != null ? parsedEstimated - valueIn : null;
+  const potentialRoi = potentialReward != null && valueIn != null && valueIn > 0
+    ? (potentialReward / valueIn) * 100 : null;
   const realizedGain = valueOut != null && valueIn != null ? valueOut - valueIn : null;
+  const realizedRoi = realizedGain != null && valueIn != null && valueIn > 0
+    ? (realizedGain / valueIn) * 100 : null;
   const isOwned = existingItem?.status === 'owned' || existingItem?.status === 'listed';
   const isSoldOrTraded = existingItem?.status === 'sold' || existingItem?.status === 'traded';
   const showMetrics = !!itemId && !!existingItem && !hideSidebar;
   const fmt = (v: number | null) => (v != null ? `$${v.toFixed(2)}` : '—');
+  const fmtPct = (v: number | null) => (v != null ? `${v.toFixed(1)}%` : '—');
+  const metricColor = (v: number | null) =>
+    v == null ? 'text-slate-900' : v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-slate-900';
 
   const inputClass = 'h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100';
 
@@ -553,30 +560,44 @@ export default function InventoryForm({
                         <span className="text-sm text-slate-600">Estimated Sold</span>
                         <span className="text-sm font-medium text-slate-900">{fmt(parsedEstimated)}</span>
                       </div>
-                      <div className="flex items-center justify-between border-t border-slate-100 pt-3">
-                        <span className="text-sm font-medium text-slate-700">Potential Reward</span>
-                        <span className={`text-sm font-semibold ${
-                          potentialReward != null && potentialReward > 0 ? 'text-emerald-600' :
-                          potentialReward != null && potentialReward < 0 ? 'text-rose-600' :
-                          'text-slate-900'
-                        }`}>
-                          {fmt(potentialReward)}
-                        </span>
+                      <div className="space-y-3 border-t border-slate-100 pt-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-slate-700">Potential Reward</span>
+                          <span className={`text-sm font-semibold ${metricColor(potentialReward)}`}>
+                            {fmt(potentialReward)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-slate-700">Potential ROI</span>
+                          <span className={`text-sm font-semibold ${metricColor(potentialRoi)}`}>
+                            {fmtPct(potentialRoi)}
+                          </span>
+                        </div>
                       </div>
                     </>
                   )}
 
                   {isSoldOrTraded && (
-                    <div className="flex items-center justify-between border-t border-slate-100 pt-3">
-                      <span className="text-sm font-medium text-slate-700">Realized Gain</span>
-                      <span className={`text-sm font-semibold ${
-                        realizedGain != null && realizedGain > 0 ? 'text-emerald-600' :
-                        realizedGain != null && realizedGain < 0 ? 'text-rose-600' :
-                        'text-slate-900'
-                      }`}>
-                        {fmt(realizedGain)}
-                      </span>
-                    </div>
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-slate-600">Value Out</span>
+                        <span className="text-sm font-medium text-slate-900">{fmt(valueOut)}</span>
+                      </div>
+                      <div className="space-y-3 border-t border-slate-100 pt-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-slate-700">Realized Gain</span>
+                          <span className={`text-sm font-semibold ${metricColor(realizedGain)}`}>
+                            {fmt(realizedGain)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-slate-700">Realized ROI</span>
+                          <span className={`text-sm font-semibold ${metricColor(realizedRoi)}`}>
+                            {fmtPct(realizedRoi)}
+                          </span>
+                        </div>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
