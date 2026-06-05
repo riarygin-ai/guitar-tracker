@@ -7,7 +7,6 @@ import {
   createDealItem,
   createCashFlow,
   getBrands,
-  getInventoryItemById,
   getLatestCashFlow,
   searchInventoryItems,
   recalculateCashFlowBalancesFrom,
@@ -110,7 +109,9 @@ export default function BuyOperationForm() {
     }, 300);
   };
 
-  const handleItemCreated = (item: InventoryItem) => {
+  const handleItemCreated = async (item: InventoryItem) => {
+    const brandResult = await getBrands();
+    if (!brandResult.error) setBrands(brandResult.data || []);
     setSelectedItem(item);
     setShowItemForm(false);
     setSuccessMessage('New inventory item created and selected.');
@@ -180,23 +181,15 @@ export default function BuyOperationForm() {
     }
 
     // --- Cash flow record ---
-    const itemResult = await getInventoryItemById(selectedItem.id);
-    let description = 'Purchase';
-    if (itemResult.data) {
-      const item = itemResult.data;
-      const brandName = brandMap[item.brand_id] ?? ''; 
-      description = 'Purchase: ' + [brandName, item.model, item.year, item.color]
-        .filter(Boolean)
-    .join(' ');
-}
+    const brandName = brandMap[selectedItem.brand_id] ?? '';
+    const description = [brandName, selectedItem.model].filter(Boolean).join(' ');
+    const cfDescription = description ? `Purchase: ${description}` : 'Purchase';
 
 const latestCfResult = await getLatestCashFlow();
 const openingBalance = latestCfResult.data?.closing_balance ?? 0;
 const cashIn = 0;
 const cashOut = parsedCashPaid;
 const closingBalance = openingBalance - cashOut + cashIn;
-
-console.log('Cash flow insert:', { openingBalance, closingBalance, description });
 
 const cfPayload: NewCashFlow = {
   deal_id: dealId,
@@ -205,7 +198,7 @@ const cfPayload: NewCashFlow = {
   cash_in: cashIn,
   cash_out: cashOut,
   closing_balance: closingBalance,
-  description,
+  description: cfDescription,
 };
 
 const cfResult = await createCashFlow(cfPayload);
