@@ -13,6 +13,7 @@ export default function HomePage() {
   const [inventoryExpenses, setInventoryExpenses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
 
   useEffect(() => {
     async function loadData() {
@@ -111,6 +112,26 @@ export default function HomePage() {
   const monthlyRows = Object.values(monthlyRowsMap)
     .filter((row) => row.profit !== 0 || row.expenses !== 0)
     .sort((a, b) => b.month.localeCompare(a.month))
+
+  const availableYears = useMemo(() => {
+    const yearSet = new Set(monthlyRows.map((row) => parseInt(row.month.slice(0, 4))))
+    yearSet.add(new Date().getFullYear())
+    return Array.from(yearSet).sort((a, b) => b - a)
+  }, [monthlyRows])
+
+  const filteredMonthlyRows = useMemo(
+    () => monthlyRows.filter((row) => row.month.startsWith(String(selectedYear))),
+    [monthlyRows, selectedYear]
+  )
+
+  const monthlyTotals = useMemo(
+    () => ({
+      cashReceived: filteredMonthlyRows.reduce((sum, r) => sum + r.cashReceived, 0),
+      dealsCount: filteredMonthlyRows.reduce((sum, r) => sum + r.dealsCount, 0),
+      profit: filteredMonthlyRows.reduce((sum, r) => sum + r.profit, 0),
+    }),
+    [filteredMonthlyRows]
+  )
 
   const navigateToMonthOperations = (month: string) => {
     const [year, monthNumber] = month.split('-').map(Number)
@@ -270,9 +291,20 @@ export default function HomePage() {
           )}
 
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Monthly performance</p>
-              <h2 className="mt-2 text-xl font-semibold text-slate-900">Monthly performance</h2>
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Monthly performance</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900">Monthly performance</h2>
+              </div>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              >
+                {availableYears.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
             </div>
             <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
               <table className="w-full text-left text-sm">
@@ -285,26 +317,32 @@ export default function HomePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {monthlyRows.map((row) => (
+                  {filteredMonthlyRows.map((row) => (
                     <tr
-                    key={row.month}
-                    role="button"
-                    tabIndex={0}
-                    className="cursor-pointer transition hover:bg-slate-50"
-                    onClick={() => navigateToMonthOperations(row.month)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        navigateToMonthOperations(row.month)
-                      }
-                    }}
-                  >
+                      key={row.month}
+                      role="button"
+                      tabIndex={0}
+                      className="cursor-pointer transition hover:bg-slate-50"
+                      onClick={() => navigateToMonthOperations(row.month)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          navigateToMonthOperations(row.month)
+                        }
+                      }}
+                    >
                       <td className="px-4 py-3 font-medium text-slate-900">{row.month}</td>
                       <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.cashReceived)}</td>
                       <td className="px-4 py-3 text-right text-slate-900">{row.dealsCount}</td>
                       <td className="px-4 py-3 text-right text-slate-900">{formatMoney(row.profit)}</td>
                     </tr>
                   ))}
+                  <tr className="bg-slate-50 font-semibold">
+                    <td className="px-4 py-3 text-slate-900">Total</td>
+                    <td className="px-4 py-3 text-right text-slate-900">{formatMoney(monthlyTotals.cashReceived)}</td>
+                    <td className="px-4 py-3 text-right text-slate-900">{monthlyTotals.dealsCount}</td>
+                    <td className="px-4 py-3 text-right text-slate-900">{formatMoney(monthlyTotals.profit)}</td>
+                  </tr>
                 </tbody>
               </table>
             </div>
