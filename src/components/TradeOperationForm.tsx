@@ -370,11 +370,15 @@ export default function TradeOperationForm() {
             const firstOutgoingItem = outgoingItems[0];
             const firstIncomingItem = incomingItems[0];
 
+            const describeItem = (item: InventoryItem) => {
+                const brand = brandMap[item.brand_id];
+                return brand ? `${brand} ${item.model}` : item.model;
+            };
             const tradeDescription =
                 firstOutgoingItem && firstIncomingItem
-                    ? `Trade: ${firstOutgoingItem.item.model} → ${firstIncomingItem.item.model}`
+                    ? `Trade: ${describeItem(firstOutgoingItem.item)} → ${describeItem(firstIncomingItem.item)}`
                     : firstOutgoingItem
-                        ? `Trade: ${firstOutgoingItem.item.model}`
+                        ? `Trade: ${describeItem(firstOutgoingItem.item)}`
                         : 'Trade cash adjustment';
 
             const openingBalance =
