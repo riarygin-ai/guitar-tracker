@@ -39,7 +39,7 @@ export default function OperationDetailPage() {
   const [editedDeal, setEditedDeal] = useState<Partial<Deal> | null>(null);
   const [editedCashFlows, setEditedCashFlows] = useState<Record<number, Partial<CashFlow>>>({});
   const [editedExpenses, setEditedExpenses] = useState<Record<number, Partial<InventoryExpense>>>({});
-  const [editedDealItems, setEditedDealItems] = useState<Record<number, { trade_value: number; total_value: number }>>({});
+  const [editedDealItems, setEditedDealItems] = useState<Record<number, { total_value: number }>>({});
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -96,7 +96,7 @@ export default function OperationDetailPage() {
       dealItems.forEach((di) => {
         setEditedDealItems((prev) => ({
           ...prev,
-          [di.id]: { trade_value: Number(di.trade_value ?? 0), total_value: Number(di.total_value ?? 0) },
+          [di.id]: { total_value: Number(di.total_value ?? 0) },
         }));
       });
     }
@@ -141,12 +141,10 @@ export default function OperationDetailPage() {
           cashReceived,
           outgoingItems: outgoing.map((di) => ({
             item_id: di.item_id,
-            trade_value: editedDealItems[di.id]?.total_value ?? Number(di.trade_value ?? 0),
             total_value: editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0),
           })),
           incomingItems: incoming.map((di) => ({
             item_id: di.item_id,
-            trade_value: editedDealItems[di.id]?.total_value ?? Number(di.trade_value ?? 0),
             total_value: editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0),
           })),
           cfTransactionDate: cashFlowRow
@@ -516,7 +514,7 @@ export default function OperationDetailPage() {
                               onChange={(e) =>
                                 setEditedDealItems((prev) => ({
                                   ...prev,
-                                  [di.id]: { trade_value: Number(e.target.value), total_value: Number(e.target.value) },
+                                  [di.id]: { total_value: Number(e.target.value) },
                                 }))
                               }
                               className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
@@ -577,7 +575,7 @@ export default function OperationDetailPage() {
                               onChange={(e) =>
                                 setEditedDealItems((prev) => ({
                                   ...prev,
-                                  [di.id]: { trade_value: Number(e.target.value), total_value: Number(e.target.value) },
+                                  [di.id]: { total_value: Number(e.target.value) },
                                 }))
                               }
                               className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"

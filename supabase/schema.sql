@@ -28,8 +28,6 @@ drop extension if exists "pg_net";
     "deal_id" bigint not null,
     "item_id" bigint not null,
     "direction" text not null,
-    "cash_value" numeric(12,2),
-    "trade_value" numeric(12,2),
     "total_value" numeric(12,2),
     "notes" text,
     "created_at" timestamp with time zone not null default now()

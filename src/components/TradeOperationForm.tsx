@@ -324,12 +324,10 @@ export default function TradeOperationForm() {
             cashReceived: parsedCashIn,
             outgoingItems: outgoingItems.map((ti) => ({
                 item_id: ti.item.id,
-                trade_value: Number(ti.value || 0),
                 total_value: Number(ti.value || 0),
             })),
             incomingItems: incomingItems.map((ti) => ({
                 item_id: ti.item.id,
-                trade_value: Number(ti.value || 0),
                 total_value: Number(ti.value || 0),
             })),
             cfDescription: parsedCashOut > 0 || parsedCashIn > 0 ? cfDescription : null,

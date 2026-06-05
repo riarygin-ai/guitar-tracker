@@ -27,8 +27,8 @@ BEGIN
     p_notes          => 'Test edit',
     p_cash_paid      => 0,
     p_cash_received  => 0,
-    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'trade_value', v_out_val, 'total_value', v_out_val)),
-    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item, 'trade_value', v_in_val, 'total_value', v_in_val))
+    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'total_value', v_out_val)),
+    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item, 'total_value', v_in_val))
   );
 
   ASSERT (SELECT channel FROM deals WHERE id = v_deal_id) = 'Facebook', 'Channel should be updated';
@@ -59,8 +59,8 @@ BEGIN
     p_deal_date      => v_date,
     p_cash_paid      => 0,
     p_cash_received  => 0,
-    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'trade_value', 500, 'total_value', 500)),
-    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'trade_value', 500, 'total_value', 500))
+    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'total_value', 500)),
+    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'total_value', 500))
   );
 
   ASSERT (SELECT total_value FROM deal_items WHERE deal_id = v_deal_id AND direction = 'out' LIMIT 1) = 500, 'Outgoing value should be 500';
@@ -92,8 +92,8 @@ BEGIN
     p_deal_date      => v_date,
     p_cash_paid      => 100,
     p_cash_received  => 0,
-    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'trade_value', 400, 'total_value', 500)),
-    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'trade_value', 500, 'total_value', 500))
+    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'total_value', 400)),
+    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'total_value', 500))
   );
 
   SELECT COUNT(*) INTO v_cf_count FROM cash_flow WHERE deal_id = v_deal_id;
@@ -126,8 +126,8 @@ BEGIN
     p_deal_date      => v_date,
     p_cash_paid      => 0,
     p_cash_received  => 0,
-    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'trade_value', 600, 'total_value', 600)),
-    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'trade_value', 600, 'total_value', 600))
+    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'total_value', 600)),
+    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'total_value', 600))
   );
 
   SELECT COUNT(*) INTO v_cf_count FROM cash_flow WHERE deal_id = v_deal_id;
@@ -159,8 +159,8 @@ BEGIN
       p_deal_date      => v_date,
       p_cash_paid      => 0,
       p_cash_received  => 0,
-      p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'trade_value', 500, 'total_value', 500)),
-      p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'trade_value', 600, 'total_value', 600))
+      p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'total_value', 500)),
+      p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'total_value', 600))
     );
     RAISE EXCEPTION 'Should have thrown a balance error';
   EXCEPTION
@@ -218,8 +218,8 @@ BEGIN
     p_deal_date           => v_cf_before.transaction_date - interval '10 days',
     p_cash_paid           => v_cf_before.cash_out,
     p_cash_received       => v_cf_before.cash_in,
-    p_outgoing_items      => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'trade_value', v_cf_before.cash_out, 'total_value', v_cf_before.cash_out)),
-    p_incoming_items      => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'trade_value', v_cf_before.cash_out, 'total_value', v_cf_before.cash_out)),
+    p_outgoing_items      => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'total_value', v_cf_before.cash_out)),
+    p_incoming_items      => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'total_value', v_cf_before.cash_out)),
     p_cf_transaction_date => v_cf_before.transaction_date - interval '10 days'
   );
 
@@ -253,8 +253,8 @@ BEGIN
     p_deal_date      => v_date,
     p_cash_paid      => 0,
     p_cash_received  => 0,
-    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'trade_value', 400, 'total_value', 400)),
-    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'trade_value', 400, 'total_value', 400))
+    p_outgoing_items => jsonb_build_array(jsonb_build_object('item_id', v_out_item, 'total_value', 400)),
+    p_incoming_items => jsonb_build_array(jsonb_build_object('item_id', v_in_item,  'total_value', 400))
   );
 
   SELECT status INTO v_status FROM inventory_items WHERE id = v_out_item;

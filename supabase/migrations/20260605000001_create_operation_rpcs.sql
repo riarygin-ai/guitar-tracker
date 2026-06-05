@@ -89,8 +89,8 @@ BEGIN
   VALUES ('purchase', p_deal_date, p_channel, p_cash_paid, 0, 0, p_notes)
   RETURNING id INTO v_deal_id;
 
-  INSERT INTO deal_items (deal_id, item_id, direction, cash_value, trade_value, total_value)
-  VALUES (v_deal_id, p_item_id, 'in', p_cash_paid, 0, p_cash_paid);
+  INSERT INTO deal_items (deal_id, item_id, direction, total_value)
+  VALUES (v_deal_id, p_item_id, 'in', p_cash_paid);
 
   INSERT INTO cash_flow (deal_id, transaction_date, opening_balance, cash_in, cash_out, closing_balance, description)
   VALUES (v_deal_id, p_deal_date, 0, 0, p_cash_paid, 0, p_cf_description)
@@ -135,8 +135,8 @@ BEGIN
   VALUES ('sale', p_deal_date, p_channel, 0, p_cash_received, 0, p_notes)
   RETURNING id INTO v_deal_id;
 
-  INSERT INTO deal_items (deal_id, item_id, direction, cash_value, trade_value, total_value)
-  VALUES (v_deal_id, p_item_id, 'out', p_cash_received, 0, p_cash_received);
+  INSERT INTO deal_items (deal_id, item_id, direction, total_value)
+  VALUES (v_deal_id, p_item_id, 'out', p_cash_received);
 
   UPDATE inventory_items
   SET status = 'sold', sold_date = p_deal_date
@@ -201,13 +201,11 @@ BEGIN
   RETURNING id INTO v_deal_id;
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_outgoing_items) LOOP
-    INSERT INTO deal_items (deal_id, item_id, direction, cash_value, trade_value, total_value)
+    INSERT INTO deal_items (deal_id, item_id, direction, total_value)
     VALUES (
       v_deal_id,
       (v_item->>'item_id')::bigint,
       'out',
-      0,
-      (v_item->>'trade_value')::numeric,
       (v_item->>'total_value')::numeric
     );
 
@@ -217,13 +215,11 @@ BEGIN
   END LOOP;
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_incoming_items) LOOP
-    INSERT INTO deal_items (deal_id, item_id, direction, cash_value, trade_value, total_value)
+    INSERT INTO deal_items (deal_id, item_id, direction, total_value)
     VALUES (
       v_deal_id,
       (v_item->>'item_id')::bigint,
       'in',
-      0,
-      (v_item->>'trade_value')::numeric,
       (v_item->>'total_value')::numeric
     );
   END LOOP;

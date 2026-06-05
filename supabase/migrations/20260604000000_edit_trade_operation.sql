@@ -10,8 +10,8 @@
 --   p_notes                - new notes (nullable)
 --   p_cash_paid            - new cash paid by us (>= 0)
 --   p_cash_received        - new cash received by us (>= 0)
---   p_outgoing_items       - jsonb array [{item_id, trade_value, total_value}]
---   p_incoming_items       - jsonb array [{item_id, trade_value, total_value}]
+--   p_outgoing_items       - jsonb array [{item_id, total_value}]
+--   p_incoming_items       - jsonb array [{item_id, total_value}]
 --   p_cf_transaction_date  - cash flow date (defaults to p_deal_date when null)
 --   p_cf_description       - cash flow description (nullable)
 --
@@ -96,13 +96,11 @@ BEGIN
 
   -- 7. Re-insert outgoing deal_items and mark inventory as traded
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_outgoing_items) LOOP
-    INSERT INTO deal_items (deal_id, item_id, direction, cash_value, trade_value, total_value)
+    INSERT INTO deal_items (deal_id, item_id, direction, total_value)
     VALUES (
       p_deal_id,
       (v_item->>'item_id')::integer,
       'out',
-      0,
-      (v_item->>'trade_value')::numeric,
       (v_item->>'total_value')::numeric
     );
 
@@ -113,13 +111,11 @@ BEGIN
 
   -- 8. Re-insert incoming deal_items and ensure inventory is owned
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_incoming_items) LOOP
-    INSERT INTO deal_items (deal_id, item_id, direction, cash_value, trade_value, total_value)
+    INSERT INTO deal_items (deal_id, item_id, direction, total_value)
     VALUES (
       p_deal_id,
       (v_item->>'item_id')::integer,
       'in',
-      0,
-      (v_item->>'trade_value')::numeric,
       (v_item->>'total_value')::numeric
     );
   END LOOP;

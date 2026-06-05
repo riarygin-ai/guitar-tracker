@@ -262,8 +262,8 @@ export async function createTradeOperation(params: {
   notes?: string | null;
   cashPaid?: number;
   cashReceived?: number;
-  outgoingItems: { item_id: number; trade_value: number; total_value: number }[];
-  incomingItems: { item_id: number; trade_value: number; total_value: number }[];
+  outgoingItems: { item_id: number; total_value: number }[];
+  incomingItems: { item_id: number; total_value: number }[];
   cfTransactionDate?: string | null;
   cfDescription?: string | null;
 }) {
@@ -287,8 +287,8 @@ export async function editTradeOperation(params: {
   notes: string | null;
   cashPaid: number;
   cashReceived: number;
-  outgoingItems: { item_id: number; trade_value: number; total_value: number }[];
-  incomingItems: { item_id: number; trade_value: number; total_value: number }[];
+  outgoingItems: { item_id: number; total_value: number }[];
+  incomingItems: { item_id: number; total_value: number }[];
   cfTransactionDate: string | null;
   cfDescription: string | null;
 }) {

@@ -52,8 +52,6 @@ export interface DealItem {
   deal_id: number;
   item_id: number;
   direction: Direction;
-  cash_value: number | null;
-  trade_value: number | null;
   total_value: number | null;
   notes: string | null;
   created_at: string;
