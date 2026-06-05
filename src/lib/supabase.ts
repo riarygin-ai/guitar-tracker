@@ -68,7 +68,14 @@ export async function searchInventoryItems(query: string) {
     .from('inventory_items_search')
     .select('*')
     .not('status', 'in', '("sold","traded")')
-    .or(`brand_name.ilike.%${trimmed}%,model.ilike.%${trimmed}%,color.ilike.%${trimmed}%`)
+    .or(
+      `brand_name.ilike.%${trimmed}%,` +
+      `model.ilike.%${trimmed}%,` +
+      `color.ilike.%${trimmed}%,` +
+      `year::text.ilike.%${trimmed}%,` +
+      `serial_number.ilike.%${trimmed}%,` +
+      `notes.ilike.%${trimmed}%`
+    )
     .order('created_at', { ascending: false })
     .limit(20);
 }

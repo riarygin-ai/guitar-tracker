@@ -67,7 +67,6 @@ export default function BuyOperationForm() {
     loadData();
   }, []);
 
-  /** Debounced search: queries DB for model/year/color, then also matches brand name client-side */
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -81,25 +80,7 @@ export default function BuyOperationForm() {
     searchTimerRef.current = setTimeout(async () => {
       setSearching(true);
       const result = await searchInventoryItems(value);
-      let items = result.data ?? [];
-
-      // Also match items whose brand name matches but model/color/year didn't
-      const q = value.trim().toLowerCase();
-      const brandMatchIds = brands
-        .filter((b) => b.name.toLowerCase().includes(q))
-        .map((b) => b.id);
-
-      if (brandMatchIds.length > 0) {
-        // Fetch all items (limited) and merge brand-matched ones
-        const allResult = await searchInventoryItems('');
-        const allItems = allResult.data ?? [];
-        const brandMatched = allItems.filter(
-          (i) => brandMatchIds.includes(i.brand_id) && !items.some((existing) => existing.id === i.id)
-        );
-        items = [...items, ...brandMatched];
-      }
-
-      setSearchResults(items);
+      setSearchResults(result.data ?? []);
       setHasSearched(true);
       setSearching(false);
     }, 300);

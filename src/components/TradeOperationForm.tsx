@@ -107,35 +107,11 @@ export default function TradeOperationForm() {
             setSearching(true)
 
             const result = await searchInventoryItems(value)
-            let items = result.data ?? []
-
-            const q = value.trim().toLowerCase()
-            const brandMatchIds = brands
-                .filter((brand) => brand.name.toLowerCase().includes(q))
-                .map((brand) => brand.id)
-
-            if (brandMatchIds.length > 0) {
-                const allResult = await searchInventoryItems('')
-                const allItems = allResult.data ?? []
-
-                const brandMatched = allItems.filter(
-                    (item) =>
-                        brandMatchIds.includes(item.brand_id) &&
-                        !items.some((existing) => existing.id === item.id)
-                )
-
-                items = [...items, ...brandMatched]
-            }
-
-            if (outgoingItems.length > 0) {
-                const selectedOutgoingIds = outgoingItems.map((tradeItem) => tradeItem.item.id)
-                items = items.filter((item) => !selectedOutgoingIds.includes(item.id))
-            }
-
-            if (incomingItems.length > 0) {
-                const selectedIncomingIds = incomingItems.map((tradeItem) => tradeItem.item.id)
-                items = items.filter((item) => !selectedIncomingIds.includes(item.id))
-            }
+            const excludedIds = new Set([
+                ...outgoingItems.map((t) => t.item.id),
+                ...incomingItems.map((t) => t.item.id),
+            ])
+            const items = (result.data ?? []).filter((item) => !excludedIds.has(item.id))
 
             setSearchResults(items)
             setHasSearched(true)
@@ -198,49 +174,11 @@ export default function TradeOperationForm() {
             setIncomingSearching(true)
 
             const result = await searchInventoryItems(value)
-            let items = result.data ?? []
-
-            const q = value.trim().toLowerCase()
-            const brandMatchIds = brands
-                .filter((brand) => brand.name.toLowerCase().includes(q))
-                .map((brand) => brand.id)
-
-            if (brandMatchIds.length > 0) {
-                const allResult = await searchInventoryItems('')
-                const allItems = allResult.data ?? []
-
-                const brandMatched = allItems.filter(
-                    (item) =>
-                        brandMatchIds.includes(item.brand_id) &&
-                        !items.some((existing) => existing.id === item.id)
-                )
-
-                items = [...items, ...brandMatched]
-            }
-
-            if (outgoingItems.length > 0) {
-                const selectedOutgoingIds = outgoingItems.map(
-                    (tradeItem) => tradeItem.item.id
-                )
-
-                items = items.filter(
-                    (item) => !selectedOutgoingIds.includes(item.id)
-                )
-            }
-
-            if (incomingItems.length > 0) {
-                const selectedIncomingIds = incomingItems.map(
-                    (tradeItem) => tradeItem.item.id
-                )
-
-                items = items.filter(
-                    (item) => !selectedIncomingIds.includes(item.id)
-                )
-            }
-            if (incomingItems.length > 0) {
-                const selectedIncomingIds = incomingItems.map((tradeItem) => tradeItem.item.id)
-                items = items.filter((item) => !selectedIncomingIds.includes(item.id))
-            }
+            const excludedIds = new Set([
+                ...outgoingItems.map((t) => t.item.id),
+                ...incomingItems.map((t) => t.item.id),
+            ])
+            const items = (result.data ?? []).filter((item) => !excludedIds.has(item.id))
 
             setIncomingSearchResults(items)
             setIncomingHasSearched(true)
