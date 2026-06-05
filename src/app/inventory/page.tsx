@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getBrands, getDealItems, getInventoryItems, getItemAcquisitionDates } from '@/lib/supabase';
 import type { Brand, DealItem, InventoryItemWithValue, Status } from '@/types';
@@ -20,19 +20,29 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize filter state from URL params; fall back to defaults
-  const [search, setSearch] = useState(() => searchParams.get('search') ?? '');
-  const [selectedStatuses, setSelectedStatuses] = useState<Status[]>(() => {
-    const s = searchParams.get('status');
-    return s ? (s.split(',').filter(Boolean) as Status[]) : ['owned', 'listed'];
-  });
-  const [selectedItemTypes, setSelectedItemTypes] = useState<string[]>(() => {
-    const t = searchParams.get('type');
-    return t ? t.split(',').filter(Boolean) : ['guitar'];
-  });
+  // Defaults used during SSR (searchParams is empty at build time for static pages)
+  const [search, setSearch] = useState('');
+  const [selectedStatuses, setSelectedStatuses] = useState<Status[]>(['owned', 'listed']);
+  const [selectedItemTypes, setSelectedItemTypes] = useState<string[]>(['guitar']);
 
-  // Keep URL in sync with filter state so links to items carry the current context
+  // After the client mounts, read the real URL params and set state from them.
+  // The ref prevents the URL-sync effect below from firing before this runs.
+  const isInitializedRef = useRef(false);
   useEffect(() => {
+    if (isInitializedRef.current) return;
+    const s = searchParams.get('status');
+    const t = searchParams.get('type');
+    const q = searchParams.get('search');
+    setSearch(q ?? '');
+    setSelectedStatuses(s ? (s.split(',').filter(Boolean) as Status[]) : ['owned', 'listed']);
+    setSelectedItemTypes(t ? t.split(',').filter(Boolean) : ['guitar']);
+    isInitializedRef.current = true;
+  }, [searchParams]);
+
+  // Keep URL in sync with filter state so links to items carry the current context.
+  // Guarded by isInitializedRef so it never overwrites incoming URL params on first render.
+  useEffect(() => {
+    if (!isInitializedRef.current) return;
     const params = new URLSearchParams();
     if (search) params.set('search', search);
     if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
