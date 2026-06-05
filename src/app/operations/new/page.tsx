@@ -8,16 +8,16 @@ import TradeOperationForm from '@/components/TradeOperationForm';
 import ExpenseOperationForm from '@/components/ExpenseOperationForm';
 
 const tabs = [
+  { id: 'trade', label: 'Trade' },
   { id: 'buy', label: 'Buy' },
   { id: 'sell', label: 'Sell' },
-  { id: 'trade', label: 'Trade' },
   { id: 'expense', label: 'Expense' },
 ] as const;
 
 type OperationTab = (typeof tabs)[number]['id'];
 
 export default function NewOperationPage() {
-  const [activeTab, setActiveTab] = useState<OperationTab>('buy');
+  const [activeTab, setActiveTab] = useState<OperationTab>('trade');
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">

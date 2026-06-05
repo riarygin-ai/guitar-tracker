@@ -21,6 +21,7 @@ export default function TradeOperationForm() {
     const [brands, setBrands] = useState<Brand[]>([])
 
     const [outgoingItems, setOutgoingItems] = useState<TradeItem[]>([])
+    const [showOutgoingForm, setShowOutgoingForm] = useState(false)
 
     const [incomingItems, setIncomingItems] = useState<TradeItem[]>([])
     const [showIncomingForm, setShowIncomingForm] = useState(false)
@@ -140,6 +141,22 @@ export default function TradeOperationForm() {
             setHasSearched(true)
             setSearching(false)
         }, 300)
+    }
+
+    const handleOutgoingItemCreated = async (item: InventoryItem) => {
+        const brandResult = await getBrands()
+        if (!brandResult.error) setBrands(brandResult.data || [])
+
+        setOutgoingItems((current) => [
+            ...current,
+            {
+                item,
+                value: item.estimated_sold_value != null ? String(item.estimated_sold_value) : '',
+            },
+        ])
+        setShowOutgoingForm(false)
+        setSuccessMessage('Outgoing item created and selected.')
+        setError(null)
     }
 
     const handleIncomingItemCreated = async (item: InventoryItem) => {
@@ -436,14 +453,6 @@ export default function TradeOperationForm() {
 
     return (
         <div className="space-y-6">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Operations</p>
-                <h2 className="mt-2 text-2xl font-semibold text-slate-900">Trade operation</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Trade v1: select one outgoing inventory item and create one incoming item.
-                </p>
-            </div>
-
             <div className="grid gap-6">
                 {/* What I give */}
                 <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -590,6 +599,33 @@ export default function TradeOperationForm() {
                                     </div>
                                 ))}
                             </div>
+                        )}
+
+                        {showOutgoingForm ? (
+                            <>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                                    <InventoryForm
+                                        onCreated={handleOutgoingItemCreated}
+                                        hideHeader
+                                        hideSidebar
+                                    />
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowOutgoingForm(false)}
+                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                >
+                                    Cancel
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => setShowOutgoingForm(true)}
+                                className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+                            >
+                                Add item
+                            </button>
                         )}
 
                         <div className="space-y-2">
@@ -825,28 +861,8 @@ export default function TradeOperationForm() {
 
                         <div className="grid gap-3 text-sm text-slate-600">
                             <div className="rounded-2xl bg-white p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Value out</p>
-                                <p className="mt-2 font-medium text-slate-900">${outgoingTotal.toFixed(2)}</p>
-                            </div>
-
-                            <div className="rounded-2xl bg-white p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash out</p>
-                                <p className="mt-2 font-medium text-slate-900">${cashOutTotal.toFixed(2)}</p>
-                            </div>
-
-                            <div className="rounded-2xl bg-white p-4">
                                 <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Total given</p>
                                 <p className="mt-2 font-semibold text-slate-900">${totalGiven.toFixed(2)}</p>
-                            </div>
-
-                            <div className="rounded-2xl bg-white p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Value in</p>
-                                <p className="mt-2 font-medium text-slate-900">${incomingTotal.toFixed(2)}</p>
-                            </div>
-
-                            <div className="rounded-2xl bg-white p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash in</p>
-                                <p className="mt-2 font-medium text-slate-900">${cashInTotal.toFixed(2)}</p>
                             </div>
 
                             <div className="rounded-2xl bg-white p-4">
@@ -856,12 +872,8 @@ export default function TradeOperationForm() {
 
                             <div className="rounded-2xl bg-white p-4">
                                 <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Trade balance</p>
-
-                                <p
-                                    className={`mt-2 font-semibold ${isBalanced ? 'text-emerald-700' : 'text-rose-700'
-                                        }`}
-                                >
-                                    {isBalanced ? 'Balanced' : `$${difference.toFixed(2)}`}
+                                <p className={`mt-2 font-semibold ${isBalanced ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                    {isBalanced ? 'Balanced' : `Off by $${Math.abs(difference).toFixed(2)}`}
                                 </p>
                             </div>
                         </div>
@@ -880,6 +892,12 @@ export default function TradeOperationForm() {
                     </div>
                 )}
 
+                {!isBalanced && (outgoingItems.length > 0 || incomingItems.length > 0) && (
+                    <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                        Trade must be balanced before saving.
+                    </div>
+                )}
+
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                     <button
                         type="button"
@@ -890,6 +908,7 @@ export default function TradeOperationForm() {
                             setIncomingSearchResults([])
                             setIncomingHasSearched(false)
                             setShowIncomingForm(false)
+                            setShowOutgoingForm(false)
                             setSearchQuery('')
                             setSearchResults([])
                             setHasSearched(false)
@@ -908,7 +927,7 @@ export default function TradeOperationForm() {
                     <button
                         type="button"
                         onClick={handleSubmit}
-                        disabled={saving}
+                        disabled={saving || !isBalanced}
                         className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
                     >
                         {saving ? 'Saving...' : 'Save trade'}
