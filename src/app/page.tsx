@@ -217,7 +217,7 @@ export default function HomePage() {
     }> = {}
 
     inventoryItems.forEach((item) => {
-      if (item.status !== 'sold') return
+      if (item.status !== 'sold' && item.status !== 'traded') return
 
       const valueIn = Number(item.value_in ?? 0)
       if (valueIn <= 0) return
