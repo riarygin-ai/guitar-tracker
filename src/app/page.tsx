@@ -180,46 +180,16 @@ export default function HomePage() {
         <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6 text-rose-700 shadow-sm">{error}</div>
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Cash Balance</p>
-              <p className="mt-3 text-2xl font-semibold text-slate-900">{formatMoney(currentCash)}</p>
-            </div>
-          </div>
-
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Inventory Count</p>
-              <h2 className="mt-2 text-xl font-semibold text-slate-900">By item type</h2>
-            </div>
-            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Item Type</th>
-                    <th className="px-4 py-3 text-right">Count</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {inventoryCountTypes.map((type) => (
-                    <tr key={type}>
-                      <td className="px-4 py-3 font-medium text-slate-900">{type}</td>
-                      <td className="px-4 py-3 text-right text-slate-900">{inventoryCountByType[type]}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-slate-50 font-semibold">
-                    <td className="px-4 py-3 text-slate-900">Total</td>
-                    <td className="px-4 py-3 text-right text-slate-900">{totalInventoryCount}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Current Inventory</p>
-              <h2 className="mt-2 text-xl font-semibold text-slate-900">By item type</h2>
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Current Inventory</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900">By item type</h2>
+              </div>
+              <div className="text-right">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cash Balance</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">{formatMoney(currentCash)}</p>
+              </div>
             </div>
             <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
               <table className="w-full text-left text-sm">
