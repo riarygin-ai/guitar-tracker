@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { createInventoryExpense, searchInventoryItems, createCashFlow, getLatestCashFlow, createDeal, recalculateCashFlowBalancesFrom } from '@/lib/supabase';
+import { createExpenseOperation, searchInventoryItems } from '@/lib/supabase';
 import type { InventorySearchItem } from '@/types';
 
 export default function ExpenseOperationForm() {
@@ -75,67 +75,19 @@ export default function ExpenseOperationForm() {
         const parsedAmount = Number(amount)
         const expenseDateValue = expenseDate || new Date().toISOString().slice(0, 10)
 
-        const dealResult = await createDeal({
-            deal_type: 'expense',
-            deal_date: expenseDateValue,
-            channel: null,
-            cash_received: 0,
-            cash_paid: parsedAmount,
-            fees: 0,
-            notes: notes.trim(),
-        })
-
-        if (dealResult.error || !dealResult.data) {
-            setSaving(false)
-            setError('Could not create expense deal.')
-            return
-        }
-
-        const deal = dealResult.data
-
-        const result = await createInventoryExpense({
-            deal_id: deal.id,
-            item_id: selectedItem?.id ?? null,
-            expense_date: expenseDateValue,
+        const result = await createExpenseOperation({
+            expenseDate: expenseDateValue,
             amount: parsedAmount,
             notes: notes.trim(),
+            itemId: selectedItem?.id ?? null,
+            cfDescription: `Expense: ${notes.trim()}`,
         })
+
         setSaving(false);
 
         if (result.error) {
             setError('Could not save expense.');
             return;
-        }
-
-        const latestCashFlowResult = await getLatestCashFlow()
-
-        const openingBalance =
-            latestCashFlowResult.data?.closing_balance != null
-                ? Number(latestCashFlowResult.data.closing_balance)
-                : 0
-
-        const cashFlowResult = await createCashFlow({
-            deal_id: deal.id,
-            transaction_date: expenseDateValue,
-            opening_balance: openingBalance,
-            cash_in: 0,
-            cash_out: parsedAmount,
-            closing_balance: openingBalance - parsedAmount,
-            description: `Expense: ${notes.trim()}`,
-        })
-
-        if (cashFlowResult.error || !cashFlowResult.data) {
-            setError('Expense saved, but cash flow entry failed.')
-            return
-        }
-
-        const recalcResult = await recalculateCashFlowBalancesFrom(
-            cashFlowResult.data.id
-        )
-
-        if (recalcResult.error) {
-            setError('Expense saved, but cash flow balance recalculation failed.')
-            return
         }
 
         setAmount('')

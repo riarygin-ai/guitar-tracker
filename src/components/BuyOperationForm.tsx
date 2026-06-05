@@ -3,15 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import InventoryForm from '@/components/InventoryForm';
 import {
-  createDeal,
-  createDealItem,
-  createCashFlow,
+  createBuyOperation,
   getBrands,
-  getLatestCashFlow,
   searchInventoryItems,
-  recalculateCashFlowBalancesFrom,
 } from '@/lib/supabase';
-import type { Brand, DealType, Direction, InventoryItem, NewCashFlow, NewDeal, NewDealItem } from '@/types';
+import type { Brand, InventoryItem } from '@/types';
 
 const channelOptions = [
   'Kijiji',
@@ -144,81 +140,26 @@ export default function BuyOperationForm() {
 
     setSaving(true);
 
-    const dealPayload: NewDeal = {
-      deal_type: 'purchase' as DealType,
-      deal_date: dealDateValue,
-      channel,
-      cash_paid: parsedCashPaid,
-      cash_received: 0,
-      fees: 0,
-      notes: null,
-    };
-
-    const dealResult = await createDeal(dealPayload);
-    if (dealResult.error || !dealResult.data) {
-      setSaving(false);
-      setError('Could not save purchase deal.');
-      return;
-    }
-
-    const dealId = dealResult.data.id;
-    const itemPayload: NewDealItem = {
-      deal_id: dealId,
-      item_id: selectedItem.id,
-      direction: 'in' as Direction,
-      cash_value: parsedCashPaid,
-      trade_value: 0,
-      total_value: parsedCashPaid,
-      notes: null,
-    };
-
-    const dealItemResult = await createDealItem(itemPayload);
-
-    if (dealItemResult.error || !dealItemResult.data) {
-      setSaving(false);
-      setError('Could not save purchase item.');
-      return;
-    }
-
-    // --- Cash flow record ---
     const brandName = brandMap[selectedItem.brand_id] ?? '';
     const description = [brandName, selectedItem.model].filter(Boolean).join(' ');
     const cfDescription = description ? `Purchase: ${description}` : 'Purchase';
 
-const latestCfResult = await getLatestCashFlow();
-const openingBalance = latestCfResult.data?.closing_balance ?? 0;
-const cashIn = 0;
-const cashOut = parsedCashPaid;
-const closingBalance = openingBalance - cashOut + cashIn;
+    const result = await createBuyOperation({
+      dealDate: dealDateValue,
+      cashPaid: parsedCashPaid,
+      channel,
+      itemId: selectedItem.id,
+      cfDescription,
+    });
 
-const cfPayload: NewCashFlow = {
-  deal_id: dealId,
-  transaction_date: dealDateValue,
-  opening_balance: openingBalance,
-  cash_in: cashIn,
-  cash_out: cashOut,
-  closing_balance: closingBalance,
-  description: cfDescription,
-};
+    setSaving(false);
 
-const cfResult = await createCashFlow(cfPayload);
-setSaving(false);
+    if (result.error) {
+      setError('Could not save purchase.');
+      return;
+    }
 
-if (cfResult.error || !cfResult.data) {
-  console.error('Cash flow insert failed:', cfResult.error);
-  setError('Purchase saved but could not create cash flow record.');
-  return;
-}
-
-const recalcResult = await recalculateCashFlowBalancesFrom(cfResult.data.id);
-
-if (recalcResult.error) {
-  console.error('Cash flow recalculation failed:', recalcResult.error);
-  setError('Purchase saved, but cash flow balance recalculation failed.');
-  return;
-}
-
-setSuccessMessage('Buy operation saved successfully.');
+    setSuccessMessage('Buy operation saved successfully.');
 setDealDate('');
 setCashPaid('');
 setChannel('');

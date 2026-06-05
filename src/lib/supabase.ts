@@ -204,6 +204,82 @@ export async function updateInventoryExpense(id: number, updates: Partial<Invent
     .single();
 }
 
+export async function createExpenseOperation(params: {
+  expenseDate: string;
+  amount: number;
+  notes: string;
+  itemId?: number | null;
+  cfDescription: string;
+}) {
+  return supabase.rpc('create_expense_operation', {
+    p_expense_date:   params.expenseDate,
+    p_amount:         params.amount,
+    p_notes:          params.notes,
+    p_item_id:        params.itemId ?? null,
+    p_cf_description: params.cfDescription,
+  });
+}
+
+export async function createBuyOperation(params: {
+  dealDate: string;
+  cashPaid: number;
+  channel: string;
+  itemId: number;
+  notes?: string | null;
+  cfDescription: string;
+}) {
+  return supabase.rpc('create_buy_operation', {
+    p_deal_date:      params.dealDate,
+    p_cash_paid:      params.cashPaid,
+    p_channel:        params.channel,
+    p_item_id:        params.itemId,
+    p_notes:          params.notes ?? null,
+    p_cf_description: params.cfDescription,
+  });
+}
+
+export async function createSellOperation(params: {
+  dealDate: string;
+  cashReceived: number;
+  channel: string;
+  itemId: number;
+  notes?: string | null;
+  cfDescription: string;
+}) {
+  return supabase.rpc('create_sell_operation', {
+    p_deal_date:      params.dealDate,
+    p_cash_received:  params.cashReceived,
+    p_channel:        params.channel,
+    p_item_id:        params.itemId,
+    p_notes:          params.notes ?? null,
+    p_cf_description: params.cfDescription,
+  });
+}
+
+export async function createTradeOperation(params: {
+  dealDate: string;
+  channel?: string | null;
+  notes?: string | null;
+  cashPaid?: number;
+  cashReceived?: number;
+  outgoingItems: { item_id: number; trade_value: number; total_value: number }[];
+  incomingItems: { item_id: number; trade_value: number; total_value: number }[];
+  cfTransactionDate?: string | null;
+  cfDescription?: string | null;
+}) {
+  return supabase.rpc('create_trade_operation', {
+    p_deal_date:           params.dealDate,
+    p_channel:             params.channel ?? null,
+    p_notes:               params.notes ?? null,
+    p_cash_paid:           params.cashPaid ?? 0,
+    p_cash_received:       params.cashReceived ?? 0,
+    p_outgoing_items:      params.outgoingItems,
+    p_incoming_items:      params.incomingItems,
+    p_cf_transaction_date: params.cfTransactionDate ?? null,
+    p_cf_description:      params.cfDescription ?? null,
+  });
+}
+
 export async function editTradeOperation(params: {
   dealId: number;
   dealDate: string;

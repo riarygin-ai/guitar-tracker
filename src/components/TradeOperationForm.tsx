@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import InventoryForm from '@/components/InventoryForm'
-import { createDeal, createDealItem, getBrands, searchInventoryItems, updateInventoryItem, createCashFlow, getLatestCashFlow, recalculateCashFlowBalancesFrom } from '@/lib/supabase'
-import type { Brand, InventoryItem, NewDeal, NewDealItem } from '@/types'
+import { createTradeOperation, getBrands, searchInventoryItems } from '@/lib/supabase'
+import type { Brand, InventoryItem } from '@/types'
 
 type TradeItem = {
     item: InventoryItem
@@ -303,134 +303,45 @@ export default function TradeOperationForm() {
 
         const dealDateValue = dealDate || new Date().toISOString().slice(0, 10)
 
-        const dealPayload: NewDeal = {
-            deal_type: 'trade',
-            deal_date: dealDateValue,
-            channel,
-            cash_paid: parsedCashOut,
-            cash_received: parsedCashIn,
-            fees: 0,
-            notes: null,
+        const describeItem = (item: InventoryItem) => {
+            const brand = brandMap[item.brand_id]
+            return brand ? `${brand} ${item.model}` : item.model
         }
 
-        const dealResult = await createDeal(dealPayload)
+        const firstOutgoingItem = outgoingItems[0]
+        const firstIncomingItem = incomingItems[0]
+        const cfDescription =
+            firstOutgoingItem && firstIncomingItem
+                ? `Trade: ${describeItem(firstOutgoingItem.item)} → ${describeItem(firstIncomingItem.item)}`
+                : firstOutgoingItem
+                    ? `Trade: ${describeItem(firstOutgoingItem.item)}`
+                    : 'Trade cash adjustment'
 
-        if (dealResult.error || !dealResult.data) {
-            setSaving(false)
-            setError('Could not create trade deal.')
+        const result = await createTradeOperation({
+            dealDate: dealDateValue,
+            channel: channel || null,
+            cashPaid: parsedCashOut,
+            cashReceived: parsedCashIn,
+            outgoingItems: outgoingItems.map((ti) => ({
+                item_id: ti.item.id,
+                trade_value: Number(ti.value || 0),
+                total_value: Number(ti.value || 0),
+            })),
+            incomingItems: incomingItems.map((ti) => ({
+                item_id: ti.item.id,
+                trade_value: Number(ti.value || 0),
+                total_value: Number(ti.value || 0),
+            })),
+            cfDescription: parsedCashOut > 0 || parsedCashIn > 0 ? cfDescription : null,
+        })
+
+        setSaving(false)
+
+        if (result.error) {
+            setError('Could not save trade.')
             return
         }
 
-        const deal = dealResult.data
-
-        for (const tradeItem of outgoingItems) {
-            const parsedValue = Number(tradeItem.value || 0)
-
-            const outgoingDealItem: NewDealItem = {
-                deal_id: deal.id,
-                item_id: tradeItem.item.id,
-                direction: 'out',
-                cash_value: 0,
-                trade_value: parsedValue,
-                total_value: parsedValue,
-                notes: null,
-            }
-
-            const outgoingResult = await createDealItem(outgoingDealItem)
-
-            if (outgoingResult.error) {
-                setSaving(false)
-                setError('Trade deal created, but one outgoing item was not linked.')
-                return
-            }
-        }
-
-        for (const tradeItem of incomingItems) {
-            const parsedValue = Number(tradeItem.value || 0)
-
-            const incomingDealItem: NewDealItem = {
-                deal_id: deal.id,
-                item_id: tradeItem.item.id,
-                direction: 'in',
-                cash_value: 0,
-                trade_value: parsedValue,
-                total_value: parsedValue,
-                notes: null,
-            }
-
-            const incomingResult = await createDealItem(incomingDealItem)
-
-            if (incomingResult.error) {
-                setSaving(false)
-                setError('Trade deal created, but one received item was not linked.')
-                return
-            }
-        }
-
-        for (const tradeItem of outgoingItems) {
-            const updateOutgoingResult = await updateInventoryItem(tradeItem.item.id, {
-                id: tradeItem.item.id,
-                status: 'traded',
-                sold_date: dealDateValue,
-            })
-
-            if (updateOutgoingResult.error) {
-                setSaving(false)
-                setError('Trade saved, but one outgoing item status was not updated.')
-                return
-            }
-        }
-
-        if (parsedCashOut > 0 || parsedCashIn > 0) {
-            const latestCashFlowResult = await getLatestCashFlow()
-
-            const firstOutgoingItem = outgoingItems[0];
-            const firstIncomingItem = incomingItems[0];
-
-            const describeItem = (item: InventoryItem) => {
-                const brand = brandMap[item.brand_id];
-                return brand ? `${brand} ${item.model}` : item.model;
-            };
-            const tradeDescription =
-                firstOutgoingItem && firstIncomingItem
-                    ? `Trade: ${describeItem(firstOutgoingItem.item)} → ${describeItem(firstIncomingItem.item)}`
-                    : firstOutgoingItem
-                        ? `Trade: ${describeItem(firstOutgoingItem.item)}`
-                        : 'Trade cash adjustment';
-
-            const openingBalance =
-                latestCashFlowResult.data?.closing_balance != null
-                    ? Number(latestCashFlowResult.data.closing_balance)
-                    : 0
-
-            const cashFlowResult = await createCashFlow({
-                deal_id: deal.id,
-                transaction_date: dealDateValue,
-                opening_balance: openingBalance,
-                cash_in: parsedCashIn,
-                cash_out: parsedCashOut,
-                closing_balance: openingBalance - parsedCashOut + parsedCashIn,
-                description: tradeDescription,
-            })
-
-            if (cashFlowResult.error || !cashFlowResult.data) {
-                setSaving(false)
-                setError('Trade saved, but cash flow was not created.')
-                return
-            }
-
-            const recalcResult = await recalculateCashFlowBalancesFrom(
-                cashFlowResult.data.id
-            )
-
-            if (recalcResult.error) {
-                setSaving(false)
-                setError('Trade saved, but cash flow balance recalculation failed.')
-                return
-            }
-        }
-
-        setSaving(false)
         setSuccessMessage('Trade operation saved successfully.')
 
         setOutgoingItems([])

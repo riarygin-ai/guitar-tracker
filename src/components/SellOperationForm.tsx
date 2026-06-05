@@ -3,17 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import InventoryForm from '@/components/InventoryForm';
 import {
-  createDeal,
-  createDealItem,
-  createCashFlow,
+  createSellOperation,
   getBrands,
   getInventoryItemWithValueById,
-  getLatestCashFlow,
   searchInventoryItems,
-  updateInventoryItem,
-  recalculateCashFlowBalancesFrom,
 } from '@/lib/supabase';
-import type { Brand, DealType, Direction, InventoryItem, NewCashFlow, NewDeal, NewDealItem } from '@/types';
+import type { Brand, InventoryItem } from '@/types';
 
 const channelOptions = [
   'Kijiji',
@@ -155,95 +150,22 @@ export default function SellOperationForm() {
 
     setSaving(true);
 
-    const dealPayload: NewDeal = {
-      deal_type: 'sale' as DealType,
-      deal_date: dealDateValue,
-      channel,
-      cash_paid: 0,
-      cash_received: parsedCashReceived,
-      fees: 0,
-      notes: null,
-    };
-
-    const dealResult = await createDeal(dealPayload);
-    if (dealResult.error || !dealResult.data) {
-      setSaving(false);
-      setError('Could not save sale deal.');
-      return;
-    }
-
-    const dealId = dealResult.data.id;
-    const itemPayload: NewDealItem = {
-      deal_id: dealId,
-      item_id: selectedItem.id,
-      direction: 'out' as Direction,
-      cash_value: parsedCashReceived,
-      trade_value: 0,
-      total_value: parsedCashReceived,
-      notes: null,
-    };
-
-    const dealItemResult = await createDealItem(itemPayload);
-
-    const updateItemResult = await updateInventoryItem(selectedItem.id, {
-      id: selectedItem.id,
-      status: 'sold',
-      sold_date: dealDateValue,
-    });
-
-    if (updateItemResult.error) {
-      console.error('Update item error:', updateItemResult.error);
-      setSaving(false);
-      setError(`Sale saved but could not update inventory item status: ${updateItemResult.error.message}`);
-      return;
-    }
-
-    if (dealItemResult.error || !dealItemResult.data) {
-      setSaving(false);
-      setError('Could not save sale item.');
-      return;
-    }
-
-    // --- Cash flow record ---
     const brandName = brandMap[selectedItem.brand_id] ?? '';
     const description = [brandName, selectedItem.model].filter(Boolean).join(' ');
     const cfDescription = description ? `Sale: ${description}` : 'Sale';
 
-    const latestCfResult = await getLatestCashFlow();
-    const openingBalance = latestCfResult.data?.closing_balance ?? 0;
-    const cashIn = parsedCashReceived;
-    const cashOut = 0;
-    const closingBalance = openingBalance - cashOut + cashIn;
+    const result = await createSellOperation({
+      dealDate: dealDateValue,
+      cashReceived: parsedCashReceived,
+      channel,
+      itemId: selectedItem.id,
+      cfDescription,
+    });
 
-    const cfPayload: NewCashFlow = {
-      deal_id: dealId,
-      transaction_date: dealDateValue,
-      opening_balance: openingBalance,
-      cash_in: cashIn,
-      cash_out: cashOut,
-      closing_balance: closingBalance,
-      description: cfDescription,
-    };
-
-    const cfResult = await createCashFlow(cfPayload);
     setSaving(false);
 
-    if (cfResult.error || !cfResult.data) {
-      console.error('Cash flow insert failed:', cfResult.error);
-      setError('Sale saved but could not create cash flow record.');
-      return;
-    }
-
-    const recalcResult = await recalculateCashFlowBalancesFrom(cfResult.data.id);
-
-    if (recalcResult.error) {
-      console.error(
-        'Cash flow recalculation failed:',
-        recalcResult.error
-      );
-      setError(
-        'Sale saved, but cash flow balance recalculation failed.'
-      );
+    if (result.error) {
+      setError('Could not save sale.');
       return;
     }
 
