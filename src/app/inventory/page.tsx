@@ -2,24 +2,53 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { getBrands, getDealItems, getInventoryItems, getItemAcquisitionDates } from '@/lib/supabase';
 import type { Brand, DealItem, InventoryItemWithValue, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
 
-const statusOptions: Array<Status | 'all'> = ['all', 'owned', 'listed', 'sold', 'traded'];
-
 const DISPLAY_LIMIT = 100;
 
 export default function InventoryPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [items, setItems] = useState<InventoryItemWithValue[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [acquiredDateByItemId, setAcquiredDateByItemId] = useState<Record<number, string>>({});
-  const [search, setSearch] = useState('');
-  const [selectedStatuses, setSelectedStatuses] = useState<Status[]>(['owned', 'listed']);
-  const [selectedItemTypes, setSelectedItemTypes] = useState<string[]>(['guitar']);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Initialize filter state from URL params; fall back to defaults
+  const [search, setSearch] = useState(() => searchParams.get('search') ?? '');
+  const [selectedStatuses, setSelectedStatuses] = useState<Status[]>(() => {
+    const s = searchParams.get('status');
+    return s ? (s.split(',').filter(Boolean) as Status[]) : ['owned', 'listed'];
+  });
+  const [selectedItemTypes, setSelectedItemTypes] = useState<string[]>(() => {
+    const t = searchParams.get('type');
+    return t ? t.split(',').filter(Boolean) : ['guitar'];
+  });
+
+  // Keep URL in sync with filter state so links to items carry the current context
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
+    if (selectedItemTypes.length > 0) params.set('type', [...selectedItemTypes].sort().join(','));
+    const qs = params.toString();
+    router.replace(`/inventory${qs ? `?${qs}` : ''}`, { scroll: false });
+  }, [search, selectedStatuses, selectedItemTypes, router]);
+
+  // Query string passed to each card so item URLs carry back-navigation context
+  const backQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
+    if (selectedItemTypes.length > 0) params.set('type', [...selectedItemTypes].sort().join(','));
+    return params.toString();
+  }, [search, selectedStatuses, selectedItemTypes]);
 
   useEffect(() => {
     async function loadData() {
@@ -45,9 +74,7 @@ export default function InventoryPage() {
         const map: Record<number, string> = {};
         for (const row of acquisitionDatesResult.data as any[]) {
           const dealDate = row.deals?.deal_date;
-          if (row.item_id != null && dealDate) {
-            map[row.item_id] = dealDate;
-          }
+          if (row.item_id != null && dealDate) map[row.item_id] = dealDate;
         }
         setAcquiredDateByItemId(map);
       }
@@ -65,11 +92,11 @@ export default function InventoryPage() {
 
   const valueOutByItemId = useMemo(
     () =>
-      dealItems.reduce<Record<number, number>>((accumulator, dealItem) => {
-        if (dealItem.direction === 'out' && dealItem.total_value != null) {
-          accumulator[dealItem.item_id] = (accumulator[dealItem.item_id] ?? 0) + Number(dealItem.total_value);
+      dealItems.reduce<Record<number, number>>((acc, di) => {
+        if (di.direction === 'out' && di.total_value != null) {
+          acc[di.item_id] = (acc[di.item_id] ?? 0) + Number(di.total_value);
         }
-        return accumulator;
+        return acc;
       }, {}),
     [dealItems]
   );
@@ -161,14 +188,15 @@ export default function InventoryPage() {
                   onClick={() => {
                     setSelectedStatuses((current) =>
                       current.includes(status)
-                        ? current.filter((value) => value !== status)
+                        ? current.filter((v) => v !== status)
                         : [...current, status]
                     );
                   }}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${selectedStatuses.includes(status)
-                    ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
-                    }`}
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                    selectedStatuses.includes(status)
+                      ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                  }`}
                 >
                   {status}
                 </button>
@@ -186,14 +214,15 @@ export default function InventoryPage() {
                   onClick={() => {
                     setSelectedItemTypes((current) =>
                       current.includes(itemType)
-                        ? current.filter((value) => value !== itemType)
+                        ? current.filter((v) => v !== itemType)
                         : [...current, itemType]
                     );
                   }}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${selectedItemTypes.includes(itemType)
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                    selectedItemTypes.includes(itemType)
                       ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
-                    }`}
+                  }`}
                 >
                   {itemType}
                 </button>
@@ -224,7 +253,12 @@ export default function InventoryPage() {
               </p>
             )}
             {displayItems.map((item) => (
-              <InventoryCard key={item.id} item={item} brandName={brandMap[item.brand_id] ?? 'Unknown'} />
+              <InventoryCard
+                key={item.id}
+                item={item}
+                brandName={brandMap[item.brand_id] ?? 'Unknown'}
+                backQuery={backQuery}
+              />
             ))}
           </div>
         )}

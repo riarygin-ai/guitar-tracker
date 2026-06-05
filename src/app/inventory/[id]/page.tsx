@@ -1,13 +1,20 @@
 import InventoryForm from '@/components/InventoryForm';
 
 interface InventoryEditPageProps {
-  params: Promise<{
-    id: string;
-  }>;
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
-export default async function InventoryEditPage({ params }: InventoryEditPageProps) {
+export default async function InventoryEditPage({ params, searchParams }: InventoryEditPageProps) {
   const resolvedParams = await params;
-  console.log('Edit page params.id:', resolvedParams.id);
-  return <InventoryForm itemId={resolvedParams.id} />;
+  const resolvedSearch = await searchParams;
+
+  const qs = new URLSearchParams(
+    Object.entries(resolvedSearch)
+      .filter(([, v]) => typeof v === 'string' && (v as string).length > 0)
+      .map(([k, v]) => [k, v as string])
+  ).toString();
+  const backHref = `/inventory${qs ? `?${qs}` : ''}`;
+
+  return <InventoryForm itemId={resolvedParams.id} backHref={backHref} />;
 }

@@ -11,9 +11,10 @@ const statusClasses: Record<string, string> = {
 interface InventoryCardProps {
   item: InventoryItemWithValue;
   brandName: string;
+  backQuery?: string;
 }
 
-export default function InventoryCard({ item, brandName }: InventoryCardProps) {
+export default function InventoryCard({ item, brandName, backQuery }: InventoryCardProps) {
   const title = [item.year, brandName, item.model].filter(Boolean).join(' ');
   const subtitle = item.color ? `${title} — ${item.color}` : title;
 
@@ -45,7 +46,7 @@ export default function InventoryCard({ item, brandName }: InventoryCardProps) {
 
   return (
     <Link
-      href={`/inventory/${item.id}`}
+      href={backQuery ? `/inventory/${item.id}?${backQuery}` : `/inventory/${item.id}`}
       className="block rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
     >
       <div className="flex items-start justify-between gap-3">

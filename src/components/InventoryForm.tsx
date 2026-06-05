@@ -52,6 +52,7 @@ interface InventoryFormProps {
   onClose?: () => void;
   hideHeader?: boolean;
   hideSidebar?: boolean;
+  backHref?: string;
 }
 
 export default function InventoryForm({
@@ -60,6 +61,7 @@ export default function InventoryForm({
   onClose,
   hideHeader = false,
   hideSidebar = false,
+  backHref,
 }: InventoryFormProps) {
   const router = useRouter();
 
@@ -530,7 +532,7 @@ export default function InventoryForm({
                 <div className="mt-6 hidden lg:flex lg:items-center lg:justify-end lg:gap-3">
                   <button
                     type="button"
-                    onClick={() => { if (onClose) { onClose(); return; } router.push('/inventory'); }}
+                    onClick={() => { if (onClose) { onClose(); return; } router.push(backHref ?? '/inventory'); }}
                     className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-6 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
                   >
                     Cancel
@@ -615,7 +617,7 @@ export default function InventoryForm({
             <div className="mx-auto flex max-w-6xl items-center gap-3">
               <button
                 type="button"
-                onClick={() => router.push('/inventory')}
+                onClick={() => router.push(backHref ?? '/inventory')}
                 className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
               >
                 Cancel
