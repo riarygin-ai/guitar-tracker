@@ -158,6 +158,13 @@ export async function getDealItems() {
   return supabase.from('deal_items').select('*')
 }
 
+export async function getItemAcquisitionDates() {
+  return supabase
+    .from('deal_items')
+    .select('item_id, deals(deal_date)')
+    .eq('direction', 'in');
+}
+
 export async function getDealById(id: number) {
   return supabase.from('deals').select('*').eq('id', id).single();
 }

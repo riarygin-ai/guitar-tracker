@@ -2,16 +2,19 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { getBrands, getDealItems, getInventoryItems } from '@/lib/supabase';
+import { getBrands, getDealItems, getInventoryItems, getItemAcquisitionDates } from '@/lib/supabase';
 import type { Brand, DealItem, InventoryItemWithValue, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
 
 const statusOptions: Array<Status | 'all'> = ['all', 'owned', 'listed', 'sold', 'traded'];
 
+const DISPLAY_LIMIT = 100;
+
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItemWithValue[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
+  const [acquiredDateByItemId, setAcquiredDateByItemId] = useState<Record<number, string>>({});
   const [search, setSearch] = useState('');
   const [selectedStatuses, setSelectedStatuses] = useState<Status[]>(['owned', 'listed']);
   const [selectedItemTypes, setSelectedItemTypes] = useState<string[]>(['guitar']);
@@ -21,10 +24,11 @@ export default function InventoryPage() {
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [brandResult, itemResult, dealItemsResult] = await Promise.all([
+      const [brandResult, itemResult, dealItemsResult, acquisitionDatesResult] = await Promise.all([
         getBrands(),
         getInventoryItems(),
         getDealItems(),
+        getItemAcquisitionDates(),
       ]);
 
       if (brandResult.error || itemResult.error || dealItemsResult.error) {
@@ -36,6 +40,18 @@ export default function InventoryPage() {
       setBrands(brandResult.data || []);
       setItems((itemResult.data as InventoryItemWithValue[]) || []);
       setDealItems((dealItemsResult.data as DealItem[]) || []);
+
+      if (!acquisitionDatesResult.error && acquisitionDatesResult.data) {
+        const map: Record<number, string> = {};
+        for (const row of acquisitionDatesResult.data as any[]) {
+          const dealDate = row.deals?.deal_date;
+          if (row.item_id != null && dealDate) {
+            map[row.item_id] = dealDate;
+          }
+        }
+        setAcquiredDateByItemId(map);
+      }
+
       setLoading(false);
     }
 
@@ -63,8 +79,9 @@ export default function InventoryPage() {
       items.map((item) => ({
         ...item,
         value_out: valueOutByItemId[item.id] ?? null,
+        acquired_date: acquiredDateByItemId[item.id] ?? null,
       })),
-    [items, valueOutByItemId]
+    [items, valueOutByItemId, acquiredDateByItemId]
   );
 
   const filteredItems = useMemo(() => {
@@ -89,6 +106,20 @@ export default function InventoryPage() {
       return matchesSearch && matchesStatus && matchesItemType;
     });
   }, [brandMap, itemsWithComputedValues, search, selectedItemTypes, selectedStatuses]);
+
+  const sortedFilteredItems = useMemo(() => {
+    return [...filteredItems].sort((a, b) => {
+      const aDate = a.acquired_date ?? null;
+      const bDate = b.acquired_date ?? null;
+      if (aDate === null && bDate === null) return 0;
+      if (aDate === null) return 1;
+      if (bDate === null) return -1;
+      return bDate.localeCompare(aDate);
+    });
+  }, [filteredItems]);
+
+  const displayItems = sortedFilteredItems.slice(0, DISPLAY_LIMIT);
+  const hasMore = sortedFilteredItems.length > DISPLAY_LIMIT;
 
   return (
     <div className="space-y-6">
@@ -181,13 +212,18 @@ export default function InventoryPage() {
           <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-700 shadow-sm">
             {error}
           </div>
-        ) : filteredItems.length === 0 ? (
+        ) : sortedFilteredItems.length === 0 ? (
           <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
             No inventory items match your filters.
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredItems.map((item) => (
+            {hasMore && (
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Showing first {DISPLAY_LIMIT} items.
+              </p>
+            )}
+            {displayItems.map((item) => (
               <InventoryCard key={item.id} item={item} brandName={brandMap[item.brand_id] ?? 'Unknown'} />
             ))}
           </div>

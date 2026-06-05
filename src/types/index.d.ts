@@ -33,6 +33,7 @@ export interface InventoryItem {
 export type InventoryItemWithValue = InventoryItem & {
   value_in: number | null;
   value_out?: number | null;
+  acquired_date?: string | null;
 };
 
 export interface Deal {

@@ -16,18 +16,32 @@ interface InventoryCardProps {
 export default function InventoryCard({ item, brandName }: InventoryCardProps) {
   const title = [item.year, brandName, item.model].filter(Boolean).join(' ');
   const subtitle = item.color ? `${title} — ${item.color}` : title;
+
+  const isOwned = item.status === 'owned' || item.status === 'listed';
+  const isSoldOrTraded = item.status === 'sold' || item.status === 'traded';
+
   const potentialReward =
-    item.status === 'owned' || item.status === 'listed'
-      ? item.estimated_sold_value != null && item.value_in != null
-        ? item.estimated_sold_value - item.value_in
-        : null
+    isOwned && item.estimated_sold_value != null && item.value_in != null
+      ? item.estimated_sold_value - item.value_in
       : null;
+
+  const potentialRoi =
+    potentialReward != null && item.value_in != null && item.value_in > 0
+      ? (potentialReward / item.value_in) * 100
+      : null;
+
   const realizedGain =
-    item.status === 'sold' || item.status === 'traded'
-      ? item.value_out != null && item.value_in != null
-        ? item.value_out - item.value_in
-        : null
+    isSoldOrTraded && item.value_out != null && item.value_in != null
+      ? item.value_out - item.value_in
       : null;
+
+  const realizedRoi =
+    realizedGain != null && item.value_in != null && item.value_in > 0
+      ? (realizedGain / item.value_in) * 100
+      : null;
+
+  const roiColor = (roi: number | null) =>
+    roi == null ? '' : roi > 0 ? 'text-emerald-600' : roi < 0 ? 'text-rose-600' : '';
 
   return (
     <Link
@@ -56,10 +70,10 @@ export default function InventoryCard({ item, brandName }: InventoryCardProps) {
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
         <span>
           <span className="text-slate-500 dark:text-slate-400">Value In:</span>{' '}
-          ${item.value_in?.toFixed(0) ?? '—'}
+          {item.value_in != null ? `$${item.value_in.toFixed(0)}` : '—'}
         </span>
 
-        {item.status === 'owned' || item.status === 'listed' ? (
+        {isOwned ? (
           <span>
             <span className="text-slate-500 dark:text-slate-400">Est. Sold:</span>{' '}
             ${item.estimated_sold_value?.toFixed(0) ?? '0'}
@@ -67,22 +81,38 @@ export default function InventoryCard({ item, brandName }: InventoryCardProps) {
         ) : (
           <span>
             <span className="text-slate-500 dark:text-slate-400">Value Out:</span>{' '}
-            ${item.value_out?.toFixed(0) ?? '—'}
+            {item.value_out != null ? `$${item.value_out.toFixed(0)}` : '—'}
           </span>
         )}
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
-        {item.status === 'owned' || item.status === 'listed' ? (
-          <span>
-            <span className="text-slate-500 dark:text-slate-400">Potential Reward:</span>{' '}
-            {potentialReward != null ? `$${potentialReward.toFixed(0)}` : '—'}
-          </span>
+      <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
+        {isOwned ? (
+          <>
+            <span>
+              <span className="text-slate-500 dark:text-slate-400">Potential Reward:</span>{' '}
+              {potentialReward != null ? `$${potentialReward.toFixed(0)}` : '—'}
+            </span>
+            <span>
+              <span className="text-slate-500 dark:text-slate-400">Potential ROI:</span>{' '}
+              <span className={roiColor(potentialRoi)}>
+                {potentialRoi != null ? `${potentialRoi.toFixed(1)}%` : '—'}
+              </span>
+            </span>
+          </>
         ) : (
-          <span>
-            <span className="text-slate-500 dark:text-slate-400">Realized Gain:</span>{' '}
-            {realizedGain != null ? `$${realizedGain.toFixed(0)}` : '—'}
-          </span>
+          <>
+            <span>
+              <span className="text-slate-500 dark:text-slate-400">Realized Gain:</span>{' '}
+              {realizedGain != null ? `$${realizedGain.toFixed(0)}` : '—'}
+            </span>
+            <span>
+              <span className="text-slate-500 dark:text-slate-400">Realized ROI:</span>{' '}
+              <span className={roiColor(realizedRoi)}>
+                {realizedRoi != null ? `${realizedRoi.toFixed(1)}%` : '—'}
+              </span>
+            </span>
+          </>
         )}
       </div>
     </Link>
