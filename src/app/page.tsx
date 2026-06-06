@@ -289,7 +289,7 @@ export default function HomePage() {
                 <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{formatMoney(currentCash)}</p>
               </div>
             </div>
-            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
+            <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                   <tr>
@@ -324,48 +324,55 @@ export default function HomePage() {
                 </tbody>
               </table>
             </div>
+            <div className="mt-5 space-y-3 md:hidden">
+              {inventoryValueTypes.map((type) => {
+                const v = inventoryValueByType[type]
+                const equity = v.estimatedValue - v.costBasis
+                return (
+                  <div key={type} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="font-semibold text-slate-900 dark:text-white">{type}</span>
+                      <span className="text-sm text-slate-500 dark:text-slate-400">{v.count} items</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-xs">
+                      <div>
+                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Cost Basis</span>
+                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(v.costBasis)}</span>
+                      </div>
+                      <div>
+                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Est. Value</span>
+                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(v.estimatedValue)}</span>
+                      </div>
+                      <div>
+                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Equity</span>
+                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(equity)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="font-semibold text-slate-900 dark:text-white">Total</span>
+                  <span className="text-sm text-slate-500 dark:text-slate-400">{totalInventoryCount} items</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Cost Basis</span>
+                    <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(totalCostBasis)}</span>
+                  </div>
+                  <div>
+                    <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Est. Value</span>
+                    <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(totalEstimatedValue)}</span>
+                  </div>
+                  <div>
+                    <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Equity</span>
+                    <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(totalEstimatedValue - totalCostBasis)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </section>
-
-          {businessInventoryTypes.length > 0 && (
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-              <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Business Inventory</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Status by item type</h2>
-              </div>
-              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-                    <tr>
-                      <th className="px-4 py-3">Item Type</th>
-                      <th className="px-4 py-3 text-right">Listed</th>
-                      <th className="px-4 py-3 text-right">Unlisted</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                    {businessInventoryTypes.map((type) => {
-                      const v = businessInventoryByType[type]
-                      return (
-                        <tr key={type}>
-                          <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{type}</td>
-                          <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{v.listed}</td>
-                          <td className={`px-4 py-3 text-right font-semibold ${v.unlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-slate-100'}`}>
-                            {v.unlisted}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                    <tr className="bg-slate-50 font-semibold dark:bg-slate-700">
-                      <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
-                      <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{totalBusinessListed}</td>
-                      <td className={`px-4 py-3 text-right ${totalBusinessUnlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
-                        {totalBusinessUnlisted}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
 
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <div className="flex items-start justify-between">
@@ -459,7 +466,7 @@ export default function HomePage() {
                 <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Brand Performance</p>
                 <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Top brands by ROI</h2>
               </div>
-              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
+              <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                     <tr>
@@ -482,6 +489,95 @@ export default function HomePage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="mt-5 space-y-3 md:hidden">
+                {brandPerformance.map((row) => (
+                  <div key={row.name} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="font-semibold text-slate-900 dark:text-white">{row.name}</span>
+                      <span className="text-sm text-slate-500 dark:text-slate-400">{row.soldQty} sold</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-xs">
+                      <div>
+                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg ROI</span>
+                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{row.avgRoi.toFixed(1)}%</span>
+                      </div>
+                      <div>
+                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg Profit</span>
+                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(row.avgProfit)}</span>
+                      </div>
+                      <div>
+                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg Days</span>
+                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{row.avgDaysHeld}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+          {businessInventoryTypes.length > 0 && (
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+              <div>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Business Inventory</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Status by item type</h2>
+              </div>
+              <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
+                    <tr>
+                      <th className="px-4 py-3">Item Type</th>
+                      <th className="px-4 py-3 text-right">Listed</th>
+                      <th className="px-4 py-3 text-right">Unlisted</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                    {businessInventoryTypes.map((type) => {
+                      const v = businessInventoryByType[type]
+                      return (
+                        <tr key={type}>
+                          <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{type}</td>
+                          <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{v.listed}</td>
+                          <td className={`px-4 py-3 text-right font-semibold ${v.unlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-slate-100'}`}>
+                            {v.unlisted}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    <tr className="bg-slate-50 font-semibold dark:bg-slate-700">
+                      <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
+                      <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{totalBusinessListed}</td>
+                      <td className={`px-4 py-3 text-right ${totalBusinessUnlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
+                        {totalBusinessUnlisted}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-5 space-y-3 md:hidden">
+                {businessInventoryTypes.map((type) => {
+                  const v = businessInventoryByType[type]
+                  return (
+                    <div key={type} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-slate-900 dark:text-white">{type}</span>
+                        <div className="flex gap-3 text-sm">
+                          <span className="text-slate-500 dark:text-slate-400">Listed: <span className="font-semibold text-slate-900 dark:text-white">{v.listed}</span></span>
+                          <span className={`font-semibold ${v.unlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>Unlisted: {v.unlisted}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-900 dark:text-white">Total</span>
+                    <div className="flex gap-3 text-sm">
+                      <span className="text-slate-500 dark:text-slate-400">Listed: <span className="font-semibold text-slate-900 dark:text-white">{totalBusinessListed}</span></span>
+                      <span className={`font-semibold ${totalBusinessUnlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>Unlisted: {totalBusinessUnlisted}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
           )}
