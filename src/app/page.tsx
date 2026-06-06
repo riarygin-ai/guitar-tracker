@@ -383,7 +383,7 @@ export default function HomePage() {
                 ))}
               </select>
             </div>
-            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
+            <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                   <tr>
@@ -422,6 +422,35 @@ export default function HomePage() {
                   </tr>
                 </tbody>
               </table>
+            </div>
+            <div className="mt-5 space-y-3 md:hidden">
+              {filteredMonthlyRows.map((row) => (
+                <button
+                  key={row.month}
+                  type="button"
+                  onClick={() => navigateToMonthOperations(row.month)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
+                >
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="font-semibold text-slate-900 dark:text-white">{row.month}</span>
+                    <span className="text-sm font-medium text-slate-900 dark:text-white">{formatMoney(row.profit)}</span>
+                  </div>
+                  <div className="flex gap-4 text-sm text-slate-500 dark:text-slate-400">
+                    <span>Cash in: {formatMoney(row.cashReceived)}</span>
+                    <span>Deals: {row.dealsCount}</span>
+                  </div>
+                </button>
+              ))}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="font-semibold text-slate-900 dark:text-white">Total</span>
+                  <span className="text-sm font-semibold text-slate-900 dark:text-white">{formatMoney(monthlyTotals.profit)}</span>
+                </div>
+                <div className="flex gap-4 text-sm text-slate-500 dark:text-slate-400">
+                  <span>Cash in: {formatMoney(monthlyTotals.cashReceived)}</span>
+                  <span>Deals: {monthlyTotals.dealsCount}</span>
+                </div>
+              </div>
             </div>
           </section>
           {brandPerformance.length > 0 && (
