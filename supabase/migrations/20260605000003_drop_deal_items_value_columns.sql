@@ -1,3 +1,3 @@
 ALTER TABLE deal_items
-  DROP COLUMN cash_value,
-  DROP COLUMN trade_value;
+  DROP COLUMN IF EXISTS cash_value,
+  DROP COLUMN IF EXISTS trade_value;
