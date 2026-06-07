@@ -24,19 +24,22 @@ interface PendingPhoto {
 
 interface ItemPhotosProps {
   itemId: number;
+  onMainPhotoChange?: (url: string | null) => void;
 }
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_BYTES = 10 * 1024 * 1024;
 
 const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
-  function ItemPhotos({ itemId }, ref) {
+  function ItemPhotos({ itemId, onMainPhotoChange }, ref) {
     const [photos, setPhotos] = useState<InventoryItemPhoto[]>([]);
     const [pending, setPending] = useState<PendingPhoto[]>([]);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const onMainPhotoChangeRef = useRef(onMainPhotoChange);
+    useEffect(() => { onMainPhotoChangeRef.current = onMainPhotoChange; }, [onMainPhotoChange]);
 
     // Expose upload trigger to parent form
     useImperativeHandle(
@@ -68,7 +71,12 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
           }
 
           setPending([]);
-          setPhotos((prev) => [...prev, ...uploaded]);
+          setPhotos((prev) => {
+            const next = [...prev, ...uploaded];
+            const main = next.find((p) => p.is_main) ?? next[0] ?? null;
+            onMainPhotoChangeRef.current?.(main ? getPhotoUrl(main.storage_path) : null);
+            return next;
+          });
           setUploading(false);
           return { error: null };
         },
@@ -84,7 +92,10 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
       if (fetchError) {
         setError('Could not load photos.');
       } else {
-        setPhotos((data as InventoryItemPhoto[]) ?? []);
+        const loaded = (data as InventoryItemPhoto[]) ?? [];
+        setPhotos(loaded);
+        const main = loaded.find((p) => p.is_main) ?? loaded[0] ?? null;
+        onMainPhotoChangeRef.current?.(main ? getPhotoUrl(main.storage_path) : null);
       }
       setLoading(false);
     }
@@ -141,6 +152,7 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
         return;
       }
       setPhotos((prev) => prev.map((p) => ({ ...p, is_main: p.id === photo.id })));
+      onMainPhotoChangeRef.current?.(getPhotoUrl(photo.storage_path));
     }
 
     async function handleDelete(photo: InventoryItemPhoto) {
@@ -155,8 +167,10 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
       if (photo.is_main && remaining.length > 0) {
         await setMainPhoto(itemId, remaining[0].id);
         setPhotos(remaining.map((p, i) => ({ ...p, is_main: i === 0 })));
+        onMainPhotoChangeRef.current?.(getPhotoUrl(remaining[0].storage_path));
       } else {
         setPhotos(remaining);
+        if (photo.is_main) onMainPhotoChangeRef.current?.(null);
       }
     }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ItemPhotos, { type ItemPhotosHandle } from '@/components/ItemPhotos';
@@ -20,6 +21,8 @@ import {
   getInventoryItemById,
   getInventoryItemWithValueById,
   getDealItemsByItemId,
+  getMainPhotosForItems,
+  getPhotoUrl,
   updateInventoryItem,
 } from '@/lib/supabase';
 
@@ -98,6 +101,7 @@ export default function InventoryForm({
   const [saving, setSaving] = useState(false);
   const [creatingBrand, setCreatingBrand] = useState(false);
   const [existingItem, setExistingItem] = useState<InventoryItem | null>(null);
+  const [mainPhotoUrl, setMainPhotoUrl] = useState<string | null>(null);
 
   // Metrics state (edit mode only)
   const [valueIn, setValueIn] = useState<number | null>(null);
@@ -140,10 +144,11 @@ export default function InventoryForm({
 
     async function loadItem() {
       setLoading(true);
-      const [itemResult, withValueResult, dealItemsResult] = await Promise.all([
+      const [itemResult, withValueResult, dealItemsResult, photosResult] = await Promise.all([
         getInventoryItemById(Number(itemId)),
         getInventoryItemWithValueById(Number(itemId)),
         getDealItemsByItemId(Number(itemId)),
+        getMainPhotosForItems([Number(itemId)]),
       ]);
       setLoading(false);
 
@@ -166,6 +171,11 @@ export default function InventoryForm({
       setSelectedBrandId(item.brand_id);
       const brand = brands.find((b) => b.id === item.brand_id);
       setBrandInput(brand?.name ?? '');
+
+      // Main photo for sticky panel
+      if (!photosResult.error && photosResult.data && photosResult.data.length > 0) {
+        setMainPhotoUrl(getPhotoUrl(photosResult.data[0].storage_path));
+      }
 
       // Metrics
       if (!withValueResult.error && withValueResult.data) {
@@ -326,15 +336,233 @@ export default function InventoryForm({
 
   const inputClass = 'h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600';
 
+  // Shared form fields used in both single-column and two-column layouts
+  const formFields = (
+    <div className="grid gap-5 sm:grid-cols-2">
+
+      {/* Item type */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+          Item type <span className="text-rose-500">*</span>
+        </label>
+        <select
+          value={itemType}
+          onChange={(e) => setItemType(e.target.value as ItemType)}
+          disabled={disabled}
+          className={inputClass}
+        >
+          {itemTypeOptions.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Brand */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+          Brand <span className="text-rose-500">*</span>
+        </label>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              value={brandInput}
+              onChange={(e) => { setBrandInput(e.target.value); setShowBrandSuggestions(true); }}
+              onFocus={() => setShowBrandSuggestions(true)}
+              onBlur={() => window.setTimeout(() => setShowBrandSuggestions(false), 120)}
+              disabled={disabled}
+              placeholder="Search or add brand"
+              className={`min-w-0 w-full rounded-xl border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 dark:focus:ring-slate-600 ${
+                brandError
+                  ? 'border-rose-300 bg-rose-50 focus:border-rose-400 dark:border-rose-700 dark:bg-rose-900/20'
+                  : 'border-slate-200 bg-white focus:border-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100'
+              }`}
+            />
+            {brandSearchLoading && (
+              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 dark:text-slate-400">
+                Searching...
+              </div>
+            )}
+            {showBrandSuggestions && brandSuggestions.length > 0 && (
+              <ul className="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-auto rounded-2xl border border-slate-200 bg-white text-sm shadow-lg dark:border-slate-600 dark:bg-slate-800">
+                {brandSuggestions.map((brand) => (
+                  <li
+                    key={brand.id}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setBrandInput(brand.name);
+                      setSelectedBrandId(brand.id);
+                      setShowBrandSuggestions(false);
+                    }}
+                    className="cursor-pointer px-3 py-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+                  >
+                    {brand.name}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCreateBrand(); }}
+            disabled={brandCreateDisabled}
+            className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
+          >
+            {creatingBrand ? 'Creating...' : 'Create'}
+          </button>
+        </div>
+      </div>
+
+      {/* Model */}
+      <div className="space-y-1.5 sm:col-span-2">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+          Model <span className="text-rose-500">*</span>
+        </label>
+        <input
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          disabled={disabled}
+          placeholder="e.g. Stratocaster"
+          className={`w-full rounded-xl border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 dark:focus:ring-slate-600 ${
+            modelError
+              ? 'border-rose-300 bg-rose-50 text-slate-900 focus:border-rose-400 dark:border-rose-700 dark:bg-rose-900/20 dark:text-slate-100'
+              : 'border-slate-200 bg-white text-slate-900 focus:border-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100'
+          }`}
+        />
+      </div>
+
+      {/* Year */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Year</label>
+        <input
+          type="number"
+          min="1900"
+          max={new Date().getFullYear() + 1}
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          disabled={disabled}
+          placeholder="e.g. 2023"
+          className={inputClass}
+        />
+      </div>
+
+      {/* Color */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Color</label>
+        <input
+          value={color}
+          onChange={(e) => setColor(e.target.value)}
+          disabled={disabled}
+          placeholder="e.g. Seafoam Green"
+          className={inputClass}
+        />
+      </div>
+
+      {/* Serial number */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Serial number</label>
+        <input
+          value={serialNumber}
+          onChange={(e) => setSerialNumber(e.target.value)}
+          disabled={disabled}
+          placeholder="e.g. MX22345678"
+          className={inputClass}
+        />
+      </div>
+
+      {/* Condition */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condition</label>
+        <select
+          value={condition}
+          onChange={(e) => setCondition(e.target.value as Condition)}
+          disabled={disabled}
+          className={inputClass}
+        >
+          <option value="">Choose condition</option>
+          {conditionOptions.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Collection */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Purpose / collection</label>
+        <select
+          value={collectionType}
+          onChange={(e) => setCollectionType(e.target.value as CollectionType)}
+          disabled={disabled}
+          className={inputClass}
+        >
+          <option value="">Choose type</option>
+          {collectionOptions.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Estimated sold value */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Estimated sold value</label>
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">$</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={estimatedSoldValue}
+            onChange={(e) => setEstimatedSoldValue(e.target.value)}
+            disabled={disabled}
+            placeholder="0.00"
+            className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+          />
+        </div>
+        <p className="text-xs text-slate-500 dark:text-slate-400">Estimated values help track potential returns.</p>
+      </div>
+
+      {/* Notes */}
+      <div className="space-y-1.5 sm:col-span-2">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Notes</label>
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          disabled={disabled}
+          placeholder="Add any additional notes..."
+          rows={3}
+          className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+        />
+      </div>
+    </div>
+  );
+
+  const formActionButtons = (
+    <div className="mt-6 hidden lg:flex lg:items-center lg:justify-end lg:gap-3">
+      <button
+        type="button"
+        onClick={() => { if (onClose) { onClose(); return; } router.push(backHref ?? '/inventory'); }}
+        className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-6 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+      >
+        Cancel
+      </button>
+      <button
+        type="submit"
+        disabled={disabled}
+        className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-6 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
+      >
+        {saveLabel}
+      </button>
+    </div>
+  );
+
   return (
     <div className={hideHeader ? '' : 'min-h-screen bg-slate-50 dark:bg-slate-900'}>
       <div className={hideHeader ? '' : 'mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8'}>
 
+        {/* Header */}
         {!hideHeader && (
           <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             {itemId ? (
               <>
-                {/* Row 1: back link + status badge */}
                 <div className="flex items-center justify-between gap-4">
                   <Link
                     href={backHref ?? '/inventory'}
@@ -351,58 +579,12 @@ export default function InventoryForm({
                     </span>
                   )}
                 </div>
-
-                {/* Row 2: item name */}
                 <div className="mt-4">
                   <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-slate-400">Inventory</p>
                   <h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">
                     {itemTitle ?? 'Update item'}
                   </h1>
                 </div>
-
-                {/* Row 3: value metrics */}
-                {showMetrics && (
-                  <div className="mt-5 border-t border-slate-100 pt-5 dark:border-slate-700">
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
-                      <div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Value In</p>
-                        <p className="mt-0.5 text-xl font-semibold text-slate-900 dark:text-slate-100">{fmt(valueIn)}</p>
-                      </div>
-                      {isOwned && (
-                        <>
-                          <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Est. Sold</p>
-                            <p className="mt-0.5 text-xl font-semibold text-slate-900 dark:text-slate-100">{fmt(parsedEstimated)}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Potential Reward</p>
-                            <p className={`mt-0.5 text-xl font-semibold ${metricColor(potentialReward)}`}>{fmt(potentialReward)}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Potential ROI</p>
-                            <p className={`mt-0.5 text-xl font-semibold ${metricColor(potentialRoi)}`}>{fmtPct(potentialRoi)}</p>
-                          </div>
-                        </>
-                      )}
-                      {isSoldOrTraded && (
-                        <>
-                          <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Value Out</p>
-                            <p className="mt-0.5 text-xl font-semibold text-slate-900 dark:text-slate-100">{fmt(valueOut)}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Realized Gain</p>
-                            <p className={`mt-0.5 text-xl font-semibold ${metricColor(realizedGain)}`}>{fmt(realizedGain)}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Realized ROI</p>
-                            <p className={`mt-0.5 text-xl font-semibold ${metricColor(realizedRoi)}`}>{fmtPct(realizedRoi)}</p>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
               </>
             ) : (
               <>
@@ -421,239 +603,141 @@ export default function InventoryForm({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} aria-busy={disabled}>
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-            <div className="grid gap-5 sm:grid-cols-2">
+        {/* Edit mode: two-column layout on desktop (sticky photo panel + form) */}
+        {itemId && !hideHeader ? (
+          <div className="lg:flex lg:items-start lg:gap-6">
 
-              {/* Item type */}
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Item type <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={itemType}
-                  onChange={(e) => setItemType(e.target.value as ItemType)}
-                  disabled={disabled}
-                  className={inputClass}
-                >
-                  {itemTypeOptions.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Brand */}
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Brand <span className="text-rose-500">*</span>
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      value={brandInput}
-                      onChange={(e) => { setBrandInput(e.target.value); setShowBrandSuggestions(true); }}
-                      onFocus={() => setShowBrandSuggestions(true)}
-                      onBlur={() => window.setTimeout(() => setShowBrandSuggestions(false), 120)}
-                      disabled={disabled}
-                      placeholder="Search or add brand"
-                      className={`min-w-0 w-full rounded-xl border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 dark:focus:ring-slate-600 ${
-                        brandError
-                          ? 'border-rose-300 bg-rose-50 focus:border-rose-400 dark:border-rose-700 dark:bg-rose-900/20'
-                          : 'border-slate-200 bg-white focus:border-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100'
-                      }`}
+            {/* Left: sticky photo panel with summary + metrics */}
+            <div className="mb-6 lg:mb-0 lg:w-72 lg:shrink-0 lg:sticky lg:top-6">
+              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                {/* Photo: 16:9 on mobile, square on desktop */}
+                <div className="relative aspect-video w-full bg-slate-100 dark:bg-slate-700 lg:aspect-square">
+                  {mainPhotoUrl ? (
+                    <Image
+                      src={mainPhotoUrl}
+                      alt={itemTitle ?? 'Item photo'}
+                      fill
+                      className="object-cover"
+                      sizes="(max-width: 1024px) 100vw, 288px"
+                      unoptimized
                     />
-                    {brandSearchLoading && (
-                      <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 dark:text-slate-400">
-                        Searching...
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-12 w-12 text-slate-300 dark:text-slate-600">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                      </svg>
+                    </div>
+                  )}
+                </div>
+
+                {/* Item summary */}
+                {existingItem && (
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                        {existingItem.item_type}
+                      </p>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusClasses[existingItem.status] ?? 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200'}`}>
+                        {existingItem.status}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-base font-semibold leading-snug text-slate-900 dark:text-white">
+                      {itemTitle}
+                    </p>
+                    {(existingItem.year || existingItem.color) && (
+                      <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                        {[existingItem.year, existingItem.color].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+
+                    {/* Metrics */}
+                    {showMetrics && (
+                      <div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-700">
+                        <div className="space-y-3">
+                          <div>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Value In</p>
+                            <p className="mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-100">{fmt(valueIn)}</p>
+                          </div>
+                          {isOwned && (
+                            <>
+                              <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Est. Sold</p>
+                                <p className="mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-100">{fmt(parsedEstimated)}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Potential Reward</p>
+                                <p className={`mt-0.5 text-lg font-semibold ${metricColor(potentialReward)}`}>{fmt(potentialReward)}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Potential ROI</p>
+                                <p className={`mt-0.5 text-lg font-semibold ${metricColor(potentialRoi)}`}>{fmtPct(potentialRoi)}</p>
+                              </div>
+                            </>
+                          )}
+                          {isSoldOrTraded && (
+                            <>
+                              <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Value Out</p>
+                                <p className="mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-100">{fmt(valueOut)}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Realized Gain</p>
+                                <p className={`mt-0.5 text-lg font-semibold ${metricColor(realizedGain)}`}>{fmt(realizedGain)}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Realized ROI</p>
+                                <p className={`mt-0.5 text-lg font-semibold ${metricColor(realizedRoi)}`}>{fmtPct(realizedRoi)}</p>
+                              </div>
+                            </>
+                          )}
+                        </div>
                       </div>
                     )}
-                    {showBrandSuggestions && brandSuggestions.length > 0 && (
-                      <ul className="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-auto rounded-2xl border border-slate-200 bg-white text-sm shadow-lg dark:border-slate-600 dark:bg-slate-800">
-                        {brandSuggestions.map((brand) => (
-                          <li
-                            key={brand.id}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              setBrandInput(brand.name);
-                              setSelectedBrandId(brand.id);
-                              setShowBrandSuggestions(false);
-                            }}
-                            className="cursor-pointer px-3 py-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
-                          >
-                            {brand.name}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCreateBrand(); }}
-                    disabled={brandCreateDisabled}
-                    className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
-                  >
-                    {creatingBrand ? 'Creating...' : 'Create'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Model */}
-              <div className="space-y-1.5 sm:col-span-2">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Model <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  disabled={disabled}
-                  placeholder="e.g. Stratocaster"
-                  className={`w-full rounded-xl border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-slate-100 dark:focus:ring-slate-600 ${
-                    modelError
-                      ? 'border-rose-300 bg-rose-50 text-slate-900 focus:border-rose-400 dark:border-rose-700 dark:bg-rose-900/20 dark:text-slate-100'
-                      : 'border-slate-200 bg-white text-slate-900 focus:border-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100'
-                  }`}
-                />
-              </div>
-
-              {/* Year */}
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Year</label>
-                <input
-                  type="number"
-                  min="1900"
-                  max={new Date().getFullYear() + 1}
-                  value={year}
-                  onChange={(e) => setYear(e.target.value)}
-                  disabled={disabled}
-                  placeholder="e.g. 2023"
-                  className={inputClass}
-                />
-              </div>
-
-              {/* Color */}
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Color</label>
-                <input
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                  disabled={disabled}
-                  placeholder="e.g. Seafoam Green"
-                  className={inputClass}
-                />
-              </div>
-
-              {/* Serial number */}
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Serial number</label>
-                <input
-                  value={serialNumber}
-                  onChange={(e) => setSerialNumber(e.target.value)}
-                  disabled={disabled}
-                  placeholder="e.g. MX22345678"
-                  className={inputClass}
-                />
-              </div>
-
-              {/* Condition */}
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condition</label>
-                <select
-                  value={condition}
-                  onChange={(e) => setCondition(e.target.value as Condition)}
-                  disabled={disabled}
-                  className={inputClass}
-                >
-                  <option value="">Choose condition</option>
-                  {conditionOptions.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Collection */}
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Purpose / collection</label>
-                <select
-                  value={collectionType}
-                  onChange={(e) => setCollectionType(e.target.value as CollectionType)}
-                  disabled={disabled}
-                  className={inputClass}
-                >
-                  <option value="">Choose type</option>
-                  {collectionOptions.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Estimated sold value */}
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Estimated sold value</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">$</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={estimatedSoldValue}
-                    onChange={(e) => setEstimatedSoldValue(e.target.value)}
-                    disabled={disabled}
-                    placeholder="0.00"
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-                  />
-                </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Estimated values help track potential returns.</p>
-              </div>
-
-              {/* Notes */}
-              <div className="space-y-1.5 sm:col-span-2">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Notes</label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  disabled={disabled}
-                  placeholder="Add any additional notes..."
-                  rows={3}
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-                />
+                )}
               </div>
             </div>
 
-            {error && (
-              <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-                {error}
-              </div>
-            )}
-            {successMessage && (
-              <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
-                {successMessage}
-              </div>
-            )}
+            {/* Right: form fields + photo management */}
+            <div className="min-w-0 flex-1 space-y-6">
+              <form onSubmit={handleSubmit} aria-busy={disabled}>
+                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                  {formFields}
+                  {error && (
+                    <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                      {error}
+                    </div>
+                  )}
+                  {successMessage && (
+                    <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+                      {successMessage}
+                    </div>
+                  )}
+                  {formActionButtons}
+                </div>
+              </form>
 
-            <div className="mt-6 hidden lg:flex lg:items-center lg:justify-end lg:gap-3">
-              <button
-                type="button"
-                onClick={() => { if (onClose) { onClose(); return; } router.push(backHref ?? '/inventory'); }}
-                className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-6 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={disabled}
-                className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-6 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
-              >
-                {saveLabel}
-              </button>
+              <ItemPhotos ref={photosRef} itemId={Number(itemId)} onMainPhotoChange={setMainPhotoUrl} />
             </div>
           </div>
-        </form>
-
-        {/* Photos — edit mode only, not shown when embedded in operation forms */}
-        {itemId && !hideHeader && (
-          <div className="mt-6">
-            <ItemPhotos ref={photosRef} itemId={Number(itemId)} />
-          </div>
+        ) : (
+          /* Create mode or embedded in operation forms: single-column */
+          <form onSubmit={handleSubmit} aria-busy={disabled}>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+              {formFields}
+              {error && (
+                <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                  {error}
+                </div>
+              )}
+              {successMessage && (
+                <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+                  {successMessage}
+                </div>
+              )}
+              {formActionButtons}
+            </div>
+          </form>
         )}
 
         {/* Mobile sticky footer */}
