@@ -383,6 +383,9 @@ CREATE POLICY "photos_delete"
 -- Also adds serial_number and user_id columns that were missing from the
 -- original view definitions.
 
+-- New columns (serial_number, user_id) appended at the end to preserve
+-- existing column positions — CREATE OR REPLACE VIEW requires this.
+
 CREATE OR REPLACE VIEW public.inventory_items_search
 WITH (security_invoker = true)
 AS
@@ -391,7 +394,6 @@ SELECT
   i.brand_id,
   i.item_type,
   i.model,
-  i.serial_number,
   i.date_listed,
   i.sold_date,
   i.estimated_sold_value,
@@ -403,8 +405,9 @@ SELECT
   i.updated_at,
   i.year,
   i.color,
-  i.user_id,
-  b.name AS brand_name
+  b.name AS brand_name,
+  i.serial_number,
+  i.user_id
 FROM public.inventory_items i
 JOIN public.brands b ON (b.id = i.brand_id);
 
@@ -416,7 +419,6 @@ SELECT
   i.brand_id,
   i.item_type,
   i.model,
-  i.serial_number,
   i.date_listed,
   i.sold_date,
   i.estimated_sold_value,
@@ -428,7 +430,8 @@ SELECT
   i.updated_at,
   i.year,
   i.color,
-  i.user_id,
-  di.total_value AS value_in
+  di.total_value AS value_in,
+  i.serial_number,
+  i.user_id
 FROM public.inventory_items i
 LEFT JOIN public.deal_items di ON (di.item_id = i.id AND di.direction = 'in');
