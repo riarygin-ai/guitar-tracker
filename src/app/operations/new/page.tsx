@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import BuyOperationForm from '@/components/BuyOperationForm';
 import SellOperationForm from '@/components/SellOperationForm';
 import TradeOperationForm from '@/components/TradeOperationForm';
@@ -17,13 +17,27 @@ const tabs = [
 
 type OperationTab = (typeof tabs)[number]['id'];
 
-export default function NewOperationPage() {
-  const searchParams = useSearchParams();
-  const typeParam = searchParams.get('type') as OperationTab | null;
-  const initialTab: OperationTab =
-    typeParam && tabs.some((t) => t.id === typeParam) ? typeParam : 'trade';
+function toValidTab(value: string | null): OperationTab {
+  return tabs.some((t) => t.id === value) ? (value as OperationTab) : 'trade';
+}
 
-  const [activeTab, setActiveTab] = useState<OperationTab>(initialTab);
+export default function NewOperationPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [activeTab, setActiveTab] = useState<OperationTab>(() =>
+    toValidTab(searchParams.get('type'))
+  );
+
+  // Sync tab when URL changes (e.g. Quick Add navigating while already on this page)
+  useEffect(() => {
+    setActiveTab(toValidTab(searchParams.get('type')));
+  }, [searchParams]);
+
+  function selectTab(tab: OperationTab) {
+    setActiveTab(tab); // immediate UI response
+    router.replace(`/operations/new?type=${tab}`, { scroll: false }); // keep URL in sync
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
@@ -52,7 +66,7 @@ export default function NewOperationPage() {
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => selectTab(tab.id)}
                 className={`rounded-full px-5 py-2.5 text-sm font-semibold transition ${activeTab === tab.id
                     ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
