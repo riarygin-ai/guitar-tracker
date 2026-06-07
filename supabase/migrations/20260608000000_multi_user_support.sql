@@ -77,7 +77,7 @@ SELECT
   email,
   COALESCE(raw_user_meta_data->>'full_name', split_part(email, '@', 1), 'Roman')
 FROM auth.users
-WHERE email = 'r.iarygin@gmail.com'
+WHERE email = 'romzzzes@gmail.com'
 ON CONFLICT (auth_user_id) DO UPDATE
   SET email         = EXCLUDED.email,
       display_name  = EXCLUDED.display_name;
@@ -99,7 +99,7 @@ DECLARE
 BEGIN
   SELECT id INTO v_roman_id
   FROM public.app_users
-  WHERE email = 'r.iarygin@gmail.com'
+  WHERE email = 'romzzzes@gmail.com'
   LIMIT 1;
 
   IF v_roman_id IS NULL THEN
