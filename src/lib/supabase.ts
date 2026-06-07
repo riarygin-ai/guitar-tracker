@@ -89,6 +89,21 @@ export async function createBrand(brand: NewBrand) {
   return supabase.from('brands').insert(brand).select().single();
 }
 
+export async function updateBrand(id: number, name: string) {
+  return supabase.from('brands').update({ name: name.trim() }).eq('id', id).select().single();
+}
+
+export async function deleteBrand(id: number) {
+  return supabase.from('brands').delete().eq('id', id);
+}
+
+export async function getBrandUsageCount(brandId: number) {
+  return supabase
+    .from('inventory_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('brand_id', brandId);
+}
+
 export async function getInventoryItems() {
   return supabase.from('inventory_items_with_value').select('*');
 }

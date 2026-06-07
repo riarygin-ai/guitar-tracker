@@ -10,6 +10,7 @@ export interface AppUser {
   auth_user_id: string;
   email: string | null;
   display_name: string;
+  admin: boolean;
   created_at: string;
 }
 

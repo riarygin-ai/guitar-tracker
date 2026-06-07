@@ -1,5 +1,6 @@
 import React from 'react';
 import './globals.css';
+import AdminNavButton from '@/components/AdminNavButton'
 import AuthGuard from '@/components/AuthGuard'
 import LogoutButton from '@/components/LogoutButton'
 import ThemeToggle from '@/components/ThemeToggle'
@@ -32,6 +33,7 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
               <a href="/cash-flow" className="hover:text-slate-900 dark:hover:text-white">Cash Flow</a>
             </nav>
             <div className="flex items-center gap-2">
+              <AdminNavButton />
               <ThemeToggle />
               <LogoutButton />
             </div>
