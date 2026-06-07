@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import BuyOperationForm from '@/components/BuyOperationForm';
 import SellOperationForm from '@/components/SellOperationForm';
 import TradeOperationForm from '@/components/TradeOperationForm';
@@ -17,7 +18,12 @@ const tabs = [
 type OperationTab = (typeof tabs)[number]['id'];
 
 export default function NewOperationPage() {
-  const [activeTab, setActiveTab] = useState<OperationTab>('trade');
+  const searchParams = useSearchParams();
+  const typeParam = searchParams.get('type') as OperationTab | null;
+  const initialTab: OperationTab =
+    typeParam && tabs.some((t) => t.id === typeParam) ? typeParam : 'trade';
+
+  const [activeTab, setActiveTab] = useState<OperationTab>(initialTab);
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
