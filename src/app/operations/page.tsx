@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems } from '@/lib/supabase';
+import { splitSearchTerms } from '@/lib/search';
 import type { Brand, Deal, DealItem, InventoryItemWithValue } from '@/types';
 
 const defaultDealTypes = ['sale', 'purchase', 'trade', 'expense'];
@@ -211,7 +212,7 @@ export default function OperationsPage() {
 
   // Filter and sort deals
   const filteredAndSortedDeals = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const searchTerms = splitSearchTerms(searchQuery);
 
     return deals
       .filter((deal) => selectedDealTypes.includes(deal.deal_type))
@@ -221,21 +222,34 @@ export default function OperationsPage() {
         return true;
       })
       .filter((deal) => {
-        if (!normalizedQuery) return true;
+        if (searchTerms.length === 0) return true;
 
-        const description = getItemDescription(deal).toLowerCase();
-        const dealType = deal.deal_type.toLowerCase();
-        const cash = formatCurrency(getCashForDeal(deal)).toLowerCase();
-        const profit = getProfitForDeal(deal) !== null ? formatCurrency(getProfitForDeal(deal)!).toLowerCase() : '';
-        const notes = (deal.notes || '').toLowerCase();
+        const itemsForDeal = dealItemsByDealId[deal.id] || [];
 
-        return (
-          description.includes(normalizedQuery) ||
-          dealType.includes(normalizedQuery) ||
-          cash.includes(normalizedQuery) ||
-          profit.includes(normalizedQuery) ||
-          notes.includes(normalizedQuery)
-        );
+        const dealFields = [
+          deal.deal_type,
+          deal.channel || '',
+          deal.deal_date || '',
+          String(deal.cash_received ?? ''),
+          String(deal.cash_paid ?? ''),
+          deal.notes || '',
+        ].map((f) => f.toLowerCase());
+
+        const itemFields: string[] = [];
+        itemsForDeal.forEach((di) => {
+          const item = itemMap[di.item_id];
+          if (item) {
+            itemFields.push((brandMap[item.brand_id] || '').toLowerCase());
+            itemFields.push(item.model.toLowerCase());
+            itemFields.push((item.color || '').toLowerCase());
+            itemFields.push(String(item.year ?? '').toLowerCase());
+            itemFields.push((item.serial_number || '').toLowerCase());
+            itemFields.push((item.notes || '').toLowerCase());
+          }
+        });
+
+        const allFields = [...dealFields, ...itemFields];
+        return searchTerms.every((term) => allFields.some((field) => field.includes(term)));
       })
       .sort((a, b) => new Date(b.deal_date).getTime() - new Date(a.deal_date).getTime());
   }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap]);
@@ -308,7 +322,7 @@ export default function OperationsPage() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by item, type, cash, profit, or notes..."
+            placeholder="Search by brand, model, color, year, channel, date, notes..."
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-slate-600"
           />
         </div>

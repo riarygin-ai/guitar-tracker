@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getBrands, getDealItems, getInventoryItems, getItemAcquisitionDates } from '@/lib/supabase';
+import { splitSearchTerms } from '@/lib/search';
 import type { Brand, DealItem, InventoryItemWithValue, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
 
@@ -122,8 +123,7 @@ export default function InventoryPage() {
   );
 
   const filteredItems = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
-    const searchTerms = normalizedSearch ? normalizedSearch.split(/\s+/).filter(Boolean) : [];
+    const searchTerms = splitSearchTerms(search);
 
     return itemsWithComputedValues.filter((item) => {
       const brandName = brandMap[item.brand_id] ?? 'Unknown';
