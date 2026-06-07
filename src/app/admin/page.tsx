@@ -11,6 +11,8 @@ import {
 } from '@/lib/supabase';
 import type { AppUser, Brand } from '@/types';
 
+const BRAND_LIMIT = 10;
+
 type EditState = { id: number; name: string };
 type DeleteState = { id: number; name: string; checking: boolean };
 
@@ -71,6 +73,15 @@ export default function AdminPage() {
   const filteredBrands = brands.filter((b) =>
     b.name.toLowerCase().includes(search.trim().toLowerCase())
   );
+  const visibleBrands = filteredBrands.slice(0, BRAND_LIMIT);
+  const isLimited = filteredBrands.length > BRAND_LIMIT;
+  const listStatusText = search.trim()
+    ? isLimited
+      ? `Showing ${BRAND_LIMIT} of ${filteredBrands.length} matching brands`
+      : `${filteredBrands.length} matching brand${filteredBrands.length !== 1 ? 's' : ''}`
+    : isLimited
+      ? `Showing ${BRAND_LIMIT} of ${brands.length} brands`
+      : null;
 
   // ── Edit ──────────────────────────────────────────────────────────────────
 
@@ -264,8 +275,12 @@ export default function AdminPage() {
             {search ? 'No brands match your search.' : 'No brands yet.'}
           </p>
         ) : (
+          <>
+            {listStatusText && (
+              <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">{listStatusText}</p>
+            )}
           <ul className="divide-y divide-slate-100 dark:divide-slate-700">
-            {filteredBrands.map((brand) => {
+            {visibleBrands.map((brand) => {
               const isEditing = editing?.id === brand.id;
               const isDeleting = deleting?.id === brand.id;
 
@@ -360,6 +375,7 @@ export default function AdminPage() {
               );
             })}
           </ul>
+          </>
         )}
       </div>
     </div>
