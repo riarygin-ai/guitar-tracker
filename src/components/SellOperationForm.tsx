@@ -94,7 +94,7 @@ export default function SellOperationForm() {
 
     searchTimerRef.current = setTimeout(async () => {
       setSearching(true);
-      const result = await searchInventoryItems(value);
+      const result = await searchInventoryItems(value, ['owned', 'listed']);
       setSearchResults(result.data ?? []);
       setHasSearched(true);
       setSearching(false);

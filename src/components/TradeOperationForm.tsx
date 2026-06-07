@@ -110,7 +110,7 @@ export default function TradeOperationForm() {
         searchTimerRef.current = setTimeout(async () => {
             setSearching(true)
 
-            const result = await searchInventoryItems(value)
+            const result = await searchInventoryItems(value, ['owned', 'listed'])
             const excludedIds = new Set([
                 ...outgoingItems.map((t) => t.item.id),
                 ...incomingItems.map((t) => t.item.id),
@@ -182,7 +182,7 @@ export default function TradeOperationForm() {
         incomingSearchTimerRef.current = setTimeout(async () => {
             setIncomingSearching(true)
 
-            const result = await searchInventoryItems(value)
+            const result = await searchInventoryItems(value, ['new'])
             const excludedIds = new Set([
                 ...outgoingItems.map((t) => t.item.id),
                 ...incomingItems.map((t) => t.item.id),

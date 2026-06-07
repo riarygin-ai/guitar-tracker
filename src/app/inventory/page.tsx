@@ -224,7 +224,7 @@ export default function InventoryPage() {
           <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">
             <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">Status</p>
             <div className="flex flex-wrap gap-2">
-              {(['owned', 'listed', 'sold', 'traded'] as Status[]).map((status) => (
+              {(['new', 'owned', 'listed', 'sold', 'traded'] as Status[]).map((status) => (
                 <button
                   key={status}
                   type="button"

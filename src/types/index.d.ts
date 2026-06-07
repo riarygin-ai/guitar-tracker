@@ -1,5 +1,5 @@
 export type ItemType = 'guitar' | 'amp' | 'pedal' | 'cab' | 'parts' | 'bass' | 'processor' | 'acoustic guitar';
-export type Status = 'owned' | 'listed' | 'sold' | 'traded';
+export type Status = 'new' | 'owned' | 'listed' | 'sold' | 'traded';
 export type DealType = 'purchase' | 'sale' | 'trade' | 'expense';
 export type Direction = 'in' | 'out';
 export type CollectionType = 'Personal' | 'Business' | 'Hybrid';

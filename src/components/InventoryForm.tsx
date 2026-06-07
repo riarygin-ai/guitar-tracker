@@ -49,6 +49,7 @@ const collectionOptions: Array<{ label: string; value: CollectionType }> = [
 ];
 
 const statusClasses: Record<string, string> = {
+  new: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
   owned: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
   listed: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
   sold: 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200',
@@ -256,7 +257,7 @@ export default function InventoryForm({
       notes: notes.trim() || null,
       date_listed: null,
       sold_date: null,
-      status: existingItem?.status ?? 'owned',
+      status: existingItem?.status ?? 'new',
     };
 
     const result = itemId

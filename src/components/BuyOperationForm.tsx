@@ -84,7 +84,7 @@ export default function BuyOperationForm() {
 
     searchTimerRef.current = setTimeout(async () => {
       setSearching(true);
-      const result = await searchInventoryItems(value);
+      const result = await searchInventoryItems(value, ['new']);
       setSearchResults(result.data ?? []);
       setHasSearched(true);
       setSearching(false);

@@ -99,12 +99,19 @@ export async function getInventoryItemsWithValue() {
     .select('*')
 }
 
-export async function searchInventoryItems(query: string) {
-  const result = await supabase
+export async function searchInventoryItems(query: string, allowedStatuses?: string[]) {
+  let dbQuery = supabase
     .from('inventory_items_search')
     .select('*')
-    .not('status', 'in', '("sold","traded")')
     .order('created_at', { ascending: false });
+
+  if (allowedStatuses && allowedStatuses.length > 0) {
+    dbQuery = dbQuery.in('status', allowedStatuses);
+  } else {
+    dbQuery = dbQuery.not('status', 'in', '("sold","traded")');
+  }
+
+  const result = await dbQuery;
 
   if (result.error || !result.data) return result;
 
