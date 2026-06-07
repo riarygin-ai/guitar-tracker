@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import ItemPhotos from '@/components/ItemPhotos';
+import ItemPhotos, { type ItemPhotosHandle } from '@/components/ItemPhotos';
 import type {
   Brand,
   CollectionType,
@@ -73,6 +73,7 @@ export default function InventoryForm({
   backHref,
 }: InventoryFormProps) {
   const router = useRouter();
+  const photosRef = useRef<ItemPhotosHandle>(null);
 
   // Form state
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -264,6 +265,15 @@ export default function InventoryForm({
 
     setSaving(false);
     if (result.error || !result.data) { setError('Could not save inventory item.'); return; }
+
+    // Upload any pending photos that were queued before the form was submitted
+    if (itemId && photosRef.current?.hasPending()) {
+      const { error: photoError } = await photosRef.current.uploadPending();
+      if (photoError) {
+        setError(`Item saved but photo upload failed: ${photoError}`);
+        return;
+      }
+    }
 
     setSuccessMessage('Inventory item saved successfully.');
     setError(null);
@@ -637,7 +647,7 @@ export default function InventoryForm({
         {/* Photos — edit mode only, not shown when embedded in operation forms */}
         {itemId && !hideHeader && (
           <div className="mt-6">
-            <ItemPhotos itemId={Number(itemId)} />
+            <ItemPhotos ref={photosRef} itemId={Number(itemId)} />
           </div>
         )}
 
