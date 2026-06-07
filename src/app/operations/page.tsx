@@ -197,6 +197,12 @@ export default function OperationsPage() {
 
   const getCashColor = (v: number) => v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-slate-600';
 
+  // Compact signed format: "+$1,200" / "−$50" / "$0" (no cents)
+  const fmtCompact = (v: number) => {
+    if (v === 0) return '$0';
+    return `${v > 0 ? '+' : '−'}$${Math.round(Math.abs(v)).toLocaleString()}`;
+  };
+
   const updateQueryParams = (params: Record<string, string | undefined>) => {
     const query = new URLSearchParams();
     if (params.from)      query.set('from', params.from);
@@ -384,107 +390,86 @@ export default function OperationsPage() {
                     href={`/operations/${deal.id}`}
                     className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-400 hover:shadow-md dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
                   >
-                    {/* 4 compact meta columns + item column takes all remaining space */}
-                    <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-[auto_auto_auto_auto_minmax(0,1fr)]">
-
-                      {/* Type */}
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Type</p>
-                        <div className={`mt-2 inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${getDealTypeColor(deal.deal_type)}`}>
-                          {deal.deal_type.charAt(0).toUpperCase() + deal.deal_type.slice(1)}
-                        </div>
+                    {/* Row 1: compact metadata — single line on all screen sizes */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <div className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${getDealTypeColor(deal.deal_type)}`}>
+                        {deal.deal_type.charAt(0).toUpperCase() + deal.deal_type.slice(1)}
                       </div>
+                      <span className="select-none text-slate-300 dark:text-slate-600">·</span>
+                      <span className="text-sm text-slate-600 dark:text-slate-400">
+                        {new Date(deal.deal_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </span>
+                      <span className="select-none text-slate-300 dark:text-slate-600">·</span>
+                      <span className={`text-sm font-medium ${getCashColor(cash)}`}>{fmtCompact(cash)}</span>
+                      {profit !== null && (
+                        <>
+                          <span className="select-none text-slate-300 dark:text-slate-600">·</span>
+                          <span className={`text-sm font-medium ${getCashColor(profit)}`}>{fmtCompact(profit)}</span>
+                        </>
+                      )}
+                    </div>
 
-                      {/* Date */}
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Date</p>
-                        <p className="mt-2 text-sm text-slate-900 dark:text-slate-100">
-                          {new Date(deal.deal_date).toLocaleDateString()}
-                        </p>
-                      </div>
-
-                      {/* Cash */}
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Cash</p>
-                        <p className={`mt-2 text-sm font-semibold ${getCashColor(cash)}`}>
-                          {formatCurrency(cash)}
-                        </p>
-                      </div>
-
-                      {/* Profit */}
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Profit</p>
-                        <p className={`mt-2 text-sm font-semibold ${profit !== null ? getCashColor(profit) : 'text-slate-600 dark:text-slate-300'}`}>
-                          {profit !== null ? formatCurrency(profit) : '—'}
-                        </p>
-                      </div>
-
-                      {/* Visual — spans full width on mobile, own column on desktop */}
-                      <div className="min-w-0 sm:col-span-2 lg:col-span-1">
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Item</p>
-                        <div className="mt-2 min-w-0">
-                          {visual.kind === 'trade' ? (() => {
-                            const hasOut = visual.outItems.some((t) => t.photoUrl) || visual.outMore > 0;
-                            const hasIn  = visual.inItems.some((t) => t.photoUrl)  || visual.inMore  > 0;
-                            return (
-                              <div className="min-w-0">
-                                {(hasOut || hasIn) && (
-                                  <div className="mb-1.5 flex flex-wrap items-center gap-1.5 lg:flex-nowrap">
-                                    {hasOut && (
-                                      <div className="flex shrink-0 items-center gap-1">
-                                        {visual.outItems.map((ti, i) =>
-                                          ti.photoUrl ? (
-                                            <div key={i} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
-                                              <Image src={ti.photoUrl} alt={ti.alt} fill className="object-cover" sizes="48px" unoptimized />
-                                            </div>
-                                          ) : null
-                                        )}
-                                        {visual.outMore > 0 && (
-                                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-                                            +{visual.outMore}
-                                          </div>
-                                        )}
-                                      </div>
+                    {/* Row 2: visual — full card width, title at left edge */}
+                    <div className="mt-3 min-w-0">
+                      {visual.kind === 'trade' ? (() => {
+                        const hasOut = visual.outItems.some((t) => t.photoUrl) || visual.outMore > 0;
+                        const hasIn  = visual.inItems.some((t) => t.photoUrl)  || visual.inMore  > 0;
+                        return (
+                          <div className="min-w-0">
+                            {(hasOut || hasIn) && (
+                              <div className="mb-1.5 flex flex-wrap items-center gap-1.5 lg:flex-nowrap">
+                                {hasOut && (
+                                  <div className="flex shrink-0 items-center gap-1">
+                                    {visual.outItems.map((ti, i) =>
+                                      ti.photoUrl ? (
+                                        <div key={i} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                                          <Image src={ti.photoUrl} alt={ti.alt} fill className="object-cover" sizes="48px" unoptimized />
+                                        </div>
+                                      ) : null
                                     )}
-                                    {hasOut && hasIn && (
-                                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400">
-                                        <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-                                      </svg>
-                                    )}
-                                    {hasIn && (
-                                      <div className="flex shrink-0 items-center gap-1">
-                                        {visual.inItems.map((ti, i) =>
-                                          ti.photoUrl ? (
-                                            <div key={i} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
-                                              <Image src={ti.photoUrl} alt={ti.alt} fill className="object-cover" sizes="48px" unoptimized />
-                                            </div>
-                                          ) : null
-                                        )}
-                                        {visual.inMore > 0 && (
-                                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-                                            +{visual.inMore}
-                                          </div>
-                                        )}
+                                    {visual.outMore > 0 && (
+                                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-500 dark:bg-slate-700 dark:text-slate-400">
+                                        +{visual.outMore}
                                       </div>
                                     )}
                                   </div>
                                 )}
-                                <p className="truncate text-sm text-slate-700 dark:text-slate-300">{visual.title}</p>
+                                {hasOut && hasIn && (
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400">
+                                    <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                                  </svg>
+                                )}
+                                {hasIn && (
+                                  <div className="flex shrink-0 items-center gap-1">
+                                    {visual.inItems.map((ti, i) =>
+                                      ti.photoUrl ? (
+                                        <div key={i} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                                          <Image src={ti.photoUrl} alt={ti.alt} fill className="object-cover" sizes="48px" unoptimized />
+                                        </div>
+                                      ) : null
+                                    )}
+                                    {visual.inMore > 0 && (
+                                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-500 dark:bg-slate-700 dark:text-slate-400">
+                                        +{visual.inMore}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            );
-                          })() : visual.photoUrl ? (
-                            <div className="min-w-0">
-                              <div className="relative mb-1.5 h-12 w-12 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
-                                <Image src={visual.photoUrl} alt={visual.alt} fill className="object-cover" sizes="48px" unoptimized />
-                              </div>
-                              <p className="truncate text-sm text-slate-700 dark:text-slate-300">{visual.title}</p>
-                            </div>
-                          ) : (
+                            )}
                             <p className="truncate text-sm text-slate-700 dark:text-slate-300">{visual.title}</p>
-                          )}
+                          </div>
+                        );
+                      })() : visual.photoUrl ? (
+                        <div className="min-w-0">
+                          <div className="relative mb-1.5 h-12 w-12 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                            <Image src={visual.photoUrl} alt={visual.alt} fill className="object-cover" sizes="48px" unoptimized />
+                          </div>
+                          <p className="truncate text-sm text-slate-700 dark:text-slate-300">{visual.title}</p>
                         </div>
-                      </div>
-
+                      ) : (
+                        <p className="truncate text-sm text-slate-700 dark:text-slate-300">{visual.title}</p>
+                      )}
                     </div>
                   </Link>
                 );
