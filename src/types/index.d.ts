@@ -5,6 +5,14 @@ export type Direction = 'in' | 'out';
 export type CollectionType = 'Personal' | 'Business' | 'Hybrid';
 export type Condition = 'Mint' | 'Excellent' | 'Very Good' | 'Good' | 'Fair';
 
+export interface AppUser {
+  id: number;
+  auth_user_id: string;
+  email: string | null;
+  display_name: string;
+  created_at: string;
+}
+
 export interface Brand {
   id: number;
   name: string;
@@ -13,6 +21,7 @@ export interface Brand {
 
 export interface InventoryItem {
   id: number;
+  user_id: number;
   brand_id: number;
   item_type: ItemType;
   model: string;
@@ -38,6 +47,7 @@ export type InventoryItemWithValue = InventoryItem & {
 
 export interface Deal {
   id: number;
+  user_id: number;
   deal_date: string;
   deal_type: DealType;
   channel: string | null;
@@ -50,6 +60,7 @@ export interface Deal {
 
 export interface DealItem {
   id: number;
+  user_id: number;
   deal_id: number;
   item_id: number;
   direction: Direction;
@@ -58,28 +69,9 @@ export interface DealItem {
   created_at: string;
 }
 
-export interface InventoryExpense {
-  id: number;
-  item_id: number | null;
-  expense_date: string;
-  amount: number;
-  notes: string;
-  created_at: string;
-}
-
-export type NewInventoryExpense = Omit<
-  InventoryExpense,
-  'id' | 'created_at'
->;
-
-export type NewBrand = Pick<Brand, 'name'>;
-
-export type NewInventoryItem = Omit<InventoryItem, 'id' | 'created_at' | 'updated_at'>;
-export type NewDeal = Omit<Deal, 'id' | 'created_at'>;
-export type NewDealItem = Omit<DealItem, 'id' | 'created_at'>;
-
 export interface CashFlow {
   id: number;
+  user_id: number;
   deal_id: number | null;
   transaction_date: string;
   opening_balance: number;
@@ -90,21 +82,20 @@ export interface CashFlow {
   created_at: string;
 }
 
-export type NewCashFlow = Omit<CashFlow, 'id' | 'created_at'>;
-
-export type UpdateInventoryItem = Partial<Omit<InventoryItem, 'id' | 'created_at' | 'updated_at'>> & {
+export interface InventoryExpense {
   id: number;
-};
-
-export type UpdateDeal = Partial<Omit<Deal, 'id' | 'created_at'>> & {
-  id: number;
-};
-export interface InventorySearchItem extends InventoryItem {
-  brand_name: string;
+  user_id: number;
+  deal_id: number | null;
+  item_id: number | null;
+  expense_date: string;
+  amount: number;
+  notes: string;
+  created_at: string;
 }
 
 export interface InventoryItemPhoto {
   id: number;
+  user_id: number;
   inventory_item_id: number;
   owner_id: string;
   storage_path: string;
@@ -115,12 +106,23 @@ export interface InventoryItemPhoto {
   sort_order: number;
   created_at: string;
 }
-export interface InventoryExpense {
+
+export type NewBrand = Pick<Brand, 'name'>;
+
+export type NewInventoryItem = Omit<InventoryItem, 'id' | 'created_at' | 'updated_at' | 'user_id'>;
+export type NewDeal = Omit<Deal, 'id' | 'created_at' | 'user_id'>;
+export type NewDealItem = Omit<DealItem, 'id' | 'created_at' | 'user_id'>;
+export type NewCashFlow = Omit<CashFlow, 'id' | 'created_at' | 'user_id'>;
+export type NewInventoryExpense = Omit<InventoryExpense, 'id' | 'created_at' | 'user_id'>;
+
+export type UpdateInventoryItem = Partial<Omit<InventoryItem, 'id' | 'created_at' | 'updated_at'>> & {
   id: number;
-  deal_id: number | null;
-  item_id: number | null;
-  expense_date: string;
-  amount: number;
-  notes: string;
-  created_at: string;
+};
+
+export type UpdateDeal = Partial<Omit<Deal, 'id' | 'created_at'>> & {
+  id: number;
+};
+
+export interface InventorySearchItem extends InventoryItem {
+  brand_name: string;
 }

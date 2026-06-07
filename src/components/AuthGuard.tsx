@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+import { supabase, getOrCreateAppUser } from '@/lib/supabase'
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -18,6 +18,10 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       if (!session && pathname !== '/login') {
         router.push('/login')
         return
+      }
+
+      if (session) {
+        await getOrCreateAppUser()
       }
 
       setLoading(false)

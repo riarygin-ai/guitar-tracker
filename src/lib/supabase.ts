@@ -1,21 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
 import { splitSearchTerms } from '@/lib/search';
-import type { InventoryItemPhoto } from '@/types';
 import type {
+  AppUser,
   Brand,
+  CashFlow,
   Deal,
   DealItem,
+  InventoryExpense,
   InventoryItem,
+  InventoryItemPhoto,
   NewBrand,
+  NewCashFlow,
   NewDeal,
   NewDealItem,
+  NewInventoryExpense,
   NewInventoryItem,
   UpdateDeal,
   UpdateInventoryItem,
-  NewCashFlow,
-  NewInventoryExpense,
-  CashFlow,
-  InventoryExpense,
 } from '@/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -31,6 +32,50 @@ if (!supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// ─── App user ─────────────────────────────────────────────────────────────────
+
+let _appUserId: number | null = null;
+
+export async function getOrCreateAppUser(): Promise<AppUser | null> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // With RLS, this returns only the current user's record
+  const { data: existing } = await supabase
+    .from('app_users')
+    .select('*')
+    .maybeSingle();
+
+  if (existing) {
+    _appUserId = (existing as AppUser).id;
+    return existing as AppUser;
+  }
+
+  // Safety net: create record if the auth trigger didn't fire
+  const displayName = (user.user_metadata?.full_name as string | undefined)
+    || user.email?.split('@')[0]
+    || 'User';
+
+  const { data: created } = await supabase
+    .from('app_users')
+    .insert({ auth_user_id: user.id, email: user.email, display_name: displayName })
+    .select()
+    .single();
+
+  if (created) {
+    _appUserId = (created as AppUser).id;
+    return created as AppUser;
+  }
+
+  return null;
+}
+
+export async function getCurrentAppUserId(): Promise<number | null> {
+  if (_appUserId !== null) return _appUserId;
+  const user = await getOrCreateAppUser();
+  return user?.id ?? null;
+}
 
 export async function getBrands(search?: string) {
   let query = supabase.from('brands').select('*').order('name', { ascending: true });
