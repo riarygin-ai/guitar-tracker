@@ -12,9 +12,11 @@ const defaultDealTypes = ['sale', 'purchase', 'trade', 'expense'];
 
 // ─── Visual helper ────────────────────────────────────────────────────────────
 
+type TradeItemVisual = { photoUrl?: string; desc: string };
+
 type DealVisual =
   | { kind: 'single'; photoUrl?: string; desc: string }
-  | { kind: 'trade'; outPhotoUrl?: string; outDesc: string; inPhotoUrl?: string; inDesc: string };
+  | { kind: 'trade'; outItems: TradeItemVisual[]; outMore: number; inItems: TradeItemVisual[]; inMore: number; summary: string };
 
 function computeDealVisual(
   deal: Deal,
@@ -28,33 +30,28 @@ function computeDealVisual(
   }
 
   if (deal.deal_type === 'trade') {
-    const outgoing = items.filter((di) => di.direction === 'out');
-    const incoming = items.filter((di) => di.direction === 'in');
+    const outgoing = items
+      .filter((di) => di.direction === 'out')
+      .sort((a, b) => Number(b.total_value ?? 0) - Number(a.total_value ?? 0));
+    const incoming = items
+      .filter((di) => di.direction === 'in')
+      .sort((a, b) => Number(b.total_value ?? 0) - Number(a.total_value ?? 0));
 
-    // Pick the item with the highest total_value on each side
-    const bestOut =
-      outgoing.length > 0
-        ? outgoing.reduce((a, b) =>
-            Number(b.total_value ?? 0) > Number(a.total_value ?? 0) ? b : a
-          )
-        : null;
-    const bestIn =
-      incoming.length > 0
-        ? incoming.reduce((a, b) =>
-            Number(b.total_value ?? 0) > Number(a.total_value ?? 0) ? b : a
-          )
-        : null;
-
-    const outItem = bestOut ? itemMap[bestOut.item_id] : null;
-    const inItem = bestIn ? itemMap[bestIn.item_id] : null;
-
-    return {
-      kind: 'trade',
-      outPhotoUrl: outItem ? photoByItemId[outItem.id] : undefined,
-      outDesc: outItem ? itemLabel(outItem) : '—',
-      inPhotoUrl: inItem ? photoByItemId[inItem.id] : undefined,
-      inDesc: inItem ? itemLabel(inItem) : '—',
+    const toVisual = (di: DealItem): TradeItemVisual => {
+      const item = itemMap[di.item_id];
+      return { photoUrl: item ? photoByItemId[item.id] : undefined, desc: item ? itemLabel(item) : '—' };
     };
+
+    const outItems = outgoing.slice(0, 3).map(toVisual);
+    const inItems = incoming.slice(0, 3).map(toVisual);
+    const outMore = Math.max(0, outgoing.length - 3);
+    const inMore = Math.max(0, incoming.length - 3);
+
+    const outLabels = outgoing.map((di) => { const item = itemMap[di.item_id]; return item ? itemLabel(item) : '—'; });
+    const inLabels = incoming.map((di) => { const item = itemMap[di.item_id]; return item ? itemLabel(item) : '—'; });
+    const summary = `${outLabels.join(' + ')} → ${inLabels.join(' + ')}`;
+
+    return { kind: 'trade', outItems, outMore, inItems, inMore, summary };
   }
 
   // purchase, sale, expense: single item
@@ -415,45 +412,52 @@ export default function OperationsPage() {
                         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Item</p>
                         <div className="mt-2">
                           {visual.kind === 'trade' ? (
-                            <div className="flex items-center gap-2">
-                              {/* Outgoing */}
-                              {visual.outPhotoUrl ? (
-                                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
-                                  <Image
-                                    src={visual.outPhotoUrl}
-                                    alt={visual.outDesc}
-                                    fill
-                                    className="object-cover"
-                                    sizes="64px"
-                                    unoptimized
-                                  />
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {/* Outgoing group */}
+                                <div className="flex items-center gap-1">
+                                  {visual.outItems.map((ti, i) =>
+                                    ti.photoUrl ? (
+                                      <div key={i} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                                        <Image src={ti.photoUrl} alt={ti.desc} fill className="object-cover" sizes="48px" unoptimized />
+                                      </div>
+                                    ) : (
+                                      <div key={i} className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 p-1 dark:bg-slate-700">
+                                        <span className="line-clamp-3 text-center text-[9px] leading-tight text-slate-600 dark:text-slate-300">{ti.desc}</span>
+                                      </div>
+                                    )
+                                  )}
+                                  {visual.outMore > 0 && (
+                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-500 dark:bg-slate-700 dark:text-slate-400">
+                                      +{visual.outMore}
+                                    </div>
+                                  )}
                                 </div>
-                              ) : (
-                                <p className="min-w-0 text-sm text-slate-700 dark:text-slate-300 line-clamp-2 max-w-[120px]">
-                                  {visual.outDesc}
-                                </p>
-                              )}
-                              {/* Arrow */}
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400">
-                                <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-                              </svg>
-                              {/* Incoming */}
-                              {visual.inPhotoUrl ? (
-                                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
-                                  <Image
-                                    src={visual.inPhotoUrl}
-                                    alt={visual.inDesc}
-                                    fill
-                                    className="object-cover"
-                                    sizes="64px"
-                                    unoptimized
-                                  />
+                                {/* Arrow */}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400">
+                                  <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                                </svg>
+                                {/* Incoming group */}
+                                <div className="flex items-center gap-1">
+                                  {visual.inItems.map((ti, i) =>
+                                    ti.photoUrl ? (
+                                      <div key={i} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                                        <Image src={ti.photoUrl} alt={ti.desc} fill className="object-cover" sizes="48px" unoptimized />
+                                      </div>
+                                    ) : (
+                                      <div key={i} className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 p-1 dark:bg-slate-700">
+                                        <span className="line-clamp-3 text-center text-[9px] leading-tight text-slate-600 dark:text-slate-300">{ti.desc}</span>
+                                      </div>
+                                    )
+                                  )}
+                                  {visual.inMore > 0 && (
+                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-500 dark:bg-slate-700 dark:text-slate-400">
+                                      +{visual.inMore}
+                                    </div>
+                                  )}
                                 </div>
-                              ) : (
-                                <p className="min-w-0 text-sm text-slate-700 dark:text-slate-300 line-clamp-2 max-w-[120px]">
-                                  {visual.inDesc}
-                                </p>
-                              )}
+                              </div>
+                              <p className="mt-1.5 max-w-full truncate text-xs text-slate-500 dark:text-slate-400">{visual.summary}</p>
                             </div>
                           ) : visual.photoUrl ? (
                             <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
