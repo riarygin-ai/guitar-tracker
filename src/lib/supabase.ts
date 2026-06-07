@@ -452,7 +452,6 @@ export async function uploadItemPhoto(
     .from('inventory_item_photos')
     .insert({
       inventory_item_id: itemId,
-      owner_id: userId,
       storage_path: storagePath,
       file_name: file.name,
       content_type: file.type,

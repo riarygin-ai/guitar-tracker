@@ -435,3 +435,11 @@ SELECT
   i.user_id
 FROM public.inventory_items i
 LEFT JOIN public.deal_items di ON (di.item_id = i.id AND di.direction = 'in');
+
+-- ─── 14. Drop owner_id from inventory_item_photos ────────────────────────────
+-- user_id (FK to app_users) replaces owner_id (FK to auth.users).
+-- Storage paths still use auth.uid() folder names — storage bucket policies
+-- are unchanged and continue to work independently of this column.
+-- RLS policies were already replaced in step 12 to use user_id.
+
+ALTER TABLE public.inventory_item_photos DROP COLUMN owner_id;

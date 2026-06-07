@@ -97,7 +97,6 @@ export interface InventoryItemPhoto {
   id: number;
   user_id: number;
   inventory_item_id: number;
-  owner_id: string;
   storage_path: string;
   file_name: string | null;
   content_type: string | null;
