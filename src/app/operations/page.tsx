@@ -408,7 +408,7 @@ export default function OperationsPage() {
 
                       {/* ── Photo area (mirrors InventoryCard thumbnail) ───── */}
                       {visual.kind === 'trade' ? (
-                        <div className="flex shrink-0 items-center gap-1.5 self-start">
+                        <div className="flex shrink-0 flex-col items-center gap-1 self-start md:flex-row md:gap-1.5">
                           {hasOutSide && (
                             <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
                               {topOut?.photoUrl
@@ -422,9 +422,16 @@ export default function OperationsPage() {
                             </div>
                           )}
                           {hasOutSide && hasInSide && (
-                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400">
-                              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-                            </svg>
+                            <>
+                              {/* Mobile: down arrow */}
+                              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400 md:hidden">
+                                <line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/>
+                              </svg>
+                              {/* Desktop: right arrow */}
+                              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="hidden shrink-0 text-slate-400 md:block">
+                                <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                              </svg>
+                            </>
                           )}
                           {hasInSide && (
                             <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
@@ -465,7 +472,7 @@ export default function OperationsPage() {
                         </div>
 
                         {/* Title (like item name in InventoryCard) */}
-                        <h3 className="mt-1 truncate text-base font-semibold text-slate-900 dark:text-white">
+                        <h3 className="mt-1 line-clamp-2 text-base font-semibold text-slate-900 dark:text-white md:line-clamp-1">
                           {visual.title}
                         </h3>
 
