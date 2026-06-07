@@ -390,7 +390,7 @@ export default function OperationsPage() {
                     href={`/operations/${deal.id}`}
                     className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-400 hover:shadow-md dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
                   >
-                    {/* Row 1: compact metadata — single line on all screen sizes */}
+                    {/* Row 1a: type + date */}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <div className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${getDealTypeColor(deal.deal_type)}`}>
                         {deal.deal_type.charAt(0).toUpperCase() + deal.deal_type.slice(1)}
@@ -399,13 +399,18 @@ export default function OperationsPage() {
                       <span className="text-sm text-slate-600 dark:text-slate-400">
                         {new Date(deal.deal_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </span>
-                      <span className="select-none text-slate-300 dark:text-slate-600">·</span>
-                      <span className={`text-sm font-medium ${getCashColor(cash)}`}>{fmtCompact(cash)}</span>
+                    </div>
+                    {/* Row 1b: labeled cash + profit */}
+                    <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-0.5">
+                      <span>
+                        <span className="text-xs text-slate-400 dark:text-slate-500">Cash </span>
+                        <span className={`text-sm font-medium ${getCashColor(cash)}`}>{fmtCompact(cash)}</span>
+                      </span>
                       {profit !== null && (
-                        <>
-                          <span className="select-none text-slate-300 dark:text-slate-600">·</span>
+                        <span>
+                          <span className="text-xs text-slate-400 dark:text-slate-500">Profit </span>
                           <span className={`text-sm font-medium ${getCashColor(profit)}`}>{fmtCompact(profit)}</span>
-                        </>
+                        </span>
                       )}
                     </div>
 
