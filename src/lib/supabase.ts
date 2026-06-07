@@ -71,13 +71,14 @@ export async function searchInventoryItems(query: string) {
     .not('status', 'in', '("sold","traded")');
 
   for (const term of terms) {
+    const yearPart = /^\d+$/.test(term) ? `,year.eq.${parseInt(term, 10)}` : '';
     q = q.or(
       `brand_name.ilike.%${term}%,` +
       `model.ilike.%${term}%,` +
       `color.ilike.%${term}%,` +
-      `year::text.ilike.%${term}%,` +
       `serial_number.ilike.%${term}%,` +
-      `notes.ilike.%${term}%`
+      `notes.ilike.%${term}%` +
+      yearPart
     );
   }
 
