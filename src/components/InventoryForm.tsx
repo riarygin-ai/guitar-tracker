@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import ItemPhotos from '@/components/ItemPhotos';
 import type {
   Brand,
   CollectionType,
@@ -632,6 +633,13 @@ export default function InventoryForm({
             </div>
           </div>
         </form>
+
+        {/* Photos — edit mode only, not shown when embedded in operation forms */}
+        {itemId && !hideHeader && (
+          <div className="mt-6">
+            <ItemPhotos itemId={Number(itemId)} />
+          </div>
+        )}
 
         {/* Mobile sticky footer */}
         {!hideHeader && (

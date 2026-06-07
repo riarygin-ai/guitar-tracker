@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getBrands, getDealItems, getInventoryItems, getItemAcquisitionDates } from '@/lib/supabase';
+import { getBrands, getDealItems, getInventoryItems, getItemAcquisitionDates, getMainPhotosForItems, getPhotoUrl } from '@/lib/supabase';
 import { splitSearchTerms } from '@/lib/search';
 import type { Brand, DealItem, InventoryItemWithValue, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
@@ -18,6 +18,7 @@ export default function InventoryPage() {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [acquiredDateByItemId, setAcquiredDateByItemId] = useState<Record<number, string>>({});
+  const [mainPhotoByItemId, setMainPhotoByItemId] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,7 +79,8 @@ export default function InventoryPage() {
       }
 
       setBrands(brandResult.data || []);
-      setItems((itemResult.data as InventoryItemWithValue[]) || []);
+      const loadedItems = (itemResult.data as InventoryItemWithValue[]) || [];
+      setItems(loadedItems);
       setDealItems((dealItemsResult.data as DealItem[]) || []);
 
       if (!acquisitionDatesResult.error && acquisitionDatesResult.data) {
@@ -88,6 +90,19 @@ export default function InventoryPage() {
           if (row.item_id != null && dealDate) map[row.item_id] = dealDate;
         }
         setAcquiredDateByItemId(map);
+      }
+
+      // Load main photos for all items in one query
+      if (loadedItems.length > 0) {
+        const itemIds = loadedItems.map((i) => i.id);
+        const photosResult = await getMainPhotosForItems(itemIds);
+        if (!photosResult.error && photosResult.data) {
+          const photoMap: Record<number, string> = {};
+          for (const row of photosResult.data) {
+            photoMap[row.inventory_item_id] = getPhotoUrl(row.storage_path);
+          }
+          setMainPhotoByItemId(photoMap);
+        }
       }
 
       setLoading(false);
@@ -286,6 +301,7 @@ export default function InventoryPage() {
                 item={item}
                 brandName={brandMap[item.brand_id] ?? 'Unknown'}
                 backQuery={backQuery}
+                mainPhotoUrl={mainPhotoByItemId[item.id] ?? null}
               />
             ))}
           </div>

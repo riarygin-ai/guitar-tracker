@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { splitSearchTerms } from '@/lib/search';
+import type { InventoryItemPhoto } from '@/types';
 import type {
   Brand,
   Deal,
@@ -320,6 +321,122 @@ export async function editTradeOperation(params: {
     p_cf_transaction_date: params.cfTransactionDate,
     p_cf_description:      params.cfDescription,
   });
+}
+
+// ─── Photo functions ──────────────────────────────────────────────────────────
+
+const PHOTO_BUCKET = 'inventory-photos';
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+
+export function getPhotoUrl(storagePath: string): string {
+  return supabase.storage.from(PHOTO_BUCKET).getPublicUrl(storagePath).data.publicUrl;
+}
+
+export async function getItemPhotos(itemId: number) {
+  return supabase
+    .from('inventory_item_photos')
+    .select('*')
+    .eq('inventory_item_id', itemId)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+}
+
+export async function getMainPhotosForItems(
+  itemIds: number[]
+): Promise<{ data: { inventory_item_id: number; storage_path: string }[] | null; error: unknown }> {
+  if (itemIds.length === 0) return { data: [], error: null };
+  return supabase
+    .from('inventory_item_photos')
+    .select('inventory_item_id, storage_path')
+    .in('inventory_item_id', itemIds)
+    .eq('is_main', true) as any;
+}
+
+export async function uploadItemPhoto(
+  itemId: number,
+  file: File
+): Promise<{ data: InventoryItemPhoto | null; error: string | null }> {
+  if (!ALLOWED_TYPES.includes(file.type)) {
+    return { data: null, error: 'Only JPEG, PNG, and WebP images are allowed.' };
+  }
+  if (file.size > MAX_SIZE_BYTES) {
+    return { data: null, error: 'File size must be 10 MB or less.' };
+  }
+
+  const userResult = await supabase.auth.getUser();
+  const userId = userResult.data.user?.id;
+  if (!userId) return { data: null, error: 'Not authenticated.' };
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const storagePath = `${userId}/${itemId}/${Date.now()}-${safeName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(PHOTO_BUCKET)
+    .upload(storagePath, file, { contentType: file.type, upsert: false });
+
+  if (uploadError) return { data: null, error: uploadError.message };
+
+  const { data, error: dbError } = await supabase
+    .from('inventory_item_photos')
+    .insert({
+      inventory_item_id: itemId,
+      owner_id: userId,
+      storage_path: storagePath,
+      file_name: file.name,
+      content_type: file.type,
+      file_size: file.size,
+      is_main: false,
+      sort_order: 0,
+    })
+    .select()
+    .single();
+
+  if (dbError) {
+    await supabase.storage.from(PHOTO_BUCKET).remove([storagePath]);
+    return { data: null, error: dbError.message };
+  }
+
+  return { data: data as InventoryItemPhoto, error: null };
+}
+
+export async function setMainPhoto(
+  itemId: number,
+  photoId: number
+): Promise<{ error: string | null }> {
+  const { error: unsetError } = await supabase
+    .from('inventory_item_photos')
+    .update({ is_main: false })
+    .eq('inventory_item_id', itemId);
+
+  if (unsetError) return { error: unsetError.message };
+
+  const { error: setError } = await supabase
+    .from('inventory_item_photos')
+    .update({ is_main: true })
+    .eq('id', photoId);
+
+  return { error: setError ? setError.message : null };
+}
+
+export async function deleteItemPhoto(
+  photoId: number,
+  storagePath: string
+): Promise<{ error: string | null }> {
+  const { error: storageError } = await supabase.storage
+    .from(PHOTO_BUCKET)
+    .remove([storagePath]);
+
+  if (storageError) return { error: `Storage error: ${storageError.message}` };
+
+  const { error: dbError } = await supabase
+    .from('inventory_item_photos')
+    .delete()
+    .eq('id', photoId);
+
+  if (dbError) return { error: `Database error: ${dbError.message}` };
+
+  return { error: null };
 }
 
 

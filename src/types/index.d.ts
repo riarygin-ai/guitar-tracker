@@ -102,6 +102,19 @@ export type UpdateDeal = Partial<Omit<Deal, 'id' | 'created_at'>> & {
 export interface InventorySearchItem extends InventoryItem {
   brand_name: string;
 }
+
+export interface InventoryItemPhoto {
+  id: number;
+  inventory_item_id: number;
+  owner_id: string;
+  storage_path: string;
+  file_name: string | null;
+  content_type: string | null;
+  file_size: number | null;
+  is_main: boolean;
+  sort_order: number;
+  created_at: string;
+}
 export interface InventoryExpense {
   id: number;
   deal_id: number | null;
