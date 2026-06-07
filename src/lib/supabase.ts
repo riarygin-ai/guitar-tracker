@@ -73,11 +73,11 @@ export async function searchInventoryItems(query: string) {
   for (const term of terms) {
     const yearPart = /^\d+$/.test(term) ? `,year.eq.${parseInt(term, 10)}` : '';
     q = q.or(
-      `brand_name.ilike.%${term}%,` +
-      `model.ilike.%${term}%,` +
-      `color.ilike.%${term}%,` +
-      `serial_number.ilike.%${term}%,` +
-      `notes.ilike.%${term}%` +
+      `brand_name.ilike.*${term}*,` +
+      `model.ilike.*${term}*,` +
+      `color.ilike.*${term}*,` +
+      `serial_number.ilike.*${term}*,` +
+      `notes.ilike.*${term}*` +
       yearPart
     );
   }
