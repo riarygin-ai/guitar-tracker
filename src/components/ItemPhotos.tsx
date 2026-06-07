@@ -83,16 +83,17 @@ export default function ItemPhotos({ itemId }: ItemPhotosProps) {
       setError(deleteError);
       return;
     }
-    setPhotos((prev) => {
-      const remaining = prev.filter((p) => p.id !== photo.id);
-      // If deleted photo was main and others remain, promote the first one
-      if (photo.is_main && remaining.length > 0) {
-        const first = remaining[0];
-        setMainPhoto(itemId, first.id);
-        return remaining.map((p, i) => ({ ...p, is_main: i === 0 }));
-      }
-      return remaining;
-    });
+
+    const remaining = photos.filter((p) => p.id !== photo.id);
+
+    if (photo.is_main && remaining.length > 0) {
+      // Promote first remaining photo to main — must run outside setState
+      const newMain = remaining[0];
+      await setMainPhoto(itemId, newMain.id);
+      setPhotos(remaining.map((p, i) => ({ ...p, is_main: i === 0 })));
+    } else {
+      setPhotos(remaining);
+    }
   }
 
   const mainPhoto = photos.find((p) => p.is_main) ?? photos[0] ?? null;
