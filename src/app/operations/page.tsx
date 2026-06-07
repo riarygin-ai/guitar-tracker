@@ -15,7 +15,7 @@ const defaultDealTypes = ['sale', 'purchase', 'trade', 'expense'];
 type TradeItemVisual = { photoUrl?: string; desc: string };
 
 type DealVisual =
-  | { kind: 'single'; photoUrl?: string; desc: string }
+  | { kind: 'single'; photoUrl?: string; desc: string; shortDesc: string }
   | { kind: 'trade'; outItems: TradeItemVisual[]; outMore: number; inItems: TradeItemVisual[]; inMore: number; summary: string };
 
 function computeDealVisual(
@@ -28,6 +28,10 @@ function computeDealVisual(
   function itemLabel(item: InventoryItemWithValue): string {
     return `${brandMap[item.brand_id] || 'Unknown'} ${item.model}`.trim();
   }
+  // Short label: model only (what the user typed), falls back to brand
+  function shortLabel(item: InventoryItemWithValue): string {
+    return item.model.trim() || brandMap[item.brand_id] || 'Unknown';
+  }
 
   if (deal.deal_type === 'trade') {
     const outgoing = items
@@ -39,7 +43,8 @@ function computeDealVisual(
 
     const toVisual = (di: DealItem): TradeItemVisual => {
       const item = itemMap[di.item_id];
-      return { photoUrl: item ? photoByItemId[item.id] : undefined, desc: item ? itemLabel(item) : '—' };
+      // desc is shortLabel so placeholder boxes stay compact
+      return { photoUrl: item ? photoByItemId[item.id] : undefined, desc: item ? shortLabel(item) : '—' };
     };
 
     const outItems = outgoing.slice(0, 3).map(toVisual);
@@ -47,8 +52,9 @@ function computeDealVisual(
     const outMore = Math.max(0, outgoing.length - 3);
     const inMore = Math.max(0, incoming.length - 3);
 
-    const outLabels = outgoing.map((di) => { const item = itemMap[di.item_id]; return item ? itemLabel(item) : '—'; });
-    const inLabels = incoming.map((di) => { const item = itemMap[di.item_id]; return item ? itemLabel(item) : '—'; });
+    // Summary uses shortLabel across ALL items (not just top 3)
+    const outLabels = outgoing.map((di) => { const item = itemMap[di.item_id]; return item ? shortLabel(item) : '—'; });
+    const inLabels  = incoming.map((di) => { const item = itemMap[di.item_id]; return item ? shortLabel(item) : '—'; });
     const summary = `${outLabels.join(' + ')} → ${inLabels.join(' + ')}`;
 
     return { kind: 'trade', outItems, outMore, inItems, inMore, summary };
@@ -61,6 +67,7 @@ function computeDealVisual(
     kind: 'single',
     photoUrl: item ? photoByItemId[item.id] : undefined,
     desc: item ? itemLabel(item) : (deal.notes || '—'),
+    shortDesc: item ? shortLabel(item) : (deal.notes || '—'),
   };
 }
 
@@ -372,8 +379,8 @@ export default function OperationsPage() {
                     href={`/operations/${deal.id}`}
                     className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-400 hover:shadow-md dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
                   >
-                    {/* 4 meta columns + 1 wide visual column */}
-                    <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_2fr]">
+                    {/* 4 compact meta columns + item column takes all remaining space */}
+                    <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-[auto_auto_auto_auto_minmax(0,1fr)]">
 
                       {/* Type */}
                       <div>
@@ -407,15 +414,15 @@ export default function OperationsPage() {
                         </p>
                       </div>
 
-                      {/* Visual — spans full width on mobile, 2 cols on desktop */}
-                      <div className="sm:col-span-2 lg:col-span-1">
+                      {/* Visual — spans full width on mobile, own column on desktop */}
+                      <div className="min-w-0 sm:col-span-2 lg:col-span-1">
                         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Item</p>
-                        <div className="mt-2">
+                        <div className="mt-2 min-w-0">
                           {visual.kind === 'trade' ? (
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                {/* Outgoing group */}
-                                <div className="flex items-center gap-1">
+                            <div className="min-w-0">
+                              {/* Thumbnail row — wraps on mobile, stays one line on desktop */}
+                              <div className="flex flex-wrap items-center gap-1.5 lg:flex-nowrap">
+                                <div className="flex shrink-0 items-center gap-1">
                                   {visual.outItems.map((ti, i) =>
                                     ti.photoUrl ? (
                                       <div key={i} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
@@ -423,7 +430,7 @@ export default function OperationsPage() {
                                       </div>
                                     ) : (
                                       <div key={i} className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 p-1 dark:bg-slate-700">
-                                        <span className="line-clamp-3 text-center text-[9px] leading-tight text-slate-600 dark:text-slate-300">{ti.desc}</span>
+                                        <span className="line-clamp-3 text-center text-[10px] leading-tight text-slate-500 dark:text-slate-400">{ti.desc}</span>
                                       </div>
                                     )
                                   )}
@@ -433,12 +440,10 @@ export default function OperationsPage() {
                                     </div>
                                   )}
                                 </div>
-                                {/* Arrow */}
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400">
                                   <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
                                 </svg>
-                                {/* Incoming group */}
-                                <div className="flex items-center gap-1">
+                                <div className="flex shrink-0 items-center gap-1">
                                   {visual.inItems.map((ti, i) =>
                                     ti.photoUrl ? (
                                       <div key={i} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
@@ -446,7 +451,7 @@ export default function OperationsPage() {
                                       </div>
                                     ) : (
                                       <div key={i} className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 p-1 dark:bg-slate-700">
-                                        <span className="line-clamp-3 text-center text-[9px] leading-tight text-slate-600 dark:text-slate-300">{ti.desc}</span>
+                                        <span className="line-clamp-3 text-center text-[10px] leading-tight text-slate-500 dark:text-slate-400">{ti.desc}</span>
                                       </div>
                                     )
                                   )}
@@ -457,21 +462,18 @@ export default function OperationsPage() {
                                   )}
                                 </div>
                               </div>
-                              <p className="mt-1.5 max-w-full truncate text-xs text-slate-500 dark:text-slate-400">{visual.summary}</p>
+                              {/* One-line summary — model names only, truncated */}
+                              <p className="mt-1.5 truncate text-xs text-slate-500 dark:text-slate-400">{visual.summary}</p>
                             </div>
                           ) : visual.photoUrl ? (
-                            <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
-                              <Image
-                                src={visual.photoUrl}
-                                alt={visual.desc}
-                                fill
-                                className="object-cover"
-                                sizes="64px"
-                                unoptimized
-                              />
+                            <div className="min-w-0">
+                              <div className="relative h-12 w-12 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                                <Image src={visual.photoUrl} alt={visual.desc} fill className="object-cover" sizes="48px" unoptimized />
+                              </div>
+                              <p className="mt-1.5 truncate text-xs text-slate-500 dark:text-slate-400">{visual.shortDesc}</p>
                             </div>
                           ) : (
-                            <p className="text-sm text-slate-900 dark:text-slate-100 line-clamp-2">{visual.desc}</p>
+                            <p className="truncate text-sm text-slate-700 dark:text-slate-300">{visual.shortDesc}</p>
                           )}
                         </div>
                       </div>
