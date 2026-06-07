@@ -353,6 +353,32 @@ export async function getMainPhotosForItems(
     .eq('is_main', true) as any;
 }
 
+// Best display photo per item: is_main=true first, then lowest sort_order.
+// Single query for any number of items — no N+1.
+export async function getDisplayPhotosForItems(
+  itemIds: number[]
+): Promise<Record<number, string>> {
+  if (itemIds.length === 0) return {};
+
+  const { data, error } = await supabase
+    .from('inventory_item_photos')
+    .select('inventory_item_id, storage_path, is_main, sort_order')
+    .in('inventory_item_id', itemIds)
+    .order('inventory_item_id', { ascending: true })
+    .order('is_main', { ascending: false })
+    .order('sort_order', { ascending: true });
+
+  if (error || !data) return {};
+
+  const result: Record<number, string> = {};
+  for (const row of data as { inventory_item_id: number; storage_path: string }[]) {
+    if (!(row.inventory_item_id in result)) {
+      result[row.inventory_item_id] = getPhotoUrl(row.storage_path);
+    }
+  }
+  return result;
+}
+
 export async function uploadItemPhoto(
   itemId: number,
   file: File

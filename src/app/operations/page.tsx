@@ -1,13 +1,73 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems } from '@/lib/supabase';
+import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems, getDisplayPhotosForItems } from '@/lib/supabase';
 import { splitSearchTerms } from '@/lib/search';
 import type { Brand, Deal, DealItem, InventoryItemWithValue } from '@/types';
 
 const defaultDealTypes = ['sale', 'purchase', 'trade', 'expense'];
+
+// ─── Visual helper ────────────────────────────────────────────────────────────
+
+type DealVisual =
+  | { kind: 'single'; photoUrl?: string; desc: string }
+  | { kind: 'trade'; outPhotoUrl?: string; outDesc: string; inPhotoUrl?: string; inDesc: string };
+
+function computeDealVisual(
+  deal: Deal,
+  items: DealItem[],
+  itemMap: Record<number, InventoryItemWithValue>,
+  brandMap: Record<number, string>,
+  photoByItemId: Record<number, string>
+): DealVisual {
+  function itemLabel(item: InventoryItemWithValue): string {
+    return `${brandMap[item.brand_id] || 'Unknown'} ${item.model}`.trim();
+  }
+
+  if (deal.deal_type === 'trade') {
+    const outgoing = items.filter((di) => di.direction === 'out');
+    const incoming = items.filter((di) => di.direction === 'in');
+
+    // Pick the item with the highest total_value on each side
+    const bestOut =
+      outgoing.length > 0
+        ? outgoing.reduce((a, b) =>
+            Number(b.total_value ?? 0) > Number(a.total_value ?? 0) ? b : a
+          )
+        : null;
+    const bestIn =
+      incoming.length > 0
+        ? incoming.reduce((a, b) =>
+            Number(b.total_value ?? 0) > Number(a.total_value ?? 0) ? b : a
+          )
+        : null;
+
+    const outItem = bestOut ? itemMap[bestOut.item_id] : null;
+    const inItem = bestIn ? itemMap[bestIn.item_id] : null;
+
+    return {
+      kind: 'trade',
+      outPhotoUrl: outItem ? photoByItemId[outItem.id] : undefined,
+      outDesc: outItem ? itemLabel(outItem) : '—',
+      inPhotoUrl: inItem ? photoByItemId[inItem.id] : undefined,
+      inDesc: inItem ? itemLabel(inItem) : '—',
+    };
+  }
+
+  // purchase, sale, expense: single item
+  const di = items[0];
+  const item = di ? itemMap[di.item_id] : null;
+  return {
+    kind: 'single',
+    photoUrl: item ? photoByItemId[item.id] : undefined,
+    desc: item ? itemLabel(item) : (deal.notes || '—'),
+  };
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OperationsPage() {
   const router = useRouter();
@@ -16,6 +76,7 @@ export default function OperationsPage() {
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemWithValue[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -43,6 +104,12 @@ export default function OperationsPage() {
       setDealItems(dealItemsResult.data || []);
       setInventoryItems(itemsResult.data || []);
       setBrands(brandsResult.data || []);
+
+      // Load photos for all referenced items in one extra query (non-blocking)
+      const allItemIds = Array.from(new Set((dealItemsResult.data || []).map((di) => di.item_id)));
+      if (allItemIds.length > 0) {
+        getDisplayPhotosForItems(allItemIds).then(setPhotoByItemId);
+      }
     }
 
     loadData();
@@ -55,7 +122,7 @@ export default function OperationsPage() {
     const to = searchParams.get('to') || '';
     const typesParam = searchParams.get('dealTypes') || '';
     const types = typesParam
-      ? typesParam.split(',').map((value) => value.trim().toLowerCase()).filter((value) => defaultDealTypes.includes(value))
+      ? typesParam.split(',').map((v) => v.trim().toLowerCase()).filter((v) => defaultDealTypes.includes(v))
       : defaultDealTypes;
 
     setFromDate(from);
@@ -64,7 +131,7 @@ export default function OperationsPage() {
   }, [searchParams]);
 
   const brandMap = useMemo(
-    () => Object.fromEntries(brands.map((brand) => [brand.id, brand.name])),
+    () => Object.fromEntries(brands.map((b) => [b.id, b.name])),
     [brands]
   );
 
@@ -87,46 +154,13 @@ export default function OperationsPage() {
     [inventoryItems]
   );
 
-  const getItemDescription = (deal: Deal): string => {
-    const itemsForDeal = dealItemsByDealId[deal.id] || [];
-
-    if (deal.deal_type === 'purchase' || deal.deal_type === 'sale') {
-      const item = itemsForDeal[0] && itemMap[itemsForDeal[0].item_id];
-      if (item) {
-        const brand = brandMap[item.brand_id] || 'Unknown';
-        return `${brand} ${item.model}`.trim();
-      }
-    } else if (deal.deal_type === 'trade') {
-      const outgoing = itemsForDeal.find((di) => di.direction === 'out');
-      const incoming = itemsForDeal.find((di) => di.direction === 'in');
-      const outItem = outgoing && itemMap[outgoing.item_id];
-      const inItem = incoming && itemMap[incoming.item_id];
-
-      if (outItem && inItem) {
-        const outBrand = brandMap[outItem.brand_id] || 'Unknown';
-        const inBrand = brandMap[inItem.brand_id] || 'Unknown';
-        return `${outBrand} ${outItem.model} → ${inBrand} ${inItem.model}`.trim();
-      } else if (outItem) {
-        const outBrand = brandMap[outItem.brand_id] || 'Unknown';
-        return `${outBrand} ${outItem.model} →`.trim();
-      }
-    }
-
-    return deal.notes || '—';
-  };
-
   const getDealTypeColor = (dealType: string) => {
     switch (dealType) {
-      case 'purchase':
-        return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700';
-      case 'sale':
-        return 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700';
-      case 'trade':
-        return 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700';
-      case 'expense':
-        return 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700';
-      default:
-        return 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:border-slate-600';
+      case 'purchase': return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700';
+      case 'sale':     return 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700';
+      case 'trade':    return 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700';
+      case 'expense':  return 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700';
+      default:         return 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:border-slate-600';
     }
   };
 
@@ -136,47 +170,31 @@ export default function OperationsPage() {
   };
 
   const getCashForDeal = (deal: Deal): number => {
-    if (deal.deal_type === 'sale') {
-      return deal.cash_received ?? 0;
-    } else if (deal.deal_type === 'purchase') {
-      return -(deal.cash_paid ?? 0);
-    } else if (deal.deal_type === 'trade') {
-      const received = deal.cash_received ?? 0;
-      const paid = deal.cash_paid ?? 0;
-      return received - paid;
-    } else if (deal.deal_type === 'expense') {
-      return -(deal.cash_paid ?? 0);
-    }
+    if (deal.deal_type === 'sale')     return deal.cash_received ?? 0;
+    if (deal.deal_type === 'purchase') return -(deal.cash_paid ?? 0);
+    if (deal.deal_type === 'trade')    return (deal.cash_received ?? 0) - (deal.cash_paid ?? 0);
+    if (deal.deal_type === 'expense')  return -(deal.cash_paid ?? 0);
     return 0;
   };
 
   const getProfitForDeal = (deal: Deal): number | null => {
-    if (deal.deal_type !== 'sale' && deal.deal_type !== 'trade') {
-      return null;
-    }
-
+    if (deal.deal_type !== 'sale' && deal.deal_type !== 'trade') return null;
     const items = dealItemsByDealId[deal.id] ?? [];
-    const outgoingItems = items.filter((item) => item.direction === 'out');
-    const outgoingValue = outgoingItems.reduce((sum, item) => sum + Number(item.total_value ?? 0), 0);
-    const outgoingCost = outgoingItems.reduce((sum, item) => sum + Number(valueInByItemId[item.item_id] ?? 0), 0);
-    return outgoingValue - outgoingCost;
+    const out = items.filter((di) => di.direction === 'out');
+    const outValue = out.reduce((s, di) => s + Number(di.total_value ?? 0), 0);
+    const outCost  = out.reduce((s, di) => s + Number(valueInByItemId[di.item_id] ?? 0), 0);
+    return outValue - outCost;
   };
 
-  const getCashColor = (value: number): string => {
-    if (value > 0) return 'text-green-600';
-    if (value < 0) return 'text-red-600';
-    return 'text-slate-600';
-  };
+  const getCashColor = (v: number) => v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-slate-600';
 
   const updateQueryParams = (params: Record<string, string | undefined>) => {
     const query = new URLSearchParams();
-
-    if (params.from) query.set('from', params.from);
-    if (params.to) query.set('to', params.to);
+    if (params.from)      query.set('from', params.from);
+    if (params.to)        query.set('to', params.to);
     if (params.dealTypes) query.set('dealTypes', params.dealTypes);
-
-    const queryString = query.toString();
-    router.replace(`/operations${queryString ? `?${queryString}` : ''}`);
+    const qs = query.toString();
+    router.replace(`/operations${qs ? `?${qs}` : ''}`);
   };
 
   const handleFromDateChange = (value: string) => {
@@ -198,19 +216,18 @@ export default function OperationsPage() {
   };
 
   const handleDealTypeToggle = (dealType: string) => {
-    const newDealTypes = selectedDealTypes.includes(dealType)
-      ? selectedDealTypes.filter((type) => type !== dealType)
+    const next = selectedDealTypes.includes(dealType)
+      ? selectedDealTypes.filter((t) => t !== dealType)
       : [...selectedDealTypes, dealType];
-
-    setSelectedDealTypes(newDealTypes.length > 0 ? newDealTypes : defaultDealTypes);
+    const types = next.length > 0 ? next : defaultDealTypes;
+    setSelectedDealTypes(types);
     updateQueryParams({
       from: fromDate || undefined,
       to: toDate || undefined,
-      dealTypes: newDealTypes.length === defaultDealTypes.length ? undefined : newDealTypes.join(','),
+      dealTypes: types.length === defaultDealTypes.length ? undefined : types.join(','),
     });
   };
 
-  // Filter and sort deals
   const filteredAndSortedDeals = useMemo(() => {
     const searchTerms = splitSearchTerms(searchQuery);
 
@@ -218,25 +235,15 @@ export default function OperationsPage() {
       .filter((deal) => selectedDealTypes.includes(deal.deal_type))
       .filter((deal) => {
         if (fromDate && deal.deal_date < fromDate) return false;
-        if (toDate && deal.deal_date > toDate) return false;
+        if (toDate   && deal.deal_date > toDate)   return false;
         return true;
       })
       .filter((deal) => {
         if (searchTerms.length === 0) return true;
-
-        const itemsForDeal = dealItemsByDealId[deal.id] || [];
-
-        const dealFields = [
-          deal.deal_type,
-          deal.channel || '',
-          deal.deal_date || '',
-          String(deal.cash_received ?? ''),
-          String(deal.cash_paid ?? ''),
-          deal.notes || '',
-        ].map((f) => f.toLowerCase());
-
+        const items = dealItemsByDealId[deal.id] || [];
+        const dealFields = [deal.deal_type, deal.channel || '', deal.deal_date || '', String(deal.cash_received ?? ''), String(deal.cash_paid ?? ''), deal.notes || ''].map((f) => f.toLowerCase());
         const itemFields: string[] = [];
-        itemsForDeal.forEach((di) => {
+        items.forEach((di) => {
           const item = itemMap[di.item_id];
           if (item) {
             itemFields.push((brandMap[item.brand_id] || '').toLowerCase());
@@ -247,9 +254,7 @@ export default function OperationsPage() {
             itemFields.push((item.notes || '').toLowerCase());
           }
         });
-
-        const allFields = [...dealFields, ...itemFields];
-        return searchTerms.every((term) => allFields.some((field) => field.includes(term)));
+        return searchTerms.every((term) => [...dealFields, ...itemFields].some((f) => f.includes(term)));
       })
       .sort((a, b) => new Date(b.deal_date).getTime() - new Date(a.deal_date).getTime());
   }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap]);
@@ -286,7 +291,6 @@ export default function OperationsPage() {
               className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
             />
           </div>
-
           <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date To</label>
             <input
@@ -306,10 +310,11 @@ export default function OperationsPage() {
                 key={dealType}
                 type="button"
                 onClick={() => handleDealTypeToggle(dealType)}
-                className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${selectedDealTypes.includes(dealType)
+                className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                  selectedDealTypes.includes(dealType)
                     ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
-                  }`}
+                }`}
               >
                 {dealType}
               </button>
@@ -327,7 +332,7 @@ export default function OperationsPage() {
           />
         </div>
 
-        {/* Content */}
+        {/* Deal list */}
         <div className="mt-6">
           {loading ? (
             <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
@@ -353,54 +358,124 @@ export default function OperationsPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredAndSortedDeals.map((deal) => (
-                <Link
-                  key={deal.id}
-                  href={`/operations/${deal.id}`}
-                  className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-400 hover:shadow-md dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
-                >
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Type</p>
-                      <div
-                        className={`mt-2 inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${getDealTypeColor(deal.deal_type)}`}
-                      >
-                        {deal.deal_type.charAt(0).toUpperCase() + deal.deal_type.slice(1)}
+              {filteredAndSortedDeals.map((deal) => {
+                const visual = computeDealVisual(
+                  deal,
+                  dealItemsByDealId[deal.id] || [],
+                  itemMap,
+                  brandMap,
+                  photoByItemId
+                );
+                const cash = getCashForDeal(deal);
+                const profit = getProfitForDeal(deal);
+
+                return (
+                  <Link
+                    key={deal.id}
+                    href={`/operations/${deal.id}`}
+                    className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-400 hover:shadow-md dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
+                  >
+                    {/* 4 meta columns + 1 wide visual column */}
+                    <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_2fr]">
+
+                      {/* Type */}
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Type</p>
+                        <div className={`mt-2 inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${getDealTypeColor(deal.deal_type)}`}>
+                          {deal.deal_type.charAt(0).toUpperCase() + deal.deal_type.slice(1)}
+                        </div>
                       </div>
-                    </div>
 
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Date</p>
-                      <p className="mt-2 text-sm text-slate-900 dark:text-slate-100">{new Date(deal.deal_date).toLocaleDateString()}</p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Cash</p>
-                      <p className={`mt-2 text-sm font-semibold ${getCashColor(getCashForDeal(deal))}`}>
-                        {formatCurrency(getCashForDeal(deal))}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Profit</p>
-                      <p className={`mt-2 text-sm font-semibold ${getProfitForDeal(deal) !== null ? getCashColor(getProfitForDeal(deal)!) : 'text-slate-600 dark:text-slate-300'}`}>
-                        {getProfitForDeal(deal) !== null ? formatCurrency(getProfitForDeal(deal)!) : '—'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Item/Description</p>
-                      <p className="mt-2 text-sm text-slate-900 line-clamp-2 dark:text-slate-100">{getItemDescription(deal)}</p>
-                    </div>
-
-                    <div className="flex items-end justify-end">
-                      <div className="inline-flex items-center justify-center rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white dark:bg-white dark:text-slate-900">
-                        View
+                      {/* Date */}
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Date</p>
+                        <p className="mt-2 text-sm text-slate-900 dark:text-slate-100">
+                          {new Date(deal.deal_date).toLocaleDateString()}
+                        </p>
                       </div>
+
+                      {/* Cash */}
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Cash</p>
+                        <p className={`mt-2 text-sm font-semibold ${getCashColor(cash)}`}>
+                          {formatCurrency(cash)}
+                        </p>
+                      </div>
+
+                      {/* Profit */}
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Profit</p>
+                        <p className={`mt-2 text-sm font-semibold ${profit !== null ? getCashColor(profit) : 'text-slate-600 dark:text-slate-300'}`}>
+                          {profit !== null ? formatCurrency(profit) : '—'}
+                        </p>
+                      </div>
+
+                      {/* Visual — spans full width on mobile, 2 cols on desktop */}
+                      <div className="sm:col-span-2 lg:col-span-1">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Item</p>
+                        <div className="mt-2">
+                          {visual.kind === 'trade' ? (
+                            <div className="flex items-center gap-2">
+                              {/* Outgoing */}
+                              {visual.outPhotoUrl ? (
+                                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                                  <Image
+                                    src={visual.outPhotoUrl}
+                                    alt={visual.outDesc}
+                                    fill
+                                    className="object-cover"
+                                    sizes="64px"
+                                    unoptimized
+                                  />
+                                </div>
+                              ) : (
+                                <p className="min-w-0 text-sm text-slate-700 dark:text-slate-300 line-clamp-2 max-w-[120px]">
+                                  {visual.outDesc}
+                                </p>
+                              )}
+                              {/* Arrow */}
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400">
+                                <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                              </svg>
+                              {/* Incoming */}
+                              {visual.inPhotoUrl ? (
+                                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                                  <Image
+                                    src={visual.inPhotoUrl}
+                                    alt={visual.inDesc}
+                                    fill
+                                    className="object-cover"
+                                    sizes="64px"
+                                    unoptimized
+                                  />
+                                </div>
+                              ) : (
+                                <p className="min-w-0 text-sm text-slate-700 dark:text-slate-300 line-clamp-2 max-w-[120px]">
+                                  {visual.inDesc}
+                                </p>
+                              )}
+                            </div>
+                          ) : visual.photoUrl ? (
+                            <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                              <Image
+                                src={visual.photoUrl}
+                                alt={visual.desc}
+                                fill
+                                className="object-cover"
+                                sizes="64px"
+                                unoptimized
+                              />
+                            </div>
+                          ) : (
+                            <p className="text-sm text-slate-900 dark:text-slate-100 line-clamp-2">{visual.desc}</p>
+                          )}
+                        </div>
+                      </div>
+
                     </div>
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>
