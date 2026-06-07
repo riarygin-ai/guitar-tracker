@@ -35,7 +35,7 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
               <nav className="hidden flex-1 items-center justify-center gap-5 text-sm font-medium text-slate-600 dark:text-slate-300 md:flex">
                 <a href="/" className="hover:text-slate-900 dark:hover:text-white">Dashboard</a>
                 <a href="/inventory" className="hover:text-slate-900 dark:hover:text-white">Inventory</a>
-                <a href="/operations/new" className="hover:text-slate-900 dark:hover:text-white">Operations</a>
+                <a href="/operations" className="hover:text-slate-900 dark:hover:text-white">Operations</a>
                 <a href="/cash-flow" className="hover:text-slate-900 dark:hover:text-white">Cash Flow</a>
               </nav>
 
@@ -55,7 +55,7 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
             <nav className="flex flex-wrap gap-x-5 gap-y-1.5 pb-3 text-sm font-medium text-slate-600 dark:text-slate-300 md:hidden">
               <a href="/" className="hover:text-slate-900 dark:hover:text-white">Dashboard</a>
               <a href="/inventory" className="hover:text-slate-900 dark:hover:text-white">Inventory</a>
-              <a href="/operations/new" className="hover:text-slate-900 dark:hover:text-white">Operations</a>
+              <a href="/operations" className="hover:text-slate-900 dark:hover:text-white">Operations</a>
               <a href="/cash-flow" className="hover:text-slate-900 dark:hover:text-white">Cash Flow</a>
             </nav>
 
