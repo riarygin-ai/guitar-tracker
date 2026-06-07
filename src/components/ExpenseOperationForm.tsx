@@ -140,13 +140,31 @@ export default function ExpenseOperationForm() {
                                 Inventory Item (Optional)
                             </label>
 
-                            <input
-                                type="text"
-                                value={searchQuery}
-                                onChange={(event) => handleSearchChange(event.target.value)}
-                                placeholder="Search inventory..."
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-                            />
+                            <div className="relative">
+                                <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(event) => handleSearchChange(event.target.value)}
+                                    placeholder="Search inventory..."
+                                    className={`w-full rounded-2xl border border-slate-200 bg-white pl-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600 ${searchQuery || searching ? 'pr-9' : 'pr-4'}`}
+                                />
+                                {searching ? (
+                                    <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                                    </div>
+                                ) : searchQuery ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleSearchChange('')}
+                                        aria-label="Clear search"
+                                        className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                                        </svg>
+                                    </button>
+                                ) : null}
+                            </div>
                         </div>
 
                         {hasSearched && searchResults.length > 0 && (
