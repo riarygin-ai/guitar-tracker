@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -15,6 +16,7 @@ import {
   updateInventoryExpense,
   recalculateCashFlowBalancesFrom,
   editTradeOperation,
+  getDisplayPhotosForItems,
 } from '@/lib/supabase';
 import type { Brand, Deal, DealItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
 
@@ -29,6 +31,7 @@ export default function OperationDetailPage() {
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [cashFlows, setCashFlows] = useState<CashFlow[]>([]);
   const [expenses, setExpenses] = useState<InventoryExpense[]>([]);
+  const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -67,6 +70,12 @@ export default function OperationDetailPage() {
     setDealItems(dealItemsResult.data || []);
     setCashFlows(cashFlowsResult.data || []);
     setExpenses(expensesResult.data || []);
+
+    // Load photos non-blocking
+    const allItemIds = (dealItemsResult.data || []).map((di: DealItem) => di.item_id);
+    if (allItemIds.length > 0) {
+      getDisplayPhotosForItems(allItemIds).then(setPhotoByItemId);
+    }
   }, [dealId]);
 
   useEffect(() => {
@@ -488,46 +497,55 @@ export default function OperationDetailPage() {
                   const realizedGain = valueOut - valueIn;
                   return (
                     <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
-                      <div className="mb-3">
-                        <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                          {brand} {item.model}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                          {item.year && `${item.year} • `}
-                          {item.color && `${item.color} • `}
-                          {item.condition}
-                        </p>
-                      </div>
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value Out</p>
-                          {editMode && deal.deal_type === 'trade' ? (
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
-                              onChange={(e) =>
-                                setEditedDealItems((prev) => ({
-                                  ...prev,
-                                  [di.id]: { total_value: Number(e.target.value) },
-                                }))
-                              }
-                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
-                            />
-                          ) : (
-                            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueOut)}</p>
-                          )}
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Realized Gain</p>
-                          <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
-                            {formatCurrency(realizedGain)}
-                          </p>
+                      <div className="flex gap-4">
+                        {photoByItemId[item.id] && (
+                          <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                            <Image src={photoByItemId[item.id]} alt={`${brand} ${item.model}`} fill className="object-cover" unoptimized sizes="80px" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-3">
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                              {brand} {item.model}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                              {item.year && `${item.year} • `}
+                              {item.color && `${item.color} • `}
+                              {item.condition}
+                            </p>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
+                              <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value Out</p>
+                              {editMode && deal.deal_type === 'trade' ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
+                                  onChange={(e) =>
+                                    setEditedDealItems((prev) => ({
+                                      ...prev,
+                                      [di.id]: { total_value: Number(e.target.value) },
+                                    }))
+                                  }
+                                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                                />
+                              ) : (
+                                <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueOut)}</p>
+                              )}
+                            </div>
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Realized Gain</p>
+                              <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
+                                {formatCurrency(realizedGain)}
+                              </p>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -553,46 +571,55 @@ export default function OperationDetailPage() {
                   const potentialReward = estimatedSold - valueIn;
                   return (
                     <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
-                      <div className="mb-3">
-                        <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                          {brand} {item.model}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                          {item.year && `${item.year} • `}
-                          {item.color && `${item.color} • `}
-                          {item.condition}
-                        </p>
-                      </div>
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
-                          {editMode && deal.deal_type === 'trade' ? (
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
-                              onChange={(e) =>
-                                setEditedDealItems((prev) => ({
-                                  ...prev,
-                                  [di.id]: { total_value: Number(e.target.value) },
-                                }))
-                              }
-                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
-                            />
-                          ) : (
-                            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
-                          )}
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Estimated Sold</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(estimatedSold)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Potential Reward</p>
-                          <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
-                            {formatCurrency(potentialReward)}
-                          </p>
+                      <div className="flex gap-4">
+                        {photoByItemId[item.id] && (
+                          <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                            <Image src={photoByItemId[item.id]} alt={`${brand} ${item.model}`} fill className="object-cover" unoptimized sizes="80px" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-3">
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                              {brand} {item.model}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                              {item.year && `${item.year} • `}
+                              {item.color && `${item.color} • `}
+                              {item.condition}
+                            </p>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
+                              {editMode && deal.deal_type === 'trade' ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
+                                  onChange={(e) =>
+                                    setEditedDealItems((prev) => ({
+                                      ...prev,
+                                      [di.id]: { total_value: Number(e.target.value) },
+                                    }))
+                                  }
+                                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                                />
+                              ) : (
+                                <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
+                              )}
+                            </div>
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Estimated Sold</p>
+                              <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(estimatedSold)}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Potential Reward</p>
+                              <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
+                                {formatCurrency(potentialReward)}
+                              </p>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>

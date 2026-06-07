@@ -1,9 +1,10 @@
 'use client'
 
+import Image from 'next/image'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import InventoryForm from '@/components/InventoryForm'
-import { createTradeOperation, getBrands, searchInventoryItems } from '@/lib/supabase'
+import { createTradeOperation, getBrands, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase'
 import type { Brand, InventoryItem } from '@/types'
 
 type TradeItem = {
@@ -44,6 +45,7 @@ export default function TradeOperationForm() {
     const [channel, setChannel] = useState('')
     const [error, setError] = useState<string | null>(null)
     const [successMessage, setSuccessMessage] = useState<string | null>(null)
+    const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({})
 
     const [saving, setSaving] = useState(false)
 
@@ -118,6 +120,11 @@ export default function TradeOperationForm() {
             setSearchResults(items)
             setHasSearched(true)
             setSearching(false)
+            if (items.length > 0) {
+                getDisplayPhotosForItems(items.map((i: { id: number }) => i.id)).then((photos) =>
+                    setPhotoByItemId((prev) => ({ ...prev, ...photos }))
+                )
+            }
         }, 300)
     }
 
@@ -185,6 +192,11 @@ export default function TradeOperationForm() {
             setIncomingSearchResults(items)
             setIncomingHasSearched(true)
             setIncomingSearching(false)
+            if (items.length > 0) {
+                getDisplayPhotosForItems(items.map((i: { id: number }) => i.id)).then((photos) =>
+                    setPhotoByItemId((prev) => ({ ...prev, ...photos }))
+                )
+            }
         }, 300)
     }
 
@@ -350,24 +362,33 @@ export default function TradeOperationForm() {
                                         }}
                                         className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
                                     >
-                                        <p className="text-sm font-medium text-slate-900 dark:text-white">
-                                            {formatItemLabel(item)}
-                                        </p>
-
-                                        <div className="mt-1 flex flex-wrap gap-2">
-                                            {item.condition && (
-                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                    {item.condition}
-                                                </span>
+                                        <div className="flex items-center gap-3">
+                                            {photoByItemId[item.id] && (
+                                                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-600">
+                                                    <Image src={photoByItemId[item.id]} alt={formatItemLabel(item)} fill className="object-cover" unoptimized sizes="48px" />
+                                                </div>
                                             )}
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-medium text-slate-900 dark:text-white">
+                                                    {formatItemLabel(item)}
+                                                </p>
 
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                {item.item_type}
-                                            </span>
+                                                <div className="mt-1 flex flex-wrap gap-2">
+                                                    {item.condition && (
+                                                        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                                            {item.condition}
+                                                        </span>
+                                                    )}
 
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                {item.status}
-                                            </span>
+                                                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                                        {item.item_type}
+                                                    </span>
+
+                                                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                                        {item.status}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </div>
                                     </button>
                                 ))}
@@ -381,61 +402,68 @@ export default function TradeOperationForm() {
                                         key={`${tradeItem.item.id}-${index}`}
                                         className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700"
                                     >
-                                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                                            <div>
-                                                <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                                                    {formatItemLabel(tradeItem.item)}
-                                                </p>
-
-                                                <div className="mt-2 flex flex-wrap gap-2">
-                                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                                        {tradeItem.item.status}
-                                                    </span>
-
-                                                    {tradeItem.item.condition && (
-                                                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                                                            {tradeItem.item.condition}
-                                                        </span>
-                                                    )}
+                                        <div className="flex gap-4">
+                                            {photoByItemId[tradeItem.item.id] && (
+                                                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                                                    <Image src={photoByItemId[tradeItem.item.id]} alt={formatItemLabel(tradeItem.item)} fill className="object-cover" unoptimized sizes="64px" />
                                                 </div>
-                                            </div>
+                                            )}
+                                            <div className="min-w-0 flex-1 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                                <div>
+                                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                                                        {formatItemLabel(tradeItem.item)}
+                                                    </p>
 
-                                            <div className="flex w-full gap-2 sm:w-48">
-                                                <div className="flex-1">
-                                                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                                                        Value out
-                                                    </label>
+                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                        <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
+                                                            {tradeItem.item.status}
+                                                        </span>
 
-                                                    <input
-                                                        type="number"
-                                                        step="0.01"
-                                                        min="0"
-                                                        value={tradeItem.value}
-                                                        onChange={(event) => {
-                                                            const value = event.target.value
+                                                        {tradeItem.item.condition && (
+                                                            <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
+                                                                {tradeItem.item.condition}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
 
-                                                            setOutgoingItems((current) =>
-                                                                current.map((entry, entryIndex) =>
-                                                                    entryIndex === index ? { ...entry, value } : entry
+                                                <div className="flex w-full gap-2 sm:w-48">
+                                                    <div className="flex-1">
+                                                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                                                            Value out
+                                                        </label>
+
+                                                        <input
+                                                            type="number"
+                                                            step="0.01"
+                                                            min="0"
+                                                            value={tradeItem.value}
+                                                            onChange={(event) => {
+                                                                const value = event.target.value
+
+                                                                setOutgoingItems((current) =>
+                                                                    current.map((entry, entryIndex) =>
+                                                                        entryIndex === index ? { ...entry, value } : entry
+                                                                    )
                                                                 )
+                                                            }}
+                                                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
+                                                            placeholder="0.00"
+                                                        />
+                                                    </div>
+
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setOutgoingItems((current) =>
+                                                                current.filter((_, entryIndex) => entryIndex !== index)
                                                             )
                                                         }}
-                                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
-                                                        placeholder="0.00"
-                                                    />
+                                                        className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
+                                                    >
+                                                        ×
+                                                    </button>
                                                 </div>
-
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setOutgoingItems((current) =>
-                                                            current.filter((_, entryIndex) => entryIndex !== index)
-                                                        )
-                                                    }}
-                                                    className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
-                                                >
-                                                    ×
-                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -551,21 +579,30 @@ export default function TradeOperationForm() {
                                         }}
                                         className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
                                     >
-                                        <p className="text-sm font-medium text-slate-900 dark:text-white">
-                                            {formatItemLabel(item)}
-                                        </p>
-                                        <div className="mt-1 flex flex-wrap gap-2">
-                                            {item.condition && (
-                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                    {item.condition}
-                                                </span>
+                                        <div className="flex items-center gap-3">
+                                            {photoByItemId[item.id] && (
+                                                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-600">
+                                                    <Image src={photoByItemId[item.id]} alt={formatItemLabel(item)} fill className="object-cover" unoptimized sizes="48px" />
+                                                </div>
                                             )}
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                {item.item_type}
-                                            </span>
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                {item.status}
-                                            </span>
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-medium text-slate-900 dark:text-white">
+                                                    {formatItemLabel(item)}
+                                                </p>
+                                                <div className="mt-1 flex flex-wrap gap-2">
+                                                    {item.condition && (
+                                                        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                                            {item.condition}
+                                                        </span>
+                                                    )}
+                                                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                                        {item.item_type}
+                                                    </span>
+                                                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                                        {item.status}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </div>
                                     </button>
                                 ))}
@@ -607,61 +644,68 @@ export default function TradeOperationForm() {
                                         key={`${tradeItem.item.id}-${index}`}
                                         className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700"
                                     >
-                                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                                            <div>
-                                                <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                                                    {formatItemLabel(tradeItem.item)}
-                                                </p>
-
-                                                <div className="mt-2 flex flex-wrap gap-2">
-                                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                                        {tradeItem.item.status}
-                                                    </span>
-
-                                                    {tradeItem.item.condition && (
-                                                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                                                            {tradeItem.item.condition}
-                                                        </span>
-                                                    )}
+                                        <div className="flex gap-4">
+                                            {photoByItemId[tradeItem.item.id] && (
+                                                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                                                    <Image src={photoByItemId[tradeItem.item.id]} alt={formatItemLabel(tradeItem.item)} fill className="object-cover" unoptimized sizes="64px" />
                                                 </div>
-                                            </div>
+                                            )}
+                                            <div className="min-w-0 flex-1 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                                <div>
+                                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                                                        {formatItemLabel(tradeItem.item)}
+                                                    </p>
 
-                                            <div className="flex w-full gap-2 sm:w-48">
-                                                <div className="flex-1">
-                                                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                                                        Value in
-                                                    </label>
+                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                        <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
+                                                            {tradeItem.item.status}
+                                                        </span>
 
-                                                    <input
-                                                        type="number"
-                                                        step="0.01"
-                                                        min="0"
-                                                        value={tradeItem.value}
-                                                        onChange={(event) => {
-                                                            const value = event.target.value
+                                                        {tradeItem.item.condition && (
+                                                            <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
+                                                                {tradeItem.item.condition}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
 
-                                                            setIncomingItems((current) =>
-                                                                current.map((entry, entryIndex) =>
-                                                                    entryIndex === index ? { ...entry, value } : entry
+                                                <div className="flex w-full gap-2 sm:w-48">
+                                                    <div className="flex-1">
+                                                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                                                            Value in
+                                                        </label>
+
+                                                        <input
+                                                            type="number"
+                                                            step="0.01"
+                                                            min="0"
+                                                            value={tradeItem.value}
+                                                            onChange={(event) => {
+                                                                const value = event.target.value
+
+                                                                setIncomingItems((current) =>
+                                                                    current.map((entry, entryIndex) =>
+                                                                        entryIndex === index ? { ...entry, value } : entry
+                                                                    )
                                                                 )
+                                                            }}
+                                                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
+                                                            placeholder="0.00"
+                                                        />
+                                                    </div>
+
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setIncomingItems((current) =>
+                                                                current.filter((_, entryIndex) => entryIndex !== index)
                                                             )
                                                         }}
-                                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
-                                                        placeholder="0.00"
-                                                    />
+                                                        className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
+                                                    >
+                                                        ×
+                                                    </button>
                                                 </div>
-
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setIncomingItems((current) =>
-                                                            current.filter((_, entryIndex) => entryIndex !== index)
-                                                        )
-                                                    }}
-                                                    className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
-                                                >
-                                                    ×
-                                                </button>
                                             </div>
                                         </div>
                                     </div>

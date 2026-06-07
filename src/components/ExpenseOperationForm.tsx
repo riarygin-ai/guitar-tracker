@@ -1,8 +1,9 @@
 'use client';
 
+import Image from 'next/image';
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createExpenseOperation, searchInventoryItems } from '@/lib/supabase';
+import { createExpenseOperation, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase';
 import type { InventorySearchItem } from '@/types';
 
 export default function ExpenseOperationForm() {
@@ -14,6 +15,7 @@ export default function ExpenseOperationForm() {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
 
     const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -47,6 +49,12 @@ export default function ExpenseOperationForm() {
             setSearchResults(result.data ?? [])
             setHasSearched(true)
             setSearching(false)
+            const found = result.data ?? [];
+            if (found.length > 0) {
+                getDisplayPhotosForItems(found.map((i: { id: number }) => i.id)).then((photos) =>
+                    setPhotoByItemId((prev) => ({ ...prev, ...photos }))
+                );
+            }
         }, 300)
     }
 
@@ -178,24 +186,33 @@ export default function ExpenseOperationForm() {
                                         }}
                                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
                                     >
-                                        <p className="text-sm font-medium text-slate-900 dark:text-white">
-                                            {[item.year, item.brand_name, item.model].filter(Boolean).join(' ')}
-                                        </p>
-
-                                        <div className="mt-1 flex gap-2">
-                                            {item.condition && (
-                                                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                    {item.condition}
-                                                </span>
+                                        <div className="flex items-center gap-3">
+                                            {photoByItemId[item.id] && (
+                                                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-600">
+                                                    <Image src={photoByItemId[item.id]} alt={[item.year, item.brand_name, item.model].filter(Boolean).join(' ')} fill className="object-cover" unoptimized sizes="48px" />
+                                                </div>
                                             )}
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-medium text-slate-900 dark:text-white">
+                                                    {[item.year, item.brand_name, item.model].filter(Boolean).join(' ')}
+                                                </p>
 
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                {item.item_type}
-                                            </span>
+                                                <div className="mt-1 flex gap-2">
+                                                    {item.condition && (
+                                                        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                                            {item.condition}
+                                                        </span>
+                                                    )}
 
-                                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                {item.status}
-                                            </span>
+                                                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                                        {item.item_type}
+                                                    </span>
+
+                                                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                                        {item.status}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </div>
                                     </button>
                                 ))}
@@ -207,31 +224,38 @@ export default function ExpenseOperationForm() {
                 {selectedItem && (
                     <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-900/20">
                         <div className="flex items-start justify-between gap-4">
-                            <div>
-                                <p className="text-xs uppercase tracking-[0.25em] text-emerald-700 dark:text-emerald-400">
-                                    Selected item
-                                </p>
+                            <div className="flex gap-4 min-w-0">
+                                {photoByItemId[selectedItem.id] && (
+                                    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                                        <Image src={photoByItemId[selectedItem.id]} alt={[selectedItem.year, selectedItem.brand_name, selectedItem.model].filter(Boolean).join(' ')} fill className="object-cover" unoptimized sizes="80px" />
+                                    </div>
+                                )}
+                                <div className="min-w-0">
+                                    <p className="text-xs uppercase tracking-[0.25em] text-emerald-700 dark:text-emerald-400">
+                                        Selected item
+                                    </p>
 
-                                <p className="mt-2 font-semibold text-slate-900 dark:text-white">
-                                    {[selectedItem.year, selectedItem.brand_name, selectedItem.model]
-                                        .filter(Boolean)
-                                        .join(' ')}
-                                </p>
+                                    <p className="mt-2 font-semibold text-slate-900 dark:text-white">
+                                        {[selectedItem.year, selectedItem.brand_name, selectedItem.model]
+                                            .filter(Boolean)
+                                            .join(' ')}
+                                    </p>
 
-                                <div className="mt-2 flex flex-wrap gap-2">
-                                    {selectedItem.condition && (
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                        {selectedItem.condition && (
+                                            <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                                                {selectedItem.condition}
+                                            </span>
+                                        )}
+
                                         <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                                            {selectedItem.condition}
+                                            {selectedItem.item_type}
                                         </span>
-                                    )}
 
-                                    <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                                        {selectedItem.item_type}
-                                    </span>
-
-                                    <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                                        {selectedItem.status}
-                                    </span>
+                                        <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                                            {selectedItem.status}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
 

@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import InventoryForm from '@/components/InventoryForm';
@@ -7,6 +8,7 @@ import {
   createBuyOperation,
   getBrands,
   searchInventoryItems,
+  getDisplayPhotosForItems,
 } from '@/lib/supabase';
 import type { Brand, InventoryItem } from '@/types';
 
@@ -33,6 +35,7 @@ export default function BuyOperationForm() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const brandMap = useMemo(
@@ -85,6 +88,12 @@ export default function BuyOperationForm() {
       setSearchResults(result.data ?? []);
       setHasSearched(true);
       setSearching(false);
+      const found = result.data ?? [];
+      if (found.length > 0) {
+        getDisplayPhotosForItems(found.map((i: { id: number }) => i.id)).then((photos) =>
+          setPhotoByItemId((prev) => ({ ...prev, ...photos }))
+        );
+      }
     }, 300);
   };
 
@@ -167,41 +176,50 @@ return (
         /* ── Selected item read-only display ── */
         <div className="space-y-4">
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-700 dark:bg-emerald-900/20">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400">Selected item</p>
-            <p className="text-sm font-semibold text-slate-900 dark:text-white">{formatItemLabel(selectedItem)}</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div>
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Brand</p>
-                <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{brandMap[selectedItem.brand_id] ?? 'Unknown'}</p>
+            <div className="flex gap-4">
+              {photoByItemId[selectedItem.id] && (
+                <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
+                  <Image src={photoByItemId[selectedItem.id]} alt={formatItemLabel(selectedItem)} fill className="object-cover" unoptimized sizes="80px" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400">Selected item</p>
+                <p className="text-sm font-semibold text-slate-900 dark:text-white">{formatItemLabel(selectedItem)}</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Brand</p>
+                    <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{brandMap[selectedItem.brand_id] ?? 'Unknown'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Model</p>
+                    <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.model}</p>
+                  </div>
+                  {selectedItem.year && (
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Year</p>
+                      <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.year}</p>
+                    </div>
+                  )}
+                  {selectedItem.color && (
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Color</p>
+                      <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.color}</p>
+                    </div>
+                  )}
+                  {selectedItem.condition && (
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Condition</p>
+                      <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.condition}</p>
+                    </div>
+                  )}
+                  {selectedItem.estimated_sold_value != null && (
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Estimated Value</p>
+                      <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">${selectedItem.estimated_sold_value.toFixed(2)}</p>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Model</p>
-                <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.model}</p>
-              </div>
-              {selectedItem.year && (
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Year</p>
-                  <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.year}</p>
-                </div>
-              )}
-              {selectedItem.color && (
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Color</p>
-                  <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.color}</p>
-                </div>
-              )}
-              {selectedItem.condition && (
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Condition</p>
-                  <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.condition}</p>
-                </div>
-              )}
-              {selectedItem.estimated_sold_value != null && (
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Estimated Value</p>
-                  <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">${selectedItem.estimated_sold_value.toFixed(2)}</p>
-                </div>
-              )}
             </div>
           </div>
           <button
@@ -292,13 +310,22 @@ return (
                   }}
                   className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
                 >
-                  <p className="text-sm font-medium text-slate-900 dark:text-white">{formatItemLabel(item)}</p>
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    {item.condition && (
-                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.condition}</span>
+                  <div className="flex items-center gap-3">
+                    {photoByItemId[item.id] && (
+                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-600">
+                        <Image src={photoByItemId[item.id]} alt={formatItemLabel(item)} fill className="object-cover" unoptimized sizes="48px" />
+                      </div>
                     )}
-                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.item_type}</span>
-                    <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.status}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-900 dark:text-white">{formatItemLabel(item)}</p>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {item.condition && (
+                          <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.condition}</span>
+                        )}
+                        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.item_type}</span>
+                        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.status}</span>
+                      </div>
+                    </div>
                   </div>
                 </button>
               ))}
