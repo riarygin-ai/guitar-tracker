@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { splitSearchTerms } from '@/lib/search';
 import type {
   Brand,
   Deal,
@@ -53,36 +54,32 @@ export async function getInventoryItemsWithValue() {
 }
 
 export async function searchInventoryItems(query: string) {
-  const trimmed = query.trim();
-
-  if (!trimmed) {
-    return supabase
-      .from('inventory_items_search')
-      .select('*')
-      .not('status', 'in', '("sold","traded")')
-      .order('created_at', { ascending: false })
-      .limit(20);
-  }
-
-  const terms = trimmed.split(/\s+/).filter(Boolean);
-  let q = supabase
+  const result = await supabase
     .from('inventory_items_search')
     .select('*')
-    .not('status', 'in', '("sold","traded")');
+    .not('status', 'in', '("sold","traded")')
+    .order('created_at', { ascending: false });
 
-  for (const term of terms) {
-    const yearPart = /^\d+$/.test(term) ? `,year.eq.${parseInt(term, 10)}` : '';
-    q = q.or(
-      `brand_name.ilike.*${term}*,` +
-      `model.ilike.*${term}*,` +
-      `color.ilike.*${term}*,` +
-      `serial_number.ilike.*${term}*,` +
-      `notes.ilike.*${term}*` +
-      yearPart
-    );
+  if (result.error || !result.data) return result;
+
+  const terms = splitSearchTerms(query);
+
+  if (terms.length === 0) {
+    return { ...result, data: result.data.slice(0, 20) };
   }
 
-  return q.order('created_at', { ascending: false }).limit(20);
+  const filtered = (result.data as any[]).filter((item) =>
+    terms.every((term) =>
+      (item.brand_name ?? '').toLowerCase().includes(term) ||
+      (item.model ?? '').toLowerCase().includes(term) ||
+      (item.color ?? '').toLowerCase().includes(term) ||
+      String(item.year ?? '').toLowerCase().includes(term) ||
+      (item.serial_number ?? '').toLowerCase().includes(term) ||
+      (item.notes ?? '').toLowerCase().includes(term)
+    )
+  );
+
+  return { ...result, data: filtered.slice(0, 20) };
 }
 
 export async function getInventoryItemById(id: number) {
