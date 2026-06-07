@@ -250,26 +250,6 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Main photo preview */}
-            {(mainPhoto || pending.length > 0) && (
-              <div
-                className="relative overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700"
-                style={{ aspectRatio: '16/9' }}
-              >
-                <Image
-                  src={mainPhoto ? getPhotoUrl(mainPhoto.storage_path) : pending[0].previewUrl}
-                  alt="Main photo"
-                  fill
-                  className="object-contain"
-                  sizes="(max-width: 768px) 100vw, 600px"
-                  unoptimized
-                />
-                <span className="absolute left-2 top-2 rounded-full bg-slate-950/70 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm">
-                  {mainPhoto ? 'Main' : 'Preview'}
-                </span>
-              </div>
-            )}
-
             {/* Photo grid */}
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
               {/* Uploaded photos */}

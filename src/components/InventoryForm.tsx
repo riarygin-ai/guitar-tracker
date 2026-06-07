@@ -611,7 +611,7 @@ export default function InventoryForm({
             <div className="mb-6 lg:mb-0 lg:w-72 lg:shrink-0 lg:sticky lg:top-6">
               <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
                 {/* Photo: 16:9 on mobile, square on desktop */}
-                <div className="relative aspect-video w-full bg-slate-100 dark:bg-slate-700 lg:aspect-square">
+                <div className="relative aspect-square w-full bg-slate-100 dark:bg-slate-700">
                   {mainPhotoUrl ? (
                     <Image
                       src={mainPhotoUrl}
