@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import InventoryForm from '@/components/InventoryForm';
 import {
   createSellOperation,
@@ -18,6 +19,7 @@ const channelOptions = [
 ];
 
 export default function SellOperationForm() {
+  const router = useRouter();
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showItemForm, setShowItemForm] = useState(false);
@@ -150,11 +152,7 @@ export default function SellOperationForm() {
       return;
     }
 
-    setSuccessMessage('Sell operation saved successfully.');
-    setDealDate('');
-    setCashReceived('');
-    setChannel('');
-    setSelectedItem(null);
+    router.push('/operations');
   };
 
   const valueOutNum = Number(cashReceived) || 0;

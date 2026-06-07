@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import InventoryForm from '@/components/InventoryForm'
 import { createTradeOperation, getBrands, searchInventoryItems } from '@/lib/supabase'
 import type { Brand, InventoryItem } from '@/types'
@@ -18,6 +19,7 @@ const channelOptions = [
 ]
 
 export default function TradeOperationForm() {
+    const router = useRouter()
     const [brands, setBrands] = useState<Brand[]>([])
 
     const [outgoingItems, setOutgoingItems] = useState<TradeItem[]>([])
@@ -278,24 +280,7 @@ export default function TradeOperationForm() {
             return
         }
 
-        setSuccessMessage('Trade operation saved successfully.')
-
-        setOutgoingItems([])
-        setCashOut('')
-
-        setIncomingItems([])
-        setCashIn('')
-
-        setIncomingSearchQuery('')
-        setIncomingSearchResults([])
-        setIncomingHasSearched(false)
-
-        setShowIncomingForm(false)
-        setSearchQuery('')
-        setSearchResults([])
-        setHasSearched(false)
-        setDealDate('')
-        setChannel('')
+        router.push('/operations')
     }
 
     return (

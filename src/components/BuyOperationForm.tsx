@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import InventoryForm from '@/components/InventoryForm';
 import {
   createBuyOperation,
@@ -17,6 +18,7 @@ const channelOptions = [
 ];
 
 export default function BuyOperationForm() {
+  const router = useRouter();
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showItemForm, setShowItemForm] = useState(false);
@@ -140,11 +142,7 @@ export default function BuyOperationForm() {
       return;
     }
 
-    setSuccessMessage('Buy operation saved successfully.');
-setDealDate('');
-setCashPaid('');
-setChannel('');
-setSelectedItem(null);
+    router.push('/operations');
   };
 
   const buyValueIn = Number(cashPaid) || 0;

@@ -1,10 +1,12 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { createExpenseOperation, searchInventoryItems } from '@/lib/supabase';
 import type { InventorySearchItem } from '@/types';
 
 export default function ExpenseOperationForm() {
+    const router = useRouter();
     const [expenseDate, setExpenseDate] = useState('');
     const [amount, setAmount] = useState('');
     const [notes, setNotes] = useState('');
@@ -88,12 +90,7 @@ export default function ExpenseOperationForm() {
         setNotes('');
         setExpenseDate('');
 
-        setSelectedItem(null);
-        setSearchQuery('');
-        setSearchResults([]);
-        setHasSearched(false);
-
-        setSuccessMessage('Expense saved successfully.');
+        router.push('/operations');
     };
 
     return (

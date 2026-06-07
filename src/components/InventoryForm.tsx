@@ -275,22 +275,26 @@ export default function InventoryForm({
       }
     }
 
-    setSuccessMessage('Inventory item saved successfully.');
-    setError(null);
-
-    if (!itemId) {
-      if (onCreated) onCreated(result.data);
-      setBrandInput('');
-      setSelectedBrandId(null);
-      setModel('');
-      setSerialNumber('');
-      setYear('');
-      setColor('');
-      setCondition('');
-      setCollectionType('');
-      setEstimatedSoldValue('');
-      setNotes('');
+    // Standalone form: navigate back to the list with filters intact
+    if (!hideHeader) {
+      router.push(backHref ?? '/inventory');
+      return;
     }
+
+    // Embedded form (inside operation forms): notify parent and reset
+    if (onCreated) onCreated(result.data);
+    setBrandInput('');
+    setSelectedBrandId(null);
+    setModel('');
+    setSerialNumber('');
+    setYear('');
+    setColor('');
+    setCondition('');
+    setCollectionType('');
+    setEstimatedSoldValue('');
+    setNotes('');
+    setSuccessMessage('Item saved.');
+    setError(null);
   };
 
   const modelError = Boolean(error?.includes('Model'));
