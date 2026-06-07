@@ -76,6 +76,22 @@ function computeDealVisual(
   };
 }
 
+// ─── Relative time ────────────────────────────────────────────────────────────
+
+function relativeTime(dateStr: string): string {
+  const diffDays = Math.floor(
+    (Date.now() - new Date(dateStr + 'T12:00:00').getTime()) / 86_400_000
+  );
+  if (diffDays === 0)  return 'today';
+  if (diffDays < 30)   return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+  if (diffDays < 365) {
+    const m = Math.round(diffDays / 30.44);
+    return `${m} month${m !== 1 ? 's' : ''} ago`;
+  }
+  const y = Math.round(diffDays / 365.25);
+  return `${y} year${y !== 1 ? 's' : ''} ago`;
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OperationsPage() {
@@ -469,27 +485,29 @@ export default function OperationsPage() {
                           {visual.title}
                         </h3>
 
-                        {/* Metrics row 1: Date + Cash */}
-                        <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
-                          <span>
-                            <span className="text-slate-500 dark:text-slate-400">Date </span>
-                            {new Date(deal.deal_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                          </span>
-                          <span>
-                            <span className="text-slate-500 dark:text-slate-400">Cash </span>
-                            <span className={getCashColor(cash)}>{fmtCompact(cash)}</span>
-                          </span>
-                        </div>
-
-                        {/* Metrics row 2: Profit (sales and trades only) */}
-                        {profit !== null && (
-                          <div className="mt-1 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
-                            <span>
-                              <span className="text-slate-500 dark:text-slate-400">Profit </span>
-                              <span className={getCashColor(profit)}>{fmtCompact(profit)}</span>
-                            </span>
+                        {/* Metrics grid — 2-column stacked label/value, matches InventoryCard */}
+                        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2">
+                          {/* Date */}
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">Date</p>
+                            <p className="mt-0.5 text-sm font-medium text-slate-900 dark:text-white">
+                              {new Date(deal.deal_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </p>
+                            <p className="text-xs text-slate-400 dark:text-slate-500">{relativeTime(deal.deal_date)}</p>
                           </div>
-                        )}
+                          {/* Cash */}
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">Cash</p>
+                            <p className={`mt-0.5 text-sm font-medium ${getCashColor(cash)}`}>{fmtCompact(cash)}</p>
+                          </div>
+                          {/* Profit — sales and trades only */}
+                          {profit !== null && (
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">Profit</p>
+                              <p className={`mt-0.5 text-sm font-medium ${getCashColor(profit)}`}>{fmtCompact(profit)}</p>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </Link>
