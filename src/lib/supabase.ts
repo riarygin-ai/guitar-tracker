@@ -10,6 +10,7 @@ import type {
   InventoryItem,
   InventoryItemPhoto,
   ItemCategory,
+  ItemListing,
   ItemSubtype,
   NewBrand,
   NewCashFlow,
@@ -19,6 +20,7 @@ import type {
   NewInventoryItem,
   UpdateDeal,
   UpdateInventoryItem,
+  UpsertItemListing,
 } from '@/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -437,6 +439,26 @@ export async function editTradeOperation(params: {
     p_cf_transaction_date: params.cfTransactionDate,
     p_cf_description:      params.cfDescription,
   });
+}
+
+// ─── Item listing functions ───────────────────────────────────────────────────
+
+export async function getItemListings(itemId: number) {
+  return supabase
+    .from('item_listings')
+    .select('*')
+    .eq('inventory_item_id', itemId);
+}
+
+export async function upsertItemListing(data: UpsertItemListing) {
+  return supabase
+    .from('item_listings')
+    .upsert(
+      { ...data, updated_at: new Date().toISOString() },
+      { onConflict: 'inventory_item_id,listing_type' },
+    )
+    .select()
+    .single<ItemListing>();
 }
 
 // ─── Photo functions ──────────────────────────────────────────────────────────

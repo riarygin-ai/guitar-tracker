@@ -5,7 +5,7 @@ import { generateListing, type ListingType } from '@/lib/openai';
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 
-const VALID_LISTING_TYPES: ListingType[] = ['reverb', 'marketplace', 'trade'];
+const VALID_LISTING_TYPES: ListingType[] = ['reverb', 'marketplace', 'kijiji'];
 
 export async function POST(req: NextRequest) {
   // ── Parse request body ───────────────────────────────────────────────────────
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
 
   // ── Call OpenAI (server-side only) ───────────────────────────────────────────
   try {
-    const text = await generateListing(
+    const { text, model } = await generateListing(
       {
         brandName:          (item.brands as any)?.name       ?? 'Unknown brand',
         model:              item.model,
@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
       typeof currentDraft === 'string' ? currentDraft : undefined,
     );
 
-    return NextResponse.json({ text });
+    return NextResponse.json({ text, ai_model: model });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Generation failed';
     console.error('[generate-listing] OpenAI error:', message);

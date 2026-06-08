@@ -125,6 +125,37 @@ export interface InventoryItemPhoto {
   created_at: string;
 }
 
+export type ListingType = 'reverb' | 'marketplace' | 'kijiji';
+export type ListingStatus = 'draft' | 'published' | 'archived';
+
+export interface ItemListing {
+  id: number;
+  user_id: number;
+  inventory_item_id: number;
+  listing_type: ListingType;
+  title: string | null;
+  description: string;
+  asking_price: number | null;
+  trade_value: number | null;
+  currency: string;
+  status: ListingStatus;
+  is_ai_generated: boolean;
+  ai_model: string | null;
+  prompt_version: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type UpsertItemListing = Pick<
+  ItemListing,
+  | 'inventory_item_id'
+  | 'listing_type'
+  | 'description'
+  | 'status'
+  | 'is_ai_generated'
+> &
+  Partial<Pick<ItemListing, 'title' | 'asking_price' | 'trade_value' | 'currency' | 'ai_model' | 'prompt_version'>>;
+
 export type NewBrand = Pick<Brand, 'name'>;
 
 export type NewInventoryItem = Omit<InventoryItem, 'id' | 'created_at' | 'updated_at' | 'user_id'>;

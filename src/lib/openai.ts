@@ -12,7 +12,7 @@ const TEMPERATURE = 0.65;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type ListingType = 'reverb' | 'marketplace' | 'trade';
+export type ListingType = 'reverb' | 'marketplace' | 'kijiji';
 
 export interface ListingItem {
   brandName: string;
@@ -54,11 +54,12 @@ Format:
 - One closing line about meeting locally or shipping
 Tone: casual, no filler phrases, under 120 words total.`,
 
-  trade: `Write a gear-forum trade post.
-Format: 2 short paragraphs.
-First: describe what you have and its condition honestly.
-Second: state you are open to trades for similar-value gear (keep it general — guitars, amps, pedals), and mention that cash adjustments either way are possible.
-Tone: direct and peer-to-peer — gear traders value brevity and honesty over marketing language.
+  kijiji: `Write a Kijiji classified ad.
+Format: 2–3 short paragraphs — no bullet points.
+First: state what the item is and its condition in plain language.
+Middle: cover any relevant details provided (year, color, notable features from seller notes). Do not invent specs.
+End: mention asking price naturally if provided, state "firm" or "or best offer" only if price flexibility is implied by the notes; add one line about local pickup and whether shipping is possible.
+Tone: casual, honest, matter-of-fact — like a knowledgeable seller placing a newspaper ad.
 Keep it under 130 words.`,
 };
 
@@ -100,7 +101,7 @@ export async function generateListing(
   item: ListingItem,
   listingType: ListingType,
   currentDraft?: string,
-): Promise<string> {
+): Promise<{ text: string; model: string }> {
   const client = getClient();
 
   const userMessage = [
@@ -127,5 +128,5 @@ export async function generateListing(
 
   const text = response.choices[0]?.message?.content?.trim();
   if (!text) throw new Error('OpenAI returned an empty response');
-  return text;
+  return { text, model: MODEL_ID };
 }
