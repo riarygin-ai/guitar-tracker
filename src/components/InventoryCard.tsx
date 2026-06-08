@@ -15,9 +15,10 @@ interface InventoryCardProps {
   brandName: string;
   backQuery?: string;
   mainPhotoUrl?: string | null;
+  subtypeName?: string;
 }
 
-export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl }: InventoryCardProps) {
+export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl, subtypeName }: InventoryCardProps) {
   const title = [item.year, brandName, item.model].filter(Boolean).join(' ');
   const subtitle = item.color ? `${title} — ${item.color}` : title;
 
@@ -76,7 +77,7 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                {item.item_type}
+                {subtypeName ?? item.item_type}
               </p>
               <h3 className="mt-1 truncate text-base font-semibold text-slate-900 dark:text-white">
                 {subtitle}

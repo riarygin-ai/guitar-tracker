@@ -3,12 +3,36 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getBrands, getDealItems, getInventoryItems, getItemAcquisitionDates, getMainPhotosForItems, getPhotoUrl } from '@/lib/supabase';
+import { getBrands, getDealItems, getInventoryItems, getItemAcquisitionDates, getItemCategories, getItemSubtypes, getMainPhotosForItems, getPhotoUrl } from '@/lib/supabase';
 import { splitSearchTerms } from '@/lib/search';
-import type { Brand, DealItem, InventoryItemWithValue, Status } from '@/types';
+import type { Brand, DealItem, InventoryItemWithValue, ItemCategory, ItemSubtype, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
 
 const DISPLAY_LIMIT = 100;
+
+const LEGACY_TYPE_TO_CATEGORY: Record<string, string> = {
+  guitar: 'Guitars',
+  bass: 'Guitars',
+  'acoustic guitar': 'Guitars',
+  amp: 'Amps',
+  cab: 'Amps',
+  processor: 'Amps',
+  pedal: 'Pedals',
+  parts: 'Parts',
+  pickups: 'Parts',
+};
+
+const LEGACY_TYPE_TO_SUBTYPE_NAME: Record<string, string> = {
+  guitar: 'Electric Guitar',
+  bass: 'Bass',
+  'acoustic guitar': 'Acoustic Guitar',
+  amp: 'Amp',
+  cab: 'Cabinet',
+  processor: 'Processor',
+  pedal: 'Pedal',
+  parts: 'Parts',
+  pickups: 'Pickups',
+};
 
 export default function InventoryPage() {
   const router = useRouter();
@@ -16,60 +40,63 @@ export default function InventoryPage() {
 
   const [items, setItems] = useState<InventoryItemWithValue[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [categories, setCategories] = useState<ItemCategory[]>([]);
+  const [allSubtypes, setAllSubtypes] = useState<ItemSubtype[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [acquiredDateByItemId, setAcquiredDateByItemId] = useState<Record<number, string>>({});
   const [mainPhotoByItemId, setMainPhotoByItemId] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Defaults used during SSR (searchParams is empty at build time for static pages)
   const [search, setSearch] = useState('');
   const [selectedStatuses, setSelectedStatuses] = useState<Status[]>(['owned', 'listed']);
-  const [selectedItemTypes, setSelectedItemTypes] = useState<string[]>(['guitar']);
+  const [selectedCategoryNames, setSelectedCategoryNames] = useState<string[]>(['Guitars']);
+  const [selectedSubtypeNames, setSelectedSubtypeNames] = useState<string[]>([]);
 
-  // After the client mounts, read the real URL params and set state from them.
-  // The ref prevents the URL-sync effect below from firing before this runs.
   const isInitializedRef = useRef(false);
   useEffect(() => {
     if (isInitializedRef.current) return;
     const s = searchParams.get('status');
-    const t = searchParams.get('type');
+    const cat = searchParams.get('category');
+    const sub = searchParams.get('subtype');
     const q = searchParams.get('search');
     setSearch(q ?? '');
     setSelectedStatuses(s ? (s.split(',').filter(Boolean) as Status[]) : ['owned', 'listed']);
-    setSelectedItemTypes(t ? t.split(',').filter(Boolean) : ['guitar']);
+    setSelectedCategoryNames(cat ? cat.split(',').filter(Boolean) : ['Guitars']);
+    setSelectedSubtypeNames(sub ? sub.split(',').filter(Boolean) : []);
     isInitializedRef.current = true;
   }, [searchParams]);
 
-  // Keep URL in sync with filter state so links to items carry the current context.
-  // Guarded by isInitializedRef so it never overwrites incoming URL params on first render.
   useEffect(() => {
     if (!isInitializedRef.current) return;
     const params = new URLSearchParams();
     if (search) params.set('search', search);
     if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
-    if (selectedItemTypes.length > 0) params.set('type', [...selectedItemTypes].sort().join(','));
+    if (selectedCategoryNames.length > 0) params.set('category', [...selectedCategoryNames].sort().join(','));
+    if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
     const qs = params.toString();
     router.replace(`/inventory${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [search, selectedStatuses, selectedItemTypes, router]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, router]);
 
-  // Query string passed to each card so item URLs carry back-navigation context
   const backQuery = useMemo(() => {
     const params = new URLSearchParams();
     if (search) params.set('search', search);
     if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
-    if (selectedItemTypes.length > 0) params.set('type', [...selectedItemTypes].sort().join(','));
+    if (selectedCategoryNames.length > 0) params.set('category', [...selectedCategoryNames].sort().join(','));
+    if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
     return params.toString();
-  }, [search, selectedStatuses, selectedItemTypes]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames]);
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [brandResult, itemResult, dealItemsResult, acquisitionDatesResult] = await Promise.all([
+      const [brandResult, itemResult, dealItemsResult, acquisitionDatesResult, catsResult, subsResult] = await Promise.all([
         getBrands(),
         getInventoryItems(),
         getDealItems(),
         getItemAcquisitionDates(),
+        getItemCategories(),
+        getItemSubtypes(),
       ]);
 
       if (brandResult.error || itemResult.error || dealItemsResult.error) {
@@ -82,6 +109,8 @@ export default function InventoryPage() {
       const loadedItems = (itemResult.data as InventoryItemWithValue[]) || [];
       setItems(loadedItems);
       setDealItems((dealItemsResult.data as DealItem[]) || []);
+      setCategories((catsResult.data as ItemCategory[]) || []);
+      setAllSubtypes((subsResult.data as ItemSubtype[]) || []);
 
       if (!acquisitionDatesResult.error && acquisitionDatesResult.data) {
         const map: Record<number, string> = {};
@@ -92,7 +121,6 @@ export default function InventoryPage() {
         setAcquiredDateByItemId(map);
       }
 
-      // Load main photos for all items in one query
       if (loadedItems.length > 0) {
         const itemIds = loadedItems.map((i) => i.id);
         const photosResult = await getMainPhotosForItems(itemIds);
@@ -116,6 +144,18 @@ export default function InventoryPage() {
     [brands]
   );
 
+  // Map subtype id → subtype name for fast lookup
+  const subtypeNameById = useMemo(
+    () => Object.fromEntries(allSubtypes.map((s) => [s.id, s.name])),
+    [allSubtypes]
+  );
+
+  // Map subtype id → category name
+  const categoryNameBySubtypeId = useMemo(() => {
+    const catById = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+    return Object.fromEntries(allSubtypes.map((s) => [s.id, catById[s.category_id] ?? '']));
+  }, [allSubtypes, categories]);
+
   const valueOutByItemId = useMemo(
     () =>
       dealItems.reduce<Record<number, number>>((acc, di) => {
@@ -137,6 +177,15 @@ export default function InventoryPage() {
     [items, valueOutByItemId, acquiredDateByItemId]
   );
 
+  // Subtype names visible in filter (only those belonging to selected categories)
+  const visibleSubtypes = useMemo(() => {
+    if (selectedCategoryNames.length === 0) return allSubtypes;
+    return allSubtypes.filter((s) => {
+      const catName = categoryNameBySubtypeId[s.id] ?? '';
+      return selectedCategoryNames.includes(catName);
+    });
+  }, [allSubtypes, selectedCategoryNames, categoryNameBySubtypeId]);
+
   const filteredItems = useMemo(() => {
     const searchTerms = splitSearchTerms(search);
 
@@ -156,12 +205,27 @@ export default function InventoryPage() {
       const matchesStatus =
         selectedStatuses.length === 0 || selectedStatuses.includes(item.status);
 
-      const matchesItemType =
-        selectedItemTypes.length === 0 || selectedItemTypes.includes(item.item_type);
+      // Resolve category and subtype names for this item
+      let itemCategoryName: string;
+      let itemSubtypeName: string;
+      if (item.item_subtype_id != null) {
+        itemSubtypeName = subtypeNameById[item.item_subtype_id] ?? '';
+        itemCategoryName = categoryNameBySubtypeId[item.item_subtype_id] ?? '';
+      } else {
+        const legacy = item.item_type.toLowerCase();
+        itemCategoryName = LEGACY_TYPE_TO_CATEGORY[legacy] ?? '';
+        itemSubtypeName = LEGACY_TYPE_TO_SUBTYPE_NAME[legacy] ?? item.item_type;
+      }
 
-      return matchesSearch && matchesStatus && matchesItemType;
+      const matchesCategory =
+        selectedCategoryNames.length === 0 || selectedCategoryNames.includes(itemCategoryName);
+
+      const matchesSubtype =
+        selectedSubtypeNames.length === 0 || selectedSubtypeNames.includes(itemSubtypeName);
+
+      return matchesSearch && matchesStatus && matchesCategory && matchesSubtype;
     });
-  }, [brandMap, itemsWithComputedValues, search, selectedItemTypes, selectedStatuses]);
+  }, [brandMap, itemsWithComputedValues, search, selectedCategoryNames, selectedSubtypeNames, selectedStatuses, subtypeNameById, categoryNameBySubtypeId]);
 
   const sortedFilteredItems = useMemo(() => {
     return [...filteredItems].sort((a, b) => {
@@ -221,6 +285,7 @@ export default function InventoryPage() {
         </div>
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          {/* Status filter */}
           <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">
             <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">Status</p>
             <div className="flex flex-wrap gap-2">
@@ -247,30 +312,72 @@ export default function InventoryPage() {
             </div>
           </div>
 
+          {/* Category + Subtype filter */}
           <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">
-            <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">Item Type</p>
+            <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">Category</p>
             <div className="flex flex-wrap gap-2">
-              {(['guitar', 'amp', 'pedal', 'cab', 'parts', 'bass', 'processor', 'acoustic guitar'] as const).map((itemType) => (
+              {categories.filter((c) => c.is_active).map((cat) => (
                 <button
-                  key={itemType}
+                  key={cat.id}
                   type="button"
                   onClick={() => {
-                    setSelectedItemTypes((current) =>
-                      current.includes(itemType)
-                        ? current.filter((v) => v !== itemType)
-                        : [...current, itemType]
+                    setSelectedCategoryNames((current) =>
+                      current.includes(cat.name)
+                        ? current.filter((v) => v !== cat.name)
+                        : [...current, cat.name]
                     );
+                    // Clear subtype selections that no longer belong to a selected category
+                    setSelectedSubtypeNames((current) => {
+                      const nextCats = selectedCategoryNames.includes(cat.name)
+                        ? selectedCategoryNames.filter((v) => v !== cat.name)
+                        : [...selectedCategoryNames, cat.name];
+                      return current.filter((subName) => {
+                        const sub = allSubtypes.find((s) => s.name === subName);
+                        if (!sub) return false;
+                        const subCatName = categoryNameBySubtypeId[sub.id] ?? '';
+                        return nextCats.includes(subCatName);
+                      });
+                    });
                   }}
                   className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                    selectedItemTypes.includes(itemType)
+                    selectedCategoryNames.includes(cat.name)
                       ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
                   }`}
                 >
-                  {itemType}
+                  {cat.name}
                 </button>
               ))}
             </div>
+
+            {/* Subtype pills — only show if any category is selected */}
+            {selectedCategoryNames.length > 0 && visibleSubtypes.length > 0 && (
+              <>
+                <p className="mb-2 mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">Type</p>
+                <div className="flex flex-wrap gap-2">
+                  {visibleSubtypes.filter((s) => s.is_active).map((sub) => (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedSubtypeNames((current) =>
+                          current.includes(sub.name)
+                            ? current.filter((v) => v !== sub.name)
+                            : [...current, sub.name]
+                        );
+                      }}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                        selectedSubtypeNames.includes(sub.name)
+                          ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                      }`}
+                    >
+                      {sub.name}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -295,15 +402,21 @@ export default function InventoryPage() {
                 Showing first {DISPLAY_LIMIT} items.
               </p>
             )}
-            {displayItems.map((item) => (
-              <InventoryCard
-                key={item.id}
-                item={item}
-                brandName={brandMap[item.brand_id] ?? 'Unknown'}
-                backQuery={backQuery}
-                mainPhotoUrl={mainPhotoByItemId[item.id] ?? null}
-              />
-            ))}
+            {displayItems.map((item) => {
+              const subtypeName = item.item_subtype_id != null
+                ? subtypeNameById[item.item_subtype_id]
+                : undefined;
+              return (
+                <InventoryCard
+                  key={item.id}
+                  item={item}
+                  brandName={brandMap[item.brand_id] ?? 'Unknown'}
+                  backQuery={backQuery}
+                  mainPhotoUrl={mainPhotoByItemId[item.id] ?? null}
+                  subtypeName={subtypeName}
+                />
+              );
+            })}
           </div>
         )}
       </div>

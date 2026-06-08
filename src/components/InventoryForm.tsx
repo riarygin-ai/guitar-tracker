@@ -9,6 +9,8 @@ import type {
   Brand,
   CollectionType,
   Condition,
+  ItemCategory,
+  ItemSubtype,
   ItemType,
   InventoryItem,
   NewBrand,
@@ -18,6 +20,8 @@ import {
   createBrand,
   createInventoryItem,
   getBrands,
+  getItemCategories,
+  getItemSubtypes,
   getInventoryItemById,
   getInventoryItemWithValueById,
   getDealItemsByItemId,
@@ -26,16 +30,28 @@ import {
   updateInventoryItem,
 } from '@/lib/supabase';
 
-const itemTypeOptions: Array<{ label: string; value: ItemType }> = [
-  { label: 'Guitar', value: 'guitar' },
-  { label: 'Amp', value: 'amp' },
-  { label: 'Cab', value: 'cab' },
-  { label: 'Pedal', value: 'pedal' },
-  { label: 'Parts', value: 'parts' },
-  { label: 'Bass', value: 'bass' },
-  { label: 'Processor', value: 'processor' },
-  { label: 'Acoustic Guitar', value: 'acoustic guitar' },
-];
+const SUBTYPE_TO_LEGACY_TYPE: Record<string, ItemType> = {
+  'Electric Guitar': 'guitar',
+  'Bass': 'bass',
+  'Acoustic Guitar': 'acoustic guitar',
+  'Amp': 'amp',
+  'Cabinet': 'cab',
+  'Processor': 'processor',
+  'Pedal': 'pedal',
+  'Parts': 'parts',
+  'Pickups': 'parts',
+};
+
+const LEGACY_TYPE_TO_SUBTYPE: Record<string, string> = {
+  guitar: 'Electric Guitar',
+  bass: 'Bass',
+  'acoustic guitar': 'Acoustic Guitar',
+  amp: 'Amp',
+  cab: 'Cabinet',
+  processor: 'Processor',
+  pedal: 'Pedal',
+  parts: 'Parts',
+};
 
 const conditionOptions: Array<{ label: string; value: Condition }> = [
   { label: 'Mint', value: 'Mint' },
@@ -81,12 +97,16 @@ export default function InventoryForm({
 
   // Form state
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [categories, setCategories] = useState<ItemCategory[]>([]);
+  const [allSubtypes, setAllSubtypes] = useState<ItemSubtype[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [selectedSubtypeId, setSelectedSubtypeId] = useState<number | null>(null);
+  const [formDataReady, setFormDataReady] = useState(false);
   const [brandSuggestions, setBrandSuggestions] = useState<Brand[]>([]);
   const [brandInput, setBrandInput] = useState('');
   const [selectedBrandId, setSelectedBrandId] = useState<number | null>(null);
   const [showBrandSuggestions, setShowBrandSuggestions] = useState(false);
   const [brandSearchLoading, setBrandSearchLoading] = useState(false);
-  const [itemType, setItemType] = useState<ItemType>('guitar');
   const [model, setModel] = useState('');
   const [serialNumber, setSerialNumber] = useState('');
   const [year, setYear] = useState('');
@@ -112,18 +132,38 @@ export default function InventoryForm({
     [brandInput, brands],
   );
 
-  // Load all brands on mount
+  // Load brands, categories, and subtypes on mount
   useEffect(() => {
-    async function loadBrands() {
+    async function loadFormData() {
       setLoading(true);
-      const result = await getBrands();
+      const [brandsResult, catsResult, subsResult] = await Promise.all([
+        getBrands(),
+        getItemCategories(),
+        getItemSubtypes(),
+      ]);
       setLoading(false);
-      if (result.error) { setError('Could not load brands.'); return; }
-      const fetched = result.data || [];
-      setBrands(fetched);
-      setBrandSuggestions(fetched);
+      if (brandsResult.error) { setError('Could not load brands.'); return; }
+      const fetchedBrands = brandsResult.data || [];
+      setBrands(fetchedBrands);
+      setBrandSuggestions(fetchedBrands);
+      const fetchedCats = (catsResult.data || []) as ItemCategory[];
+      const fetchedSubs = (subsResult.data || []) as ItemSubtype[];
+      setCategories(fetchedCats);
+      setAllSubtypes(fetchedSubs);
+      // Default for new items: first active category + first active subtype
+      if (!itemId) {
+        const firstCat = fetchedCats.find((c) => c.is_active) ?? fetchedCats[0] ?? null;
+        if (firstCat) {
+          setSelectedCategoryId(firstCat.id);
+          const firstSub = fetchedSubs.find((s) => s.category_id === firstCat.id && s.is_active)
+            ?? fetchedSubs.find((s) => s.category_id === firstCat.id) ?? null;
+          if (firstSub) setSelectedSubtypeId(firstSub.id);
+        }
+      }
+      setFormDataReady(true);
     }
-    loadBrands();
+    loadFormData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Brand search debounce
@@ -140,7 +180,7 @@ export default function InventoryForm({
 
   // Load existing item when editing
   useEffect(() => {
-    if (!itemId || brands.length === 0) return;
+    if (!itemId || !formDataReady) return;
 
     async function loadItem() {
       setLoading(true);
@@ -159,7 +199,26 @@ export default function InventoryForm({
 
       const item = itemResult.data;
       setExistingItem(item);
-      setItemType(item.item_type);
+
+      // Resolve category and subtype
+      if (item.item_subtype_id) {
+        const sub = allSubtypes.find((s) => s.id === item.item_subtype_id);
+        if (sub) {
+          setSelectedSubtypeId(sub.id);
+          setSelectedCategoryId(sub.category_id);
+        }
+      } else {
+        // Legacy fallback: map item_type → subtype name → ids
+        const subtypeName = LEGACY_TYPE_TO_SUBTYPE[item.item_type.toLowerCase()];
+        if (subtypeName) {
+          const sub = allSubtypes.find((s) => s.name === subtypeName);
+          if (sub) {
+            setSelectedSubtypeId(sub.id);
+            setSelectedCategoryId(sub.category_id);
+          }
+        }
+      }
+
       setModel(item.model);
       setSerialNumber(item.serial_number ?? '');
       setYear(item.year != null ? String(item.year) : '');
@@ -190,7 +249,7 @@ export default function InventoryForm({
     }
 
     loadItem();
-  }, [itemId, brands]);
+  }, [itemId, formDataReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync selected brand id when user types an existing brand name
   useEffect(() => {
@@ -203,6 +262,17 @@ export default function InventoryForm({
     const brand = brands.find((b) => b.id === selectedBrandId);
     if (brand) setBrandInput(brand.name);
   }, [selectedBrandId, brands]);
+
+  // Derived category/subtype data
+  const filteredSubtypes = allSubtypes.filter((s) => s.category_id === selectedCategoryId);
+  const selectedSubtype = allSubtypes.find((s) => s.id === selectedSubtypeId) ?? null;
+
+  const handleCategoryChange = (catId: number) => {
+    setSelectedCategoryId(catId);
+    const firstSub = allSubtypes.find((s) => s.category_id === catId && s.is_active)
+      ?? allSubtypes.find((s) => s.category_id === catId) ?? null;
+    setSelectedSubtypeId(firstSub?.id ?? null);
+  };
 
   const handleCreateBrand = async () => {
     if (!brandInput.trim()) { setError('Brand name is required.'); return; }
@@ -230,7 +300,7 @@ export default function InventoryForm({
 
     if (!model.trim()) { setError('Model is required.'); return; }
     if (!brandInput.trim() && !selectedBrandId) { setError('Brand is required.'); return; }
-    if (!itemType) { setError('Item type is required.'); return; }
+    if (!selectedSubtypeId) { setError('Item subtype is required.'); return; }
     if (year) {
       const n = Number(year);
       const max = new Date().getFullYear() + 1;
@@ -254,9 +324,13 @@ export default function InventoryForm({
       setBrands((prev) => [...prev, brandResult.data]);
     }
 
+    const derivedItemType: ItemType =
+      (selectedSubtype && SUBTYPE_TO_LEGACY_TYPE[selectedSubtype.name]) ?? 'guitar';
+
     const payload: NewInventoryItem = {
       brand_id: brandId!,
-      item_type: itemType,
+      item_type: derivedItemType,
+      item_subtype_id: selectedSubtypeId,
       model: model.trim(),
       serial_number: serialNumber.trim() || null,
       year: year ? Number(year) : null,
@@ -296,6 +370,14 @@ export default function InventoryForm({
     if (onCreated) onCreated(result.data);
     setBrandInput('');
     setSelectedBrandId(null);
+    // Reset to default category/subtype
+    const firstCat = categories.find((c) => c.is_active) ?? categories[0] ?? null;
+    if (firstCat) {
+      setSelectedCategoryId(firstCat.id);
+      const firstSub = allSubtypes.find((s) => s.category_id === firstCat.id && s.is_active)
+        ?? allSubtypes.find((s) => s.category_id === firstCat.id) ?? null;
+      setSelectedSubtypeId(firstSub?.id ?? null);
+    }
     setModel('');
     setSerialNumber('');
     setYear('');
@@ -340,19 +422,38 @@ export default function InventoryForm({
   const formFields = (
     <div className="grid gap-5 sm:grid-cols-2">
 
-      {/* Item type */}
+      {/* Category */}
       <div className="space-y-1.5">
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-          Item type <span className="text-rose-500">*</span>
+          Category <span className="text-rose-500">*</span>
         </label>
         <select
-          value={itemType}
-          onChange={(e) => setItemType(e.target.value as ItemType)}
+          value={selectedCategoryId ?? ''}
+          onChange={(e) => handleCategoryChange(Number(e.target.value))}
           disabled={disabled}
           className={inputClass}
         >
-          {itemTypeOptions.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+          <option value="" disabled>Choose category</option>
+          {categories.filter((c) => c.is_active).map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Subtype */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+          Type <span className="text-rose-500">*</span>
+        </label>
+        <select
+          value={selectedSubtypeId ?? ''}
+          onChange={(e) => setSelectedSubtypeId(Number(e.target.value))}
+          disabled={disabled || filteredSubtypes.length === 0}
+          className={inputClass}
+        >
+          <option value="" disabled>Choose type</option>
+          {filteredSubtypes.filter((s) => s.is_active).map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
       </div>
@@ -635,7 +736,7 @@ export default function InventoryForm({
                   <div className="p-4">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                        {existingItem.item_type}
+                        {selectedSubtype?.name ?? existingItem.item_type}
                       </p>
                       <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusClasses[existingItem.status] ?? 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200'}`}>
                         {existingItem.status}

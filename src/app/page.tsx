@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses } from '@/lib/supabase'
+import { getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemSubtypes } from '@/lib/supabase'
 
 export default function HomePage() {
   const router = useRouter()
@@ -12,6 +12,8 @@ export default function HomePage() {
   const [dealItems, setDealItems] = useState<any[]>([])
   const [inventoryExpenses, setInventoryExpenses] = useState<any[]>([])
   const [brands, setBrands] = useState<any[]>([])
+  const [itemSubtypes, setItemSubtypes] = useState<any[]>([])
+  const [itemCategoriesData, setItemCategoriesData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
@@ -20,13 +22,15 @@ export default function HomePage() {
     async function loadData() {
       setLoading(true)
 
-      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, brandsResult] = await Promise.all([
+      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, brandsResult, catsResult, subsResult] = await Promise.all([
         getCashFlows(),
         getInventoryItemsWithValue(),
         getDeals(),
         getDealItems(),
         getInventoryExpenses(),
         getBrands(),
+        getItemCategories(),
+        getItemSubtypes(),
       ])
 
       if (cashFlowResult.error || inventoryResult.error || dealsResult.error || dealItemsResult.error || inventoryExpensesResult.error || brandsResult.error) {
@@ -41,6 +45,8 @@ export default function HomePage() {
       setDealItems(dealItemsResult.data || [])
       setInventoryExpenses(inventoryExpensesResult.data || [])
       setBrands(brandsResult.data || [])
+      setItemCategoriesData(catsResult.data || [])
+      setItemSubtypes(subsResult.data || [])
       setLoading(false)
     }
 
@@ -142,41 +148,63 @@ export default function HomePage() {
     router.push(`/operations?from=${month}-01&to=${month}-${String(lastDay).padStart(2, '0')}&dealTypes=sale,trade,purchase`)
   }
 
+  const legacyTypeToCategory: Record<string, string> = {
+    guitar: 'Guitars', bass: 'Guitars', 'acoustic guitar': 'Guitars',
+    amp: 'Amps', cab: 'Amps', processor: 'Amps',
+    pedal: 'Pedals',
+    parts: 'Parts', pickups: 'Parts',
+  }
+
+  const categoryNameBySubtypeId = useMemo(() => {
+    const catById: Record<number, string> = Object.fromEntries(
+      itemCategoriesData.map((c: any) => [c.id, c.name])
+    )
+    return Object.fromEntries(
+      itemSubtypes.map((s: any) => [s.id, catById[s.category_id] ?? ''])
+    )
+  }, [itemCategoriesData, itemSubtypes])
+
+  const getItemCategoryName = (item: any): string => {
+    if (item.item_subtype_id != null) {
+      return categoryNameBySubtypeId[item.item_subtype_id] ?? legacyTypeToCategory[item.item_type?.toLowerCase()] ?? 'Other'
+    }
+    return legacyTypeToCategory[item.item_type?.toLowerCase()] ?? 'Other'
+  }
+
   const inventoryCountByType = useMemo(() => {
     const counts: Record<string, number> = {}
     activeInventory.forEach((item) => {
-      counts[item.item_type] = (counts[item.item_type] ?? 0) + 1
+      const cat = getItemCategoryName(item)
+      counts[cat] = (counts[cat] ?? 0) + 1
     })
     return counts
-  }, [activeInventory])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeInventory, categoryNameBySubtypeId])
 
   const inventoryValueByType = useMemo(() => {
     const values: Record<string, { count: number; costBasis: number; estimatedValue: number }> = {}
     activeInventory.forEach((item) => {
-      if (!values[item.item_type]) {
-        values[item.item_type] = { count: 0, costBasis: 0, estimatedValue: 0 }
-      }
-      values[item.item_type].count += 1
-      values[item.item_type].costBasis += Number(item.value_in ?? 0)
-      values[item.item_type].estimatedValue += Number(item.estimated_sold_value ?? 0)
+      const cat = getItemCategoryName(item)
+      if (!values[cat]) values[cat] = { count: 0, costBasis: 0, estimatedValue: 0 }
+      values[cat].count += 1
+      values[cat].costBasis += Number(item.value_in ?? 0)
+      values[cat].estimatedValue += Number(item.estimated_sold_value ?? 0)
     })
     return values
-  }, [activeInventory])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeInventory, categoryNameBySubtypeId])
 
   const businessInventoryByType = useMemo(() => {
     const counts: Record<string, { listed: number; unlisted: number }> = {}
     businessInventory.forEach((item) => {
-      if (!counts[item.item_type]) {
-        counts[item.item_type] = { listed: 0, unlisted: 0 }
-      }
-      if (item.status === 'listed') {
-        counts[item.item_type].listed += 1
-      } else {
-        counts[item.item_type].unlisted += 1
-      }
+      const cat = getItemCategoryName(item)
+      if (!counts[cat]) counts[cat] = { listed: 0, unlisted: 0 }
+      if (item.status === 'listed') counts[cat].listed += 1
+      else counts[cat].unlisted += 1
     })
     return counts
-  }, [businessInventory])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessInventory, categoryNameBySubtypeId])
 
   const inventoryCountTypes = Object.keys(inventoryCountByType).sort()
   const inventoryValueTypes = Object.keys(inventoryValueByType).sort()
@@ -282,7 +310,7 @@ export default function HomePage() {
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Current Inventory</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">By item type</h2>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">By category</h2>
               </div>
               <div className="text-right">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Cash Balance</p>
@@ -293,7 +321,7 @@ export default function HomePage() {
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                   <tr>
-                    <th className="px-4 py-3">Item Type</th>
+                    <th className="px-4 py-3">Category</th>
                     <th className="px-4 py-3 text-right">Count</th>
                     <th className="px-4 py-3 text-right">Cost Basis</th>
                     <th className="px-4 py-3 text-right">Estimated Value</th>
@@ -520,13 +548,13 @@ export default function HomePage() {
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <div>
                 <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Business Inventory</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Status by item type</h2>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Status by category</h2>
               </div>
               <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                     <tr>
-                      <th className="px-4 py-3">Item Type</th>
+                      <th className="px-4 py-3">Category</th>
                       <th className="px-4 py-3 text-right">Listed</th>
                       <th className="px-4 py-3 text-right">Unlisted</th>
                     </tr>

@@ -1,5 +1,22 @@
 export type ItemType = 'guitar' | 'amp' | 'pedal' | 'cab' | 'parts' | 'bass' | 'processor' | 'acoustic guitar';
 export type Status = 'new' | 'owned' | 'listed' | 'sold' | 'traded';
+
+export interface ItemCategory {
+  id: number;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface ItemSubtype {
+  id: number;
+  category_id: number;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+}
 export type DealType = 'purchase' | 'sale' | 'trade' | 'expense';
 export type Direction = 'in' | 'out';
 export type CollectionType = 'Personal' | 'Business' | 'Hybrid';
@@ -25,6 +42,7 @@ export interface InventoryItem {
   user_id: number;
   brand_id: number;
   item_type: ItemType;
+  item_subtype_id: number | null;
   model: string;
   serial_number: string | null;
   date_listed: string | null;

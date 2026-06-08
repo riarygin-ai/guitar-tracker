@@ -9,6 +9,8 @@ import type {
   InventoryExpense,
   InventoryItem,
   InventoryItemPhoto,
+  ItemCategory,
+  ItemSubtype,
   NewBrand,
   NewCashFlow,
   NewDeal,
@@ -102,6 +104,53 @@ export async function getBrandUsageCount(brandId: number) {
     .from('inventory_items')
     .select('id', { count: 'exact', head: true })
     .eq('brand_id', brandId);
+}
+
+// ─── Item categories & subtypes ───────────────────────────────────────────────
+
+export async function getItemCategories() {
+  return supabase
+    .from('item_categories')
+    .select('*')
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true });
+}
+
+export async function getItemSubtypes(categoryId?: number) {
+  let q = supabase
+    .from('item_subtypes')
+    .select('*')
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true });
+  if (categoryId != null) q = q.eq('category_id', categoryId);
+  return q;
+}
+
+export async function createItemCategory(name: string) {
+  return supabase.from('item_categories').insert({ name: name.trim() }).select().single();
+}
+
+export async function updateItemCategory(id: number, updates: { name?: string; is_active?: boolean }) {
+  return supabase.from('item_categories').update(updates).eq('id', id).select().single();
+}
+
+export async function createItemSubtype(categoryId: number, name: string) {
+  return supabase
+    .from('item_subtypes')
+    .insert({ category_id: categoryId, name: name.trim() })
+    .select()
+    .single();
+}
+
+export async function updateItemSubtype(id: number, updates: { name?: string; is_active?: boolean }) {
+  return supabase.from('item_subtypes').update(updates).eq('id', id).select().single();
+}
+
+export async function getSubtypeUsageCount(subtypeId: number) {
+  return supabase
+    .from('inventory_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('item_subtype_id', subtypeId);
 }
 
 export async function getInventoryItems() {
