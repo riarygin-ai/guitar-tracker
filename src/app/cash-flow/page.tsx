@@ -15,21 +15,15 @@ import {
 } from '@/lib/supabase';
 import type { Brand, CashFlow, Deal, DealItem, InventoryItemWithValue } from '@/types';
 
-// ─── Visual helper — same approach as Operations page ─────────────────────────
+// ─── Visual helper ─────────────────────────────────────────────────────────────
 
-type TradeItemVisual = { photoUrl?: string; alt: string };
-
-type DealVisual =
-  | { kind: 'single'; photoUrl?: string; alt: string; title: string }
-  | { kind: 'trade'; outItems: TradeItemVisual[]; outMore: number; inItems: TradeItemVisual[]; inMore: number; title: string };
-
-function computeDealVisual(
+function getDealPhotoAndTitle(
   deal: Deal,
   items: DealItem[],
   itemMap: Record<number, InventoryItemWithValue>,
   brandMap: Record<number, string>,
   photoByItemId: Record<number, string>,
-): DealVisual {
+): { photoUrl: string | undefined; alt: string; title: string } {
   function brandModel(item: InventoryItemWithValue): string {
     return `${brandMap[item.brand_id] || ''} ${item.model}`.trim() || 'Unknown';
   }
@@ -43,37 +37,25 @@ function computeDealVisual(
   }
 
   if (deal.deal_type === 'trade') {
-    const outgoing = items
-      .filter((di) => di.direction === 'out')
-      .sort((a, b) => Number(b.total_value ?? 0) - Number(a.total_value ?? 0));
-    const incoming = items
-      .filter((di) => di.direction === 'in')
-      .sort((a, b) => Number(b.total_value ?? 0) - Number(a.total_value ?? 0));
-    const toVisual = (di: DealItem): TradeItemVisual => {
-      const item = itemMap[di.item_id];
-      return { photoUrl: item ? photoByItemId[item.id] : undefined, alt: item ? brandModel(item) : '—' };
-    };
-    const outItems = outgoing.slice(0, 3).map(toVisual);
-    const inItems = incoming.slice(0, 3).map(toVisual);
-    const bestOut = outgoing[0] ? itemMap[outgoing[0].item_id] : null;
-    const bestIn = incoming[0] ? itemMap[incoming[0].item_id] : null;
+    const sorted = [...items].sort((a, b) => Number(b.total_value ?? 0) - Number(a.total_value ?? 0));
+    const bestOut = sorted.find((di) => di.direction === 'out');
+    const bestIn  = sorted.find((di) => di.direction === 'in');
+    const photoItem = (bestOut ?? bestIn) ? itemMap[(bestOut ?? bestIn)!.item_id] : null;
+    const outItem = bestOut ? itemMap[bestOut.item_id] : null;
+    const inItem  = bestIn  ? itemMap[bestIn.item_id]  : null;
     return {
-      kind: 'trade',
-      outItems,
-      outMore: Math.max(0, outgoing.length - 3),
-      inItems,
-      inMore: Math.max(0, incoming.length - 3),
-      title: `${bestOut ? brandModel(bestOut) : '—'} → ${bestIn ? brandModel(bestIn) : '—'}`,
+      photoUrl: photoItem ? photoByItemId[photoItem.id] : undefined,
+      alt:      photoItem ? brandModel(photoItem) : '—',
+      title:    `${outItem ? brandModel(outItem) : '—'} → ${inItem ? brandModel(inItem) : '—'}`,
     };
   }
 
   const di = items[0];
   const item = di ? itemMap[di.item_id] : null;
   return {
-    kind: 'single',
     photoUrl: item ? photoByItemId[item.id] : undefined,
-    alt: item ? brandModel(item) : (deal.notes || '—'),
-    title: item ? yearBrandModel(item) : (deal.notes || '—'),
+    alt:      item ? brandModel(item) : (deal.notes || '—'),
+    title:    item ? yearBrandModel(item) : (deal.notes || '—'),
   };
 }
 
@@ -186,14 +168,20 @@ export default function CashFlowPage() {
       maximumFractionDigits: 2,
     }).format(v);
 
-  const photoPlaceholder = (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-7 w-7 text-slate-300 dark:text-slate-600">
+  const arrowRight = (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-300 dark:text-slate-600">
+      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+    </svg>
+  );
+
+  const imgPlaceholder = (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-4 w-4 text-slate-300 dark:text-slate-600">
       <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
     </svg>
   );
 
-  const cashPlaceholder = (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-7 w-7 text-slate-300 dark:text-slate-600">
+  const cashIconPlaceholder = (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-4 w-4 text-slate-300 dark:text-slate-600">
       <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
     </svg>
   );
@@ -254,86 +242,48 @@ export default function CashFlowPage() {
               {filteredRows.map((cf) => {
                 const deal = cf.deal_id ? dealMap[cf.deal_id] : null;
                 const items = cf.deal_id ? (dealItemsByDealId[cf.deal_id] || []) : [];
-                const visual = deal ? computeDealVisual(deal, items, itemMap, brandMap, photoByItemId) : null;
+                const dealInfo = deal
+                  ? getDealPhotoAndTitle(deal, items, itemMap, brandMap, photoByItemId)
+                  : null;
+
+                const title = cf.description || dealInfo?.title || '—';
 
                 const formattedDate = new Date(cf.transaction_date + 'T12:00:00').toLocaleDateString('en-US', {
                   month: 'short', day: 'numeric', year: 'numeric',
                 });
 
-                const title = cf.description || visual?.title || '—';
+                const hasCashIn  = cf.cash_in > 0;
+                const hasCashOut = cf.cash_out > 0;
+                const movementLabel =
+                  hasCashIn && hasCashOut ? 'Cash flow'
+                  : hasCashIn  ? 'Cash in'
+                  : hasCashOut ? 'Cash out'
+                  : 'No movement';
 
-                const topOut  = visual?.kind === 'trade' ? visual.outItems[0]  : null;
-                const topIn   = visual?.kind === 'trade' ? visual.inItems[0]   : null;
-                const moreOut = visual?.kind === 'trade' ? (visual.outItems.length - (topOut ? 1 : 0) + visual.outMore) : 0;
-                const moreIn  = visual?.kind === 'trade' ? (visual.inItems.length  - (topIn  ? 1 : 0) + visual.inMore)  : 0;
-                const hasOutSide = visual?.kind === 'trade' && (!!topOut || moreOut > 0);
-                const hasInSide  = visual?.kind === 'trade' && (!!topIn  || moreIn  > 0);
+                const cardClass = 'rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800';
 
-                const photoCol = (
-                  <div className="shrink-0 self-start md:w-[185px]">
-                    {visual?.kind === 'trade' ? (
-                      <div className="flex flex-col items-center gap-1 md:flex-row md:gap-1.5">
-                        {hasOutSide && (
-                          <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
-                            {topOut?.photoUrl
-                              ? <Image src={topOut.photoUrl} alt={topOut.alt} fill className="object-cover" sizes="80px" unoptimized />
-                              : photoPlaceholder}
-                            {moreOut > 0 && (
-                              <div className="absolute bottom-1 right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-slate-900/70 px-1 text-[10px] font-semibold text-white">
-                                +{moreOut}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {hasOutSide && hasInSide && (
-                          <>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400 md:hidden">
-                              <line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/>
-                            </svg>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="hidden shrink-0 text-slate-400 md:block">
-                              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-                            </svg>
-                          </>
-                        )}
-                        {hasInSide && (
-                          <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
-                            {topIn?.photoUrl
-                              ? <Image src={topIn.photoUrl} alt={topIn.alt} fill className="object-cover" sizes="80px" unoptimized />
-                              : photoPlaceholder}
-                            {moreIn > 0 && (
-                              <div className="absolute bottom-1 right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-slate-900/70 px-1 text-[10px] font-semibold text-white">
-                                +{moreIn}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {!hasOutSide && !hasInSide && (
-                          <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
-                            {photoPlaceholder}
-                          </div>
-                        )}
+                const cardBody = (
+                  <>
+                    {/* ── Header row: small photo + type label + badge ─── */}
+                    <div className="mb-3.5 flex items-center gap-2.5">
+                      {/* Small photo */}
+                      <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-700">
+                        {dealInfo?.photoUrl ? (
+                          <Image
+                            src={dealInfo.photoUrl}
+                            alt={dealInfo.alt}
+                            fill
+                            className="object-cover"
+                            sizes="32px"
+                            unoptimized
+                          />
+                        ) : deal ? imgPlaceholder : cashIconPlaceholder}
                       </div>
-                    ) : visual?.kind === 'single' ? (
-                      <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
-                        {visual.photoUrl
-                          ? <Image src={visual.photoUrl} alt={visual.alt} fill className="object-cover" sizes="80px" unoptimized />
-                          : photoPlaceholder}
-                      </div>
-                    ) : (
-                      <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
-                        {cashPlaceholder}
-                      </div>
-                    )}
-                  </div>
-                );
 
-                const contentCol = (
-                  <div className="min-w-0 flex-1">
-                    {/* Label + deal type badge */}
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                      <p className="flex-1 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                         {deal ? deal.deal_type : 'cash flow'}
                       </p>
+
                       {deal && (
                         <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${getDealTypeColor(deal.deal_type)}`}>
                           {deal.deal_type.charAt(0).toUpperCase() + deal.deal_type.slice(1)}
@@ -341,46 +291,63 @@ export default function CashFlowPage() {
                       )}
                     </div>
 
-                    {/* Description / title */}
-                    <h3 className="mt-1 truncate text-base font-semibold text-slate-900 dark:text-white">
-                      {title}
-                    </h3>
+                    {/* ── Financial flow — main visual focus ─────────── */}
+                    <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-4 py-4 dark:bg-slate-700/40 sm:gap-3">
 
-                    {/* Desktop: metrics in labeled rows */}
-                    <div className="mt-2 hidden md:block">
-                      <div className="flex flex-wrap gap-x-5 gap-y-0.5 text-sm text-slate-700 dark:text-slate-200">
-                        <span><span className="text-slate-500 dark:text-slate-400">Date </span>{formattedDate}</span>
-                        <span><span className="text-slate-500 dark:text-slate-400">Opening </span>{fmt(cf.opening_balance)}</span>
-                        <span><span className="text-slate-500 dark:text-slate-400">Closing </span>{fmt(cf.closing_balance)}</span>
+                      {/* Opening */}
+                      <div className="min-w-0 flex-1 text-center">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                          Opening
+                        </p>
+                        <p className="mt-1.5 tabular-nums text-sm font-medium text-slate-600 dark:text-slate-300">
+                          {fmt(cf.opening_balance)}
+                        </p>
                       </div>
-                      <div className="mt-1 flex gap-x-4 text-sm font-medium">
-                        {cf.cash_in > 0 && <span className="text-emerald-600">+{fmt(cf.cash_in)}</span>}
-                        {cf.cash_out > 0 && <span className="text-rose-600">−{fmt(cf.cash_out)}</span>}
+
+                      {arrowRight}
+
+                      {/* Cash movement — center, prominent */}
+                      <div className="min-w-0 flex-[2] text-center">
+                        {hasCashIn && (
+                          <p className="tabular-nums text-xl font-bold leading-tight text-emerald-600 dark:text-emerald-400 sm:text-2xl">
+                            +{fmt(cf.cash_in)}
+                          </p>
+                        )}
+                        {hasCashOut && (
+                          <p className="tabular-nums text-xl font-bold leading-tight text-rose-600 dark:text-rose-400 sm:text-2xl">
+                            −{fmt(cf.cash_out)}
+                          </p>
+                        )}
+                        {!hasCashIn && !hasCashOut && (
+                          <p className="tabular-nums text-xl font-bold text-slate-400 dark:text-slate-500 sm:text-2xl">—</p>
+                        )}
+                        <p className="mt-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                          {movementLabel}
+                        </p>
+                      </div>
+
+                      {arrowRight}
+
+                      {/* Closing */}
+                      <div className="min-w-0 flex-1 text-center">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                          Closing
+                        </p>
+                        <p className="mt-1.5 tabular-nums text-sm font-medium text-slate-600 dark:text-slate-300">
+                          {fmt(cf.closing_balance)}
+                        </p>
                       </div>
                     </div>
 
-                    {/* Mobile: compact stacked */}
-                    <div className="mt-1.5 md:hidden">
-                      <p className="text-sm text-slate-500 dark:text-slate-400">{formattedDate}</p>
-                      <div className="mt-0.5 flex flex-wrap gap-x-3 text-sm">
-                        <span>
-                          <span className="text-slate-500 dark:text-slate-400">Opening </span>
-                          <span className="text-slate-700 dark:text-slate-200">{fmt(cf.opening_balance)}</span>
-                        </span>
-                        <span>
-                          <span className="text-slate-500 dark:text-slate-400">Closing </span>
-                          <span className="text-slate-700 dark:text-slate-200">{fmt(cf.closing_balance)}</span>
-                        </span>
-                      </div>
-                      <div className="mt-0.5 flex gap-x-3 text-sm font-medium">
-                        {cf.cash_in > 0 && <span className="text-emerald-600">+{fmt(cf.cash_in)}</span>}
-                        {cf.cash_out > 0 && <span className="text-rose-600">−{fmt(cf.cash_out)}</span>}
-                      </div>
+                    {/* ── Footer: description + date — secondary ─────── */}
+                    <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-700">
+                      <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">
+                        {title}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{formattedDate}</p>
                     </div>
-                  </div>
+                  </>
                 );
-
-                const cardClass = 'rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800';
 
                 return cf.deal_id ? (
                   <Link
@@ -388,17 +355,11 @@ export default function CashFlowPage() {
                     href={`/operations/${cf.deal_id}`}
                     className={`block ${cardClass} transition hover:-translate-y-0.5 hover:shadow-md`}
                   >
-                    <div className="flex items-start gap-3">
-                      {photoCol}
-                      {contentCol}
-                    </div>
+                    {cardBody}
                   </Link>
                 ) : (
                   <div key={cf.id} className={cardClass}>
-                    <div className="flex items-start gap-3">
-                      {photoCol}
-                      {contentCol}
-                    </div>
+                    {cardBody}
                   </div>
                 );
               })}
