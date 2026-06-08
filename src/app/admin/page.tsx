@@ -58,10 +58,9 @@ export default function AdminPage() {
   const [subEditing, setSubEditing] = useState<EditState | null>(null);
   const [subEditSaving, setSubEditSaving] = useState(false);
   const [subEditError, setSubEditError] = useState<string | null>(null);
-  const [subCreateCatId, setSubCreateCatId] = useState<number | null>(null);
-  const [subCreateName, setSubCreateName] = useState('');
-  const [subCreating, setSubCreating] = useState(false);
-  const [subCreateError, setSubCreateError] = useState<string | null>(null);
+  const [subCreateNames, setSubCreateNames] = useState<Record<number, string>>({});
+  const [subCreatingCatId, setSubCreatingCatId] = useState<number | null>(null);
+  const [subCreateErrors, setSubCreateErrors] = useState<Record<number, string>>({});
   const [subToggling, setSubToggling] = useState<Set<number>>(new Set());
   const subEditInputRef = useRef<HTMLInputElement>(null);
 
@@ -162,9 +161,6 @@ export default function AdminPage() {
     setCatsLoading(false);
     if (error) return;
     setCategories((data as ItemCategory[]) ?? []);
-    if (!subCreateCatId && data && data.length > 0) {
-      setSubCreateCatId((data[0] as ItemCategory).id);
-    }
   }
 
   useEffect(() => {
@@ -223,13 +219,6 @@ export default function AdminPage() {
     if (subEditing) subEditInputRef.current?.focus();
   }, [subEditing?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Set default create category once categories are loaded
-  useEffect(() => {
-    if (categories.length > 0 && subCreateCatId === null) {
-      setSubCreateCatId(categories[0].id);
-    }
-  }, [categories, subCreateCatId]);
-
   function startSubEdit(sub: ItemSubtype) {
     setSubEditing({ id: sub.id, name: sub.name });
     setSubEditError(null);
@@ -256,17 +245,22 @@ export default function AdminPage() {
     if (!error) setSubtypes((prev) => prev.map((s) => s.id === sub.id ? { ...s, is_active: !sub.is_active } : s));
   }
 
-  async function handleCreateSubtype() {
-    if (!subCreateCatId) { setSubCreateError('Select a category.'); return; }
-    const trimmed = subCreateName.trim();
-    if (!trimmed) { setSubCreateError('Name is required.'); return; }
-    setSubCreating(true);
-    setSubCreateError(null);
-    const { data, error } = await createItemSubtype(subCreateCatId, trimmed);
-    setSubCreating(false);
-    if (error) { setSubCreateError(error.message || 'Could not create subtype.'); return; }
+  async function handleCreateSubtype(catId: number) {
+    const trimmed = (subCreateNames[catId] ?? '').trim();
+    if (!trimmed) {
+      setSubCreateErrors((prev) => ({ ...prev, [catId]: 'Name is required.' }));
+      return;
+    }
+    setSubCreatingCatId(catId);
+    setSubCreateErrors((prev) => { const n = { ...prev }; delete n[catId]; return n; });
+    const { data, error } = await createItemSubtype(catId, trimmed);
+    setSubCreatingCatId(null);
+    if (error) {
+      setSubCreateErrors((prev) => ({ ...prev, [catId]: error.message || 'Could not create subtype.' }));
+      return;
+    }
     setSubtypes((prev) => [...prev, data as ItemSubtype]);
-    setSubCreateName('');
+    setSubCreateNames((prev) => ({ ...prev, [catId]: '' }));
   }
 
   // ── Render guards ─────────────────────────────────────────────────────────
@@ -304,6 +298,7 @@ export default function AdminPage() {
   const inputClass = 'h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600';
   const btnPrimary = 'inline-flex h-9 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400';
   const btnSecondary = 'inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600';
+  const btnAction = 'inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600';
 
   return (
     <div className="space-y-6">
@@ -406,7 +401,7 @@ export default function AdminPage() {
                       <div className="flex items-center justify-between gap-3">
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900 dark:text-white">{brand.name}</span>
                         <div className="flex shrink-0 items-center gap-1.5">
-                          <button type="button" onClick={() => startEdit(brand)} className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">Edit</button>
+                          <button type="button" onClick={() => startEdit(brand)} className={btnAction}>Edit</button>
                           <button type="button" onClick={() => startDelete(brand)} className="inline-flex h-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-medium text-rose-700 transition hover:bg-rose-100 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-400 dark:hover:bg-rose-900/40">Delete</button>
                         </div>
                       </div>
@@ -419,17 +414,17 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* ── Categories ────────────────────────────────────────────────── */}
+      {/* ── Item Categories ────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <div className="mb-5">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Categories</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Item Categories</h2>
           <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-            {categories.length} categor{categories.length !== 1 ? 'ies' : 'y'}
+            {categories.length} categor{categories.length !== 1 ? 'ies' : 'y'} · {subtypes.length} subtype{subtypes.length !== 1 ? 's' : ''}
           </p>
         </div>
 
-        {/* Create */}
-        <div className="mb-5 space-y-2">
+        {/* Add new category */}
+        <div className="mb-6 space-y-2">
           <div className="flex gap-2">
             <input
               value={catCreateName}
@@ -440,168 +435,151 @@ export default function AdminPage() {
               className={inputClass}
             />
             <button type="button" onClick={handleCreateCategory} disabled={catCreating || !catCreateName.trim()} className={btnPrimary}>
-              {catCreating ? 'Creating…' : 'Create'}
+              {catCreating ? 'Creating…' : 'Add category'}
             </button>
           </div>
           {catCreateError && <p className="text-xs text-rose-600 dark:text-rose-400">{catCreateError}</p>}
         </div>
 
-        {catsLoading ? (
+        {catsLoading || subsLoading ? (
           <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">Loading…</p>
         ) : categories.length === 0 ? (
           <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">No categories yet.</p>
         ) : (
-          <ul className="divide-y divide-slate-100 dark:divide-slate-700">
-            {categories.map((cat) => {
-              const isEditing = catEditing?.id === cat.id;
-              return (
-                <li key={cat.id} className="py-3">
-                  {isEditing ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          ref={catEditInputRef}
-                          value={catEditing.name}
-                          onChange={(e) => setCatEditing((s) => s && { ...s, name: e.target.value })}
-                          onKeyDown={(e) => { if (e.key === 'Enter') saveCatEdit(); if (e.key === 'Escape') cancelCatEdit(); }}
-                          disabled={catEditSaving}
-                          className={inputClass}
-                        />
-                        <button type="button" onClick={saveCatEdit} disabled={catEditSaving} className={btnPrimary}>
-                          {catEditSaving ? 'Saving…' : 'Save'}
-                        </button>
-                        <button type="button" onClick={cancelCatEdit} disabled={catEditSaving} className={btnSecondary}>Cancel</button>
-                      </div>
-                      {catEditError && <p className="text-xs text-rose-600 dark:text-rose-400">{catEditError}</p>}
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <span className={`min-w-0 flex-1 truncate text-sm font-medium ${cat.is_active ? 'text-slate-900 dark:text-white' : 'text-slate-400 line-through dark:text-slate-500'}`}>
-                          {cat.name}
-                        </span>
-                        {!cat.is_active && (
-                          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-700 dark:text-slate-400">inactive</span>
-                        )}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <button type="button" onClick={() => startCatEdit(cat)} className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">Edit</button>
-                        <button
-                          type="button"
-                          onClick={() => toggleCatActive(cat)}
-                          disabled={catToggling.has(cat.id)}
-                          className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-                        >
-                          {catToggling.has(cat.id) ? '…' : cat.is_active ? 'Deactivate' : 'Activate'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-
-      {/* ── Subtypes ──────────────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <div className="mb-5">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Subtypes</h2>
-          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-            {subtypes.length} subtype{subtypes.length !== 1 ? 's' : ''}
-          </p>
-        </div>
-
-        {/* Create */}
-        <div className="mb-5 space-y-2">
-          <div className="flex gap-2">
-            <select
-              value={subCreateCatId ?? ''}
-              onChange={(e) => setSubCreateCatId(Number(e.target.value))}
-              disabled={subCreating || categories.length === 0}
-              className="h-9 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-            >
-              <option value="" disabled>Category</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <input
-              value={subCreateName}
-              onChange={(e) => setSubCreateName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateSubtype(); }}
-              placeholder="New subtype name…"
-              disabled={subCreating}
-              className={inputClass}
-            />
-            <button type="button" onClick={handleCreateSubtype} disabled={subCreating || !subCreateName.trim() || !subCreateCatId} className={btnPrimary}>
-              {subCreating ? 'Creating…' : 'Create'}
-            </button>
-          </div>
-          {subCreateError && <p className="text-xs text-rose-600 dark:text-rose-400">{subCreateError}</p>}
-        </div>
-
-        {subsLoading ? (
-          <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">Loading…</p>
-        ) : subtypes.length === 0 ? (
-          <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">No subtypes yet.</p>
-        ) : (
           <div className="space-y-4">
             {categories.map((cat) => {
               const catSubs = subtypes.filter((s) => s.category_id === cat.id);
-              if (catSubs.length === 0) return null;
+              const isEditingCat = catEditing?.id === cat.id;
+              const subInputVal = subCreateNames[cat.id] ?? '';
+              const isCreatingSub = subCreatingCatId === cat.id;
+
               return (
-                <div key={cat.id}>
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{cat.name}</p>
-                  <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-700 dark:border-slate-700">
-                    {catSubs.map((sub) => {
-                      const isEditing = subEditing?.id === sub.id;
-                      return (
-                        <li key={sub.id} className="px-4 py-3">
-                          {isEditing ? (
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <input
-                                  ref={subEditInputRef}
-                                  value={subEditing.name}
-                                  onChange={(e) => setSubEditing((s) => s && { ...s, name: e.target.value })}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') saveSubEdit(); if (e.key === 'Escape') cancelSubEdit(); }}
-                                  disabled={subEditSaving}
-                                  className={inputClass}
-                                />
-                                <button type="button" onClick={saveSubEdit} disabled={subEditSaving} className={btnPrimary}>
-                                  {subEditSaving ? 'Saving…' : 'Save'}
-                                </button>
-                                <button type="button" onClick={cancelSubEdit} disabled={subEditSaving} className={btnSecondary}>Cancel</button>
-                              </div>
-                              {subEditError && <p className="text-xs text-rose-600 dark:text-rose-400">{subEditError}</p>}
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex min-w-0 flex-1 items-center gap-2">
-                                <span className={`min-w-0 flex-1 truncate text-sm font-medium ${sub.is_active ? 'text-slate-900 dark:text-white' : 'text-slate-400 line-through dark:text-slate-500'}`}>
-                                  {sub.name}
-                                </span>
-                                {!sub.is_active && (
-                                  <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-700 dark:text-slate-400">inactive</span>
-                                )}
-                              </div>
-                              <div className="flex shrink-0 items-center gap-1.5">
-                                <button type="button" onClick={() => startSubEdit(sub)} className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">Edit</button>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleSubActive(sub)}
-                                  disabled={subToggling.has(sub.id)}
-                                  className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-                                >
-                                  {subToggling.has(sub.id) ? '…' : sub.is_active ? 'Deactivate' : 'Activate'}
-                                </button>
-                              </div>
-                            </div>
+                <div key={cat.id} className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
+
+                  {/* Category header */}
+                  <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
+                    {isEditingCat ? (
+                      <div className="flex flex-1 flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <input
+                            ref={catEditInputRef}
+                            value={catEditing.name}
+                            onChange={(e) => setCatEditing((s) => s && { ...s, name: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === 'Enter') saveCatEdit(); if (e.key === 'Escape') cancelCatEdit(); }}
+                            disabled={catEditSaving}
+                            className={inputClass}
+                          />
+                          <button type="button" onClick={saveCatEdit} disabled={catEditSaving} className={btnPrimary}>
+                            {catEditSaving ? 'Saving…' : 'Save'}
+                          </button>
+                          <button type="button" onClick={cancelCatEdit} disabled={catEditSaving} className={btnSecondary}>Cancel</button>
+                        </div>
+                        {catEditError && <p className="text-xs text-rose-600 dark:text-rose-400">{catEditError}</p>}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <span className={`text-sm font-semibold ${cat.is_active ? 'text-slate-900 dark:text-white' : 'text-slate-400 line-through dark:text-slate-500'}`}>
+                            {cat.name}
+                          </span>
+                          {!cat.is_active && (
+                            <span className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-700 dark:text-slate-400">inactive</span>
                           )}
-                        </li>
-                      );
-                    })}
-                  </ul>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button type="button" onClick={() => startCatEdit(cat)} className={btnAction}>Edit</button>
+                          <button
+                            type="button"
+                            onClick={() => toggleCatActive(cat)}
+                            disabled={catToggling.has(cat.id)}
+                            className={`${btnAction} disabled:opacity-50`}
+                          >
+                            {catToggling.has(cat.id) ? '…' : cat.is_active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Subtypes list */}
+                  {catSubs.length > 0 && (
+                    <ul className="divide-y divide-slate-100 dark:divide-slate-700">
+                      {catSubs.map((sub) => {
+                        const isEditingSub = subEditing?.id === sub.id;
+                        return (
+                          <li key={sub.id} className="px-4 py-3">
+                            {isEditingSub ? (
+                              <div className="space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    ref={subEditInputRef}
+                                    value={subEditing.name}
+                                    onChange={(e) => setSubEditing((s) => s && { ...s, name: e.target.value })}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') saveSubEdit(); if (e.key === 'Escape') cancelSubEdit(); }}
+                                    disabled={subEditSaving}
+                                    className={inputClass}
+                                  />
+                                  <button type="button" onClick={saveSubEdit} disabled={subEditSaving} className={btnPrimary}>
+                                    {subEditSaving ? 'Saving…' : 'Save'}
+                                  </button>
+                                  <button type="button" onClick={cancelSubEdit} disabled={subEditSaving} className={btnSecondary}>Cancel</button>
+                                </div>
+                                {subEditError && <p className="text-xs text-rose-600 dark:text-rose-400">{subEditError}</p>}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex min-w-0 flex-1 items-center gap-2">
+                                  <span className={`min-w-0 flex-1 truncate text-sm ${sub.is_active ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 line-through dark:text-slate-500'}`}>
+                                    {sub.name}
+                                  </span>
+                                  {!sub.is_active && (
+                                    <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-700 dark:text-slate-400">inactive</span>
+                                  )}
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1.5">
+                                  <button type="button" onClick={() => startSubEdit(sub)} className={btnAction}>Edit</button>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSubActive(sub)}
+                                    disabled={subToggling.has(sub.id)}
+                                    className={`${btnAction} disabled:opacity-50`}
+                                  >
+                                    {subToggling.has(sub.id) ? '…' : sub.is_active ? 'Deactivate' : 'Activate'}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+
+                  {/* Add subtype row */}
+                  <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/30">
+                    <div className="flex gap-2">
+                      <input
+                        value={subInputVal}
+                        onChange={(e) => setSubCreateNames((prev) => ({ ...prev, [cat.id]: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateSubtype(cat.id); }}
+                        placeholder="Add subtype…"
+                        disabled={isCreatingSub}
+                        className="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleCreateSubtype(cat.id)}
+                        disabled={isCreatingSub || !subInputVal.trim()}
+                        className="inline-flex h-8 items-center justify-center rounded-lg bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
+                      >
+                        {isCreatingSub ? 'Adding…' : 'Add'}
+                      </button>
+                    </div>
+                    {subCreateErrors[cat.id] && (
+                      <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{subCreateErrors[cat.id]}</p>
+                    )}
+                  </div>
+
                 </div>
               );
             })}
