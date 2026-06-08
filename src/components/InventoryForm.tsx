@@ -9,7 +9,6 @@ import type {
   Brand,
   CollectionType,
   Condition,
-  ItemCategory,
   ItemSubtype,
   ItemType,
   InventoryItem,
@@ -20,7 +19,6 @@ import {
   createBrand,
   createInventoryItem,
   getBrands,
-  getItemCategories,
   getItemSubtypes,
   getInventoryItemById,
   getInventoryItemWithValueById,
@@ -97,9 +95,7 @@ export default function InventoryForm({
 
   // Form state
   const [brands, setBrands] = useState<Brand[]>([]);
-  const [categories, setCategories] = useState<ItemCategory[]>([]);
   const [allSubtypes, setAllSubtypes] = useState<ItemSubtype[]>([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [selectedSubtypeId, setSelectedSubtypeId] = useState<number | null>(null);
   const [formDataReady, setFormDataReady] = useState(false);
   const [brandSuggestions, setBrandSuggestions] = useState<Brand[]>([]);
@@ -132,13 +128,12 @@ export default function InventoryForm({
     [brandInput, brands],
   );
 
-  // Load brands, categories, and subtypes on mount
+  // Load brands and subtypes on mount
   useEffect(() => {
     async function loadFormData() {
       setLoading(true);
-      const [brandsResult, catsResult, subsResult] = await Promise.all([
+      const [brandsResult, subsResult] = await Promise.all([
         getBrands(),
-        getItemCategories(),
         getItemSubtypes(),
       ]);
       setLoading(false);
@@ -146,19 +141,12 @@ export default function InventoryForm({
       const fetchedBrands = brandsResult.data || [];
       setBrands(fetchedBrands);
       setBrandSuggestions(fetchedBrands);
-      const fetchedCats = (catsResult.data || []) as ItemCategory[];
       const fetchedSubs = (subsResult.data || []) as ItemSubtype[];
-      setCategories(fetchedCats);
       setAllSubtypes(fetchedSubs);
-      // Default for new items: first active category + first active subtype
+      // Default for new items: first active subtype
       if (!itemId) {
-        const firstCat = fetchedCats.find((c) => c.is_active) ?? fetchedCats[0] ?? null;
-        if (firstCat) {
-          setSelectedCategoryId(firstCat.id);
-          const firstSub = fetchedSubs.find((s) => s.category_id === firstCat.id && s.is_active)
-            ?? fetchedSubs.find((s) => s.category_id === firstCat.id) ?? null;
-          if (firstSub) setSelectedSubtypeId(firstSub.id);
-        }
+        const firstSub = fetchedSubs.find((s) => s.is_active) ?? fetchedSubs[0] ?? null;
+        if (firstSub) setSelectedSubtypeId(firstSub.id);
       }
       setFormDataReady(true);
     }
@@ -200,22 +188,16 @@ export default function InventoryForm({
       const item = itemResult.data;
       setExistingItem(item);
 
-      // Resolve category and subtype
+      // Resolve subtype
       if (item.item_subtype_id) {
         const sub = allSubtypes.find((s) => s.id === item.item_subtype_id);
-        if (sub) {
-          setSelectedSubtypeId(sub.id);
-          setSelectedCategoryId(sub.category_id);
-        }
+        if (sub) setSelectedSubtypeId(sub.id);
       } else {
-        // Legacy fallback: map item_type → subtype name → ids
+        // Legacy fallback: map item_type → subtype name → id
         const subtypeName = LEGACY_TYPE_TO_SUBTYPE[item.item_type.toLowerCase()];
         if (subtypeName) {
           const sub = allSubtypes.find((s) => s.name === subtypeName);
-          if (sub) {
-            setSelectedSubtypeId(sub.id);
-            setSelectedCategoryId(sub.category_id);
-          }
+          if (sub) setSelectedSubtypeId(sub.id);
         }
       }
 
@@ -263,16 +245,8 @@ export default function InventoryForm({
     if (brand) setBrandInput(brand.name);
   }, [selectedBrandId, brands]);
 
-  // Derived category/subtype data
-  const filteredSubtypes = allSubtypes.filter((s) => s.category_id === selectedCategoryId);
+  const activeSubtypes = allSubtypes.filter((s) => s.is_active);
   const selectedSubtype = allSubtypes.find((s) => s.id === selectedSubtypeId) ?? null;
-
-  const handleCategoryChange = (catId: number) => {
-    setSelectedCategoryId(catId);
-    const firstSub = allSubtypes.find((s) => s.category_id === catId && s.is_active)
-      ?? allSubtypes.find((s) => s.category_id === catId) ?? null;
-    setSelectedSubtypeId(firstSub?.id ?? null);
-  };
 
   const handleCreateBrand = async () => {
     if (!brandInput.trim()) { setError('Brand name is required.'); return; }
@@ -370,14 +344,9 @@ export default function InventoryForm({
     if (onCreated) onCreated(result.data);
     setBrandInput('');
     setSelectedBrandId(null);
-    // Reset to default category/subtype
-    const firstCat = categories.find((c) => c.is_active) ?? categories[0] ?? null;
-    if (firstCat) {
-      setSelectedCategoryId(firstCat.id);
-      const firstSub = allSubtypes.find((s) => s.category_id === firstCat.id && s.is_active)
-        ?? allSubtypes.find((s) => s.category_id === firstCat.id) ?? null;
-      setSelectedSubtypeId(firstSub?.id ?? null);
-    }
+    // Reset to default subtype
+    const firstSub = allSubtypes.find((s) => s.is_active) ?? allSubtypes[0] ?? null;
+    setSelectedSubtypeId(firstSub?.id ?? null);
     setModel('');
     setSerialNumber('');
     setYear('');
@@ -422,24 +391,6 @@ export default function InventoryForm({
   const formFields = (
     <div className="grid gap-5 sm:grid-cols-2">
 
-      {/* Category */}
-      <div className="space-y-1.5">
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-          Category <span className="text-rose-500">*</span>
-        </label>
-        <select
-          value={selectedCategoryId ?? ''}
-          onChange={(e) => handleCategoryChange(Number(e.target.value))}
-          disabled={disabled}
-          className={inputClass}
-        >
-          <option value="" disabled>Choose category</option>
-          {categories.filter((c) => c.is_active).map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-      </div>
-
       {/* Subtype */}
       <div className="space-y-1.5">
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -448,11 +399,11 @@ export default function InventoryForm({
         <select
           value={selectedSubtypeId ?? ''}
           onChange={(e) => setSelectedSubtypeId(Number(e.target.value))}
-          disabled={disabled || filteredSubtypes.length === 0}
+          disabled={disabled || activeSubtypes.length === 0}
           className={inputClass}
         >
           <option value="" disabled>Choose type</option>
-          {filteredSubtypes.filter((s) => s.is_active).map((s) => (
+          {activeSubtypes.map((s) => (
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
