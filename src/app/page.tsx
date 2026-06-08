@@ -73,6 +73,13 @@ export default function HomePage() {
       maximumFractionDigits: 0,
     })}`
 
+  const formatMonthLabel = (month: string) => {
+    const [year, m] = month.split('-')
+    return new Date(Number(year), Number(m) - 1, 1).toLocaleDateString('en-US', {
+      month: 'short', year: 'numeric',
+    })
+  }
+
   const valueInByItemId = Object.fromEntries(
     inventoryItems.map((item) => [item.id, Number(item.value_in ?? 0)])
   )
@@ -140,6 +147,14 @@ export default function HomePage() {
       profit: filteredMonthlyRows.reduce((sum, r) => sum + r.profit, 0),
     }),
     [filteredMonthlyRows]
+  )
+
+  const bestMonthRow = useMemo(
+    () =>
+      filteredMonthlyRows.length > 0
+        ? filteredMonthlyRows.reduce((best, row) => (row.profit > best.profit ? row : best))
+        : null,
+    [filteredMonthlyRows],
   )
 
   const navigateToMonthOperations = (month: string) => {
@@ -221,7 +236,6 @@ export default function HomePage() {
       brands.map((b: any) => [b.id, b.name])
     )
 
-    // Most recent direction='in' deal_item per item (by deal_id)
     const inDealItemByItemId: Record<number, any> = {}
     dealItems.forEach((di) => {
       if (di.direction !== 'in') return
@@ -229,7 +243,6 @@ export default function HomePage() {
       if (!existing || di.deal_id > existing.deal_id) inDealItemByItemId[di.item_id] = di
     })
 
-    // Most recent direction='out' deal_item per item (by deal_id)
     const outDealItemByItemId: Record<number, any> = {}
     dealItems.forEach((di) => {
       if (di.direction !== 'out') return
@@ -306,17 +319,72 @@ export default function HomePage() {
         <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6 text-rose-700 shadow-sm">{error}</div>
       ) : (
         <>
+          {/* ── Inventory section ──────────────────────────────────────── */}
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Current Inventory</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">By category</h2>
-              </div>
-              <div className="text-right">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Cash Balance</p>
-                <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{formatMoney(currentCash)}</p>
-              </div>
+            <div>
+              <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Current Inventory</p>
+              <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">By category</h2>
             </div>
+
+            {/* Inventory summary cards */}
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+
+              {/* Inventory Value */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:p-5">
+                <div className="inline-flex rounded-xl bg-blue-50 p-2.5 dark:bg-blue-900/20">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-blue-500 dark:text-blue-400">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
+                  </svg>
+                </div>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Inventory Value</p>
+                <p className="mt-1 text-xl font-bold tabular-nums text-slate-900 dark:text-white sm:text-2xl">{formatMoney(inventoryEstimatedValue)}</p>
+                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{totalInventoryCount} items in stock</p>
+              </div>
+
+              {/* Cost Basis */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:p-5">
+                <div className="inline-flex rounded-xl bg-violet-50 p-2.5 dark:bg-violet-900/20">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-violet-500 dark:text-violet-400">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                    <line x1="7" y1="7" x2="7.01" y2="7"/>
+                  </svg>
+                </div>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Cost Basis</p>
+                <p className="mt-1 text-xl font-bold tabular-nums text-slate-900 dark:text-white sm:text-2xl">{formatMoney(inventoryCostBasis)}</p>
+                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">total acquisition cost</p>
+              </div>
+
+              {/* Inventory Equity */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:p-5">
+                <div className={`inline-flex rounded-xl p-2.5 ${inventoryEquity >= 0 ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'bg-rose-50 dark:bg-rose-900/20'}`}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={`h-4 w-4 ${inventoryEquity >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                    <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                    <polyline points="17 6 23 6 23 12"/>
+                  </svg>
+                </div>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Inventory Equity</p>
+                <p className={`mt-1 text-xl font-bold tabular-nums sm:text-2xl ${inventoryEquity >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                  {inventoryEquity >= 0 ? '+' : '−'}{formatMoney(Math.abs(inventoryEquity))}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">estimated − cost</p>
+              </div>
+
+              {/* Cash Balance */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:p-5">
+                <div className="inline-flex rounded-xl bg-sky-50 p-2.5 dark:bg-sky-900/20">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-sky-500 dark:text-sky-400">
+                    <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+                  </svg>
+                </div>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Cash Balance</p>
+                <p className="mt-1 text-xl font-bold tabular-nums text-sky-700 dark:text-sky-300 sm:text-2xl">{formatMoney(currentCash)}</p>
+                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">available business cash</p>
+              </div>
+
+            </div>
+
+            {/* Desktop table */}
             <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
@@ -338,7 +406,9 @@ export default function HomePage() {
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{v.count}</td>
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(v.costBasis)}</td>
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(v.estimatedValue)}</td>
-                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(equity)}</td>
+                        <td className={`px-4 py-3 text-right font-medium tabular-nums ${equity >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                          {equity >= 0 ? '+' : '−'}{formatMoney(Math.abs(equity))}
+                        </td>
                       </tr>
                     )
                   })}
@@ -347,11 +417,15 @@ export default function HomePage() {
                     <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{totalInventoryCount}</td>
                     <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(totalCostBasis)}</td>
                     <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(totalEstimatedValue)}</td>
-                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(totalEstimatedValue - totalCostBasis)}</td>
+                    <td className={`px-4 py-3 text-right tabular-nums ${(totalEstimatedValue - totalCostBasis) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {(totalEstimatedValue - totalCostBasis) >= 0 ? '+' : '−'}{formatMoney(Math.abs(totalEstimatedValue - totalCostBasis))}
+                    </td>
                   </tr>
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile cards */}
             <div className="mt-5 space-y-3 md:hidden">
               {inventoryValueTypes.map((type) => {
                 const v = inventoryValueByType[type]
@@ -373,7 +447,9 @@ export default function HomePage() {
                       </div>
                       <div>
                         <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Equity</span>
-                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(equity)}</span>
+                        <span className={`mt-0.5 block font-medium tabular-nums ${equity >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                          {equity >= 0 ? '+' : '−'}{formatMoney(Math.abs(equity))}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -395,13 +471,16 @@ export default function HomePage() {
                   </div>
                   <div>
                     <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Equity</span>
-                    <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(totalEstimatedValue - totalCostBasis)}</span>
+                    <span className={`mt-0.5 block font-medium tabular-nums ${(totalEstimatedValue - totalCostBasis) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {(totalEstimatedValue - totalCostBasis) >= 0 ? '+' : '−'}{formatMoney(Math.abs(totalEstimatedValue - totalCostBasis))}
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
           </section>
 
+          {/* ── Monthly Performance section ─────────────────────────────── */}
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <div className="flex items-start justify-between">
               <div>
@@ -418,6 +497,72 @@ export default function HomePage() {
                 ))}
               </select>
             </div>
+
+            {/* Monthly summary cards */}
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+
+              {/* Total Cash Received */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:p-5">
+                <div className="inline-flex rounded-xl bg-emerald-50 p-2.5 dark:bg-emerald-900/20">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-emerald-500 dark:text-emerald-400">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="8 12 12 16 16 12"/><line x1="12" y1="8" x2="12" y2="16"/>
+                  </svg>
+                </div>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Cash Received</p>
+                <p className="mt-1 text-xl font-bold tabular-nums text-slate-900 dark:text-white sm:text-2xl">{formatMoney(monthlyTotals.cashReceived)}</p>
+                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">for {selectedYear}</p>
+              </div>
+
+              {/* Total Deals */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:p-5">
+                <div className="inline-flex rounded-xl bg-slate-100 p-2.5 dark:bg-slate-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-slate-500 dark:text-slate-400">
+                    <line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/>
+                    <line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/>
+                  </svg>
+                </div>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Total Deals</p>
+                <p className="mt-1 text-xl font-bold tabular-nums text-slate-900 dark:text-white sm:text-2xl">{monthlyTotals.dealsCount}</p>
+                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">buy / sell / trade</p>
+              </div>
+
+              {/* Total Profit */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:p-5">
+                <div className={`inline-flex rounded-xl p-2.5 ${monthlyTotals.profit >= 0 ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'bg-rose-50 dark:bg-rose-900/20'}`}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={`h-4 w-4 ${monthlyTotals.profit >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                    <line x1="12" y1="1" x2="12" y2="23"/>
+                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                  </svg>
+                </div>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Total Profit</p>
+                <p className={`mt-1 text-xl font-bold tabular-nums sm:text-2xl ${monthlyTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                  {monthlyTotals.profit >= 0 ? '+' : '−'}{formatMoney(Math.abs(monthlyTotals.profit))}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">realized gain</p>
+              </div>
+
+              {/* Best Month */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:p-5">
+                <div className="inline-flex rounded-xl bg-amber-50 p-2.5 dark:bg-amber-900/20">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-amber-500 dark:text-amber-400">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  </svg>
+                </div>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Best Month</p>
+                {bestMonthRow ? (
+                  <>
+                    <p className="mt-1 text-xl font-bold text-slate-900 dark:text-white sm:text-2xl">{formatMonthLabel(bestMonthRow.month)}</p>
+                    <p className="mt-0.5 text-xs font-medium tabular-nums text-emerald-600 dark:text-emerald-400">+{formatMoney(bestMonthRow.profit)} profit</p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-xl font-bold text-slate-400 dark:text-slate-500">—</p>
+                )}
+              </div>
+
+            </div>
+
+            {/* Desktop table */}
             <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
@@ -444,20 +589,26 @@ export default function HomePage() {
                       }}
                     >
                       <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{row.month}</td>
-                      <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(row.cashReceived)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-900 dark:text-slate-100">{formatMoney(row.cashReceived)}</td>
                       <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.dealsCount}</td>
-                      <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(row.profit)}</td>
+                      <td className={`px-4 py-3 text-right font-medium tabular-nums ${row.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                        {row.profit >= 0 ? '+' : '−'}{formatMoney(Math.abs(row.profit))}
+                      </td>
                     </tr>
                   ))}
                   <tr className="bg-slate-50 font-semibold dark:bg-slate-700">
                     <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
-                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(monthlyTotals.cashReceived)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-slate-900 dark:text-white">{formatMoney(monthlyTotals.cashReceived)}</td>
                     <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{monthlyTotals.dealsCount}</td>
-                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(monthlyTotals.profit)}</td>
+                    <td className={`px-4 py-3 text-right tabular-nums ${monthlyTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {monthlyTotals.profit >= 0 ? '+' : '−'}{formatMoney(Math.abs(monthlyTotals.profit))}
+                    </td>
                   </tr>
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile */}
             <div className="mt-5 space-y-3 md:hidden">
               {filteredMonthlyRows.map((row) => (
                 <button
@@ -468,7 +619,9 @@ export default function HomePage() {
                 >
                   <div className="mb-1 flex items-center justify-between">
                     <span className="font-semibold text-slate-900 dark:text-white">{row.month}</span>
-                    <span className="text-sm font-medium text-slate-900 dark:text-white">{formatMoney(row.profit)}</span>
+                    <span className={`text-sm font-medium tabular-nums ${row.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {row.profit >= 0 ? '+' : '−'}{formatMoney(Math.abs(row.profit))}
+                    </span>
                   </div>
                   <div className="flex gap-4 text-sm text-slate-500 dark:text-slate-400">
                     <span>Cash in: {formatMoney(row.cashReceived)}</span>
@@ -479,7 +632,9 @@ export default function HomePage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">
                 <div className="mb-1 flex items-center justify-between">
                   <span className="font-semibold text-slate-900 dark:text-white">Total</span>
-                  <span className="text-sm font-semibold text-slate-900 dark:text-white">{formatMoney(monthlyTotals.profit)}</span>
+                  <span className={`text-sm font-semibold tabular-nums ${monthlyTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {monthlyTotals.profit >= 0 ? '+' : '−'}{formatMoney(Math.abs(monthlyTotals.profit))}
+                  </span>
                 </div>
                 <div className="flex gap-4 text-sm text-slate-500 dark:text-slate-400">
                   <span>Cash in: {formatMoney(monthlyTotals.cashReceived)}</span>
@@ -488,51 +643,73 @@ export default function HomePage() {
               </div>
             </div>
           </section>
+
+          {/* ── Brand Performance section ───────────────────────────────── */}
           {brandPerformance.length > 0 && (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <div>
                 <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Brand Performance</p>
                 <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Top brands by ROI</h2>
               </div>
+
+              {/* Desktop table */}
               <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                     <tr>
                       <th className="px-4 py-3">Brand</th>
-                      <th className="px-4 py-3 text-right">Sold Qty</th>
+                      <th className="px-4 py-3 text-center">Sold</th>
                       <th className="px-4 py-3 text-right">Avg ROI</th>
                       <th className="px-4 py-3 text-right">Avg Profit</th>
                       <th className="px-4 py-3 text-right">Avg Days Held</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                    {brandPerformance.map((row) => (
+                    {brandPerformance.map((row, index) => (
                       <tr key={row.name}>
-                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{row.name}</td>
-                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.soldQty}</td>
-                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.avgRoi.toFixed(1)}%</td>
-                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(row.avgProfit)}</td>
+                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">
+                          <span className="mr-2 text-xs font-normal text-slate-400 dark:text-slate-500">#{index + 1}</span>
+                          {row.name}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                            {row.soldQty}
+                          </span>
+                        </td>
+                        <td className={`px-4 py-3 text-right font-semibold tabular-nums ${row.avgRoi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                          {row.avgRoi >= 0 ? '+' : ''}{row.avgRoi.toFixed(1)}%
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-900 dark:text-slate-100">{formatMoney(row.avgProfit)}</td>
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.avgDaysHeld}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+
+              {/* Mobile */}
               <div className="mt-5 space-y-3 md:hidden">
-                {brandPerformance.map((row) => (
+                {brandPerformance.map((row, index) => (
                   <div key={row.name} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
                     <div className="mb-2 flex items-center justify-between">
-                      <span className="font-semibold text-slate-900 dark:text-white">{row.name}</span>
-                      <span className="text-sm text-slate-500 dark:text-slate-400">{row.soldQty} sold</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400 dark:text-slate-500">#{index + 1}</span>
+                        <span className="font-semibold text-slate-900 dark:text-white">{row.name}</span>
+                      </div>
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                        {row.soldQty} sold
+                      </span>
                     </div>
                     <div className="grid grid-cols-3 gap-3 text-xs">
                       <div>
                         <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg ROI</span>
-                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{row.avgRoi.toFixed(1)}%</span>
+                        <span className={`mt-0.5 block font-semibold tabular-nums ${row.avgRoi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                          {row.avgRoi >= 0 ? '+' : ''}{row.avgRoi.toFixed(1)}%
+                        </span>
                       </div>
                       <div>
                         <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg Profit</span>
-                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(row.avgProfit)}</span>
+                        <span className="mt-0.5 block font-medium tabular-nums text-slate-700 dark:text-slate-300">{formatMoney(row.avgProfit)}</span>
                       </div>
                       <div>
                         <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg Days</span>
@@ -544,6 +721,8 @@ export default function HomePage() {
               </div>
             </section>
           )}
+
+          {/* ── Business Inventory section ──────────────────────────────── */}
           {businessInventoryTypes.length > 0 && (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <div>
@@ -566,7 +745,7 @@ export default function HomePage() {
                         <tr key={type}>
                           <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{type}</td>
                           <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{v.listed}</td>
-                          <td className={`px-4 py-3 text-right font-semibold ${v.unlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-slate-100'}`}>
+                          <td className={`px-4 py-3 text-right font-semibold ${v.unlisted > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-slate-100'}`}>
                             {v.unlisted}
                           </td>
                         </tr>
@@ -575,7 +754,7 @@ export default function HomePage() {
                     <tr className="bg-slate-50 font-semibold dark:bg-slate-700">
                       <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
                       <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{totalBusinessListed}</td>
-                      <td className={`px-4 py-3 text-right ${totalBusinessUnlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
+                      <td className={`px-4 py-3 text-right ${totalBusinessUnlisted > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}>
                         {totalBusinessUnlisted}
                       </td>
                     </tr>
@@ -591,7 +770,7 @@ export default function HomePage() {
                         <span className="font-semibold text-slate-900 dark:text-white">{type}</span>
                         <div className="flex gap-3 text-sm">
                           <span className="text-slate-500 dark:text-slate-400">Listed: <span className="font-semibold text-slate-900 dark:text-white">{v.listed}</span></span>
-                          <span className={`font-semibold ${v.unlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>Unlisted: {v.unlisted}</span>
+                          <span className={`font-semibold ${v.unlisted > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}>Unlisted: {v.unlisted}</span>
                         </div>
                       </div>
                     </div>
@@ -602,7 +781,7 @@ export default function HomePage() {
                     <span className="font-semibold text-slate-900 dark:text-white">Total</span>
                     <div className="flex gap-3 text-sm">
                       <span className="text-slate-500 dark:text-slate-400">Listed: <span className="font-semibold text-slate-900 dark:text-white">{totalBusinessListed}</span></span>
-                      <span className={`font-semibold ${totalBusinessUnlisted > 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>Unlisted: {totalBusinessUnlisted}</span>
+                      <span className={`font-semibold ${totalBusinessUnlisted > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}>Unlisted: {totalBusinessUnlisted}</span>
                     </div>
                   </div>
                 </div>
