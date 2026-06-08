@@ -5,19 +5,39 @@ import { getItemListings, upsertItemListing } from '@/lib/supabase';
 import { supabase } from '@/lib/supabase';
 import type { ListingType } from '@/types';
 
+// ── State ──────────────────────────────────────────────────────────────────────
+
 interface TabState {
-  content: string;
+  content:       string;
   isAiGenerated: boolean;
-  aiModel: string | null;
-  savedAt: string | null;
-  statusMsg: string;
-  errorMsg: string;
+  aiModel:       string | null;
+  savedAt:       string | null;
+  // Tracks whether in-memory content differs from what's in the DB.
+  // false on load, false after any successful save, true on every edit/clear.
+  isDirty:       boolean;
+  // Determines the wording of the saved status line.
+  lastSavedVia:  'ai' | 'manual' | null;
+  errorMsg:      string;
 }
 
+const EMPTY_TAB: TabState = {
+  content:      '',
+  isAiGenerated: false,
+  aiModel:      null,
+  savedAt:      null,
+  isDirty:      false,
+  lastSavedVia: null,
+  errorMsg:     '',
+};
+
+// ── Props ──────────────────────────────────────────────────────────────────────
+
 export interface AiAssistantCardProps {
-  itemId: number;
+  itemId:    number;
   itemLabel: string;
 }
+
+// ── Constants ──────────────────────────────────────────────────────────────────
 
 const TABS: { id: ListingType; label: string; placeholder: string }[] = [
   {
@@ -37,35 +57,45 @@ const TABS: { id: ListingType; label: string; placeholder: string }[] = [
   },
 ];
 
-const EMPTY_TAB: TabState = {
-  content:       '',
-  isAiGenerated: false,
-  aiModel:       null,
-  savedAt:       null,
-  statusMsg:     '',
-  errorMsg:      '',
-};
-
-function statusColor(msg: string): string {
-  if (msg.includes('Saved'))     return 'text-emerald-600 dark:text-emerald-400';
-  if (msg.includes('Generated')) return 'text-violet-600 dark:text-violet-400';
-  return 'text-slate-400 dark:text-slate-500';
-}
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function formatSavedAt(iso: string): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleString('en-CA', {
-      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    return new Date(iso).toLocaleString('en-CA', {
+      month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
     });
   } catch {
     return '';
   }
 }
 
+function getStatusDisplay(tab: TabState): { label: string; color: string } {
+  if (tab.isDirty) {
+    return {
+      label: 'Unsaved changes',
+      color: 'text-amber-600 dark:text-amber-400',
+    };
+  }
+  if (tab.savedAt) {
+    const when   = formatSavedAt(tab.savedAt);
+    const prefix = tab.lastSavedVia === 'ai' ? 'Generated and saved' : 'Saved';
+    return {
+      label: when ? `${prefix} ${when}` : prefix,
+      color: 'text-emerald-600 dark:text-emerald-400',
+    };
+  }
+  return {
+    label: 'No draft saved',
+    color: 'text-slate-400 dark:text-slate-500',
+  };
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
+
 export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardProps) {
-  const [activeTab, setActiveTab] = useState<ListingType>('reverb');
-  const [tabs, setTabs] = useState<Record<ListingType, TabState>>({
+  const [activeTab,     setActiveTab]     = useState<ListingType>('reverb');
+  const [tabs,          setTabs]          = useState<Record<ListingType, TabState>>({
     reverb:      { ...EMPTY_TAB },
     marketplace: { ...EMPTY_TAB },
     kijiji:      { ...EMPTY_TAB },
@@ -77,7 +107,8 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
 
   const current = tabs[activeTab];
 
-  // ── Load existing drafts on mount ─────────────────────────────────────────────
+  // ── Load existing drafts on mount ──────────────────────────────────────────
+
   useEffect(() => {
     let cancelled = false;
 
@@ -86,29 +117,26 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
 
       if (cancelled) return;
 
-      if (error || !data) {
-        setLoadingDrafts(false);
-        return;
-      }
-
-      setTabs((prev) => {
-        const next = { ...prev };
-        for (const row of data) {
-          const id = row.listing_type as ListingType;
-          if (id in next) {
-            const savedDate = formatSavedAt(row.updated_at);
-            next[id] = {
-              content:       row.description,
-              isAiGenerated: row.is_ai_generated,
-              aiModel:       row.ai_model ?? null,
-              savedAt:       row.updated_at,
-              statusMsg:     savedDate ? `Saved ${savedDate}` : 'Saved draft',
-              errorMsg:      '',
-            };
+      if (!error && data) {
+        setTabs((prev) => {
+          const next = { ...prev };
+          for (const row of data) {
+            const id = row.listing_type as ListingType;
+            if (id in next) {
+              next[id] = {
+                content:       row.description,
+                isAiGenerated: row.is_ai_generated,
+                aiModel:       row.ai_model ?? null,
+                savedAt:       row.updated_at,
+                isDirty:       false,
+                lastSavedVia:  row.is_ai_generated ? 'ai' : 'manual',
+                errorMsg:      '',
+              };
+            }
           }
-        }
-        return next;
-      });
+          return next;
+        });
+      }
 
       setLoadingDrafts(false);
     }
@@ -117,21 +145,47 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
     return () => { cancelled = true; };
   }, [itemId]);
 
-  // ── Helpers ───────────────────────────────────────────────────────────────────
+  // ── Tab state updater ──────────────────────────────────────────────────────
 
   function updateTab(id: ListingType, patch: Partial<TabState>) {
     setTabs((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   }
 
-  // ── Actions ───────────────────────────────────────────────────────────────────
+  // ── Upsert helper (shared by generate auto-save and manual Save Draft) ─────
+
+  async function saveToDb(
+    tab:      ListingType,
+    content:  string,
+    isAi:     boolean,
+    aiModel:  string | null,
+  ): Promise<{ savedAt: string | null; error: string | null }> {
+    const { data, error } = await upsertItemListing({
+      inventory_item_id: itemId,
+      listing_type:      tab,
+      description:       content,
+      status:            'draft',
+      is_ai_generated:   isAi,
+      ai_model:          aiModel ?? undefined,
+      prompt_version:    'v1',
+    });
+
+    if (error) return { savedAt: null, error: error.message };
+    return { savedAt: data?.updated_at ?? new Date().toISOString(), error: null };
+  }
+
+  // ── Actions ────────────────────────────────────────────────────────────────
 
   async function handleGenerate() {
     setGenerating(true);
     updateTab(activeTab, { errorMsg: '' });
 
+    const tab = activeTab; // capture — user might switch tabs mid-flight
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error('Not authenticated — please reload and try again');
+      if (!session?.access_token) {
+        throw new Error('Not authenticated — please reload and try again');
+      }
 
       const res = await fetch('/api/ai/generate-listing', {
         method: 'POST',
@@ -141,24 +195,43 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
         },
         body: JSON.stringify({
           inventoryItemId: itemId,
-          listingType:     activeTab,
-          currentDraft:    current.content.trim() || undefined,
+          listingType:     tab,
+          currentDraft:    tabs[tab].content.trim() || undefined,
         }),
       });
 
       const payload = await res.json();
-
       if (!res.ok) throw new Error(payload.error ?? `Server error ${res.status}`);
 
-      updateTab(activeTab, {
-        content:       payload.text,
-        isAiGenerated: true,
-        aiModel:       payload.ai_model ?? null,
-        statusMsg:     'Generated just now',
-        errorMsg:      '',
-      });
+      const text    = payload.text as string;
+      const aiModel = (payload.ai_model as string | null | undefined) ?? null;
+
+      // Auto-save the AI response immediately
+      const { savedAt, error: saveError } = await saveToDb(tab, text, true, aiModel);
+
+      if (saveError) {
+        // Generated but auto-save failed — mark dirty so Save Draft is available
+        updateTab(tab, {
+          content:       text,
+          isAiGenerated: true,
+          aiModel,
+          isDirty:       true,
+          lastSavedVia:  null,
+          errorMsg:      `Generated, but auto-save failed: ${saveError}`,
+        });
+      } else {
+        updateTab(tab, {
+          content:       text,
+          isAiGenerated: true,
+          aiModel,
+          savedAt:       savedAt!,
+          isDirty:       false,
+          lastSavedVia:  'ai',
+          errorMsg:      '',
+        });
+      }
     } catch (err) {
-      updateTab(activeTab, {
+      updateTab(tab, {
         errorMsg: err instanceof Error ? err.message : 'Something went wrong',
       });
     } finally {
@@ -175,29 +248,25 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
     setSaving(true);
     updateTab(activeTab, { errorMsg: '' });
 
-    const { data, error } = await upsertItemListing({
-      inventory_item_id: itemId,
-      listing_type:      activeTab,
-      description:       current.content.trim(),
-      status:            'draft',
-      is_ai_generated:   current.isAiGenerated,
-      ai_model:          current.aiModel ?? undefined,
-      prompt_version:    'v1',
-    });
+    const { savedAt, error } = await saveToDb(
+      activeTab,
+      current.content.trim(),
+      current.isAiGenerated,
+      current.aiModel,
+    );
 
     setSaving(false);
 
     if (error) {
-      updateTab(activeTab, { errorMsg: `Save failed: ${error.message}` });
+      updateTab(activeTab, { errorMsg: `Save failed: ${error}` });
       return;
     }
 
-    const savedAt = data?.updated_at ?? new Date().toISOString();
-    const label   = formatSavedAt(savedAt);
     updateTab(activeTab, {
-      savedAt,
-      statusMsg: `Saved ${label}`,
-      errorMsg:  '',
+      savedAt:      savedAt!,
+      isDirty:      false,
+      lastSavedVia: 'manual',
+      errorMsg:     '',
     });
   }
 
@@ -208,7 +277,7 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard API unavailable (non-secure context)
+      // Clipboard API unavailable in non-secure context
     }
   }
 
@@ -217,19 +286,22 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
       content:       '',
       isAiGenerated: false,
       aiModel:       null,
-      statusMsg:     current.savedAt ? `Saved ${formatSavedAt(current.savedAt)}` : '',
+      // Dirty only if the DB still has a row — user cleared local content but DB differs
+      isDirty:       current.savedAt !== null,
       errorMsg:      '',
     });
   }
 
-  // ── Shared button style ───────────────────────────────────────────────────────
+  // ── Derived UI state ───────────────────────────────────────────────────────
+
+  const status      = getStatusDisplay(current);
   const secondaryBtn =
     'inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600';
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
 
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
+      {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2.5">
@@ -256,7 +328,7 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
         </svg>
       </div>
 
-      {/* ── Tabs ────────────────────────────────────────────────────────────── */}
+      {/* ── Tabs ──────────────────────────────────────────────────────────── */}
       <div
         className="mt-4 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-700/60"
         role="tablist"
@@ -276,19 +348,23 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
             }`}
           >
             {tab.label}
-            {/* Dot: tab has saved or generated content but is not active */}
+            {/* Dot: tab has content and is not the active view */}
             {tabs[tab.id].content && activeTab !== tab.id && (
-              <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-violet-400 align-middle dark:bg-violet-500" />
+              <span className={`ml-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle ${
+                tabs[tab.id].isDirty
+                  ? 'bg-amber-400 dark:bg-amber-500'
+                  : 'bg-violet-400 dark:bg-violet-500'
+              }`} />
             )}
           </button>
         ))}
       </div>
 
-      {/* ── Textarea ────────────────────────────────────────────────────────── */}
+      {/* ── Textarea ──────────────────────────────────────────────────────── */}
       <div className="relative mt-4">
         <textarea
           value={current.content}
-          onChange={(e) => updateTab(activeTab, { content: e.target.value })}
+          onChange={(e) => updateTab(activeTab, { content: e.target.value, isDirty: true })}
           placeholder={
             loadingDrafts
               ? 'Loading saved drafts...'
@@ -301,7 +377,7 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
           style={{ minHeight: '300px' }}
         />
 
-        {/* Overlay while generating */}
+        {/* Generating overlay (covers generate + auto-save) */}
         {generating && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-white/80 backdrop-blur-[2px] dark:bg-slate-800/80">
             <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm dark:border-slate-600 dark:bg-slate-800">
@@ -313,7 +389,7 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
           </div>
         )}
 
-        {/* Overlay while saving */}
+        {/* Saving overlay (manual Save Draft only) */}
         {saving && !generating && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-white/70 backdrop-blur-[2px] dark:bg-slate-800/70">
             <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm dark:border-slate-600 dark:bg-slate-800">
@@ -326,11 +402,9 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
         )}
       </div>
 
-      {/* ── Status row ──────────────────────────────────────────────────────── */}
+      {/* ── Status + char count ────────────────────────────────────────────── */}
       <div className="mt-2 flex items-center justify-between gap-2">
-        <p className={`text-xs ${current.statusMsg ? statusColor(current.statusMsg) : 'text-slate-400 dark:text-slate-500'}`}>
-          {current.statusMsg || (current.savedAt ? `Saved ${formatSavedAt(current.savedAt)}` : 'No draft saved')}
-        </p>
+        <p className={`text-xs ${status.color}`}>{status.label}</p>
         {current.content && (
           <p className="text-xs text-slate-400 dark:text-slate-500">
             {current.content.length.toLocaleString()} chars
@@ -338,14 +412,14 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
         )}
       </div>
 
-      {/* ── Error banner ────────────────────────────────────────────────────── */}
+      {/* ── Error banner ──────────────────────────────────────────────────── */}
       {current.errorMsg && (
         <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-300">
           {current.errorMsg}
         </div>
       )}
 
-      {/* ── Action buttons ───────────────────────────────────────────────────── */}
+      {/* ── Buttons ───────────────────────────────────────────────────────── */}
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
 
         {/* Generate — primary */}
@@ -373,11 +447,11 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
         {/* Secondary buttons */}
         <div className="flex flex-wrap items-center gap-2">
 
-          {/* Save Draft */}
+          {/* Save Draft — enabled only when there is something unsaved */}
           <button
             type="button"
             onClick={handleSaveDraft}
-            disabled={saving || generating || loadingDrafts}
+            disabled={saving || generating || loadingDrafts || !current.isDirty}
             className={secondaryBtn}
           >
             {saving ? (
@@ -397,7 +471,7 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
             )}
           </button>
 
-          {/* Copy */}
+          {/* Copy — never saves, just copies */}
           <button
             type="button"
             onClick={handleCopy}
@@ -422,7 +496,7 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
             )}
           </button>
 
-          {/* Clear */}
+          {/* Clear — clears textarea only, does not touch DB */}
           <button
             type="button"
             onClick={handleClear}
