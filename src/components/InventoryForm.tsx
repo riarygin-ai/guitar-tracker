@@ -340,7 +340,7 @@ export default function InventoryForm({
       estimated_sold_value: estimatedSoldValue ? Number(estimatedSoldValue) : null,
       notes: notes.trim() || null,
       date_listed: null,
-      sold_date: null,
+      sold_date: existingItem?.sold_date ?? null,
       status: existingItem?.status ?? 'new',
     };
 
