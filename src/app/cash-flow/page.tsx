@@ -15,15 +15,21 @@ import {
 } from '@/lib/supabase';
 import type { Brand, CashFlow, Deal, DealItem, InventoryItemWithValue } from '@/types';
 
-// ─── Visual helper ─────────────────────────────────────────────────────────────
+// ─── Visual helper — same approach as Operations page ─────────────────────────
 
-function getDealPhotoAndTitle(
+type TradeItemVisual = { photoUrl?: string; alt: string };
+
+type DealVisual =
+  | { kind: 'single'; photoUrl?: string; alt: string; title: string }
+  | { kind: 'trade'; outItems: TradeItemVisual[]; outMore: number; inItems: TradeItemVisual[]; inMore: number; title: string };
+
+function computeDealVisual(
   deal: Deal,
   items: DealItem[],
   itemMap: Record<number, InventoryItemWithValue>,
   brandMap: Record<number, string>,
   photoByItemId: Record<number, string>,
-): { photoUrl: string | undefined; alt: string; title: string } {
+): DealVisual {
   function brandModel(item: InventoryItemWithValue): string {
     return `${brandMap[item.brand_id] || ''} ${item.model}`.trim() || 'Unknown';
   }
@@ -52,15 +58,19 @@ function getDealPhotoAndTitle(
     const bestOut  = outgoing[0] ? itemMap[outgoing[0].item_id] : null;
     const bestIn   = incoming[0] ? itemMap[incoming[0].item_id] : null;
     return {
-      photoUrl: photoItem ? photoByItemId[photoItem.id] : undefined,
-      alt:      photoItem ? brandModel(photoItem) : '—',
-      title:    `${outItem ? brandModel(outItem) : '—'} → ${inItem ? brandModel(inItem) : '—'}`,
+      kind: 'trade',
+      outItems,
+      outMore: Math.max(0, outgoing.length - 3),
+      inItems,
+      inMore: Math.max(0, incoming.length - 3),
+      title: `${bestOut ? brandModel(bestOut) : '—'} → ${bestIn ? brandModel(bestIn) : '—'}`,
     };
   }
 
   const di = items[0];
   const item = di ? itemMap[di.item_id] : null;
   return {
+    kind: 'single',
     photoUrl: item ? photoByItemId[item.id] : undefined,
     alt:      item ? brandModel(item) : (deal.notes || '—'),
     title:    item ? yearBrandModel(item) : (deal.notes || '—'),
@@ -176,20 +186,14 @@ export default function CashFlowPage() {
       maximumFractionDigits: 2,
     }).format(v);
 
-  const arrowRight = (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-300 dark:text-slate-600">
-      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-    </svg>
-  );
-
-  const imgPlaceholder = (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-4 w-4 text-slate-300 dark:text-slate-600">
+  const photoPlaceholder = (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-7 w-7 text-slate-300 dark:text-slate-600">
       <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
     </svg>
   );
 
-  const cashIconPlaceholder = (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-4 w-4 text-slate-300 dark:text-slate-600">
+  const cashPlaceholder = (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-7 w-7 text-slate-300 dark:text-slate-600">
       <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
     </svg>
   );
@@ -250,25 +254,14 @@ export default function CashFlowPage() {
               {filteredRows.map((cf) => {
                 const deal = cf.deal_id ? dealMap[cf.deal_id] : null;
                 const items = cf.deal_id ? (dealItemsByDealId[cf.deal_id] || []) : [];
-                const dealInfo = deal
-                  ? getDealPhotoAndTitle(deal, items, itemMap, brandMap, photoByItemId)
-                  : null;
-
-                const title = cf.description || dealInfo?.title || '—';
+                const visual = deal ? computeDealVisual(deal, items, itemMap, brandMap, photoByItemId) : null;
 
                 const formattedDate = new Date(cf.transaction_date + 'T12:00:00').toLocaleDateString('en-US', {
                   month: 'short', day: 'numeric', year: 'numeric',
                 });
 
-                const hasCashIn  = cf.cash_in > 0;
-                const hasCashOut = cf.cash_out > 0;
-                const movementLabel =
-                  hasCashIn && hasCashOut ? 'Cash flow'
-                  : hasCashIn  ? 'Cash in'
-                  : hasCashOut ? 'Cash out'
-                  : 'No movement';
+                const title = cf.description || visual?.title || '—';
 
-                // Trade photo vars
                 const topOut   = visual?.kind === 'trade' ? visual.outItems[0]  : null;
                 const topIn    = visual?.kind === 'trade' ? visual.inItems[0]   : null;
                 const moreOut  = visual?.kind === 'trade' ? (visual.outItems.length - (topOut ? 1 : 0) + visual.outMore) : 0;
@@ -276,7 +269,6 @@ export default function CashFlowPage() {
                 const hasOutSide = visual?.kind === 'trade' && (!!topOut || moreOut > 0);
                 const hasInSide  = visual?.kind === 'trade' && (!!topIn  || moreIn  > 0);
 
-                // ── Photo column ────────────────────────────────────────────
                 const photoCol = (
                   <div className="shrink-0 self-start md:w-[185px]">
                     {visual?.kind === 'trade' ? (
@@ -321,17 +313,26 @@ export default function CashFlowPage() {
                           </div>
                         )}
                       </div>
+                    ) : visual?.kind === 'single' ? (
+                      <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                        {visual.photoUrl
+                          ? <Image src={visual.photoUrl} alt={visual.alt} fill className="object-cover" sizes="80px" unoptimized />
+                          : photoPlaceholder}
+                      </div>
+                    ) : (
+                      <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                        {cashPlaceholder}
+                      </div>
+                    )}
+                  </div>
+                );
 
-                // ── Content column ──────────────────────────────────────────
                 const contentCol = (
                   <div className="min-w-0 flex-1">
-
-                    {/* Type label + badge */}
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                         {deal ? deal.deal_type : 'cash flow'}
                       </p>
-
                       {deal && (
                         <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${getDealTypeColor(deal.deal_type)}`}>
                           {deal.deal_type.charAt(0).toUpperCase() + deal.deal_type.slice(1)}
@@ -339,17 +340,13 @@ export default function CashFlowPage() {
                       )}
                     </div>
 
-                    {/* Title */}
                     <h3 className="mt-1 truncate text-base font-semibold text-slate-900 dark:text-white">
                       {title}
                     </h3>
 
-                    {/* Date */}
                     <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{formattedDate}</p>
 
-                    {/* Financial rows: Opening → Cash In/Out → Closing */}
                     <div className="mt-2.5 grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-0.5">
-
                       <span className="text-xs text-slate-400 dark:text-slate-500">Opening</span>
                       <span className="tabular-nums text-sm text-slate-500 dark:text-slate-400">
                         {fmt(cf.opening_balance)}
@@ -377,10 +374,11 @@ export default function CashFlowPage() {
                       <span className="tabular-nums text-sm font-medium text-slate-700 dark:text-slate-200">
                         {fmt(cf.closing_balance)}
                       </span>
-
                     </div>
-                  </>
+                  </div>
                 );
+
+                const cardClass = 'rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800';
 
                 return cf.deal_id ? (
                   <Link
