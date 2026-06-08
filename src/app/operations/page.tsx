@@ -89,9 +89,14 @@ export default function OperationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 6);
+    return d.toISOString().split('T')[0];
+  });
+  const [toDate, setToDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>(defaultDealTypes);
+  const [showDateFilter, setShowDateFilter] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -127,15 +132,16 @@ export default function OperationsPage() {
   useEffect(() => {
     if (!searchParams) return;
 
-    const from = searchParams.get('from') || '';
-    const to = searchParams.get('to') || '';
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
     const typesParam = searchParams.get('dealTypes') || '';
     const types = typesParam
       ? typesParam.split(',').map((v) => v.trim().toLowerCase()).filter((v) => defaultDealTypes.includes(v))
       : defaultDealTypes;
 
-    setFromDate(from);
-    setToDate(to);
+    // Only override defaults when URL explicitly carries these params
+    if (from !== null) setFromDate(from);
+    if (to !== null) setToDate(to);
     setSelectedDealTypes(types.length > 0 ? types : defaultDealTypes);
   }, [searchParams]);
 
@@ -277,8 +283,8 @@ export default function OperationsPage() {
   return (
     <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        {/* Header — hidden on mobile, shown on desktop */}
+        <div className="hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:block dark:border-slate-700 dark:bg-slate-800">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Operations</p>
@@ -296,7 +302,7 @@ export default function OperationsPage() {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
+        <div className="mt-6 hidden gap-4 md:grid lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
           <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date From</label>
             <input
@@ -318,8 +324,46 @@ export default function OperationsPage() {
         </div>
 
         <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Deal type filter</p>
-          <div className="mt-3 flex flex-wrap gap-2">
+
+          {/* Mobile header: title + date filter toggle */}
+          <div className="mb-3 flex items-center justify-between md:hidden">
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Operations</h1>
+            <button
+              type="button"
+              onClick={() => setShowDateFilter((v) => !v)}
+              className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+            >
+              {showDateFilter ? 'Hide dates' : 'Date filter'}
+            </button>
+          </div>
+
+          {/* Mobile: collapsible date fields */}
+          {showDateFilter && (
+            <div className="mb-4 grid gap-3 md:hidden">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date From</label>
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => handleFromDateChange(e.target.value)}
+                  className="mt-1.5 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date To</label>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => handleToDateChange(e.target.value)}
+                  className="mt-1.5 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Desktop label */}
+          <p className="hidden text-sm font-medium text-slate-700 dark:text-slate-200 md:block">Deal type filter</p>
+          <div className="flex flex-wrap gap-2 md:mt-3">
             {defaultDealTypes.map((dealType) => (
               <button
                 key={dealType}
