@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ItemPhotos, { type ItemPhotosHandle } from '@/components/ItemPhotos';
+import AiAssistantCard from '@/components/AiAssistantCard';
 import type {
   Brand,
   CollectionType,
@@ -770,6 +771,16 @@ export default function InventoryForm({
               </form>
 
               <ItemPhotos ref={photosRef} itemId={Number(itemId)} onMainPhotoChange={setMainPhotoUrl} />
+
+              {existingItem && (
+                <AiAssistantCard
+                  itemLabel={`${brandInput} ${model}`.trim()}
+                  condition={existingItem.condition}
+                  year={existingItem.year}
+                  color={existingItem.color}
+                  estimatedValue={estimatedSoldValue ? Number(estimatedSoldValue) : null}
+                />
+              )}
             </div>
           </div>
         ) : (
