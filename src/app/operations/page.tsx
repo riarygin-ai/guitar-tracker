@@ -383,6 +383,7 @@ export default function OperationsPage() {
                 );
                 const cash = getCashForDeal(deal);
                 const profit = getProfitForDeal(deal);
+                const formattedDate = new Date(deal.deal_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
                 // For trades: show 1 photo per side (most valuable), +N for the rest
                 const topOut    = visual.kind === 'trade' ? visual.outItems[0] : null;
@@ -406,11 +407,12 @@ export default function OperationsPage() {
                   >
                     <div className="flex items-start gap-3">
 
-                      {/* ── Photo area (mirrors InventoryCard thumbnail) ───── */}
+                      {/* ── Photo column — fixed width on desktop so all titles align ── */}
+                      <div className="shrink-0 self-start md:w-[185px]">
                       {visual.kind === 'trade' ? (
-                        <div className="flex shrink-0 flex-col items-center gap-1 self-start md:flex-row md:gap-1.5">
+                        <div className="flex flex-col items-center gap-1 md:flex-row md:gap-1.5">
                           {hasOutSide && (
-                            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                            <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
                               {topOut?.photoUrl
                                 ? <Image src={topOut.photoUrl} alt={topOut.alt} fill className="object-cover" sizes="80px" unoptimized />
                                 : photoPlaceholder}
@@ -434,7 +436,7 @@ export default function OperationsPage() {
                             </>
                           )}
                           {hasInSide && (
-                            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                            <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
                               {topIn?.photoUrl
                                 ? <Image src={topIn.photoUrl} alt={topIn.alt} fill className="object-cover" sizes="80px" unoptimized />
                                 : photoPlaceholder}
@@ -446,18 +448,19 @@ export default function OperationsPage() {
                             </div>
                           )}
                           {!hasOutSide && !hasInSide && (
-                            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                            <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
                               {photoPlaceholder}
                             </div>
                           )}
                         </div>
                       ) : (
-                        <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                        <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
                           {visual.photoUrl
                             ? <Image src={visual.photoUrl} alt={visual.alt} fill className="object-cover" sizes="80px" unoptimized />
                             : photoPlaceholder}
                         </div>
                       )}
+                      </div>
 
                       {/* ── Content (mirrors InventoryCard content area) ───── */}
                       <div className="min-w-0 flex-1">
@@ -471,32 +474,53 @@ export default function OperationsPage() {
                           </span>
                         </div>
 
-                        {/* Title (like item name in InventoryCard) */}
-                        <h3 className="mt-1 line-clamp-2 text-base font-semibold text-slate-900 dark:text-white md:line-clamp-1">
-                          {visual.title}
-                        </h3>
+                        {/* Title */}
+                        {visual.kind === 'trade' ? (
+                          <>
+                            {/* Mobile: given → received as two separate truncated lines */}
+                            <div className="mt-1 md:hidden">
+                              <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{topOut?.alt || '—'}</p>
+                              <p className="my-0.5 text-xs text-slate-400 dark:text-slate-500">↓</p>
+                              <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{topIn?.alt || '—'}</p>
+                            </div>
+                            {/* Desktop: single-line combined title */}
+                            <h3 className="mt-1 hidden truncate text-base font-semibold text-slate-900 dark:text-white md:block">
+                              {visual.title}
+                            </h3>
+                          </>
+                        ) : (
+                          <h3 className="mt-1 truncate text-base font-semibold text-slate-900 dark:text-white">
+                            {visual.title}
+                          </h3>
+                        )}
 
-                        {/* Metrics row 1: Date + Cash */}
-                        <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
-                          <span>
-                            <span className="text-slate-500 dark:text-slate-400">Date </span>
-                            {new Date(deal.deal_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                          </span>
-                          <span>
-                            <span className="text-slate-500 dark:text-slate-400">Cash </span>
-                            <span className={getCashColor(cash)}>{fmtCompact(cash)}</span>
-                          </span>
-                        </div>
-
-                        {/* Metrics row 2: Profit (sales and trades only) */}
-                        {profit !== null && (
-                          <div className="mt-1 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
-                            <span>
+                        {/* Metrics — desktop: labeled two-row layout; mobile: compact single lines */}
+                        <div className="hidden md:block">
+                          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
+                            <span><span className="text-slate-500 dark:text-slate-400">Date </span>{formattedDate}</span>
+                            <span><span className="text-slate-500 dark:text-slate-400">Cash </span><span className={getCashColor(cash)}>{fmtCompact(cash)}</span></span>
+                          </div>
+                          {profit !== null && (
+                            <div className="mt-1 text-sm text-slate-700 dark:text-slate-200">
                               <span className="text-slate-500 dark:text-slate-400">Profit </span>
                               <span className={getCashColor(profit)}>{fmtCompact(profit)}</span>
-                            </span>
-                          </div>
-                        )}
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-2 md:hidden">
+                          <p className="text-sm text-slate-700 dark:text-slate-200">{formattedDate}</p>
+                          <p className="mt-0.5 text-sm text-slate-700 dark:text-slate-200">
+                            <span className="text-slate-500 dark:text-slate-400">Cash </span>
+                            <span className={getCashColor(cash)}>{fmtCompact(cash)}</span>
+                            {profit !== null && (
+                              <>
+                                <span className="mx-1.5 text-slate-300 dark:text-slate-600">•</span>
+                                <span className="text-slate-500 dark:text-slate-400">Profit </span>
+                                <span className={getCashColor(profit)}>{fmtCompact(profit)}</span>
+                              </>
+                            )}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </Link>
