@@ -1,93 +1,39 @@
 'use client';
 
 import { useState } from 'react';
+import { supabase } from '@/lib/supabase';
 
 type TabId = 'reverb' | 'marketplace' | 'trade';
 
 interface TabState {
   content: string;
   statusMsg: string;
+  errorMsg: string;
 }
 
 export interface AiAssistantCardProps {
+  itemId: number;
   itemLabel: string;
-  condition?: string | null;
-  year?: number | null;
-  color?: string | null;
-  estimatedValue?: number | null;
 }
 
 const TABS: { id: TabId; label: string; placeholder: string }[] = [
-  { id: 'reverb',      label: 'Reverb',      placeholder: 'Write or generate a Reverb.com listing for this item...' },
-  { id: 'marketplace', label: 'Marketplace', placeholder: 'Write or generate a Marketplace / Kijiji post for this item...' },
-  { id: 'trade',       label: 'Trade',       placeholder: 'Write or generate a trade post for this item...' },
+  {
+    id:          'reverb',
+    label:       'Reverb',
+    placeholder: 'Click Generate to create a Reverb.com listing, or write your own...',
+  },
+  {
+    id:          'marketplace',
+    label:       'Marketplace',
+    placeholder: 'Click Generate to create a Marketplace / Kijiji post, or write your own...',
+  },
+  {
+    id:          'trade',
+    label:       'Trade',
+    placeholder: 'Click Generate to create a trade post, or write your own...',
+  },
 ];
 
-// ── Placeholder content builder (replace body with real API call later) ────────
-function buildPlaceholder(
-  tab: TabId,
-  itemLabel: string,
-  condition?: string | null,
-  year?: number | null,
-  color?: string | null,
-  estimatedValue?: number | null,
-): string {
-  const yr    = year  ? `${year} ` : '';
-  const col   = color ? ` in ${color}` : '';
-  const cond  = condition ?? 'Very Good';
-  const price = estimatedValue ? `$${estimatedValue.toLocaleString()}` : null;
-
-  switch (tab) {
-    case 'reverb':
-      return [
-        `Up for sale is a ${cond.toLowerCase()} condition ${yr}${itemLabel}${col}.`,
-        '',
-        `This is a fantastic instrument that plays and sounds amazing. The neck is comfortable, the action is dialed in, and all electronics are fully functional with no issues.`,
-        '',
-        `Cosmetically it shows typical signs of play wear consistent with the condition rating — nothing that affects playability or tone.`,
-        '',
-        price
-          ? `Asking ${price}. Priced fairly for the condition — open to reasonable offers.`
-          : 'Priced to sell — open to reasonable offers.',
-        '',
-        `Ships safely in original case/gig bag. Feel free to message with any questions!`,
-      ].join('\n');
-
-    case 'marketplace':
-      return [
-        `SELLING — ${yr}${itemLabel}${col}`,
-        '',
-        `Condition: ${cond}`,
-        price ? `Price: ${price} (firm)` : 'Price: Make an offer',
-        '',
-        `Up for sale is my ${yr}${itemLabel}${col}. In ${cond.toLowerCase()} condition and sounds incredible. Great for gigging, recording, or adding to your collection.`,
-        '',
-        `Can meet locally or ship at buyer's expense. Serious inquiries only — no low-ball offers.`,
-        '',
-        `Comment below or send a DM if interested.`,
-      ].join('\n');
-
-    case 'trade':
-      return [
-        `TRADE — ${yr}${itemLabel}${col}`,
-        '',
-        `Looking to trade my ${yr}${itemLabel}${col}.`,
-        `Condition: ${cond} — no cracks, no repairs, all original.`,
-        '',
-        `Open to:`,
-        `• Quality guitars of similar value`,
-        `• Amps or combo amp`,
-        `• Boutique pedals or effects`,
-        `• Cash + trade combos`,
-        '',
-        price ? `Current value: ${price}` : '',
-        '',
-        `Not looking for anything specific — open to interesting offers. DM with photos and your offer.`,
-      ].filter((l) => l !== null).join('\n');
-  }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function statusColor(msg: string): string {
   if (!msg) return 'text-slate-400 dark:text-slate-500';
   if (msg.includes('saved'))     return 'text-emerald-600 dark:text-emerald-400';
@@ -95,19 +41,12 @@ function statusColor(msg: string): string {
   return 'text-slate-400 dark:text-slate-500';
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
-export default function AiAssistantCard({
-  itemLabel,
-  condition,
-  year,
-  color,
-  estimatedValue,
-}: AiAssistantCardProps) {
+export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardProps) {
   const [activeTab, setActiveTab] = useState<TabId>('reverb');
   const [tabs, setTabs] = useState<Record<TabId, TabState>>({
-    reverb:      { content: '', statusMsg: '' },
-    marketplace: { content: '', statusMsg: '' },
-    trade:       { content: '', statusMsg: '' },
+    reverb:      { content: '', statusMsg: '', errorMsg: '' },
+    marketplace: { content: '', statusMsg: '', errorMsg: '' },
+    trade:       { content: '', statusMsg: '', errorMsg: '' },
   });
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied]         = useState(false);
@@ -119,16 +58,48 @@ export default function AiAssistantCard({
     setTabs((prev) => ({ ...prev, [tab]: { ...prev[tab], ...patch } }));
   }
 
-  // ── Actions ─────────────────────────────────────────────────────────────────
+  // ── Actions ──────────────────────────────────────────────────────────────────
 
   async function handleGenerate() {
     setGenerating(true);
-    // Simulated latency — swap this block for a real API call when ready:
-    // const { text } = await openai.chat(...)
-    await new Promise((r) => setTimeout(r, 650));
-    const content = buildPlaceholder(activeTab, itemLabel, condition, year, color, estimatedValue);
-    updateTab(activeTab, { content, statusMsg: 'Generated just now' });
-    setGenerating(false);
+    updateTab(activeTab, { errorMsg: '' });
+
+    try {
+      // Get the user's current auth token — keeps the API key server-side only
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated — please reload and try again');
+
+      const res = await fetch('/api/ai/generate-listing', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          inventoryItemId: itemId,
+          listingType:     activeTab,
+          // Pass current content as draft context so the model can refine it
+          currentDraft: current.content.trim() || undefined,
+        }),
+      });
+
+      const payload = await res.json();
+
+      if (!res.ok) {
+        throw new Error(payload.error ?? `Server error ${res.status}`);
+      }
+
+      updateTab(activeTab, {
+        content:   payload.text,
+        statusMsg: 'Generated just now',
+        errorMsg:  '',
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Something went wrong';
+      updateTab(activeTab, { errorMsg: msg });
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function handleCopy() {
@@ -138,28 +109,28 @@ export default function AiAssistantCard({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard API unavailable in non-secure context — silently ignore
+      // Clipboard API unavailable (non-secure context)
     }
   }
 
   function handleSaveDraft() {
-    updateTab(activeTab, { statusMsg: 'Draft saved' });
+    updateTab(activeTab, { statusMsg: 'Draft saved', errorMsg: '' });
     setDraftToast(true);
     setTimeout(() => setDraftToast(false), 2500);
   }
 
   function handleClear() {
-    updateTab(activeTab, { content: '', statusMsg: '' });
+    updateTab(activeTab, { content: '', statusMsg: '', errorMsg: '' });
   }
 
-  // ── Shared class strings ─────────────────────────────────────────────────────
+  // ── Shared styles ─────────────────────────────────────────────────────────────
   const secondaryBtn =
     'inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600';
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
 
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2.5">
@@ -175,7 +146,6 @@ export default function AiAssistantCard({
             </span>
           </p>
         </div>
-        {/* Sparkle icon */}
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="18"
@@ -192,7 +162,7 @@ export default function AiAssistantCard({
         </svg>
       </div>
 
-      {/* ── Tabs ───────────────────────────────────────────────────────────── */}
+      {/* ── Tabs ────────────────────────────────────────────────────────────── */}
       <div
         className="mt-4 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-700/60"
         role="tablist"
@@ -212,7 +182,7 @@ export default function AiAssistantCard({
             }`}
           >
             {tab.label}
-            {/* Dot indicator if this tab has content */}
+            {/* Dot indicator: tab has content but is not active */}
             {tabs[tab.id].content && activeTab !== tab.id && (
               <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-violet-400 align-middle dark:bg-violet-500" />
             )}
@@ -220,7 +190,7 @@ export default function AiAssistantCard({
         ))}
       </div>
 
-      {/* ── Textarea ───────────────────────────────────────────────────────── */}
+      {/* ── Textarea ────────────────────────────────────────────────────────── */}
       <div className="relative mt-4">
         <textarea
           value={current.content}
@@ -246,7 +216,7 @@ export default function AiAssistantCard({
         )}
       </div>
 
-      {/* ── Status row ─────────────────────────────────────────────────────── */}
+      {/* ── Status row ──────────────────────────────────────────────────────── */}
       <div className="mt-2 flex items-center justify-between gap-2">
         <p className={`text-xs ${statusColor(current.statusMsg)}`}>
           {current.statusMsg || 'Never generated'}
@@ -258,7 +228,14 @@ export default function AiAssistantCard({
         )}
       </div>
 
-      {/* ── Action buttons ─────────────────────────────────────────────────── */}
+      {/* ── Error banner ────────────────────────────────────────────────────── */}
+      {current.errorMsg && (
+        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-300">
+          {current.errorMsg}
+        </div>
+      )}
+
+      {/* ── Action buttons ───────────────────────────────────────────────────── */}
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
 
         {/* Generate — primary */}
@@ -344,7 +321,7 @@ export default function AiAssistantCard({
         </div>
       </div>
 
-      {/* ── Draft saved toast ───────────────────────────────────────────────── */}
+      {/* ── Draft saved toast ────────────────────────────────────────────────── */}
       {draftToast && (
         <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-900/20 dark:text-emerald-300">
           Draft saved for this session.

@@ -774,11 +774,8 @@ export default function InventoryForm({
 
               {existingItem && (
                 <AiAssistantCard
+                  itemId={Number(itemId)}
                   itemLabel={`${brandInput} ${model}`.trim()}
-                  condition={existingItem.condition}
-                  year={existingItem.year}
-                  color={existingItem.color}
-                  estimatedValue={estimatedSoldValue ? Number(estimatedSoldValue) : null}
                 />
               )}
             </div>
