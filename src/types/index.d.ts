@@ -156,6 +156,24 @@ export type UpsertItemListing = Pick<
 > &
   Partial<Pick<ItemListing, 'title' | 'asking_price' | 'trade_value' | 'currency' | 'ai_model' | 'prompt_version'>>;
 
+export interface AiPrompt {
+  id:          number;
+  prompt_key:  string;
+  name:        string;
+  description: string | null;
+  prompt_text: string;
+  model:       string | null;
+  temperature: number | null;
+  is_active:   boolean;
+  created_at:  string;
+  updated_at:  string;
+}
+
+export type UpdateAiPrompt = Partial<Pick<
+  AiPrompt,
+  'name' | 'description' | 'prompt_text' | 'model' | 'temperature' | 'is_active'
+>>;
+
 export type NewBrand = Pick<Brand, 'name'>;
 
 export type NewInventoryItem = Omit<InventoryItem, 'id' | 'created_at' | 'updated_at' | 'user_id'>;

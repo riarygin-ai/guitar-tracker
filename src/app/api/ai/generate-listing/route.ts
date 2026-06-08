@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { generateListing, type ListingType } from '@/lib/openai';
+import { generateListing, type ListingType, type PromptOverride } from '@/lib/openai';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
@@ -57,6 +57,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Item not found or access denied' }, { status: 404 });
   }
 
+  // ── Load active prompt from ai_prompts (falls back to hardcoded if missing) ───
+  const promptKey = `listing_${listingType as string}`;
+  let promptOverride: PromptOverride | undefined;
+
+  const { data: promptRow } = await db
+    .from('ai_prompts')
+    .select('prompt_text, model, temperature, is_active')
+    .eq('prompt_key', promptKey)
+    .maybeSingle();
+
+  if (promptRow?.is_active && promptRow.prompt_text?.trim()) {
+    promptOverride = {
+      promptText:  promptRow.prompt_text,
+      model:       promptRow.model       ?? null,
+      temperature: promptRow.temperature != null ? Number(promptRow.temperature) : null,
+    };
+  }
+
   // ── Call OpenAI (server-side only) ───────────────────────────────────────────
   try {
     const { text, model } = await generateListing(
@@ -76,6 +94,7 @@ export async function POST(req: NextRequest) {
       },
       listingType as ListingType,
       typeof currentDraft === 'string' ? currentDraft : undefined,
+      promptOverride,
     );
 
     return NextResponse.json({ text, ai_model: model });

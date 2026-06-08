@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { splitSearchTerms } from '@/lib/search';
 import type {
+  AiPrompt,
   AppUser,
   Brand,
   CashFlow,
@@ -18,6 +19,7 @@ import type {
   NewDealItem,
   NewInventoryExpense,
   NewInventoryItem,
+  UpdateAiPrompt,
   UpdateDeal,
   UpdateInventoryItem,
   UpsertItemListing,
@@ -439,6 +441,24 @@ export async function editTradeOperation(params: {
     p_cf_transaction_date: params.cfTransactionDate,
     p_cf_description:      params.cfDescription,
   });
+}
+
+// ─── AI prompt functions ──────────────────────────────────────────────────────
+
+export async function getAiPrompts() {
+  return supabase
+    .from('ai_prompts')
+    .select('*')
+    .order('prompt_key', { ascending: true });
+}
+
+export async function updateAiPromptById(id: number, updates: UpdateAiPrompt) {
+  return supabase
+    .from('ai_prompts')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single<AiPrompt>();
 }
 
 // ─── Item listing functions ───────────────────────────────────────────────────

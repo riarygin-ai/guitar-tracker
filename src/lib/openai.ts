@@ -14,6 +14,14 @@ const TEMPERATURE = 0.65;
 
 export type ListingType = 'reverb' | 'marketplace' | 'kijiji';
 
+// When an active ai_prompts row exists, the API route passes this to override
+// the hardcoded defaults. Null/undefined fields fall back to the hardcoded values.
+export interface PromptOverride {
+  promptText:   string;
+  model?:       string | null;
+  temperature?: number | null;
+}
+
 export interface ListingItem {
   brandName: string;
   model: string;
@@ -101,14 +109,20 @@ export async function generateListing(
   item: ListingItem,
   listingType: ListingType,
   currentDraft?: string,
+  promptOverride?: PromptOverride,
 ): Promise<{ text: string; model: string }> {
   const client = getClient();
+
+  // Prefer DB-loaded values; fall back to hardcoded constants.
+  const resolvedModel       = promptOverride?.model?.trim()             || MODEL_ID;
+  const resolvedTemperature = promptOverride?.temperature               ?? TEMPERATURE;
+  const resolvedInstruction = promptOverride?.promptText                ?? LISTING_INSTRUCTIONS[listingType];
 
   const userMessage = [
     'Item details:',
     buildItemContext(item),
     '',
-    `Task: ${LISTING_INSTRUCTIONS[listingType]}`,
+    `Task: ${resolvedInstruction}`,
     currentDraft?.trim()
       ? `\nThe seller has an existing draft they would like improved:\n"""\n${currentDraft.trim()}\n"""`
       : '',
@@ -117,16 +131,16 @@ export async function generateListing(
     .join('\n');
 
   const response = await client.chat.completions.create({
-    model: MODEL_ID,
+    model:       resolvedModel,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userMessage },
+      { role: 'user',   content: userMessage },
     ],
-    max_tokens: MAX_TOKENS,
-    temperature: TEMPERATURE,
+    max_tokens:  MAX_TOKENS,
+    temperature: resolvedTemperature,
   });
 
   const text = response.choices[0]?.message?.content?.trim();
   if (!text) throw new Error('OpenAI returned an empty response');
-  return { text, model: MODEL_ID };
+  return { text, model: resolvedModel };
 }
