@@ -92,18 +92,21 @@ WHERE ii.item_subtype_id IS NULL
   END;
 
 -- ─── 6. Refresh views to expose item_subtype_id ───────────────────────────────
+-- DROP + CREATE required because CREATE OR REPLACE VIEW cannot reorder existing
+-- columns. item_subtype_id is appended at the end, matching the pattern used
+-- when serial_number and user_id were added in the multi-user migration.
 
-CREATE OR REPLACE VIEW public.inventory_items_with_value
+DROP VIEW IF EXISTS public.inventory_items_with_value;
+DROP VIEW IF EXISTS public.inventory_items_search;
+
+CREATE VIEW public.inventory_items_with_value
 WITH (security_invoker = true)
 AS
 SELECT
   i.id,
-  i.user_id,
   i.brand_id,
   i.item_type,
-  i.item_subtype_id,
   i.model,
-  i.serial_number,
   i.date_listed,
   i.sold_date,
   i.estimated_sold_value,
@@ -115,21 +118,21 @@ SELECT
   i.updated_at,
   i.year,
   i.color,
-  di.total_value AS value_in
+  di.total_value AS value_in,
+  i.serial_number,
+  i.user_id,
+  i.item_subtype_id
 FROM public.inventory_items i
 LEFT JOIN public.deal_items di ON (di.item_id = i.id AND di.direction = 'in');
 
-CREATE OR REPLACE VIEW public.inventory_items_search
+CREATE VIEW public.inventory_items_search
 WITH (security_invoker = true)
 AS
 SELECT
   i.id,
-  i.user_id,
   i.brand_id,
   i.item_type,
-  i.item_subtype_id,
   i.model,
-  i.serial_number,
   i.date_listed,
   i.sold_date,
   i.estimated_sold_value,
@@ -141,6 +144,9 @@ SELECT
   i.updated_at,
   i.year,
   i.color,
-  b.name AS brand_name
+  b.name AS brand_name,
+  i.serial_number,
+  i.user_id,
+  i.item_subtype_id
 FROM public.inventory_items i
 JOIN public.brands b ON (b.id = i.brand_id);
