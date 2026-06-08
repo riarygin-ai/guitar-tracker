@@ -323,18 +323,26 @@ export default function OperationsPage() {
           </div>
         </div>
 
-        <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6 dark:border-slate-700 dark:bg-slate-800">
 
-          {/* Mobile header: title + date filter toggle */}
-          <div className="mb-3 flex items-center justify-between md:hidden">
-            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Operations</h1>
-            <button
-              type="button"
-              onClick={() => setShowDateFilter((v) => !v)}
-              className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-            >
-              {showDateFilter ? 'Hide dates' : 'Date filter'}
-            </button>
+          {/* Mobile header — matches Inventory page typography */}
+          <div className="mb-4 md:hidden">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Operations</p>
+                <h1 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Operations</h1>
+                <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                  View all your buy, sell, trade, and expense operations.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDateFilter((v) => !v)}
+                className="mt-1 shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                {showDateFilter ? 'Hide dates' : 'Date filter'}
+              </button>
+            </div>
           </div>
 
           {/* Mobile: collapsible date fields */}
