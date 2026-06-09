@@ -60,14 +60,16 @@ export async function POST(req: NextRequest) {
   // ── Load active prompt from ai_prompts (falls back to hardcoded if missing) ───
   const promptKey = `listing_${listingType as string}`;
   let promptOverride: PromptOverride | undefined;
+  let aiPromptId: number | null = null;
 
   const { data: promptRow } = await db
     .from('ai_prompts')
-    .select('prompt_text, model, temperature, is_active')
+    .select('id, prompt_text, model, temperature, is_active')
     .eq('prompt_key', promptKey)
     .maybeSingle();
 
   if (promptRow?.is_active && promptRow.prompt_text?.trim()) {
+    aiPromptId = promptRow.id as number;
     promptOverride = {
       promptText:  promptRow.prompt_text,
       model:       promptRow.model       ?? null,
@@ -77,7 +79,7 @@ export async function POST(req: NextRequest) {
 
   // ── Call OpenAI (server-side only) ───────────────────────────────────────────
   try {
-    const { text, model } = await generateListing(
+    const { text, model, promptSnapshot } = await generateListing(
       {
         brandName:          (item.brands as any)?.name       ?? 'Unknown brand',
         model:              item.model,
@@ -97,7 +99,7 @@ export async function POST(req: NextRequest) {
       promptOverride,
     );
 
-    return NextResponse.json({ text, ai_model: model });
+    return NextResponse.json({ text, ai_model: model, ai_prompt_id: aiPromptId, prompt_snapshot: promptSnapshot });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Generation failed';
     console.error('[generate-listing] OpenAI error:', message);

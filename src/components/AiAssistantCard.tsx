@@ -8,26 +8,30 @@ import type { ListingType } from '@/types';
 // ── State ──────────────────────────────────────────────────────────────────────
 
 interface TabState {
-  content:       string;
-  isAiGenerated: boolean;
-  aiModel:       string | null;
-  savedAt:       string | null;
+  content:        string;
+  isAiGenerated:  boolean;
+  aiModel:        string | null;
+  aiPromptId:     number | null;
+  promptSnapshot: string | null;
+  savedAt:        string | null;
   // Tracks whether in-memory content differs from what's in the DB.
   // false on load, false after any successful save, true on every edit/clear.
-  isDirty:       boolean;
+  isDirty:        boolean;
   // Determines the wording of the saved status line.
-  lastSavedVia:  'ai' | 'manual' | null;
-  errorMsg:      string;
+  lastSavedVia:   'ai' | 'manual' | null;
+  errorMsg:       string;
 }
 
 const EMPTY_TAB: TabState = {
-  content:      '',
-  isAiGenerated: false,
-  aiModel:      null,
-  savedAt:      null,
-  isDirty:      false,
-  lastSavedVia: null,
-  errorMsg:     '',
+  content:        '',
+  isAiGenerated:  false,
+  aiModel:        null,
+  aiPromptId:     null,
+  promptSnapshot: null,
+  savedAt:        null,
+  isDirty:        false,
+  lastSavedVia:   null,
+  errorMsg:       '',
 };
 
 // ── Props ──────────────────────────────────────────────────────────────────────
@@ -124,13 +128,15 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
             const id = row.listing_type as ListingType;
             if (id in next) {
               next[id] = {
-                content:       row.description,
-                isAiGenerated: row.is_ai_generated,
-                aiModel:       row.ai_model ?? null,
-                savedAt:       row.updated_at,
-                isDirty:       false,
-                lastSavedVia:  row.is_ai_generated ? 'ai' : 'manual',
-                errorMsg:      '',
+                content:        row.description,
+                isAiGenerated:  row.is_ai_generated,
+                aiModel:        row.ai_model        ?? null,
+                aiPromptId:     row.ai_prompt_id    ?? null,
+                promptSnapshot: row.prompt_snapshot ?? null,
+                savedAt:        row.updated_at,
+                isDirty:        false,
+                lastSavedVia:   row.is_ai_generated ? 'ai' : 'manual',
+                errorMsg:       '',
               };
             }
           }
@@ -154,10 +160,12 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
   // ── Upsert helper (shared by generate auto-save and manual Save Draft) ─────
 
   async function saveToDb(
-    tab:      ListingType,
-    content:  string,
-    isAi:     boolean,
-    aiModel:  string | null,
+    tab:            ListingType,
+    content:        string,
+    isAi:           boolean,
+    aiModel:        string | null,
+    aiPromptId:     number | null,
+    promptSnapshot: string | null,
   ): Promise<{ savedAt: string | null; error: string | null }> {
     const { data, error } = await upsertItemListing({
       inventory_item_id: itemId,
@@ -165,8 +173,9 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
       description:       content,
       status:            'draft',
       is_ai_generated:   isAi,
-      ai_model:          aiModel ?? undefined,
-      prompt_version:    'v1',
+      ai_model:          aiModel        ?? undefined,
+      ai_prompt_id:      aiPromptId     ?? undefined,
+      prompt_snapshot:   promptSnapshot ?? undefined,
     });
 
     if (error) return { savedAt: null, error: error.message };
@@ -203,31 +212,37 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
       const payload = await res.json();
       if (!res.ok) throw new Error(payload.error ?? `Server error ${res.status}`);
 
-      const text    = payload.text as string;
-      const aiModel = (payload.ai_model as string | null | undefined) ?? null;
+      const text           = payload.text as string;
+      const aiModel        = (payload.ai_model     as string | null | undefined) ?? null;
+      const aiPromptId     = (payload.ai_prompt_id as number | null | undefined) ?? null;
+      const promptSnapshot = (payload.prompt_snapshot as string | null | undefined) ?? null;
 
       // Auto-save the AI response immediately
-      const { savedAt, error: saveError } = await saveToDb(tab, text, true, aiModel);
+      const { savedAt, error: saveError } = await saveToDb(tab, text, true, aiModel, aiPromptId, promptSnapshot);
 
       if (saveError) {
         // Generated but auto-save failed — mark dirty so Save Draft is available
         updateTab(tab, {
-          content:       text,
-          isAiGenerated: true,
+          content:        text,
+          isAiGenerated:  true,
           aiModel,
-          isDirty:       true,
-          lastSavedVia:  null,
-          errorMsg:      `Generated, but auto-save failed: ${saveError}`,
+          aiPromptId,
+          promptSnapshot,
+          isDirty:        true,
+          lastSavedVia:   null,
+          errorMsg:       `Generated, but auto-save failed: ${saveError}`,
         });
       } else {
         updateTab(tab, {
-          content:       text,
-          isAiGenerated: true,
+          content:        text,
+          isAiGenerated:  true,
           aiModel,
-          savedAt:       savedAt!,
-          isDirty:       false,
-          lastSavedVia:  'ai',
-          errorMsg:      '',
+          aiPromptId,
+          promptSnapshot,
+          savedAt:        savedAt!,
+          isDirty:        false,
+          lastSavedVia:   'ai',
+          errorMsg:       '',
         });
       }
     } catch (err) {
@@ -253,6 +268,8 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
       current.content.trim(),
       current.isAiGenerated,
       current.aiModel,
+      current.aiPromptId,
+      current.promptSnapshot,
     );
 
     setSaving(false);

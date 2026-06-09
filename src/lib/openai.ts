@@ -110,7 +110,7 @@ export async function generateListing(
   listingType: ListingType,
   currentDraft?: string,
   promptOverride?: PromptOverride,
-): Promise<{ text: string; model: string }> {
+): Promise<{ text: string; model: string; promptSnapshot: string }> {
   const client = getClient();
 
   // Prefer DB-loaded values; fall back to hardcoded constants.
@@ -142,5 +142,5 @@ export async function generateListing(
 
   const text = response.choices[0]?.message?.content?.trim();
   if (!text) throw new Error('OpenAI returned an empty response');
-  return { text, model: resolvedModel };
+  return { text, model: resolvedModel, promptSnapshot: resolvedInstruction };
 }

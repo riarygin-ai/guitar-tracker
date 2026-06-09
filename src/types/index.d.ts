@@ -141,7 +141,8 @@ export interface ItemListing {
   status: ListingStatus;
   is_ai_generated: boolean;
   ai_model: string | null;
-  prompt_version: string | null;
+  ai_prompt_id: number | null;
+  prompt_snapshot: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -154,7 +155,7 @@ export type UpsertItemListing = Pick<
   | 'status'
   | 'is_ai_generated'
 > &
-  Partial<Pick<ItemListing, 'title' | 'asking_price' | 'trade_value' | 'currency' | 'ai_model' | 'prompt_version'>>;
+  Partial<Pick<ItemListing, 'title' | 'asking_price' | 'trade_value' | 'currency' | 'ai_model' | 'ai_prompt_id' | 'prompt_snapshot'>>;
 
 export interface AiPrompt {
   id:          number;
