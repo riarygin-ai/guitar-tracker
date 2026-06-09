@@ -6,9 +6,9 @@ import OpenAI from 'openai';
 // ── Model configuration ────────────────────────────────────────────────────────
 // Change MODEL_ID here to swap models without touching other code.
 // Options: 'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini'
-const MODEL_ID = 'gpt-4o';
-const MAX_TOKENS = 900;
-const TEMPERATURE = 0.65;
+export const MODEL_ID    = 'gpt-4o';
+export const MAX_TOKENS  = 900;
+export const TEMPERATURE = 0.65;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ export interface ListingItem {
 
 // ── Prompts ────────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are an experienced guitar dealer writing marketplace listings. Your writing is natural, knowledgeable, and honest — not over-hyped or salesy.
+export const SYSTEM_PROMPT = `You are an experienced guitar dealer writing marketplace listings. Your writing is natural, knowledgeable, and honest — not over-hyped or salesy.
 
 Rules you must follow:
 - Only describe specs that are explicitly provided. Do not invent pickup configurations, tonewoods, hardware details, year, origin, or history.
@@ -47,7 +47,7 @@ Rules you must follow:
 - Write in first person as the seller.
 - If an asking price is provided, use it naturally. If not, do not mention price at all.`;
 
-const LISTING_INSTRUCTIONS: Record<ListingType, string> = {
+export const LISTING_INSTRUCTIONS: Record<ListingType, string> = {
   reverb: `Write a Reverb.com listing body (no title needed).
 Format: 2–3 focused paragraphs.
 Cover: what the instrument is and its condition, any notable details from the seller notes, what is included for shipping/case.
@@ -73,7 +73,7 @@ Keep it under 130 words.`,
 
 // ── Item context builder ───────────────────────────────────────────────────────
 
-function buildItemContext(item: ListingItem): string {
+export function buildItemContext(item: ListingItem): string {
   const rows: string[] = [
     `Brand: ${item.brandName}`,
     `Model: ${item.model}`,

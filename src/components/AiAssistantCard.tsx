@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getItemListings, upsertItemListing } from '@/lib/supabase';
+import { getItemListings, getOrCreateAppUser, upsertItemListing } from '@/lib/supabase';
 import { supabase } from '@/lib/supabase';
 import type { ListingType } from '@/types';
 
@@ -33,6 +33,25 @@ const EMPTY_TAB: TabState = {
   lastSavedVia:   null,
   errorMsg:       '',
 };
+
+// ── Debug payload type ─────────────────────────────────────────────────────────
+
+interface DebugPayload {
+  model:               string;
+  temperature:         number;
+  maxTokens:           number;
+  listingType:         string;
+  category:            string;
+  detectedCategory:    string;
+  aiPromptId:          number | null;
+  promptName:          string | null;
+  systemMessage:       string;
+  itemDataBlock:       string;
+  taskPrompt:          string;
+  existingDraft:       string | null;
+  finalUserMessage:    string;
+  fullMessagesPayload: Array<{ role: string; content: string }>;
+}
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 
@@ -104,12 +123,23 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
     marketplace: { ...EMPTY_TAB },
     kijiji:      { ...EMPTY_TAB },
   });
-  const [loadingDrafts, setLoadingDrafts] = useState(true);
-  const [generating,    setGenerating]    = useState(false);
-  const [saving,        setSaving]        = useState(false);
-  const [copied,        setCopied]        = useState(false);
+  const [loadingDrafts,  setLoadingDrafts]  = useState(true);
+  const [generating,     setGenerating]     = useState(false);
+  const [saving,         setSaving]         = useState(false);
+  const [copied,         setCopied]         = useState(false);
+  const [isAdmin,        setIsAdmin]        = useState(false);
+  const [debugging,      setDebugging]      = useState(false);
+  const [debugPayload,   setDebugPayload]   = useState<DebugPayload | null>(null);
+  const [debugPanelOpen, setDebugPanelOpen] = useState(true);
+  const [debugCopied,    setDebugCopied]    = useState(false);
 
   const current = tabs[activeTab];
+
+  // ── Load admin flag on mount ───────────────────────────────────────────────
+
+  useEffect(() => {
+    getOrCreateAppUser().then((u) => { if (u) setIsAdmin(u.admin); });
+  }, []);
 
   // ── Load existing drafts on mount ──────────────────────────────────────────
 
@@ -307,6 +337,54 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
       isDirty:       current.savedAt !== null,
       errorMsg:      '',
     });
+  }
+
+  async function handleDebugPrompt() {
+    setDebugging(true);
+    setDebugPayload(null);
+
+    const tab = activeTab;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated');
+
+      const res = await fetch('/api/ai/debug-prompt', {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          inventoryItemId: itemId,
+          listingType:     tab,
+          currentDraft:    tabs[tab].content.trim() || undefined,
+        }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error ?? `Server error ${res.status}`);
+
+      setDebugPayload(payload as DebugPayload);
+      setDebugPanelOpen(true);
+    } catch (err) {
+      updateTab(activeTab, {
+        errorMsg: `Debug failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+      });
+    } finally {
+      setDebugging(false);
+    }
+  }
+
+  async function handleCopyDebug() {
+    if (!debugPayload) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(debugPayload, null, 2));
+      setDebugCopied(true);
+      setTimeout(() => setDebugCopied(false), 2000);
+    } catch {
+      // Clipboard unavailable
+    }
   }
 
   // ── Derived UI state ───────────────────────────────────────────────────────
@@ -528,8 +606,168 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
             Clear
           </button>
 
+          {/* Debug Prompt — admin only */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={handleDebugPrompt}
+              disabled={debugging || generating || saving || loadingDrafts}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40"
+            >
+              {debugging ? (
+                <>
+                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700 dark:border-amber-700 dark:border-t-amber-300" />
+                  Inspecting...
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
+                    <path d="M12 8v4" />
+                    <path d="M12 16h.01" />
+                  </svg>
+                  Debug Prompt
+                </>
+              )}
+            </button>
+          )}
+
         </div>
       </div>
+
+      {/* ── AI Debug Panel ────────────────────────────────────────────────── */}
+      {isAdmin && debugPayload && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/10">
+
+          {/* Panel header / toggle */}
+          <button
+            type="button"
+            onClick={() => setDebugPanelOpen((v) => !v)}
+            className="flex w-full items-center justify-between px-4 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          >
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-amber-900 dark:text-amber-200">AI Debug</span>
+              <span className="rounded bg-amber-200 px-1.5 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-800/50 dark:text-amber-200">
+                {debugPayload.listingType}
+              </span>
+              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                {debugPayload.category}{debugPayload.detectedCategory !== debugPayload.category ? ` (detected: ${debugPayload.detectedCategory})` : ''}
+              </span>
+              {debugPayload.promptName && (
+                <span className="text-xs text-amber-700 dark:text-amber-400">
+                  prompt: <span className="font-medium">{debugPayload.promptName}</span>
+                </span>
+              )}
+              {debugPayload.aiPromptId === null && (
+                <span className="text-xs text-slate-500 dark:text-slate-400 italic">fallback (no DB prompt)</span>
+              )}
+            </div>
+            <svg
+              xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+              fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              className={`shrink-0 text-amber-600 transition-transform dark:text-amber-400 ${debugPanelOpen ? 'rotate-180' : ''}`}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+
+          {debugPanelOpen && (
+            <div className="border-t border-amber-200 px-4 pb-4 dark:border-amber-800/40">
+
+              {/* Meta row */}
+              <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-600 dark:text-slate-400">
+                {[
+                  ['model',       debugPayload.model],
+                  ['temperature', String(debugPayload.temperature)],
+                  ['maxTokens',   String(debugPayload.maxTokens)],
+                  ['promptId',    debugPayload.aiPromptId != null ? String(debugPayload.aiPromptId) : 'none (fallback)'],
+                ].map(([k, v]) => (
+                  <span key={k}>
+                    <span className="font-medium text-slate-500 dark:text-slate-500">{k}:</span>{' '}
+                    <code className="font-mono text-slate-800 dark:text-slate-200">{v}</code>
+                  </span>
+                ))}
+              </div>
+
+              {/* System message */}
+              <div className="mt-4">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-400">System message</p>
+                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-slate-900 px-3 py-2.5 text-xs leading-relaxed text-slate-100 dark:bg-slate-950">
+                  {debugPayload.systemMessage}
+                </pre>
+              </div>
+
+              {/* Item data block */}
+              <div className="mt-3">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-400">Item data block</p>
+                <pre className="whitespace-pre-wrap break-words rounded-lg bg-slate-900 px-3 py-2.5 text-xs leading-relaxed text-slate-100 dark:bg-slate-950">
+                  {debugPayload.itemDataBlock}
+                </pre>
+              </div>
+
+              {/* Task prompt */}
+              <div className="mt-3">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-400">Task prompt</p>
+                <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-slate-900 px-3 py-2.5 text-xs leading-relaxed text-slate-100 dark:bg-slate-950">
+                  {debugPayload.taskPrompt}
+                </pre>
+              </div>
+
+              {/* Existing draft */}
+              {debugPayload.existingDraft && (
+                <div className="mt-3">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-400">Existing draft (included)</p>
+                  <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-slate-900 px-3 py-2.5 text-xs leading-relaxed text-slate-100 dark:bg-slate-950">
+                    {debugPayload.existingDraft}
+                  </pre>
+                </div>
+              )}
+
+              {/* Final user message */}
+              <div className="mt-3">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-400">Final user message</p>
+                <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-slate-900 px-3 py-2.5 text-xs leading-relaxed text-slate-100 dark:bg-slate-950">
+                  {debugPayload.finalUserMessage}
+                </pre>
+              </div>
+
+              {/* Full messages JSON */}
+              <div className="mt-3">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-400">Full messages payload (JSON)</p>
+                <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-slate-900 px-3 py-2.5 text-xs leading-relaxed text-slate-100 dark:bg-slate-950">
+                  {JSON.stringify(debugPayload.fullMessagesPayload, null, 2)}
+                </pre>
+              </div>
+
+              {/* Copy button */}
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleCopyDebug}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-50 dark:border-amber-700/60 dark:bg-slate-800 dark:text-amber-300 dark:hover:bg-slate-700"
+                >
+                  {debugCopied ? (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                      </svg>
+                      Copy Debug Payload
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
     </div>
   );
