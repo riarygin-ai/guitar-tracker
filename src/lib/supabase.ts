@@ -146,8 +146,16 @@ export async function createItemSubtype(categoryId: number, name: string) {
     .single();
 }
 
-export async function updateItemSubtype(id: number, updates: { name?: string; is_active?: boolean }) {
+export async function updateItemSubtype(id: number, updates: { name?: string; is_active?: boolean; category_id?: number }) {
   return supabase.from('item_subtypes').update(updates).eq('id', id).select().single();
+}
+
+export async function deleteItemCategory(id: number) {
+  return supabase.from('item_categories').delete().eq('id', id);
+}
+
+export async function deleteItemSubtype(id: number) {
+  return supabase.from('item_subtypes').delete().eq('id', id);
 }
 
 export async function getSubtypeUsageCount(subtypeId: number) {
