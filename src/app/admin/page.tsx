@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import AiPromptsCard from '@/components/AiPromptsCard';
 import {
   createItemCategory,
   createItemSubtype,
@@ -414,7 +415,7 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* ── Item Categories ────────────────────────────────────────────── */}
+      {/* ── Item Categories & Subtypes ────────────────────────────────── */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <div className="mb-5">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Item Categories</h2>
@@ -586,6 +587,10 @@ export default function AdminPage() {
           </div>
         )}
       </div>
+
+      {/* ── AI Prompts ────────────────────────────────────────────────── */}
+      <AiPromptsCard />
+
     </div>
   );
 }
