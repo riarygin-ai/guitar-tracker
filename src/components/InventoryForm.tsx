@@ -92,8 +92,9 @@ export default function InventoryForm({
   backHref,
 }: InventoryFormProps) {
   const router = useRouter();
-  const photosRef   = useRef<ItemPhotosHandle>(null);
-  const formCardRef = useRef<HTMLDivElement>(null);
+  const photosRef          = useRef<ItemPhotosHandle>(null);
+  const formCardRef        = useRef<HTMLDivElement>(null);
+  const wasPhotosShownRef  = useRef(false);
 
   // Form state
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -121,6 +122,19 @@ export default function InventoryForm({
   const [existingItem, setExistingItem] = useState<InventoryItem | null>(null);
   const [mainPhotoUrl, setMainPhotoUrl] = useState<string | null>(null);
   const [showPhotos,   setShowPhotos]   = useState(false);
+
+  // Scroll back to form card after photo section collapses (runs after DOM update)
+  useEffect(() => {
+    if (showPhotos) {
+      wasPhotosShownRef.current = true;
+    } else if (wasPhotosShownRef.current) {
+      console.log('[scroll] photos hidden, waiting for next frame to scroll');
+      requestAnimationFrame(() => {
+        console.log('[scroll] scrolling to form card', formCardRef.current);
+        formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }, [showPhotos]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Metrics state (edit mode only)
   const [valueIn, setValueIn] = useState<number | null>(null);
@@ -772,7 +786,7 @@ export default function InventoryForm({
             {/* Right: form fields + photo management */}
             <div className="min-w-0 flex-1 space-y-6">
               <form onSubmit={handleSubmit} aria-busy={disabled}>
-                <div ref={formCardRef} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                <div ref={formCardRef} className="scroll-mt-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
                   {formFields}
                   {error && (
                     <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
@@ -794,10 +808,8 @@ export default function InventoryForm({
                   itemId={Number(itemId)}
                   onMainPhotoChange={setMainPhotoUrl}
                   onClose={() => {
+                    console.log('[scroll] close button clicked, hiding photos');
                     setShowPhotos(false);
-                    requestAnimationFrame(() => {
-                      formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    });
                   }}
                 />
               )}
