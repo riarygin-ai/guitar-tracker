@@ -20,6 +20,7 @@ import type {
   NewInventoryExpense,
   NewInventoryItem,
   UpdateAiPrompt,
+  UpsertAiPrompt,
   UpdateDeal,
   UpdateInventoryItem,
   UpsertItemListing,
@@ -457,7 +458,16 @@ export async function getAiPrompts() {
   return supabase
     .from('ai_prompts')
     .select('*')
-    .order('prompt_key', { ascending: true });
+    .order('category', { ascending: true })
+    .order('listing_type', { ascending: true });
+}
+
+export async function upsertAiPrompt(data: UpsertAiPrompt) {
+  return supabase
+    .from('ai_prompts')
+    .upsert(data, { onConflict: 'user_id,category,listing_type' })
+    .select()
+    .single<AiPrompt>();
 }
 
 export async function updateAiPromptById(id: number, updates: UpdateAiPrompt) {

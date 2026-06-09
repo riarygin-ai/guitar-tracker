@@ -158,17 +158,32 @@ export type UpsertItemListing = Pick<
   Partial<Pick<ItemListing, 'title' | 'asking_price' | 'trade_value' | 'currency' | 'ai_model' | 'ai_prompt_id' | 'prompt_snapshot'>>;
 
 export interface AiPrompt {
-  id:          number;
-  prompt_key:  string;
-  name:        string;
-  description: string | null;
-  prompt_text: string;
-  model:       string | null;
-  temperature: number | null;
-  is_active:   boolean;
-  created_at:  string;
-  updated_at:  string;
+  id:           number;
+  user_id:      number;
+  category:     string;      // 'Guitar' | 'Amp' | 'Pedal' | 'Cabinet' | 'Other'
+  listing_type: string;      // 'reverb' | 'marketplace' | 'kijiji'
+  prompt_key:   string | null; // legacy — nullable after migration
+  name:         string;
+  description:  string | null;
+  prompt_text:  string;
+  model:        string | null;
+  temperature:  number | null;
+  is_active:    boolean;
+  created_at:   string;
+  updated_at:   string;
 }
+
+export type UpsertAiPrompt = {
+  user_id:      number;
+  category:     string;
+  listing_type: string;
+  name:         string;
+  description:  string | null;
+  prompt_text:  string;
+  model:        string | null;
+  temperature:  number | null;
+  is_active:    boolean;
+};
 
 export type UpdateAiPrompt = Partial<Pick<
   AiPrompt,

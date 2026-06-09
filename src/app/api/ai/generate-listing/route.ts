@@ -7,6 +7,43 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 
 const VALID_LISTING_TYPES: ListingType[] = ['reverb', 'marketplace', 'kijiji'];
 
+// Maps item subtype names → broad prompt category.
+// Guitar family: Electric Guitar, Acoustic Guitar, Bass, Classical Guitar, etc.
+const SUBTYPE_TO_CATEGORY: Record<string, string> = {
+  'Electric Guitar':  'Guitar',
+  'Acoustic Guitar':  'Guitar',
+  'Classical Guitar': 'Guitar',
+  'Resonator Guitar': 'Guitar',
+  'Bass':             'Guitar',
+  'Bass Guitar':      'Guitar',
+  'Amp':              'Amp',
+  'Cabinet':          'Cabinet',
+  'Pedal':            'Pedal',
+  'Processor':        'Pedal',   // multi-effects units → Pedal category
+  'Parts':            'Other',
+  'Pickups':          'Other',
+};
+
+// Legacy item_type fallback (used when item_subtype_id is null)
+const ITEM_TYPE_TO_CATEGORY: Record<string, string> = {
+  'guitar':         'Guitar',
+  'bass':           'Guitar',
+  'acoustic guitar':'Guitar',
+  'amp':            'Amp',
+  'cab':            'Cabinet',
+  'processor':      'Pedal',
+  'pedal':          'Pedal',
+  'parts':          'Other',
+};
+
+function detectCategory(subtypeName: string | null, itemType: string): string {
+  if (subtypeName) {
+    const mapped = SUBTYPE_TO_CATEGORY[subtypeName];
+    if (mapped) return mapped;
+  }
+  return ITEM_TYPE_TO_CATEGORY[itemType?.toLowerCase()] ?? 'Other';
+}
+
 export async function POST(req: NextRequest) {
   // ── Parse request body ───────────────────────────────────────────────────────
   let body: { inventoryItemId?: unknown; listingType?: unknown; currentDraft?: unknown };
@@ -57,24 +94,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Item not found or access denied' }, { status: 404 });
   }
 
-  // ── Load active prompt from ai_prompts (falls back to hardcoded if missing) ───
-  const promptKey = `listing_${listingType as string}`;
+  // ── Detect broad category for prompt lookup ──────────────────────────────────
+  const subtypeName = (item.item_subtypes as any)?.name as string | null ?? null;
+  const category    = detectCategory(subtypeName, item.item_type);
+
+  // Fallback order: detected category → Guitar → Other
+  const candidateCategories: string[] = [category];
+  if (category !== 'Guitar')  candidateCategories.push('Guitar');
+  if (category !== 'Other')   candidateCategories.push('Other');
+
+  // ── Load active prompt (user-scoped via RLS) ─────────────────────────────────
   let promptOverride: PromptOverride | undefined;
   let aiPromptId: number | null = null;
 
-  const { data: promptRow } = await db
-    .from('ai_prompts')
-    .select('id, prompt_text, model, temperature, is_active')
-    .eq('prompt_key', promptKey)
-    .maybeSingle();
+  for (const cat of candidateCategories) {
+    const { data: promptRow } = await db
+      .from('ai_prompts')
+      .select('id, prompt_text, model, temperature, is_active')
+      .eq('category',     cat)
+      .eq('listing_type', listingType as string)
+      .eq('is_active',    true)
+      .maybeSingle();
 
-  if (promptRow?.is_active && promptRow.prompt_text?.trim()) {
-    aiPromptId = promptRow.id as number;
-    promptOverride = {
-      promptText:  promptRow.prompt_text,
-      model:       promptRow.model       ?? null,
-      temperature: promptRow.temperature != null ? Number(promptRow.temperature) : null,
-    };
+    if (promptRow?.prompt_text?.trim()) {
+      aiPromptId    = promptRow.id as number;
+      promptOverride = {
+        promptText:  promptRow.prompt_text,
+        model:       promptRow.model       ?? null,
+        temperature: promptRow.temperature != null ? Number(promptRow.temperature) : null,
+      };
+      break;
+    }
   }
 
   // ── Call OpenAI (server-side only) ───────────────────────────────────────────
@@ -84,7 +134,7 @@ export async function POST(req: NextRequest) {
         brandName:          (item.brands as any)?.name       ?? 'Unknown brand',
         model:              item.model,
         itemType:           item.item_type,
-        subtypeName:        (item.item_subtypes as any)?.name ?? null,
+        subtypeName:        subtypeName,
         year:               item.year               ?? null,
         color:              item.color              ?? null,
         condition:          item.condition          ?? null,
@@ -104,7 +154,6 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : 'Generation failed';
     console.error('[generate-listing] OpenAI error:', message);
 
-    // Surface quota/auth errors clearly; keep other details vague
     if (message.includes('API key') || message.includes('apiKey')) {
       return NextResponse.json({ error: 'OpenAI API key is not configured on the server' }, { status: 500 });
     }

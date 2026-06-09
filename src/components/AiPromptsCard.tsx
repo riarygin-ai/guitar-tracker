@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getAiPrompts, updateAiPromptById } from '@/lib/supabase';
+import { getAiPrompts, getOrCreateAppUser, upsertAiPrompt } from '@/lib/supabase';
 import type { AiPrompt } from '@/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type TabId = 'reverb' | 'marketplace' | 'kijiji';
+type CategoryId   = 'Guitar' | 'Amp' | 'Pedal' | 'Cabinet' | 'Other';
+type ListingTabId = 'reverb' | 'marketplace' | 'kijiji';
+type ComboKey     = string; // `${CategoryId}:${ListingTabId}`
 
 interface FormValues {
   name:        string;
@@ -18,21 +20,29 @@ interface FormValues {
 }
 
 interface TabState {
-  promptId:  number | null;
-  current:   FormValues;
-  saved:     FormValues | null;
-  isDirty:   boolean;
-  savedAt:   string | null;
-  saving:    boolean;
-  errorMsg:  string;
+  promptId: number | null;
+  current:  FormValues;
+  saved:    FormValues | null;
+  isDirty:  boolean;
+  savedAt:  string | null;
+  saving:   boolean;
+  errorMsg: string;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const TABS: { id: TabId; label: string; promptKey: string }[] = [
-  { id: 'reverb',      label: 'Reverb',      promptKey: 'listing_reverb' },
-  { id: 'marketplace', label: 'Marketplace', promptKey: 'listing_marketplace' },
-  { id: 'kijiji',      label: 'Kijiji',      promptKey: 'listing_kijiji' },
+const CATEGORIES: { id: CategoryId; label: string }[] = [
+  { id: 'Guitar',  label: 'Guitar'  },
+  { id: 'Amp',     label: 'Amp'     },
+  { id: 'Pedal',   label: 'Pedal'   },
+  { id: 'Cabinet', label: 'Cabinet' },
+  { id: 'Other',   label: 'Other'   },
+];
+
+const LISTING_TABS: { id: ListingTabId; label: string }[] = [
+  { id: 'reverb',      label: 'Reverb'      },
+  { id: 'marketplace', label: 'Marketplace' },
+  { id: 'kijiji',      label: 'Kijiji'      },
 ];
 
 const EMPTY_FORM: FormValues = {
@@ -43,6 +53,17 @@ const EMPTY_FORM: FormValues = {
   promptText:  '',
   isActive:    true,
 };
+
+function makeEmpty(): TabState {
+  return { promptId: null, current: { ...EMPTY_FORM }, saved: null, isDirty: false, savedAt: null, saving: false, errorMsg: '' };
+}
+
+function initTabs(): Record<ComboKey, TabState> {
+  const entries = CATEGORIES.flatMap((c) =>
+    LISTING_TABS.map((lt) => [`${c.id}:${lt.id}`, makeEmpty()] as const)
+  );
+  return Object.fromEntries(entries);
+}
 
 function promptToForm(p: AiPrompt): FormValues {
   return {
@@ -68,23 +89,15 @@ function formatDate(iso: string): string {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function AiPromptsCard() {
-  const [activeTab, setActiveTab] = useState<TabId>('reverb');
-  const [loading,   setLoading]   = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [tabs, setTabs] = useState<Record<TabId, TabState>>(() => {
-    const make = (): TabState => ({
-      promptId: null,
-      current:  { ...EMPTY_FORM },
-      saved:    null,
-      isDirty:  false,
-      savedAt:  null,
-      saving:   false,
-      errorMsg: '',
-    });
-    return { reverb: make(), marketplace: make(), kijiji: make() };
-  });
+  const [activeCategory, setActiveCategory] = useState<CategoryId>('Guitar');
+  const [activeTab,      setActiveTab]      = useState<ListingTabId>('reverb');
+  const [loading,        setLoading]        = useState(true);
+  const [loadError,      setLoadError]      = useState<string | null>(null);
+  const [userId,         setUserId]         = useState<number | null>(null);
+  const [tabs,           setTabs]           = useState<Record<ComboKey, TabState>>(initTabs);
 
-  const tab = tabs[activeTab];
+  const comboKey: ComboKey = `${activeCategory}:${activeTab}`;
+  const tab = tabs[comboKey];
 
   // ── Load prompts on mount ──────────────────────────────────────────────────
 
@@ -92,8 +105,17 @@ export default function AiPromptsCard() {
     let cancelled = false;
 
     async function load() {
-      const { data, error } = await getAiPrompts();
+      const user = await getOrCreateAppUser();
+      if (cancelled) return;
 
+      if (!user) {
+        setLoadError('Not authenticated.');
+        setLoading(false);
+        return;
+      }
+      setUserId(user.id);
+
+      const { data, error } = await getAiPrompts();
       if (cancelled) return;
 
       if (error || !data) {
@@ -104,18 +126,11 @@ export default function AiPromptsCard() {
 
       setTabs((prev) => {
         const next = { ...prev };
-        for (const tabDef of TABS) {
-          const row = (data as AiPrompt[]).find((p) => p.prompt_key === tabDef.promptKey);
-          if (row) {
+        for (const row of data as AiPrompt[]) {
+          const key: ComboKey = `${row.category}:${row.listing_type}`;
+          if (key in next) {
             const form = promptToForm(row);
-            next[tabDef.id] = {
-              ...next[tabDef.id],
-              promptId: row.id,
-              current:  form,
-              saved:    form,
-              isDirty:  false,
-              savedAt:  row.updated_at,
-            };
+            next[key] = { ...next[key], promptId: row.id, current: form, saved: form, isDirty: false, savedAt: row.updated_at };
           }
         }
         return next;
@@ -130,69 +145,78 @@ export default function AiPromptsCard() {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  function updateCurrent(id: TabId, patch: Partial<FormValues>) {
+  function updateCurrent(key: ComboKey, patch: Partial<FormValues>) {
     setTabs((prev) => ({
       ...prev,
-      [id]: { ...prev[id], current: { ...prev[id].current, ...patch }, isDirty: true, errorMsg: '' },
+      [key]: { ...prev[key], current: { ...prev[key].current, ...patch }, isDirty: true, errorMsg: '' },
     }));
   }
 
-  function updateTabMeta(id: TabId, patch: Partial<TabState>) {
-    setTabs((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  function updateTabMeta(key: ComboKey, patch: Partial<TabState>) {
+    setTabs((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+  }
+
+  function categoryHasDirty(catId: CategoryId): boolean {
+    return LISTING_TABS.some((lt) => tabs[`${catId}:${lt.id}`]?.isDirty);
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
   async function handleSave() {
-    if (!tab.promptId) return;
+    if (!userId) return;
+
     if (!tab.current.promptText.trim()) {
-      updateTabMeta(activeTab, { errorMsg: 'Prompt text cannot be empty.' });
+      updateTabMeta(comboKey, { errorMsg: 'Prompt text cannot be empty.' });
       return;
     }
     if (!tab.current.name.trim()) {
-      updateTabMeta(activeTab, { errorMsg: 'Name cannot be empty.' });
+      updateTabMeta(comboKey, { errorMsg: 'Name cannot be empty.' });
       return;
     }
 
     const tempNum = parseFloat(tab.current.temperature);
     if (isNaN(tempNum) || tempNum < 0 || tempNum > 2) {
-      updateTabMeta(activeTab, { errorMsg: 'Temperature must be between 0 and 2.' });
+      updateTabMeta(comboKey, { errorMsg: 'Temperature must be between 0 and 2.' });
       return;
     }
 
-    updateTabMeta(activeTab, { saving: true, errorMsg: '' });
+    updateTabMeta(comboKey, { saving: true, errorMsg: '' });
 
-    const { data, error } = await updateAiPromptById(tab.promptId, {
-      name:        tab.current.name.trim(),
-      description: tab.current.description.trim() || null,
-      model:       tab.current.model.trim()        || null,
-      temperature: tempNum,
-      prompt_text: tab.current.promptText,
-      is_active:   tab.current.isActive,
+    const { data, error } = await upsertAiPrompt({
+      user_id:      userId,
+      category:     activeCategory,
+      listing_type: activeTab,
+      name:         tab.current.name.trim(),
+      description:  tab.current.description.trim() || null,
+      prompt_text:  tab.current.promptText,
+      model:        tab.current.model.trim() || null,
+      temperature:  tempNum,
+      is_active:    tab.current.isActive,
     });
 
     if (error) {
-      updateTabMeta(activeTab, { saving: false, errorMsg: `Save failed: ${error.message}` });
+      updateTabMeta(comboKey, { saving: false, errorMsg: `Save failed: ${error.message}` });
       return;
     }
 
-    const savedAt   = (data as AiPrompt | null)?.updated_at ?? new Date().toISOString();
+    const savedRow  = data as AiPrompt | null;
+    const savedAt   = savedRow?.updated_at ?? new Date().toISOString();
     const savedForm = { ...tab.current, temperature: String(tempNum) };
-    updateTabMeta(activeTab, {
-      saving: false, saved: savedForm, current: savedForm, isDirty: false, savedAt, errorMsg: '',
+    updateTabMeta(comboKey, {
+      saving: false, promptId: savedRow?.id ?? tab.promptId,
+      saved: savedForm, current: savedForm, isDirty: false, savedAt, errorMsg: '',
     });
   }
 
   function handleReset() {
     if (!tab.saved) return;
-    updateTabMeta(activeTab, { current: { ...tab.saved }, isDirty: false, errorMsg: '' });
+    updateTabMeta(comboKey, { current: { ...tab.saved }, isDirty: false, errorMsg: '' });
   }
 
   // ── Styles ─────────────────────────────────────────────────────────────────
 
   const inputClass =
     'h-9 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700/50 dark:text-slate-100 dark:focus:bg-slate-700 dark:focus:ring-slate-600';
-
   const labelClass = 'block text-xs font-medium text-slate-600 dark:text-slate-400';
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -210,8 +234,8 @@ export default function AiPromptsCard() {
             </span>
           </div>
           <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-            Edit the instructions used when generating marketplace listings.
-            Changes take effect immediately on the next generation.
+            Customize generation instructions by gear category and platform.
+            Changes take effect on the next generation.
           </p>
         </div>
         <svg
@@ -225,27 +249,54 @@ export default function AiPromptsCard() {
         </svg>
       </div>
 
-      {/* Tab bar */}
+      {/* Category selector */}
       <div
         className="mt-5 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-700/60"
         role="tablist"
-        aria-label="Listing platform"
+        aria-label="Gear category"
       >
-        {TABS.map((t) => (
+        {CATEGORIES.map((c) => (
           <button
-            key={t.id}
+            key={c.id}
             type="button"
             role="tab"
-            aria-selected={activeTab === t.id}
-            onClick={() => setActiveTab(t.id)}
+            aria-selected={activeCategory === c.id}
+            onClick={() => setActiveCategory(c.id)}
             className={`flex-1 rounded-lg py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
-              activeTab === t.id
+              activeCategory === c.id
                 ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-white'
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
             }`}
           >
-            {t.label}
-            {tabs[t.id].isDirty && activeTab !== t.id && (
+            {c.label}
+            {categoryHasDirty(c.id) && activeCategory !== c.id && (
+              <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle dark:bg-amber-500" />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Listing type tabs */}
+      <div
+        className="mt-2 flex gap-1 rounded-xl bg-slate-50 p-1 dark:bg-slate-700/30"
+        role="tablist"
+        aria-label="Listing platform"
+      >
+        {LISTING_TABS.map((lt) => (
+          <button
+            key={lt.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === lt.id}
+            onClick={() => setActiveTab(lt.id)}
+            className={`flex-1 rounded-lg py-1 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
+              activeTab === lt.id
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-white'
+                : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+            }`}
+          >
+            {lt.label}
+            {tabs[`${activeCategory}:${lt.id}`]?.isDirty && activeTab !== lt.id && (
               <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle dark:bg-amber-500" />
             )}
           </button>
@@ -263,7 +314,7 @@ export default function AiPromptsCard() {
           {loadError}
         </div>
       ) : (
-        <div className="mt-6 space-y-5">
+        <div className="mt-5 space-y-5">
 
           {/* Row 1: Name + Description */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -272,10 +323,10 @@ export default function AiPromptsCard() {
               <input
                 type="text"
                 value={tab.current.name}
-                onChange={(e) => updateCurrent(activeTab, { name: e.target.value })}
+                onChange={(e) => updateCurrent(comboKey, { name: e.target.value })}
                 disabled={tab.saving}
                 className={inputClass}
-                placeholder="e.g. Reverb.com Listing"
+                placeholder={`e.g. ${activeCategory} – ${LISTING_TABS.find(l => l.id === activeTab)?.label} Listing`}
               />
             </div>
             <div className="space-y-1.5">
@@ -283,7 +334,7 @@ export default function AiPromptsCard() {
               <input
                 type="text"
                 value={tab.current.description}
-                onChange={(e) => updateCurrent(activeTab, { description: e.target.value })}
+                onChange={(e) => updateCurrent(comboKey, { description: e.target.value })}
                 disabled={tab.saving}
                 className={inputClass}
                 placeholder="Short note about this prompt"
@@ -298,7 +349,7 @@ export default function AiPromptsCard() {
               <input
                 type="text"
                 value={tab.current.model}
-                onChange={(e) => updateCurrent(activeTab, { model: e.target.value })}
+                onChange={(e) => updateCurrent(comboKey, { model: e.target.value })}
                 disabled={tab.saving}
                 className={inputClass}
                 placeholder="gpt-4o"
@@ -312,7 +363,7 @@ export default function AiPromptsCard() {
                 max="2"
                 step="0.05"
                 value={tab.current.temperature}
-                onChange={(e) => updateCurrent(activeTab, { temperature: e.target.value })}
+                onChange={(e) => updateCurrent(comboKey, { temperature: e.target.value })}
                 disabled={tab.saving}
                 className={inputClass}
               />
@@ -323,7 +374,7 @@ export default function AiPromptsCard() {
                 type="button"
                 role="switch"
                 aria-checked={tab.current.isActive}
-                onClick={() => updateCurrent(activeTab, { isActive: !tab.current.isActive })}
+                onClick={() => updateCurrent(comboKey, { isActive: !tab.current.isActive })}
                 disabled={tab.saving}
                 className={`relative mt-0.5 inline-flex h-6 w-11 items-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50 ${
                   tab.current.isActive ? 'bg-emerald-500 dark:bg-emerald-600' : 'bg-slate-300 dark:bg-slate-600'
@@ -346,14 +397,15 @@ export default function AiPromptsCard() {
             </div>
             <textarea
               value={tab.current.promptText}
-              onChange={(e) => updateCurrent(activeTab, { promptText: e.target.value })}
+              onChange={(e) => updateCurrent(comboKey, { promptText: e.target.value })}
               disabled={tab.saving}
-              placeholder="Enter the instruction that tells the model how to format the listing…"
+              placeholder={`Enter instructions for ${activeCategory} listings on ${LISTING_TABS.find(l => l.id === activeTab)?.label}…`}
               className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 font-mono text-sm leading-relaxed text-slate-900 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700/50 dark:text-slate-100 dark:focus:bg-slate-700 dark:focus:ring-slate-600"
-              style={{ minHeight: '320px' }}
+              style={{ minHeight: '280px' }}
             />
             <p className="text-xs text-slate-400 dark:text-slate-500">
-              This replaces the per-type instruction in the AI message. The global system prompt (dealer tone, honesty rules) remains fixed.
+              This replaces the per-type instruction in the AI message. The global system prompt (dealer tone, honesty rules) stays fixed.
+              Lookup order: <span className="font-medium">{activeCategory}</span> → Guitar → Other → built-in fallback.
             </p>
           </div>
 
@@ -370,7 +422,9 @@ export default function AiPromptsCard() {
                 ? 'Unsaved changes'
                 : tab.savedAt
                   ? `Saved ${formatDate(tab.savedAt)}`
-                  : 'No changes'
+                  : tab.promptId === null
+                    ? 'No prompt saved yet for this combination'
+                    : 'No changes'
               }
             </p>
             {tab.errorMsg && (
@@ -385,7 +439,7 @@ export default function AiPromptsCard() {
             <button
               type="button"
               onClick={handleSave}
-              disabled={tab.saving || !tab.isDirty}
+              disabled={tab.saving || !tab.isDirty || !userId}
               className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
             >
               {tab.saving ? (
@@ -400,7 +454,7 @@ export default function AiPromptsCard() {
                     <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
                     <path d="M7 3v4a1 1 0 0 0 1 1h7" />
                   </svg>
-                  Save
+                  {tab.promptId === null ? 'Create' : 'Save'}
                 </>
               )}
             </button>
@@ -408,14 +462,14 @@ export default function AiPromptsCard() {
             <button
               type="button"
               onClick={handleReset}
-              disabled={tab.saving || !tab.isDirty}
+              disabled={tab.saving || !tab.isDirty || !tab.saved}
               className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                 <path d="M3 3v5h5" />
               </svg>
-              Reset changes
+              Reset
             </button>
           </div>
 
