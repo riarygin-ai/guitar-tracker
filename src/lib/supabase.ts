@@ -10,6 +10,7 @@ import type {
   InventoryExpense,
   InventoryItem,
   InventoryItemPhoto,
+  InventoryItemWithValue,
   ItemCategory,
   ItemListing,
   ItemSubtype,
@@ -25,6 +26,16 @@ import type {
   UpdateInventoryItem,
   UpsertItemListing,
 } from '@/types';
+
+// ─── Item timeline types ──────────────────────────────────────────────────────
+
+export interface ItemTimelineData {
+  deals:           Deal[];
+  dealItems:       DealItem[];
+  inventoryItems:  InventoryItemWithValue[];
+  brands:          Brand[];
+  photoByItemId:   Record<number, string>;
+}
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
@@ -638,6 +649,70 @@ export async function deleteItemPhoto(
   if (dbError) return { error: `Database error: ${dbError.message}` };
 
   return { error: null };
+}
+
+// ─── Item timeline ─────────────────────────────────────────────────────────────
+// Loads full deal history for a single inventory item in 3 parallel rounds.
+// Round 1 : deal_items for this item → collect deal IDs
+// Round 2 : deals + all deal_items for those deal IDs + brands (parallel)
+// Round 3 : inventory_items_with_value for all item IDs + photos (parallel)
+
+export async function getItemTimeline(
+  itemId: number,
+): Promise<{ data: ItemTimelineData | null; error: string | null }> {
+  const empty: ItemTimelineData = { deals: [], dealItems: [], inventoryItems: [], brands: [], photoByItemId: {} };
+
+  // Round 1 — which deals involve this item?
+  const { data: mySlots, error: e1 } = await supabase
+    .from('deal_items')
+    .select('deal_id')
+    .eq('item_id', itemId);
+
+  if (e1) return { data: null, error: e1.message };
+  if (!mySlots?.length) return { data: empty, error: null };
+
+  const dealIds = Array.from(new Set(mySlots.map((s) => s.deal_id as number)));
+
+  // Round 2 — full context for those deals (parallel)
+  const [dealsRes, allSlotsRes, brandsRes] = await Promise.all([
+    supabase
+      .from('deals')
+      .select('*')
+      .in('id', dealIds)
+      .order('deal_date', { ascending: true }),
+    supabase
+      .from('deal_items')
+      .select('*')
+      .in('deal_id', dealIds),
+    supabase
+      .from('brands')
+      .select('*')
+      .order('name', { ascending: true }),
+  ]);
+
+  if (dealsRes.error) return { data: null, error: dealsRes.error.message };
+
+  const allSlots = (allSlotsRes.data ?? []) as DealItem[];
+  const allItemIds = Array.from(new Set(allSlots.map((s) => s.item_id)));
+
+  // Round 3 — item details + photos (parallel)
+  const [itemsRes, photoByItemId] = await Promise.all([
+    allItemIds.length > 0
+      ? supabase.from('inventory_items_with_value').select('*').in('id', allItemIds)
+      : Promise.resolve({ data: [] as any[], error: null }),
+    getDisplayPhotosForItems(allItemIds),
+  ]);
+
+  return {
+    data: {
+      deals:          (dealsRes.data   ?? []) as Deal[],
+      dealItems:      allSlots,
+      inventoryItems: (itemsRes.data   ?? []) as InventoryItemWithValue[],
+      brands:         (brandsRes.data  ?? []) as Brand[],
+      photoByItemId,
+    },
+    error: null,
+  };
 }
 
 

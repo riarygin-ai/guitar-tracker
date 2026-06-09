@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ItemPhotos, { type ItemPhotosHandle } from '@/components/ItemPhotos';
 import AiAssistantCard from '@/components/AiAssistantCard';
+import InventoryLifeCard from '@/components/InventoryLifeCard';
 import type {
   Brand,
   CollectionType,
@@ -829,6 +830,10 @@ export default function InventoryForm({
                   itemId={Number(itemId)}
                   itemLabel={`${brandInput} ${model}`.trim()}
                 />
+              )}
+
+              {existingItem && (
+                <InventoryLifeCard itemId={Number(itemId)} />
               )}
             </div>
           </div>
