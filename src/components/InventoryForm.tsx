@@ -94,6 +94,7 @@ export default function InventoryForm({
   const router = useRouter();
   const photosRef          = useRef<ItemPhotosHandle>(null);
   const formCardRef        = useRef<HTMLDivElement>(null);
+  const photosWrapperRef   = useRef<HTMLDivElement>(null);
   const wasPhotosShownRef  = useRef(false);
 
   // Form state
@@ -123,14 +124,20 @@ export default function InventoryForm({
   const [mainPhotoUrl, setMainPhotoUrl] = useState<string | null>(null);
   const [showPhotos,   setShowPhotos]   = useState(false);
 
-  // Scroll back to form card after photo section collapses (runs after DOM update)
+  // Scroll to photo card when opened, scroll back to form when closed.
+  // Runs after React commits DOM changes so layout is stable.
   useEffect(() => {
     if (showPhotos) {
       wasPhotosShownRef.current = true;
-    } else if (wasPhotosShownRef.current) {
-      console.log('[scroll] photos hidden, waiting for next frame to scroll');
+      console.log('[scroll] photos shown, scrolling to photo card', photosWrapperRef.current);
       requestAnimationFrame(() => {
-        console.log('[scroll] scrolling to form card', formCardRef.current);
+        console.log('[scroll] rAF: photosWrapper =', photosWrapperRef.current);
+        photosWrapperRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    } else if (wasPhotosShownRef.current) {
+      console.log('[scroll] photos hidden, scrolling to form card', formCardRef.current);
+      requestAnimationFrame(() => {
+        console.log('[scroll] rAF: formCard =', formCardRef.current);
         formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     }
@@ -802,17 +809,20 @@ export default function InventoryForm({
                 </div>
               </form>
 
-              {showPhotos && (
-                <ItemPhotos
-                  ref={photosRef}
-                  itemId={Number(itemId)}
-                  onMainPhotoChange={setMainPhotoUrl}
-                  onClose={() => {
-                    console.log('[scroll] close button clicked, hiding photos');
-                    setShowPhotos(false);
-                  }}
-                />
-              )}
+              {/* Always-present wrapper so photosWrapperRef is stable for scroll targeting */}
+              <div ref={photosWrapperRef} className="scroll-mt-4">
+                {showPhotos && (
+                  <ItemPhotos
+                    ref={photosRef}
+                    itemId={Number(itemId)}
+                    onMainPhotoChange={setMainPhotoUrl}
+                    onClose={() => {
+                      console.log('[scroll] close button clicked, hiding photos');
+                      setShowPhotos(false);
+                    }}
+                  />
+                )}
+              </div>
 
               {existingItem && (
                 <AiAssistantCard
