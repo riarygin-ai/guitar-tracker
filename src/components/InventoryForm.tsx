@@ -92,7 +92,8 @@ export default function InventoryForm({
   backHref,
 }: InventoryFormProps) {
   const router = useRouter();
-  const photosRef = useRef<ItemPhotosHandle>(null);
+  const photosRef   = useRef<ItemPhotosHandle>(null);
+  const formCardRef = useRef<HTMLDivElement>(null);
 
   // Form state
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -771,7 +772,7 @@ export default function InventoryForm({
             {/* Right: form fields + photo management */}
             <div className="min-w-0 flex-1 space-y-6">
               <form onSubmit={handleSubmit} aria-busy={disabled}>
-                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                <div ref={formCardRef} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
                   {formFields}
                   {error && (
                     <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
@@ -792,7 +793,12 @@ export default function InventoryForm({
                   ref={photosRef}
                   itemId={Number(itemId)}
                   onMainPhotoChange={setMainPhotoUrl}
-                  onClose={() => setShowPhotos(false)}
+                  onClose={() => {
+                    setShowPhotos(false);
+                    requestAnimationFrame(() => {
+                      formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    });
+                  }}
                 />
               )}
 
