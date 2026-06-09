@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { getItemTimeline, type ItemTimelineData } from '@/lib/supabase';
+import { getItemLineage, type ItemTimelineData } from '@/lib/supabase';
 import type { Deal, DealItem, InventoryItemWithValue } from '@/types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -289,7 +289,7 @@ export default function InventoryLifeCard({ itemId }: { itemId: number }) {
 
   useEffect(() => {
     let cancelled = false;
-    getItemTimeline(itemId).then(({ data, error }) => {
+    getItemLineage(itemId).then(({ data, error }) => {
       if (!cancelled) {
         setData(data);
         setError(error);
@@ -320,7 +320,7 @@ export default function InventoryLifeCard({ itemId }: { itemId: number }) {
       {/* Section header */}
       <div className="border-b border-slate-100 px-5 py-4 dark:border-slate-700">
         <div className="flex items-center gap-2.5">
-          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Inventory Life</h2>
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Trade Chain</h2>
           {!loading && deals.length > 0 && (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
               {deals.length}
@@ -328,7 +328,7 @@ export default function InventoryLifeCard({ itemId }: { itemId: number }) {
           )}
         </div>
         <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-          Trade, purchase, and sale history for this item.
+          Full connected trade, purchase, and sale history for this item.
         </p>
       </div>
 
@@ -336,13 +336,13 @@ export default function InventoryLifeCard({ itemId }: { itemId: number }) {
       {loading ? (
         <div className="flex items-center gap-2.5 px-5 py-6">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600 dark:border-slate-700 dark:border-t-slate-300" />
-          <span className="text-sm text-slate-500 dark:text-slate-400">Loading history…</span>
+          <span className="text-sm text-slate-500 dark:text-slate-400">Building trade chain…</span>
         </div>
       ) : error ? (
         <div className="px-5 py-4 text-sm text-rose-600 dark:text-rose-400">{error}</div>
       ) : deals.length === 0 ? (
         <div className="px-5 py-6 text-sm text-slate-500 dark:text-slate-400">
-          No deal history yet.
+          No trade chain yet.
         </div>
       ) : (
         <div className="divide-y divide-slate-100 dark:divide-slate-700">
