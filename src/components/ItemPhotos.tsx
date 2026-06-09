@@ -25,25 +25,25 @@ interface PendingPhoto {
 interface ItemPhotosProps {
   itemId: number;
   onMainPhotoChange?: (url: string | null) => void;
+  onClose?: () => void;
 }
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_BYTES = 10 * 1024 * 1024;
 
 const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
-  function ItemPhotos({ itemId, onMainPhotoChange }, ref) {
-    const [photos,         setPhotos]         = useState<InventoryItemPhoto[]>([]);
-    const [pending,        setPending]        = useState<PendingPhoto[]>([]);
-    const [loading,        setLoading]        = useState(true);
-    const [uploading,      setUploading]      = useState(false);
-    const [error,          setError]          = useState<string | null>(null);
-    const [uploadExpanded, setUploadExpanded] = useState(false);
+  function ItemPhotos({ itemId, onMainPhotoChange, onClose }, ref) {
+    const [photos,    setPhotos]    = useState<InventoryItemPhoto[]>([]);
+    const [pending,   setPending]   = useState<PendingPhoto[]>([]);
+    const [loading,   setLoading]   = useState(true);
+    const [uploading, setUploading] = useState(false);
+    const [error,     setError]     = useState<string | null>(null);
 
-    const fileInputRef        = useRef<HTMLInputElement>(null);
+    const fileInputRef         = useRef<HTMLInputElement>(null);
     const onMainPhotoChangeRef = useRef(onMainPhotoChange);
     useEffect(() => { onMainPhotoChangeRef.current = onMainPhotoChange; }, [onMainPhotoChange]);
 
-    // ── Imperative handle exposed to InventoryForm ─────────────────────────────
+    // ── Imperative handle ──────────────────────────────────────────────────────
 
     useImperativeHandle(
       ref,
@@ -66,7 +66,6 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
             URL.revokeObjectURL(p.previewUrl);
           }
 
-          // Promote first uploaded photo to main if none exists yet
           const hasExistingMain = photos.some((p) => p.is_main);
           if (!hasExistingMain && uploaded.length > 0) {
             await setMainPhoto(itemId, uploaded[0].id);
@@ -74,7 +73,6 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
           }
 
           setPending([]);
-          setUploadExpanded(false); // collapse after successful upload
           setPhotos((prev) => {
             const next = [...prev, ...uploaded];
             const main = next.find((p) => p.is_main) ?? next[0] ?? null;
@@ -108,7 +106,6 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
 
     useEffect(() => { loadPhotos(); }, [itemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Revoke blob URLs on unmount
     useEffect(() => {
       return () => { pending.forEach((p) => URL.revokeObjectURL(p.previewUrl)); };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -195,10 +192,10 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
             )}
           </div>
 
-          {uploadExpanded ? (
+          {onClose && (
             <button
               type="button"
-              onClick={() => { setUploadExpanded(false); setError(null); }}
+              onClick={onClose}
               disabled={uploading}
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
             >
@@ -206,18 +203,6 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
               Close
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setUploadExpanded(true)}
-              disabled={uploading}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-              Add image
             </button>
           )}
         </div>
@@ -229,7 +214,7 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
           </div>
         )}
 
-        {/* ── Compact thumbnail grid — always visible when photos exist ─── */}
+        {/* ── Compact thumbnail grid ─────────────────────────────────────── */}
         {hasThumbnails && (
           <div className="mt-4 grid grid-cols-4 gap-1.5 sm:grid-cols-5">
 
@@ -249,7 +234,6 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
                   sizes="(max-width: 640px) 25vw, 20vw"
                   unoptimized
                 />
-                {/* Delete */}
                 <button
                   type="button"
                   onClick={() => handleDelete(photo)}
@@ -260,7 +244,6 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
                     <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                   </svg>
                 </button>
-                {/* Main / Set main */}
                 {photo.is_main ? (
                   <span className="absolute bottom-0.5 left-0.5 rounded-full bg-slate-950/60 px-1.5 py-px text-[10px] font-medium leading-tight text-white backdrop-blur-sm">
                     Main
@@ -277,7 +260,6 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
               </div>
             ))}
 
-            {/* Pending (not yet uploaded) thumbnails */}
             {pending.map((p) => (
               <div
                 key={p.tempId}
@@ -311,7 +293,7 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
           </div>
         )}
 
-        {/* ── Pending notice — visible below grid even when upload is closed ─ */}
+        {/* ── Pending notice ──────────────────────────────────────────────── */}
         {pending.length > 0 && (
           <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
             {pending.length} photo{pending.length !== 1 ? 's' : ''} queued — will upload when you click{' '}
@@ -319,41 +301,34 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
           </p>
         )}
 
-        {/* ── Empty state — only when nothing saved/pending and area is closed ─ */}
-        {!loading && photos.length === 0 && pending.length === 0 && !uploadExpanded && (
-          <p className="mt-3 text-sm text-slate-400 dark:text-slate-500">No photos yet.</p>
-        )}
-
-        {/* ── Upload zone — only when expanded ──────────────────────────── */}
-        {uploadExpanded && (
-          <div className="mt-4">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-7 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed dark:border-slate-600 dark:hover:border-slate-400 dark:hover:bg-slate-700/30"
-            >
-              {uploading ? (
-                <>
-                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600 dark:border-slate-700 dark:border-t-slate-300" />
-                  <span className="text-sm text-slate-500 dark:text-slate-400">Uploading…</span>
-                </>
-              ) : (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300 dark:text-slate-600">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-                  </svg>
-                  <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
-                    Click to select a photo
-                  </span>
-                  <span className="text-xs text-slate-400 dark:text-slate-500">
-                    JPEG, PNG, WebP · up to 10 MB
-                  </span>
-                </>
-              )}
-            </button>
-          </div>
-        )}
+        {/* ── Upload zone ─────────────────────────────────────────────────── */}
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-7 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed dark:border-slate-600 dark:hover:border-slate-400 dark:hover:bg-slate-700/30"
+          >
+            {uploading ? (
+              <>
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600 dark:border-slate-700 dark:border-t-slate-300" />
+                <span className="text-sm text-slate-500 dark:text-slate-400">Uploading…</span>
+              </>
+            ) : (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300 dark:text-slate-600">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                  Click to select a photo
+                </span>
+                <span className="text-xs text-slate-400 dark:text-slate-500">
+                  JPEG, PNG, WebP · up to 10 MB
+                </span>
+              </>
+            )}
+          </button>
+        </div>
 
         <input
           ref={fileInputRef}

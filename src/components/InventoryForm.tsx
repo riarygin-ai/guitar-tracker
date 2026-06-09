@@ -119,6 +119,7 @@ export default function InventoryForm({
   const [creatingBrand, setCreatingBrand] = useState(false);
   const [existingItem, setExistingItem] = useState<InventoryItem | null>(null);
   const [mainPhotoUrl, setMainPhotoUrl] = useState<string | null>(null);
+  const [showPhotos,   setShowPhotos]   = useState(false);
 
   // Metrics state (edit mode only)
   const [valueIn, setValueIn] = useState<number | null>(null);
@@ -333,6 +334,7 @@ export default function InventoryForm({
         setError(`Item saved but photo upload failed: ${photoError}`);
         return;
       }
+      setShowPhotos(false);
     }
 
     // Standalone form: navigate back to the list with filters intact
@@ -589,21 +591,36 @@ export default function InventoryForm({
   );
 
   const formActionButtons = (
-    <div className="mt-6 hidden lg:flex lg:items-center lg:justify-end lg:gap-3">
-      <button
-        type="button"
-        onClick={() => { if (onClose) { onClose(); return; } router.push(backHref ?? '/inventory'); }}
-        className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-6 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
-      >
-        Cancel
-      </button>
-      <button
-        type="submit"
-        disabled={disabled}
-        className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-6 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
-      >
-        {saveLabel}
-      </button>
+    <div className="mt-6 hidden lg:flex lg:items-center lg:gap-3">
+      {/* Add image — only in edit mode */}
+      {existingItem && (
+        <button
+          type="button"
+          onClick={() => setShowPhotos(true)}
+          className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          Add image
+        </button>
+      )}
+      <div className="ml-auto flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => { if (onClose) { onClose(); return; } router.push(backHref ?? '/inventory'); }}
+          className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-6 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={disabled}
+          className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-6 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
+        >
+          {saveLabel}
+        </button>
+      </div>
     </div>
   );
 
@@ -770,7 +787,14 @@ export default function InventoryForm({
                 </div>
               </form>
 
-              <ItemPhotos ref={photosRef} itemId={Number(itemId)} onMainPhotoChange={setMainPhotoUrl} />
+              {showPhotos && (
+                <ItemPhotos
+                  ref={photosRef}
+                  itemId={Number(itemId)}
+                  onMainPhotoChange={setMainPhotoUrl}
+                  onClose={() => setShowPhotos(false)}
+                />
+              )}
 
               {existingItem && (
                 <AiAssistantCard
@@ -811,6 +835,19 @@ export default function InventoryForm({
               >
                 Cancel
               </button>
+              {/* Add image — edit mode only */}
+              {existingItem && (
+                <button
+                  type="button"
+                  onClick={() => setShowPhotos(true)}
+                  aria-label="Add image"
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                </button>
+              )}
               <button
                 type="submit"
                 onClick={() => document.querySelector('form')?.requestSubmit()}
