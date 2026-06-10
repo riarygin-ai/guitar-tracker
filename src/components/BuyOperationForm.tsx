@@ -218,23 +218,11 @@ export default function BuyOperationForm() {
             {items.map((li) => (
               <div
                 key={li.item.id}
-                className="relative rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700/50"
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700"
               >
-                {/* X remove button — top-right */}
-                <button
-                  type="button"
-                  onClick={() => handleRemoveItem(li.item.id)}
-                  aria-label="Remove item"
-                  className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-600 dark:hover:text-slate-200"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
-                </button>
-
-                {/* Item photo + info row */}
-                <div className="flex items-start gap-3 pr-8">
-                  <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                <div className="flex gap-4">
+                  {/* Photo */}
+                  <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
                     {photoByItemId[li.item.id] ? (
                       <Image
                         src={photoByItemId[li.item.id]}
@@ -242,7 +230,7 @@ export default function BuyOperationForm() {
                         fill
                         className="object-cover"
                         unoptimized
-                        sizes="56px"
+                        sizes="64px"
                       />
                     ) : (
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-6 w-6 text-slate-300 dark:text-slate-500">
@@ -250,49 +238,59 @@ export default function BuyOperationForm() {
                       </svg>
                     )}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold leading-snug text-slate-900 dark:text-white">
-                      {formatItemLabel(li.item)}
-                    </p>
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {li.item.condition && (
-                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-600 dark:text-slate-300">
-                          {li.item.condition}
-                        </span>
-                      )}
-                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-600 dark:text-slate-300">
-                        {li.item.item_type}
-                      </span>
-                    </div>
-                    {li.item.estimated_sold_value != null && (
-                      <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                        Est. sold:{' '}
-                        <span className="font-medium text-slate-700 dark:text-slate-200">
-                          ${li.item.estimated_sold_value.toFixed(0)}
-                        </span>
-                      </p>
-                    )}
-                  </div>
-                </div>
 
-                {/* Purchase cost input */}
-                <div className="mt-3 flex items-center gap-3">
-                  <span className="shrink-0 text-xs font-medium text-slate-500 dark:text-slate-400">
-                    Purchase cost
-                  </span>
-                  <div className="relative">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">
-                      $
-                    </span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={li.cost > 0 ? li.cost : ''}
-                      onChange={(e) => handleCostChange(li.item.id, e.target.value)}
-                      placeholder="0.00"
-                      className="w-36 rounded-xl border border-slate-200 bg-white py-2 pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
-                    />
+                  {/* Info + cost + remove — stacks on mobile, row on sm+ */}
+                  <div className="min-w-0 flex-1 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    {/* Item info */}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                        {formatItemLabel(li.item)}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {li.item.condition && (
+                          <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
+                            {li.item.condition}
+                          </span>
+                        )}
+                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
+                          {li.item.item_type}
+                        </span>
+                      </div>
+                      {li.item.estimated_sold_value != null && (
+                        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                          Est. sold:{' '}
+                          <span className="font-medium text-slate-700 dark:text-slate-200">
+                            ${li.item.estimated_sold_value.toFixed(0)}
+                          </span>
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Purchase cost + remove button */}
+                    <div className="flex w-full gap-2 sm:w-48">
+                      <div className="flex-1">
+                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                          Purchase cost
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={li.cost > 0 ? li.cost : ''}
+                          onChange={(e) => handleCostChange(li.item.id, e.target.value)}
+                          placeholder="0.00"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveItem(li.item.id)}
+                        aria-label="Remove item"
+                        className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-rose-50 hover:text-rose-600 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-rose-900/20 dark:hover:text-rose-400"
+                      >
+                        ×
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

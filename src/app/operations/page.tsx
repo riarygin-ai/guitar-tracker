@@ -456,11 +456,18 @@ export default function OperationsPage() {
                   </svg>
                 );
 
+                const cardClass =
+                  deal.deal_type === 'purchase'
+                    ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800/60 dark:bg-blue-900/10'
+                    : deal.deal_type === 'sale'
+                    ? 'border-green-200 bg-green-50/50 dark:border-green-800/60 dark:bg-green-900/10'
+                    : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800';
+
                 return (
                   <Link
                     key={deal.id}
                     href={`/operations/${deal.id}`}
-                    className="block rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
+                    className={`block rounded-2xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${cardClass}`}
                   >
                     <div className="flex items-start gap-3">
 
