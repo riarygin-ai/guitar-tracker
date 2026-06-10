@@ -7,7 +7,7 @@ import QuickAddButton from '@/components/QuickAddButton'
 import ThemeToggle from '@/components/ThemeToggle'
 
 export const metadata = {
-  title: 'guitar_tracker',
+  title: 'Guitar Tracker',
   description: 'A guitar inventory tracking app built with Next.js, Supabase, and Tailwind CSS',
 };
 
