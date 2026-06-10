@@ -300,20 +300,29 @@ export default function TradeOperationForm() {
             <div className="grid gap-6">
                 {/* What I give */}
                 <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">What I give</h3>
-                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                        Search existing inventory items going out.
-                    </p>
+                    <div className="mb-4 flex items-center justify-between gap-2">
+                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">What I give</h3>
+                        {!showOutgoingForm && (
+                            <button
+                                type="button"
+                                onClick={() => setShowOutgoingForm(true)}
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
+                                <span className="hidden sm:inline">Add item</span>
+                            </button>
+                        )}
+                    </div>
 
-                    <div className="mt-5 space-y-4">
-                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Search inventory</label>
-
+                    <div className="mt-4 space-y-4">
                         <div className="relative">
                             <input
                                 type="text"
                                 value={searchQuery}
                                 onChange={(event) => handleSearchChange(event.target.value)}
-                                placeholder="Search by brand, model, year, or color..."
+                                placeholder="Search inventory..."
                                 className={`w-full rounded-2xl border border-slate-200 bg-white pl-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600 ${searchQuery || searching ? 'pr-9' : 'pr-4'}`}
                             />
                             {searching ? (
@@ -471,7 +480,7 @@ export default function TradeOperationForm() {
                             </div>
                         )}
 
-                        {showOutgoingForm ? (
+                        {showOutgoingForm && (
                             <>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
                                     <InventoryForm
@@ -488,14 +497,6 @@ export default function TradeOperationForm() {
                                     Cancel
                                 </button>
                             </>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={() => setShowOutgoingForm(true)}
-                                className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
-                            >
-                                Add item
-                            </button>
                         )}
 
                         <div className="space-y-2">
@@ -515,22 +516,29 @@ export default function TradeOperationForm() {
 
                 {/* What I receive */}
                 <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">What I receive</h3>
-                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                        Search existing received items or create new ones.
-                    </p>
+                    <div className="mb-4 flex items-center justify-between gap-2">
+                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">What I receive</h3>
+                        {!showIncomingForm && (
+                            <button
+                                type="button"
+                                onClick={() => setShowIncomingForm(true)}
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
+                                <span className="hidden sm:inline">Add item</span>
+                            </button>
+                        )}
+                    </div>
 
-                    <div className="mt-5 space-y-4">
-                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                            Search existing received item
-                        </label>
-
+                    <div className="mt-4 space-y-4">
                         <div className="relative">
                             <input
                                 type="text"
                                 value={incomingSearchQuery}
                                 onChange={(event) => handleIncomingSearchChange(event.target.value)}
-                                placeholder="Search existing item..."
+                                placeholder="Search items..."
                                 className={`w-full rounded-2xl border border-slate-200 bg-white pl-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600 ${incomingSearchQuery || incomingSearching ? 'pr-9' : 'pr-4'}`}
                             />
                             {incomingSearching ? (
@@ -609,7 +617,7 @@ export default function TradeOperationForm() {
                             </div>
                         )}
 
-                        {showIncomingForm ? (
+                        {showIncomingForm && (
                             <>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
                                     <InventoryForm
@@ -627,14 +635,6 @@ export default function TradeOperationForm() {
                                     Cancel
                                 </button>
                             </>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={() => setShowIncomingForm(true)}
-                                className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
-                            >
-                                Add item
-                            </button>
                         )}
 
                         {incomingItems.length > 0 && (

@@ -183,9 +183,20 @@ export default function SellOperationForm() {
     <div className="space-y-6">
       {/* Item Section */}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <div className="mb-4">
+        <div className="mb-4 flex items-center justify-between gap-2">
           <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Item</h3>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Search for an existing item or create a new one for this sale.</p>
+          {!selectedItem && !showItemForm && (
+            <button
+              type="button"
+              onClick={() => setShowItemForm(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              <span className="hidden sm:inline">Add item</span>
+            </button>
+          )}
         </div>
 
         {selectedItem ? (
@@ -274,17 +285,15 @@ export default function SellOperationForm() {
           /* ── Search + Add New ── */
           <div className="space-y-4">
             {/* Search input */}
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Search existing items</label>
-              <div className="relative">
-                <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  placeholder="Search by brand, model, year, or color..."
+            <div className="relative">
+              <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="Search inventory..."
                   className={`w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600 ${searchQuery || searching ? 'pr-9' : 'pr-4'}`}
                 />
                 {searching ? (
@@ -303,7 +312,6 @@ export default function SellOperationForm() {
                     </svg>
                   </button>
                 ) : null}
-              </div>
             </div>
 
             {/* Search results */}
@@ -348,20 +356,6 @@ export default function SellOperationForm() {
               </div>
             )}
 
-            {/* Divider + Add New Item */}
-            <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-600" />
-              <span className="text-xs text-slate-400 dark:text-slate-500">or</span>
-              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-600" />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowItemForm(true)}
-              className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
-            >
-              Add new item
-            </button>
           </div>
         )}
       </div>
