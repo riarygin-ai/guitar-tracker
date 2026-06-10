@@ -1,17 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!--
-    Active favicon. To switch, replace path contents with one of:
-      icon-options/rg.svg        (superstrat double-cutaway)
-      icon-options/explorer.svg  (Explorer angular wings)
-      icon-options/monogram.svg  (GT lettermark)
-  -->
-  <!-- Explorer style: neck top, angular wings, body bottom -->
-  <path fill="#14b8a6" d="
-    M14 0 L18 0
-    L19 11
-    L28 9 L31 14 L21 16
-    L22 31 L10 31
-    L11 16 L1 14 L4 9
-    L13 11 Z
-  "/>
+  <rect width="32" height="32" rx="5" fill="#0f172a"/>
+  <text
+    x="16" y="23"
+    text-anchor="middle"
+    font-family="ui-sans-serif, system-ui, -apple-system, 'Helvetica Neue', sans-serif"
+    font-size="17"
+    font-weight="800"
+    fill="#14b8a6"
+  >GT</text>
 </svg>
