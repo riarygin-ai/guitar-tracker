@@ -409,6 +409,11 @@ export async function getInventoryExpensesForDeal(dealId: number) {
   return supabase.from('inventory_expenses').select('*').eq('deal_id', dealId);
 }
 
+export async function getInventoryExpensesByItemIds(itemIds: number[]) {
+  if (itemIds.length === 0) return { data: [] as InventoryExpense[], error: null };
+  return supabase.from('inventory_expenses').select('*').in('item_id', itemIds);
+}
+
 export async function updateDeal(id: number, updates: Partial<Deal>) {
   const { id: _ignoredId, created_at: _ignoredCreated, ...payload } = updates as any;
   return supabase

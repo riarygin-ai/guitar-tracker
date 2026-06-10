@@ -23,6 +23,7 @@ import {
   createItemWithHistoricalImport,
   getBrands,
   getHistoricalImportByItemId,
+  getInventoryExpensesByItemIds,
   getInventoryItemById,
   getInventoryItemWithValueById,
   getItemSubtypes,
@@ -150,6 +151,7 @@ export default function InventoryForm({
   // Metrics state (edit mode only)
   const [valueIn, setValueIn] = useState<number | null>(null);
   const [valueOut, setValueOut] = useState<number | null>(null);
+  const [totalItemExpenses, setTotalItemExpenses] = useState(0);
 
   // Historical import state
   const [historicalImport,    setHistoricalImport]    = useState(false);
@@ -207,12 +209,13 @@ export default function InventoryForm({
 
     async function loadItem() {
       setLoading(true);
-      const [itemResult, withValueResult, dealItemsResult, photosResult, histImportResult] = await Promise.all([
+      const [itemResult, withValueResult, dealItemsResult, photosResult, histImportResult, expensesResult] = await Promise.all([
         getInventoryItemById(Number(itemId)),
         getInventoryItemWithValueById(Number(itemId)),
         getDealItemsByItemId(Number(itemId)),
         getMainPhotosForItems([Number(itemId)]),
         getHistoricalImportByItemId(Number(itemId)),
+        getInventoryExpensesByItemIds([Number(itemId)]),
       ]);
       setLoading(false);
 
@@ -268,6 +271,12 @@ export default function InventoryForm({
       // Historical import (read-only display in edit mode)
       if (!histImportResult.error && histImportResult.data) {
         setExistingHistImport(histImportResult.data);
+      }
+
+      // Total item-level expenses (reduces cost basis / profit)
+      if (!expensesResult.error && expensesResult.data) {
+        const total = expensesResult.data.reduce((sum: number, exp: any) => sum + (exp.amount ?? 0), 0);
+        setTotalItemExpenses(total);
       }
     }
 
@@ -467,14 +476,16 @@ export default function InventoryForm({
   const disabled = loading || saving;
   const brandCreateDisabled = !brandInput.trim() || !!existingBrand || disabled || creatingBrand;
 
-  // Metrics
+  // Metrics — expenses reduce the effective cost basis and therefore profit/ROI
   const parsedEstimated = estimatedSoldValue ? Number(estimatedSoldValue) : null;
-  const potentialReward = parsedEstimated != null && valueIn != null ? parsedEstimated - valueIn : null;
-  const potentialRoi = potentialReward != null && valueIn != null && valueIn > 0
-    ? (potentialReward / valueIn) * 100 : null;
-  const realizedGain = valueOut != null && valueIn != null ? valueOut - valueIn : null;
-  const realizedRoi = realizedGain != null && valueIn != null && valueIn > 0
-    ? (realizedGain / valueIn) * 100 : null;
+  const potentialReward = parsedEstimated != null && valueIn != null
+    ? parsedEstimated - valueIn - totalItemExpenses : null;
+  const potentialRoi = potentialReward != null && valueIn != null && (valueIn + totalItemExpenses) > 0
+    ? (potentialReward / (valueIn + totalItemExpenses)) * 100 : null;
+  const realizedGain = valueOut != null && valueIn != null
+    ? valueOut - valueIn - totalItemExpenses : null;
+  const realizedRoi = realizedGain != null && valueIn != null && (valueIn + totalItemExpenses) > 0
+    ? (realizedGain / (valueIn + totalItemExpenses)) * 100 : null;
   const isOwned = existingItem?.status === 'owned' || existingItem?.status === 'listed';
   const isSoldOrTraded = existingItem?.status === 'sold' || existingItem?.status === 'traded';
   const showMetrics = !!itemId && !!existingItem && !hideSidebar;

@@ -11,6 +11,7 @@ import {
   getDealItemsForDeal,
   getCashFlowsForDeal,
   getInventoryExpensesForDeal,
+  getInventoryExpensesByItemIds,
   updateDeal,
   updateCashFlow,
   updateInventoryExpense,
@@ -32,6 +33,7 @@ export default function OperationDetailPage() {
   const [cashFlows, setCashFlows] = useState<CashFlow[]>([]);
   const [expenses, setExpenses] = useState<InventoryExpense[]>([]);
   const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
+  const [itemExpensesByItemId, setItemExpensesByItemId] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -71,10 +73,32 @@ export default function OperationDetailPage() {
     setCashFlows(cashFlowsResult.data || []);
     setExpenses(expensesResult.data || []);
 
-    // Load photos non-blocking
-    const allItemIds = (dealItemsResult.data || []).map((di: DealItem) => di.item_id);
-    if (allItemIds.length > 0) {
-      getDisplayPhotosForItems(allItemIds).then(setPhotoByItemId);
+    // Load photos for deal items + expense-linked items (non-blocking)
+    const dealItemIds = (dealItemsResult.data || []).map((di: DealItem) => di.item_id);
+    const expenseItemIds = (expensesResult.data || [])
+      .filter((exp: any) => exp.item_id != null)
+      .map((exp: any) => exp.item_id as number);
+    const allPhotoItemIds = Array.from(new Set([...dealItemIds, ...expenseItemIds]));
+    if (allPhotoItemIds.length > 0) {
+      getDisplayPhotosForItems(allPhotoItemIds).then(setPhotoByItemId);
+    }
+
+    // Load all expenses for outgoing items across all deals (non-blocking) — used for realized gain
+    const outgoingItemIds = (dealItemsResult.data || [])
+      .filter((di: any) => di.direction === 'out')
+      .map((di: any) => di.item_id as number);
+    if (outgoingItemIds.length > 0) {
+      getInventoryExpensesByItemIds(outgoingItemIds).then((result) => {
+        if (!result.error && result.data) {
+          const map: Record<number, number> = {};
+          for (const exp of result.data) {
+            if (exp.item_id != null) {
+              map[exp.item_id] = (map[exp.item_id] ?? 0) + exp.amount;
+            }
+          }
+          setItemExpensesByItemId(map);
+        }
+      });
     }
   }, [dealId]);
 
@@ -494,7 +518,8 @@ export default function OperationDetailPage() {
                   const valueOut = editMode && deal.deal_type === 'trade'
                     ? (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0))
                     : Number(di.total_value ?? 0);
-                  const realizedGain = valueOut - valueIn;
+                  const itemExpenses = itemExpensesByItemId[item.id] ?? 0;
+                  const realizedGain = valueOut - valueIn - itemExpenses;
                   return (
                     <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
                       <div className="flex gap-4">
@@ -539,6 +564,12 @@ export default function OperationDetailPage() {
                                 <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueOut)}</p>
                               )}
                             </div>
+                            {itemExpenses > 0 && (
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Expenses</p>
+                                <p className="mt-1 text-sm font-semibold text-rose-600">−{formatCurrency(itemExpenses)}</p>
+                              </div>
+                            )}
                             <div>
                               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Realized Gain</p>
                               <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
@@ -702,54 +733,98 @@ export default function OperationDetailPage() {
               <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
                 <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Expenses</h2>
                 <div className="mt-4 space-y-4">
-                  {expenses.map((exp) => (
-                    <div key={exp.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div>
-                          <label className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Expense date</label>
-                          {editMode ? (
-                            <input
-                              type="date"
-                              value={editedExpenses[exp.id]?.expense_date ?? exp.expense_date}
-                              onChange={(e) =>
-                                setEditedExpenses({
-                                  ...editedExpenses,
-                                  [exp.id]: { ...editedExpenses[exp.id], expense_date: e.target.value },
-                                })
-                              }
-                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
-                            />
-                          ) : (
-                            <p className="mt-2 text-sm text-slate-900 dark:text-white">{new Date(exp.expense_date).toLocaleDateString()}</p>
-                          )}
-                        </div>
+                  {expenses.map((exp) => {
+                    const linkedItem = exp.item_id != null ? itemMap[exp.item_id] : null;
+                    const linkedBrand = linkedItem ? (brandMap[linkedItem.brand_id] || 'Unknown') : null;
+                    return (
+                      <div key={exp.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
 
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Amount</p>
-                          <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(exp.amount)}</p>
-                        </div>
+                        {/* Linked item card — shown when expense is tied to an inventory item */}
+                        {linkedItem && (
+                          <Link
+                            href={`/inventory/${linkedItem.id}`}
+                            className="mb-4 flex gap-3 rounded-xl border border-slate-200 bg-white p-3 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700"
+                          >
+                            {photoByItemId[linkedItem.id] && (
+                              <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-700">
+                                <Image
+                                  src={photoByItemId[linkedItem.id]}
+                                  alt={`${linkedBrand} ${linkedItem.model}`}
+                                  fill
+                                  className="object-cover"
+                                  unoptimized
+                                  sizes="56px"
+                                />
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                                {linkedItem.item_type}
+                              </p>
+                              <p className="mt-0.5 truncate text-sm font-semibold text-slate-900 dark:text-white">
+                                {[linkedItem.year, linkedBrand, linkedItem.model].filter(Boolean).join(' ')}
+                              </p>
+                              {(linkedItem.color || linkedItem.condition) && (
+                                <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
+                                  {[linkedItem.color, linkedItem.condition].filter(Boolean).join(' · ')}
+                                </p>
+                              )}
+                              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-600 dark:text-slate-300">
+                                {linkedItem.value_in != null && (
+                                  <span><span className="text-slate-400 dark:text-slate-500">Value In </span>${Number(linkedItem.value_in).toFixed(0)}</span>
+                                )}
+                              </div>
+                            </div>
+                          </Link>
+                        )}
 
-                        <div className="sm:col-span-2">
-                          <label className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Notes</label>
-                          {editMode ? (
-                            <textarea
-                              value={editedExpenses[exp.id]?.notes ?? exp.notes ?? ''}
-                              onChange={(e) =>
-                                setEditedExpenses({
-                                  ...editedExpenses,
-                                  [exp.id]: { ...editedExpenses[exp.id], notes: e.target.value },
-                                })
-                              }
-                              rows={2}
-                              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
-                            />
-                          ) : (
-                            <p className="mt-2 text-sm text-slate-900 dark:text-white">{exp.notes || '—'}</p>
-                          )}
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <label className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Expense date</label>
+                            {editMode ? (
+                              <input
+                                type="date"
+                                value={editedExpenses[exp.id]?.expense_date ?? exp.expense_date}
+                                onChange={(e) =>
+                                  setEditedExpenses({
+                                    ...editedExpenses,
+                                    [exp.id]: { ...editedExpenses[exp.id], expense_date: e.target.value },
+                                  })
+                                }
+                                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                              />
+                            ) : (
+                              <p className="mt-2 text-sm text-slate-900 dark:text-white">{new Date(exp.expense_date).toLocaleDateString()}</p>
+                            )}
+                          </div>
+
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Amount</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(exp.amount)}</p>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Notes</label>
+                            {editMode ? (
+                              <textarea
+                                value={editedExpenses[exp.id]?.notes ?? exp.notes ?? ''}
+                                onChange={(e) =>
+                                  setEditedExpenses({
+                                    ...editedExpenses,
+                                    [exp.id]: { ...editedExpenses[exp.id], notes: e.target.value },
+                                  })
+                                }
+                                rows={2}
+                                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                              />
+                            ) : (
+                              <p className="mt-2 text-sm text-slate-900 dark:text-white">{exp.notes || '—'}</p>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

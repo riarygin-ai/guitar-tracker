@@ -3,9 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getBrands, getDealItems, getInventoryItems, getItemAcquisitionDates, getItemCategories, getItemSubtypes, getMainPhotosForItems, getPhotoUrl } from '@/lib/supabase';
+import { getBrands, getDealItems, getInventoryItems, getInventoryExpenses, getItemAcquisitionDates, getItemCategories, getItemSubtypes, getMainPhotosForItems, getPhotoUrl } from '@/lib/supabase';
 import { splitSearchTerms } from '@/lib/search';
-import type { Brand, DealItem, InventoryItemWithValue, ItemCategory, ItemSubtype, Status } from '@/types';
+import type { Brand, DealItem, InventoryExpense, InventoryItemWithValue, ItemCategory, ItemSubtype, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
 
 const DISPLAY_LIMIT = 100;
@@ -43,6 +43,7 @@ export default function InventoryPage() {
   const [categories, setCategories] = useState<ItemCategory[]>([]);
   const [allSubtypes, setAllSubtypes] = useState<ItemSubtype[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
+  const [expenses, setExpenses] = useState<InventoryExpense[]>([]);
   const [acquiredDateByItemId, setAcquiredDateByItemId] = useState<Record<number, string>>({});
   const [mainPhotoByItemId, setMainPhotoByItemId] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
@@ -90,13 +91,14 @@ export default function InventoryPage() {
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [brandResult, itemResult, dealItemsResult, acquisitionDatesResult, catsResult, subsResult] = await Promise.all([
+      const [brandResult, itemResult, dealItemsResult, acquisitionDatesResult, catsResult, subsResult, expensesResult] = await Promise.all([
         getBrands(),
         getInventoryItems(),
         getDealItems(),
         getItemAcquisitionDates(),
         getItemCategories(),
         getItemSubtypes(),
+        getInventoryExpenses(),
       ]);
 
       if (brandResult.error || itemResult.error || dealItemsResult.error) {
@@ -111,6 +113,7 @@ export default function InventoryPage() {
       setDealItems((dealItemsResult.data as DealItem[]) || []);
       setCategories((catsResult.data as ItemCategory[]) || []);
       setAllSubtypes((subsResult.data as ItemSubtype[]) || []);
+      setExpenses((expensesResult.data as InventoryExpense[]) || []);
 
       if (!acquisitionDatesResult.error && acquisitionDatesResult.data) {
         const map: Record<number, string> = {};
@@ -163,6 +166,17 @@ export default function InventoryPage() {
         return acc;
       }, {}),
     [dealItems]
+  );
+
+  const expensesByItemId = useMemo(
+    () =>
+      expenses.reduce<Record<number, number>>((acc, exp) => {
+        if (exp.item_id != null) {
+          acc[exp.item_id] = (acc[exp.item_id] ?? 0) + exp.amount;
+        }
+        return acc;
+      }, {}),
+    [expenses]
   );
 
   const itemsWithComputedValues = useMemo(
@@ -394,6 +408,7 @@ export default function InventoryPage() {
                   backQuery={backQuery}
                   mainPhotoUrl={mainPhotoByItemId[item.id] ?? null}
                   subtypeName={subtypeName}
+                  totalExpenses={expensesByItemId[item.id] ?? 0}
                 />
               );
             })}

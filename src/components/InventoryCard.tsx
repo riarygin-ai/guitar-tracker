@@ -16,9 +16,10 @@ interface InventoryCardProps {
   backQuery?: string;
   mainPhotoUrl?: string | null;
   subtypeName?: string;
+  totalExpenses?: number;
 }
 
-export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl, subtypeName }: InventoryCardProps) {
+export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl, subtypeName, totalExpenses = 0 }: InventoryCardProps) {
   const title = [item.year, brandName, item.model].filter(Boolean).join(' ');
   const subtitle = item.color ? `${title} — ${item.color}` : title;
 
@@ -27,22 +28,22 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
 
   const potentialReward =
     isOwned && item.estimated_sold_value != null && item.value_in != null
-      ? item.estimated_sold_value - item.value_in
+      ? item.estimated_sold_value - item.value_in - totalExpenses
       : null;
 
   const potentialRoi =
-    potentialReward != null && item.value_in != null && item.value_in > 0
-      ? (potentialReward / item.value_in) * 100
+    potentialReward != null && item.value_in != null && (item.value_in + totalExpenses) > 0
+      ? (potentialReward / (item.value_in + totalExpenses)) * 100
       : null;
 
   const realizedGain =
     isSoldOrTraded && item.value_out != null && item.value_in != null
-      ? item.value_out - item.value_in
+      ? item.value_out - item.value_in - totalExpenses
       : null;
 
   const realizedRoi =
-    realizedGain != null && item.value_in != null && item.value_in > 0
-      ? (realizedGain / item.value_in) * 100
+    realizedGain != null && item.value_in != null && (item.value_in + totalExpenses) > 0
+      ? (realizedGain / (item.value_in + totalExpenses)) * 100
       : null;
 
   const roiColor = (roi: number | null) =>
