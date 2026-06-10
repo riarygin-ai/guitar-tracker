@@ -157,7 +157,10 @@ export default function BuyOperationForm() {
   const buyValueIn = Number(cashPaid) || 0;
   const estimatedSold = selectedItem?.estimated_sold_value ?? null;
   const potentialReward = estimatedSold != null ? estimatedSold - buyValueIn : null;
-  const potentialRoi = potentialReward != null && buyValueIn > 0 ? (potentialReward / buyValueIn) * 100 : null;
+  const potentialRoi =
+    potentialReward != null && buyValueIn === 0 ? (potentialReward > 0 ? 100 : null) :
+    potentialReward != null && buyValueIn > 0 ? (potentialReward / buyValueIn) * 100 :
+    null;
   const fmt = (v: number | null) => v != null ? `$${v.toFixed(2)}` : '—';
   const fmtPct = (v: number | null) => v != null ? `${v.toFixed(2)}%` : '—';
   const metricColor = (v: number | null) =>

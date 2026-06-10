@@ -261,7 +261,6 @@ export default function HomePage() {
       if (item.status !== 'sold' && item.status !== 'traded') return
 
       const valueIn = Number(item.value_in ?? 0)
-      if (valueIn <= 0) return
 
       const outDi = outDealItemByItemId[item.id]
       if (!outDi) return
@@ -280,8 +279,9 @@ export default function HomePage() {
       )
       if (daysHeld < 0) return
 
-      const roi = ((valueOut - valueIn) / valueIn) * 100
-      const profit = valueOut - valueIn
+      const itemExpenses = expensesByItemId[item.id] ?? 0
+      const profit = valueOut - valueIn - itemExpenses
+      const roi = valueIn === 0 ? (profit > 0 ? 100 : 0) : (profit / valueIn) * 100
       const brandId = item.brand_id
 
       if (!brandData[brandId]) {
@@ -301,7 +301,7 @@ export default function HomePage() {
       })
       .sort((a, b) => b.avgRoi - a.avgRoi)
       .slice(0, 15)
-  }, [inventoryItems, dealItems, deals, brands])
+  }, [inventoryItems, dealItems, deals, brands, inventoryExpenses])
 
   return (
     <div className="space-y-6">

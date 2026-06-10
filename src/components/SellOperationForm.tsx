@@ -171,9 +171,11 @@ export default function SellOperationForm() {
   };
 
   const valueOutNum = Number(cashReceived) || 0;
-  const costBasis = (valueIn ?? 0) + totalExpenses;
   const realizedGain = valueIn != null ? valueOutNum - valueIn - totalExpenses : null;
-  const realizedRoi = realizedGain != null && costBasis > 0 ? (realizedGain / costBasis) * 100 : null;
+  const realizedRoi =
+    realizedGain != null && valueIn === 0 ? (realizedGain > 0 ? 100 : null) :
+    realizedGain != null && valueIn != null && valueIn > 0 ? (realizedGain / valueIn) * 100 :
+    null;
   const fmt = (v: number | null) => v != null ? `$${v.toFixed(2)}` : '—';
   const fmtPct = (v: number | null) => v != null ? `${v.toFixed(2)}%` : '—';
   const metricColor = (v: number | null) =>

@@ -33,6 +33,7 @@ import {
   updateInventoryItem,
   type HistoricalImportInfo,
 } from '@/lib/supabase';
+import { calculateItemProfitMetrics } from '@/lib/profit';
 
 const SUBTYPE_TO_LEGACY_TYPE: Record<string, ItemType> = {
   'Electric Guitar': 'guitar',
@@ -476,16 +477,18 @@ export default function InventoryForm({
   const disabled = loading || saving;
   const brandCreateDisabled = !brandInput.trim() || !!existingBrand || disabled || creatingBrand;
 
-  // Metrics — expenses reduce the effective cost basis and therefore profit/ROI
   const parsedEstimated = estimatedSoldValue ? Number(estimatedSoldValue) : null;
-  const potentialReward = parsedEstimated != null && valueIn != null
-    ? parsedEstimated - valueIn - totalItemExpenses : null;
-  const potentialRoi = potentialReward != null && valueIn != null && (valueIn + totalItemExpenses) > 0
-    ? (potentialReward / (valueIn + totalItemExpenses)) * 100 : null;
-  const realizedGain = valueOut != null && valueIn != null
-    ? valueOut - valueIn - totalItemExpenses : null;
-  const realizedRoi = realizedGain != null && valueIn != null && (valueIn + totalItemExpenses) > 0
-    ? (realizedGain / (valueIn + totalItemExpenses)) * 100 : null;
+  const {
+    potentialReward,
+    potentialROI: potentialRoi,
+    realizedGain,
+    realizedROI: realizedRoi,
+  } = calculateItemProfitMetrics({
+    valueIn,
+    valueOut,
+    estimatedSoldValue: parsedEstimated,
+    totalExpenses: totalItemExpenses,
+  });
   const isOwned = existingItem?.status === 'owned' || existingItem?.status === 'listed';
   const isSoldOrTraded = existingItem?.status === 'sold' || existingItem?.status === 'traded';
   const showMetrics = !!itemId && !!existingItem && !hideSidebar;

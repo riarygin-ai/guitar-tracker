@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import type { InventoryItemWithValue } from '@/types';
+import { calculateItemProfitMetrics } from '@/lib/profit';
 
 const statusClasses: Record<string, string> = {
   new: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
@@ -26,25 +27,17 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
   const isOwned = item.status === 'owned' || item.status === 'listed';
   const isSoldOrTraded = item.status === 'sold' || item.status === 'traded';
 
-  const potentialReward =
-    isOwned && item.estimated_sold_value != null && item.value_in != null
-      ? item.estimated_sold_value - item.value_in - totalExpenses
-      : null;
-
-  const potentialRoi =
-    potentialReward != null && item.value_in != null && (item.value_in + totalExpenses) > 0
-      ? (potentialReward / (item.value_in + totalExpenses)) * 100
-      : null;
-
-  const realizedGain =
-    isSoldOrTraded && item.value_out != null && item.value_in != null
-      ? item.value_out - item.value_in - totalExpenses
-      : null;
-
-  const realizedRoi =
-    realizedGain != null && item.value_in != null && (item.value_in + totalExpenses) > 0
-      ? (realizedGain / (item.value_in + totalExpenses)) * 100
-      : null;
+  const {
+    potentialReward,
+    potentialROI,
+    realizedGain,
+    realizedROI,
+  } = calculateItemProfitMetrics({
+    valueIn: item.value_in,
+    valueOut: isSoldOrTraded ? item.value_out : null,
+    estimatedSoldValue: isOwned ? item.estimated_sold_value : null,
+    totalExpenses,
+  });
 
   const roiColor = (roi: number | null) =>
     roi == null ? '' : roi > 0 ? 'text-emerald-600' : roi < 0 ? 'text-rose-600' : '';
@@ -120,8 +113,8 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
                 </span>
                 <span>
                   <span className="text-slate-500 dark:text-slate-400">Potential ROI:</span>{' '}
-                  <span className={roiColor(potentialRoi)}>
-                    {fmtRoi(potentialRoi, potentialReward)}
+                  <span className={roiColor(potentialROI)}>
+                    {fmtRoi(potentialROI, potentialReward)}
                   </span>
                 </span>
               </>
@@ -133,8 +126,8 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
                 </span>
                 <span>
                   <span className="text-slate-500 dark:text-slate-400">Realized ROI:</span>{' '}
-                  <span className={roiColor(realizedRoi)}>
-                    {fmtRoi(realizedRoi, realizedGain)}
+                  <span className={roiColor(realizedROI)}>
+                    {fmtRoi(realizedROI, realizedGain)}
                   </span>
                 </span>
               </>
