@@ -218,7 +218,7 @@ export default function BuyOperationForm() {
             {items.map((li) => (
               <div
                 key={li.item.id}
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700"
+                className="rounded-2xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-700 dark:bg-blue-900/20"
               >
                 <div className="flex gap-4">
                   {/* Photo */}

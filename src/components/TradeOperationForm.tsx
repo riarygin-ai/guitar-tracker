@@ -409,7 +409,7 @@ export default function TradeOperationForm() {
                                 {outgoingItems.map((tradeItem, index) => (
                                     <div
                                         key={`${tradeItem.item.id}-${index}`}
-                                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700"
+                                        className="rounded-2xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-700 dark:bg-purple-900/20"
                                     >
                                         <div className="flex gap-4">
                                             {photoByItemId[tradeItem.item.id] && (
@@ -642,7 +642,7 @@ export default function TradeOperationForm() {
                                 {incomingItems.map((tradeItem, index) => (
                                     <div
                                         key={`${tradeItem.item.id}-${index}`}
-                                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700"
+                                        className="rounded-2xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-700 dark:bg-purple-900/20"
                                     >
                                         <div className="flex gap-4">
                                             {photoByItemId[tradeItem.item.id] && (

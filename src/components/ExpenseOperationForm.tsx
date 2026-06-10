@@ -222,7 +222,7 @@ export default function ExpenseOperationForm() {
                 )}
 
                 {selectedItem && (
-                    <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-900/20">
+                    <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-700 dark:bg-red-900/20">
                         <div className="flex items-start justify-between gap-4">
                             <div className="flex gap-4 min-w-0">
                                 {photoByItemId[selectedItem.id] && (
