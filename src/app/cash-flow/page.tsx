@@ -3,6 +3,7 @@
 export const dynamic = 'force-dynamic';
 
 import { useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import {
   getCashFlows,
@@ -14,7 +15,7 @@ import {
 } from '@/lib/supabase';
 import type { Brand, CashFlow, Deal, DealItem, InventoryItemWithValue } from '@/types';
 
-// ─── Visual helper — only used for deal title derivation ─────────────────────
+// ─── Visual helper ────────────────────────────────────────────────────────────
 
 type TradeItemVisual = { photoUrl?: string; alt: string };
 
@@ -89,6 +90,8 @@ const DATE_PRESETS: { key: DatePreset; label: string }[] = [
   { key: 'custom', label: 'Custom' },
 ];
 
+const ALL_DEAL_TYPES = ['sale', 'purchase', 'trade', 'expense'] as const;
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CashFlowPage() {
@@ -104,6 +107,7 @@ export default function CashFlowPage() {
   const [datePreset, setDatePreset] = useState<DatePreset>('6m');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>([...ALL_DEAL_TYPES]);
 
   useEffect(() => {
     async function loadData() {
@@ -179,14 +183,22 @@ export default function CashFlowPage() {
     return { dateFrom: from.toISOString().split('T')[0], dateTo: now.toISOString().split('T')[0] };
   }, [datePreset, customFrom, customTo]);
 
+  const allDealTypesSelected = selectedDealTypes.length === ALL_DEAL_TYPES.length;
+
   const filteredRows = useMemo(
     () =>
       sortedRows.filter((row) => {
         if (dateFrom && row.transaction_date < dateFrom) return false;
         if (dateTo   && row.transaction_date > dateTo)   return false;
+        if (!allDealTypesSelected) {
+          const deal = row.deal_id ? dealMap[row.deal_id] : null;
+          const dealType = deal?.deal_type ?? null;
+          // Rows with no linked deal are untyped — only hide them if no deal types selected at all
+          if (dealType !== null && !selectedDealTypes.includes(dealType)) return false;
+        }
         return true;
       }),
-    [sortedRows, dateFrom, dateTo],
+    [sortedRows, dateFrom, dateTo, allDealTypesSelected, selectedDealTypes, dealMap],
   );
 
   const summaryStats = useMemo(() => {
@@ -217,6 +229,20 @@ export default function CashFlowPage() {
   };
 
   const fmtCompact = (v: number) => `$${Math.round(Math.abs(v)).toLocaleString()}`;
+
+  // ── Shared photo placeholders ──────────────────────────────────────────────
+
+  const photoPlaceholder = (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-7 w-7 text-slate-300 dark:text-slate-600">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+    </svg>
+  );
+
+  const cashPlaceholder = (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-7 w-7 text-slate-300 dark:text-slate-600">
+      <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+    </svg>
+  );
 
   return (
     <div className="space-y-4">
@@ -262,6 +288,31 @@ export default function CashFlowPage() {
           ))}
         </div>
 
+        {/* Deal type filter pills */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {ALL_DEAL_TYPES.map((dealType) => (
+            <button
+              key={dealType}
+              type="button"
+              onClick={() => {
+                setSelectedDealTypes((current) => {
+                  const next = current.includes(dealType)
+                    ? current.filter((t) => t !== dealType)
+                    : [...current, dealType];
+                  return next.length > 0 ? next : [...ALL_DEAL_TYPES];
+                });
+              }}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                selectedDealTypes.includes(dealType)
+                  ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
+              }`}
+            >
+              {dealType}
+            </button>
+          ))}
+        </div>
+
         {/* Custom date inputs — only shown when Custom is selected */}
         {datePreset === 'custom' && (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -300,7 +351,7 @@ export default function CashFlowPage() {
         ) : filteredRows.length === 0 ? (
           <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <p className="text-slate-600 dark:text-slate-300">
-              {rows.length === 0 ? 'No cash flow records yet.' : 'No records match the selected date range.'}
+              {rows.length === 0 ? 'No cash flow records yet.' : 'No records match the selected filters.'}
             </p>
           </div>
         ) : (
@@ -318,10 +369,77 @@ export default function CashFlowPage() {
 
               const title = cf.description || visual?.title || '—';
 
-              const cardContent = (
-                <>
-                  {/* Type label + badge */}
-                  <div className="flex items-center justify-between gap-2">
+              // ── Photo column (mirrors Operations page) ───────────────────
+              const topOut   = visual?.kind === 'trade' ? visual.outItems[0]  : null;
+              const topIn    = visual?.kind === 'trade' ? visual.inItems[0]   : null;
+              const moreOut  = visual?.kind === 'trade' ? (visual.outItems.length - (topOut ? 1 : 0) + visual.outMore) : 0;
+              const moreIn   = visual?.kind === 'trade' ? (visual.inItems.length  - (topIn  ? 1 : 0) + visual.inMore)  : 0;
+              const hasOutSide = visual?.kind === 'trade' && (!!topOut || moreOut > 0);
+              const hasInSide  = visual?.kind === 'trade' && (!!topIn  || moreIn  > 0);
+
+              const photoCol = (
+                <div className="shrink-0 self-start md:w-[185px]">
+                  {visual?.kind === 'trade' ? (
+                    <div className="flex flex-col items-center gap-1 md:flex-row md:gap-1.5">
+                      {hasOutSide && (
+                        <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                          {topOut?.photoUrl
+                            ? <Image src={topOut.photoUrl} alt={topOut.alt} fill className="object-cover" sizes="80px" unoptimized />
+                            : photoPlaceholder}
+                          {moreOut > 0 && (
+                            <div className="absolute bottom-1 right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-slate-900/70 px-1 text-[10px] font-semibold text-white">
+                              +{moreOut}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {hasOutSide && hasInSide && (
+                        <>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400 md:hidden">
+                            <line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/>
+                          </svg>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="hidden shrink-0 text-slate-400 md:block">
+                            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                          </svg>
+                        </>
+                      )}
+                      {hasInSide && (
+                        <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                          {topIn?.photoUrl
+                            ? <Image src={topIn.photoUrl} alt={topIn.alt} fill className="object-cover" sizes="80px" unoptimized />
+                            : photoPlaceholder}
+                          {moreIn > 0 && (
+                            <div className="absolute bottom-1 right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-slate-900/70 px-1 text-[10px] font-semibold text-white">
+                              +{moreIn}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {!hasOutSide && !hasInSide && (
+                        <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                          {photoPlaceholder}
+                        </div>
+                      )}
+                    </div>
+                  ) : visual?.kind === 'single' ? (
+                    <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                      {visual.photoUrl
+                        ? <Image src={visual.photoUrl} alt={visual.alt} fill className="object-cover" sizes="80px" unoptimized />
+                        : photoPlaceholder}
+                    </div>
+                  ) : (
+                    // No linked deal — use cash icon
+                    <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
+                      {cashPlaceholder}
+                    </div>
+                  )}
+                </div>
+              );
+
+              // ── Content column ────────────────────────────────────────────
+              const contentCol = (
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                       {deal ? deal.deal_type : 'cash flow'}
                     </p>
@@ -332,14 +450,28 @@ export default function CashFlowPage() {
                     )}
                   </div>
 
-                  {/* Title + date */}
-                  <h3 className="mt-0.5 truncate text-sm font-semibold text-slate-900 dark:text-white">
-                    {title}
-                  </h3>
+                  {/* Trade: two-line title on mobile, one-line on desktop */}
+                  {visual?.kind === 'trade' ? (
+                    <>
+                      <div className="mt-1 md:hidden">
+                        <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{topOut?.alt || '—'}</p>
+                        <p className="my-0.5 text-xs text-slate-400 dark:text-slate-500">↓</p>
+                        <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{topIn?.alt || '—'}</p>
+                      </div>
+                      <h3 className="mt-1 hidden truncate text-base font-semibold text-slate-900 dark:text-white md:block">
+                        {visual.title}
+                      </h3>
+                    </>
+                  ) : (
+                    <h3 className="mt-1 truncate text-base font-semibold text-slate-900 dark:text-white">
+                      {title}
+                    </h3>
+                  )}
+
                   <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{formattedDate}</p>
 
-                  {/* Amount (primary) + Balance After */}
-                  <div className="mt-2.5 flex items-end justify-between gap-4">
+                  {/* Amount + Balance After */}
+                  <div className="mt-2 flex items-end justify-between gap-4">
                     <div>
                       {cf.cash_in > 0 && (
                         <>
@@ -365,7 +497,7 @@ export default function CashFlowPage() {
                       </p>
                     </div>
                   </div>
-                </>
+                </div>
               );
 
               const cardClass = 'rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800';
@@ -376,11 +508,11 @@ export default function CashFlowPage() {
                   href={`/operations/${cf.deal_id}`}
                   className={`block ${cardClass} transition hover:-translate-y-0.5 hover:shadow-md`}
                 >
-                  {cardContent}
+                  <div className="flex items-start gap-3">{photoCol}{contentCol}</div>
                 </Link>
               ) : (
                 <div key={cf.id} className={cardClass}>
-                  {cardContent}
+                  <div className="flex items-start gap-3">{photoCol}{contentCol}</div>
                 </div>
               );
             })}
