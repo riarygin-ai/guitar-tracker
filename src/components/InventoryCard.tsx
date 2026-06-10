@@ -109,15 +109,6 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
             )}
           </div>
 
-          {totalExpenses > 0 && (
-            <div className="mt-1 flex flex-wrap gap-x-6 gap-y-1 text-sm">
-              <span>
-                <span className="text-slate-500 dark:text-slate-400">Expenses:</span>{' '}
-                <span className="text-rose-600 dark:text-rose-400">−${totalExpenses.toFixed(0)}</span>
-              </span>
-            </div>
-          )}
-
           <div className="mt-1 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
             {isOwned ? (
               <>
