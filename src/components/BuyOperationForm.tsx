@@ -212,32 +212,49 @@ export default function BuyOperationForm() {
           )}
         </div>
 
-        {/* Selected items list */}
+        {/* Selected items list — always rendered above search */}
         {items.length > 0 && (
           <div className="mb-4 space-y-3">
             {items.map((li) => (
               <div
                 key={li.item.id}
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700/50"
+                className="relative rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700/50"
               >
-                <div className="flex items-center gap-3">
-                  {photoByItemId[li.item.id] && (
-                    <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-600">
+                {/* X remove button — top-right */}
+                <button
+                  type="button"
+                  onClick={() => handleRemoveItem(li.item.id)}
+                  aria-label="Remove item"
+                  className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-600 dark:hover:text-slate-200"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+
+                {/* Item photo + info row */}
+                <div className="flex items-start gap-3 pr-8">
+                  <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                    {photoByItemId[li.item.id] ? (
                       <Image
                         src={photoByItemId[li.item.id]}
                         alt={formatItemLabel(li.item)}
                         fill
                         className="object-cover"
                         unoptimized
-                        sizes="48px"
+                        sizes="56px"
                       />
-                    </div>
-                  )}
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-6 w-6 text-slate-300 dark:text-slate-500">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                      </svg>
+                    )}
+                  </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-slate-900 dark:text-white">
+                    <p className="text-sm font-semibold leading-snug text-slate-900 dark:text-white">
                       {formatItemLabel(li.item)}
                     </p>
-                    <div className="mt-1 flex flex-wrap gap-1.5">
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
                       {li.item.condition && (
                         <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-600 dark:text-slate-300">
                           {li.item.condition}
@@ -247,32 +264,35 @@ export default function BuyOperationForm() {
                         {li.item.item_type}
                       </span>
                     </div>
+                    {li.item.estimated_sold_value != null && (
+                      <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                        Est. sold:{' '}
+                        <span className="font-medium text-slate-700 dark:text-slate-200">
+                          ${li.item.estimated_sold_value.toFixed(0)}
+                        </span>
+                      </p>
+                    )}
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <div className="relative">
-                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">
-                        $
-                      </span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={li.cost > 0 ? li.cost : ''}
-                        onChange={(e) => handleCostChange(li.item.id, e.target.value)}
-                        placeholder="0.00"
-                        className="w-28 rounded-xl border border-slate-200 bg-white py-2 pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveItem(li.item.id)}
-                      aria-label="Remove item"
-                      className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-500 dark:hover:bg-slate-600 dark:hover:text-slate-200"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </button>
+                </div>
+
+                {/* Purchase cost input */}
+                <div className="mt-3 flex items-center gap-3">
+                  <span className="shrink-0 text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Purchase cost
+                  </span>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">
+                      $
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={li.cost > 0 ? li.cost : ''}
+                      onChange={(e) => handleCostChange(li.item.id, e.target.value)}
+                      placeholder="0.00"
+                      className="w-36 rounded-xl border border-slate-200 bg-white py-2 pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                    />
                   </div>
                 </div>
               </div>
