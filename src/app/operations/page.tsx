@@ -458,9 +458,11 @@ export default function OperationsPage() {
 
                 const cardClass =
                   deal.deal_type === 'purchase'
-                    ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800/60 dark:bg-blue-900/10'
+                    ? 'border-blue-200 bg-blue-50 dark:border-blue-800/50 dark:bg-blue-900/20'
                     : deal.deal_type === 'sale'
-                    ? 'border-green-200 bg-green-50/50 dark:border-green-800/60 dark:bg-green-900/10'
+                    ? 'border-green-200 bg-green-50 dark:border-green-800/50 dark:bg-green-900/20'
+                    : deal.deal_type === 'trade'
+                    ? 'border-purple-200 bg-purple-50 dark:border-purple-800/50 dark:bg-purple-900/20'
                     : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800';
 
                 return (
