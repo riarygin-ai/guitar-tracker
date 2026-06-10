@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -18,8 +18,10 @@ import {
   recalculateCashFlowBalancesFrom,
   editTradeOperation,
   getDisplayPhotosForItems,
+  searchInventoryItems,
 } from '@/lib/supabase';
-import type { Brand, Deal, DealItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
+import InventoryForm from '@/components/InventoryForm';
+import type { Brand, Deal, DealItem, InventoryItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
 
 export default function OperationDetailPage() {
   const params = useParams();
@@ -40,11 +42,25 @@ export default function OperationDetailPage() {
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Edit state
+  // Edit state — existing fields
   const [editedDeal, setEditedDeal] = useState<Partial<Deal> | null>(null);
   const [editedCashFlows, setEditedCashFlows] = useState<Record<number, Partial<CashFlow>>>({});
   const [editedExpenses, setEditedExpenses] = useState<Record<number, Partial<InventoryExpense>>>({});
   const [editedDealItems, setEditedDealItems] = useState<Record<number, { total_value: number }>>({});
+
+  // Trade item add / remove state
+  const [pendingOutgoing, setPendingOutgoing] = useState<{ item: InventoryItem; value: number }[]>([]);
+  const [pendingIncoming, setPendingIncoming] = useState<{ item: InventoryItem; value: number }[]>([]);
+  const [removedDealItemIds, setRemovedDealItemIds] = useState<number[]>([]);
+  const [showAddOutgoing, setShowAddOutgoing] = useState(false);
+  const [showAddIncoming, setShowAddIncoming] = useState(false);
+  const [addOutgoingQuery, setAddOutgoingQuery] = useState('');
+  const [addIncomingQuery, setAddIncomingQuery] = useState('');
+  const [addOutgoingResults, setAddOutgoingResults] = useState<InventoryItem[]>([]);
+  const [addIncomingResults, setAddIncomingResults] = useState<InventoryItem[]>([]);
+  const [addSearching, setAddSearching] = useState<'out' | 'in' | null>(null);
+  const [showNewIncomingForm, setShowNewIncomingForm] = useState(false);
+  const addSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -107,6 +123,44 @@ export default function OperationDetailPage() {
   const brandMap = Object.fromEntries(brands.map((b) => [b.id, b.name]));
   const itemMap = Object.fromEntries(items.map((i) => [i.id, i]));
 
+  const handleAddSearch = (query: string, direction: 'out' | 'in') => {
+    if (direction === 'out') setAddOutgoingQuery(query);
+    else setAddIncomingQuery(query);
+
+    if (addSearchTimerRef.current) clearTimeout(addSearchTimerRef.current);
+
+    if (!query.trim()) {
+      if (direction === 'out') setAddOutgoingResults([]);
+      else setAddIncomingResults([]);
+      setAddSearching(null);
+      return;
+    }
+
+    setAddSearching(direction);
+    addSearchTimerRef.current = setTimeout(async () => {
+      const statuses = direction === 'out' ? ['owned', 'listed'] : undefined;
+      const result = await searchInventoryItems(query, statuses);
+      setAddSearching(null);
+      const found = (result.data ?? []) as InventoryItem[];
+      if (direction === 'out') setAddOutgoingResults(found);
+      else setAddIncomingResults(found);
+    }, 300);
+  };
+
+  const resetAddRemoveState = () => {
+    setPendingOutgoing([]);
+    setPendingIncoming([]);
+    setRemovedDealItemIds([]);
+    setShowAddOutgoing(false);
+    setShowAddIncoming(false);
+    setAddOutgoingQuery('');
+    setAddIncomingQuery('');
+    setAddOutgoingResults([]);
+    setAddIncomingResults([]);
+    setAddSearching(null);
+    setShowNewIncomingForm(false);
+  };
+
   const handleEditMode = () => {
     if (editMode) {
       setEditMode(false);
@@ -114,6 +168,7 @@ export default function OperationDetailPage() {
       setEditedCashFlows({});
       setEditedExpenses({});
       setEditedDealItems({});
+      resetAddRemoveState();
     } else {
       setEditMode(true);
       setSuccessMessage(null);
@@ -141,21 +196,19 @@ export default function OperationDetailPage() {
 
     try {
       if (deal.deal_type === 'trade') {
-        const outgoing = dealItems.filter((di) => di.direction === 'out');
-        const incoming = dealItems.filter((di) => di.direction === 'in');
+        const outgoing = dealItems.filter((di) => di.direction === 'out' && !removedDealItemIds.includes(di.id));
+        const incoming = dealItems.filter((di) => di.direction === 'in' && !removedDealItemIds.includes(di.id));
         const cashFlowRow = cashFlows[0] ?? null;
 
         const cashPaid = Number(editedDeal?.cash_paid ?? deal.cash_paid ?? 0);
         const cashReceived = Number(editedDeal?.cash_received ?? deal.cash_received ?? 0);
 
-        const outgoingTotal = outgoing.reduce(
-          (sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)),
-          0
-        );
-        const incomingTotal = incoming.reduce(
-          (sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)),
-          0
-        );
+        const outgoingTotal =
+          outgoing.reduce((sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)), 0) +
+          pendingOutgoing.reduce((sum, p) => sum + p.value, 0);
+        const incomingTotal =
+          incoming.reduce((sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)), 0) +
+          pendingIncoming.reduce((sum, p) => sum + p.value, 0);
 
         if (Math.round((outgoingTotal + cashPaid) * 100) !== Math.round((incomingTotal + cashReceived) * 100)) {
           setSaving(false);
@@ -170,14 +223,20 @@ export default function OperationDetailPage() {
           notes: editedDeal?.notes ?? deal.notes ?? null,
           cashPaid,
           cashReceived,
-          outgoingItems: outgoing.map((di) => ({
-            item_id: di.item_id,
-            total_value: editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0),
-          })),
-          incomingItems: incoming.map((di) => ({
-            item_id: di.item_id,
-            total_value: editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0),
-          })),
+          outgoingItems: [
+            ...outgoing.map((di) => ({
+              item_id: di.item_id,
+              total_value: editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0),
+            })),
+            ...pendingOutgoing.map((p) => ({ item_id: p.item.id, total_value: p.value })),
+          ],
+          incomingItems: [
+            ...incoming.map((di) => ({
+              item_id: di.item_id,
+              total_value: editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0),
+            })),
+            ...pendingIncoming.map((p) => ({ item_id: p.item.id, total_value: p.value })),
+          ],
           cfTransactionDate: cashFlowRow
             ? (editedCashFlows[cashFlowRow.id]?.transaction_date ?? cashFlowRow.transaction_date)
             : null,
@@ -273,6 +332,7 @@ export default function OperationDetailPage() {
       setEditedCashFlows({});
       setEditedExpenses({});
       setEditedDealItems({});
+      resetAddRemoveState();
       setSaving(false);
       setEditMode(false);
       setSuccessMessage('Changes saved successfully.');
@@ -337,14 +397,16 @@ export default function OperationDetailPage() {
 
   const tradeEditCashPaid = Number(editedDeal?.cash_paid ?? deal.cash_paid ?? 0);
   const tradeEditCashReceived = Number(editedDeal?.cash_received ?? deal.cash_received ?? 0);
-  const tradeEditOutgoingTotal = outgoingItems.reduce(
-    (sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)),
-    0
-  );
-  const tradeEditIncomingTotal = incomingItems.reduce(
-    (sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)),
-    0
-  );
+  const tradeEditOutgoingTotal =
+    outgoingItems
+      .filter((di) => !removedDealItemIds.includes(di.id))
+      .reduce((sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)), 0) +
+    pendingOutgoing.reduce((sum, p) => sum + p.value, 0);
+  const tradeEditIncomingTotal =
+    incomingItems
+      .filter((di) => !removedDealItemIds.includes(di.id))
+      .reduce((sum, di) => sum + (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)), 0) +
+    pendingIncoming.reduce((sum, p) => sum + p.value, 0);
   const tradeGiven = tradeEditOutgoingTotal + tradeEditCashPaid;
   const tradeReceived = tradeEditIncomingTotal + tradeEditCashReceived;
   const tradeIsBalanced = Math.round(tradeGiven * 100) === Math.round(tradeReceived * 100);
@@ -504,157 +566,463 @@ export default function OperationDetailPage() {
           </div>
 
           {/* Gave / Outgoing Items */}
-          {outgoingItems.length > 0 && (
+          {(outgoingItems.length > 0 || (editMode && deal.deal_type === 'trade')) && (
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Gave / Outgoing</h2>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Gave / Outgoing</h2>
+                {editMode && deal.deal_type === 'trade' && !showAddOutgoing && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddOutgoing(true)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <span className="hidden sm:inline">Add outgoing item</span>
+                  </button>
+                )}
+              </div>
               <div className="mt-4 space-y-3">
-                {outgoingItems.map((di) => {
-                  const item = itemMap[di.item_id];
-                  if (!item) return null;
-                  const brand = brandMap[item.brand_id] || 'Unknown';
-                  const valueIn = Number(item.value_in ?? 0);
-                  const valueOut = editMode && deal.deal_type === 'trade'
-                    ? (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0))
-                    : Number(di.total_value ?? 0);
-                  const itemExpenses = itemExpensesByItemId[item.id] ?? 0;
-                  const realizedGain = valueOut - valueIn - itemExpenses;
-                  return (
-                    <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
-                      <div className="flex gap-4">
-                        {photoByItemId[item.id] && (
-                          <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
-                            <Image src={photoByItemId[item.id]} alt={`${brand} ${item.model}`} fill className="object-cover" unoptimized sizes="80px" />
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="mb-3">
-                            <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                              {brand} {item.model}
-                            </p>
-                            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                              {item.year && `${item.year} • `}
-                              {item.color && `${item.color} • `}
-                              {item.condition}
-                            </p>
-                          </div>
-                          <div className="grid gap-3 sm:grid-cols-3">
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
-                              <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
+                {/* Existing items (excluding removed) */}
+                {outgoingItems
+                  .filter((di) => !removedDealItemIds.includes(di.id))
+                  .map((di) => {
+                    const item = itemMap[di.item_id];
+                    if (!item) return null;
+                    const brand = brandMap[item.brand_id] || 'Unknown';
+                    const valueIn = Number(item.value_in ?? 0);
+                    const valueOut = editMode && deal.deal_type === 'trade'
+                      ? (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0))
+                      : Number(di.total_value ?? 0);
+                    const itemExpenses = itemExpensesByItemId[item.id] ?? 0;
+                    const realizedGain = valueOut - valueIn - itemExpenses;
+                    return (
+                      <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
+                        <div className="flex gap-4">
+                          {photoByItemId[item.id] && (
+                            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                              <Image src={photoByItemId[item.id]} alt={`${brand} ${item.model}`} fill className="object-cover" unoptimized sizes="80px" />
                             </div>
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value Out</p>
-                              {editMode && deal.deal_type === 'trade' ? (
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
-                                  onChange={(e) =>
-                                    setEditedDealItems((prev) => ({
-                                      ...prev,
-                                      [di.id]: { total_value: Number(e.target.value) },
-                                    }))
-                                  }
-                                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
-                                />
-                              ) : (
-                                <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueOut)}</p>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-3 flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-white">{brand} {item.model}</p>
+                                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                                  {item.year && `${item.year} • `}{item.color && `${item.color} • `}{item.condition}
+                                </p>
+                              </div>
+                              {editMode && deal.deal_type === 'trade' && (
+                                <button
+                                  type="button"
+                                  onClick={() => setRemovedDealItemIds((prev) => [...prev, di.id])}
+                                  title="Remove from operation"
+                                  className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20 dark:hover:text-rose-400"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
                               )}
                             </div>
-                            {itemExpenses > 0 && (
+                            <div className="grid gap-3 sm:grid-cols-3">
                               <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Expenses</p>
-                                <p className="mt-1 text-sm font-semibold text-rose-600">−{formatCurrency(itemExpenses)}</p>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
                               </div>
-                            )}
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Realized Gain</p>
-                              <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
-                                {formatCurrency(realizedGain)}
-                              </p>
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value Out</p>
+                                {editMode && deal.deal_type === 'trade' ? (
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
+                                    onChange={(e) =>
+                                      setEditedDealItems((prev) => ({
+                                        ...prev,
+                                        [di.id]: { total_value: Number(e.target.value) },
+                                      }))
+                                    }
+                                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                                  />
+                                ) : (
+                                  <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueOut)}</p>
+                                )}
+                              </div>
+                              {itemExpenses > 0 && (
+                                <div>
+                                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Expenses</p>
+                                  <p className="mt-1 text-sm font-semibold text-rose-600">−{formatCurrency(itemExpenses)}</p>
+                                </div>
+                              )}
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Realized Gain</p>
+                                <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
+                                  {formatCurrency(realizedGain)}
+                                </p>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
+                    );
+                  })}
+
+                {/* Pending new outgoing items */}
+                {pendingOutgoing.map((p, i) => (
+                  <div key={`pending-out-${i}`} className="rounded-2xl border border-teal-200 bg-teal-50/40 p-4 dark:border-teal-700/50 dark:bg-teal-900/10">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-teal-700 dark:text-teal-400">Adding to trade</p>
+                        <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-white">
+                          {brandMap[p.item.brand_id] || 'Unknown'} {p.item.model}
+                          {p.item.year ? ` (${p.item.year})` : ''}
+                        </p>
+                        {p.item.condition && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{p.item.condition}</p>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPendingOutgoing((prev) => prev.filter((_, idx) => idx !== i))}
+                        title="Remove"
+                        className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20 dark:hover:text-rose-400"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
                     </div>
-                  );
-                })}
+                    <div className="mt-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value Out</p>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={p.value}
+                        onChange={(e) =>
+                          setPendingOutgoing((prev) =>
+                            prev.map((entry, idx) => idx === i ? { ...entry, value: Number(e.target.value) } : entry)
+                          )
+                        }
+                        className="mt-1 w-40 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                      />
+                    </div>
+                  </div>
+                ))}
+
+                {/* Add outgoing search panel */}
+                {editMode && deal.deal_type === 'trade' && showAddOutgoing && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Add an owned item as outgoing</p>
+                      <button
+                        type="button"
+                        onClick={() => { setShowAddOutgoing(false); setAddOutgoingQuery(''); setAddOutgoingResults([]); }}
+                        className="rounded-lg p-1 text-slate-400 transition hover:text-slate-700 dark:hover:text-slate-200"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                      <input
+                        type="text"
+                        value={addOutgoingQuery}
+                        onChange={(e) => handleAddSearch(e.target.value, 'out')}
+                        placeholder="Search owned inventory..."
+                        className="w-full rounded-2xl border border-slate-200 bg-white py-2.5 pl-9 pr-4 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                      />
+                      {addSearching === 'out' && (
+                        <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                          <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                        </div>
+                      )}
+                    </div>
+                    {addOutgoingResults.length > 0 && (
+                      <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
+                        {addOutgoingResults.map((res) => {
+                          const alreadyIn = dealItems.some((di) => di.item_id === res.id && !removedDealItemIds.includes(di.id));
+                          const alreadyPending = pendingOutgoing.some((p) => p.item.id === res.id);
+                          const disabled = alreadyIn || alreadyPending;
+                          return (
+                            <button
+                              key={res.id}
+                              type="button"
+                              disabled={disabled}
+                              onClick={() => {
+                                setPendingOutgoing((prev) => [...prev, { item: res, value: 0 }]);
+                                setShowAddOutgoing(false);
+                                setAddOutgoingQuery('');
+                                setAddOutgoingResults([]);
+                              }}
+                              className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left text-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
+                            >
+                              <p className="font-medium text-slate-900 dark:text-white">
+                                {brandMap[res.brand_id] || 'Unknown'} {res.model}
+                                {res.year ? ` (${res.year})` : ''}
+                              </p>
+                              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                                {res.status}{res.condition ? ` · ${res.condition}` : ''}
+                                {disabled ? ' · already in trade' : ''}
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {addOutgoingQuery && addOutgoingResults.length === 0 && addSearching === null && (
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">No owned items found for &ldquo;{addOutgoingQuery}&rdquo;</p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
 
           {/* Received / Incoming Items */}
-          {incomingItems.length > 0 && (
+          {(incomingItems.length > 0 || (editMode && deal.deal_type === 'trade')) && (
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Received / Incoming</h2>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Received / Incoming</h2>
+                {editMode && deal.deal_type === 'trade' && !showAddIncoming && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddIncoming(true)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <span className="hidden sm:inline">Add incoming item</span>
+                  </button>
+                )}
+              </div>
               <div className="mt-4 space-y-3">
-                {incomingItems.map((di) => {
-                  const item = itemMap[di.item_id];
-                  if (!item) return null;
-                  const brand = brandMap[item.brand_id] || 'Unknown';
-                  const valueIn = editMode && deal.deal_type === 'trade'
-                    ? (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0))
-                    : Number(di.total_value ?? 0);
-                  const estimatedSold = Number(item.estimated_sold_value ?? 0);
-                  const incomingItemExpenses = itemExpensesByItemId[item.id] ?? 0;
-                  const potentialReward = estimatedSold - valueIn - incomingItemExpenses;
-                  return (
-                    <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
-                      <div className="flex gap-4">
-                        {photoByItemId[item.id] && (
-                          <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
-                            <Image src={photoByItemId[item.id]} alt={`${brand} ${item.model}`} fill className="object-cover" unoptimized sizes="80px" />
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="mb-3">
-                            <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                              {brand} {item.model}
-                            </p>
-                            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                              {item.year && `${item.year} • `}
-                              {item.color && `${item.color} • `}
-                              {item.condition}
-                            </p>
-                          </div>
-                          <div className="grid gap-3 sm:grid-cols-3">
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
-                              {editMode && deal.deal_type === 'trade' ? (
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
-                                  onChange={(e) =>
-                                    setEditedDealItems((prev) => ({
-                                      ...prev,
-                                      [di.id]: { total_value: Number(e.target.value) },
-                                    }))
-                                  }
-                                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
-                                />
-                              ) : (
-                                <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
+                {/* Existing items (excluding removed) */}
+                {incomingItems
+                  .filter((di) => !removedDealItemIds.includes(di.id))
+                  .map((di) => {
+                    const item = itemMap[di.item_id];
+                    if (!item) return null;
+                    const brand = brandMap[item.brand_id] || 'Unknown';
+                    const valueIn = editMode && deal.deal_type === 'trade'
+                      ? (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0))
+                      : Number(di.total_value ?? 0);
+                    const estimatedSold = Number(item.estimated_sold_value ?? 0);
+                    const incomingItemExpenses = itemExpensesByItemId[item.id] ?? 0;
+                    const potentialReward = estimatedSold - valueIn - incomingItemExpenses;
+                    return (
+                      <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
+                        <div className="flex gap-4">
+                          {photoByItemId[item.id] && (
+                            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                              <Image src={photoByItemId[item.id]} alt={`${brand} ${item.model}`} fill className="object-cover" unoptimized sizes="80px" />
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-3 flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-white">{brand} {item.model}</p>
+                                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                                  {item.year && `${item.year} • `}{item.color && `${item.color} • `}{item.condition}
+                                </p>
+                              </div>
+                              {editMode && deal.deal_type === 'trade' && (
+                                <button
+                                  type="button"
+                                  onClick={() => setRemovedDealItemIds((prev) => [...prev, di.id])}
+                                  title="Remove from operation"
+                                  className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20 dark:hover:text-rose-400"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
                               )}
                             </div>
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Estimated Sold</p>
-                              <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(estimatedSold)}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Potential Reward</p>
-                              <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
-                                {formatCurrency(potentialReward)}
-                              </p>
+                            <div className="grid gap-3 sm:grid-cols-3">
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
+                                {editMode && deal.deal_type === 'trade' ? (
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0)}
+                                    onChange={(e) =>
+                                      setEditedDealItems((prev) => ({
+                                        ...prev,
+                                        [di.id]: { total_value: Number(e.target.value) },
+                                      }))
+                                    }
+                                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                                  />
+                                ) : (
+                                  <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
+                                )}
+                              </div>
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Estimated Sold</p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(estimatedSold)}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Potential Reward</p>
+                                <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
+                                  {formatCurrency(potentialReward)}
+                                </p>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
+                    );
+                  })}
+
+                {/* Pending new incoming items */}
+                {pendingIncoming.map((p, i) => (
+                  <div key={`pending-in-${i}`} className="rounded-2xl border border-teal-200 bg-teal-50/40 p-4 dark:border-teal-700/50 dark:bg-teal-900/10">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-teal-700 dark:text-teal-400">Adding to trade</p>
+                        <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-white">
+                          {brandMap[p.item.brand_id] || 'Unknown'} {p.item.model}
+                          {p.item.year ? ` (${p.item.year})` : ''}
+                        </p>
+                        {p.item.condition && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{p.item.condition}</p>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPendingIncoming((prev) => prev.filter((_, idx) => idx !== i))}
+                        title="Remove"
+                        className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20 dark:hover:text-rose-400"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
                     </div>
-                  );
-                })}
+                    <div className="mt-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={p.value}
+                        onChange={(e) =>
+                          setPendingIncoming((prev) =>
+                            prev.map((entry, idx) => idx === i ? { ...entry, value: Number(e.target.value) } : entry)
+                          )
+                        }
+                        className="mt-1 w-40 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                      />
+                    </div>
+                  </div>
+                ))}
+
+                {/* Add incoming search panel */}
+                {editMode && deal.deal_type === 'trade' && showAddIncoming && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Add an incoming item</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAddIncoming(false);
+                          setAddIncomingQuery('');
+                          setAddIncomingResults([]);
+                          setShowNewIncomingForm(false);
+                        }}
+                        className="rounded-lg p-1 text-slate-400 transition hover:text-slate-700 dark:hover:text-slate-200"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    </div>
+
+                    {!showNewIncomingForm && (
+                      <>
+                        <div className="relative">
+                          <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                          <input
+                            type="text"
+                            value={addIncomingQuery}
+                            onChange={(e) => handleAddSearch(e.target.value, 'in')}
+                            placeholder="Search inventory..."
+                            className="w-full rounded-2xl border border-slate-200 bg-white py-2.5 pl-9 pr-4 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-500"
+                          />
+                          {addSearching === 'in' && (
+                            <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                              <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                            </div>
+                          )}
+                        </div>
+                        {addIncomingResults.length > 0 && (
+                          <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
+                            {addIncomingResults.map((res) => {
+                              const alreadyIn = dealItems.some((di) => di.item_id === res.id && !removedDealItemIds.includes(di.id));
+                              const alreadyPending = pendingIncoming.some((p) => p.item.id === res.id);
+                              const disabled = alreadyIn || alreadyPending;
+                              return (
+                                <button
+                                  key={res.id}
+                                  type="button"
+                                  disabled={disabled}
+                                  onClick={() => {
+                                    setPendingIncoming((prev) => [...prev, { item: res, value: 0 }]);
+                                    setShowAddIncoming(false);
+                                    setAddIncomingQuery('');
+                                    setAddIncomingResults([]);
+                                  }}
+                                  className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left text-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
+                                >
+                                  <p className="font-medium text-slate-900 dark:text-white">
+                                    {brandMap[res.brand_id] || 'Unknown'} {res.model}
+                                    {res.year ? ` (${res.year})` : ''}
+                                  </p>
+                                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                                    {res.status}{res.condition ? ` · ${res.condition}` : ''}
+                                    {disabled ? ' · already in trade' : ''}
+                                  </p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {addIncomingQuery && addIncomingResults.length === 0 && addSearching === null && (
+                          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">No items found for &ldquo;{addIncomingQuery}&rdquo;</p>
+                        )}
+                        <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-500">
+                          <button
+                            type="button"
+                            onClick={() => setShowNewIncomingForm(true)}
+                            className="inline-flex items-center gap-1.5 text-sm font-medium text-teal-600 transition hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Create new inventory item
+                          </button>
+                        </div>
+                      </>
+                    )}
+
+                    {showNewIncomingForm && (
+                      <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-500 dark:bg-slate-800">
+                        <div className="mb-3 flex items-center justify-between">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">New inventory item</p>
+                          <button
+                            type="button"
+                            onClick={() => setShowNewIncomingForm(false)}
+                            className="text-xs text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                          >
+                            ← Back to search
+                          </button>
+                        </div>
+                        <InventoryForm
+                          hideHeader
+                          hideSidebar
+                          onCreated={(newItem) => {
+                            setPendingIncoming((prev) => [...prev, { item: newItem, value: 0 }]);
+                            setShowAddIncoming(false);
+                            setShowNewIncomingForm(false);
+                            setAddIncomingQuery('');
+                            setAddIncomingResults([]);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
