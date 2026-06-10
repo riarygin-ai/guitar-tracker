@@ -48,217 +48,27 @@ const STATUS_STYLES: Record<string, string> = {
   traded: 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400',
 };
 
-// ── Shared ────────────────────────────────────────────────────────────────────
-
 function PhotoPlaceholder({ small }: { small?: boolean }) {
   return (
     <div className="absolute inset-0 flex items-center justify-center">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-        className={`${small ? 'h-4 w-4' : 'h-8 w-8'} text-slate-300 dark:text-slate-600`}>
+        className={`${small ? 'h-4 w-4' : 'h-6 w-6'} text-slate-300 dark:text-slate-600`}>
         <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
       </svg>
     </div>
   );
 }
 
-// ── Desktop: chain arrow ──────────────────────────────────────────────────────
+// ── Deal card (unified, responsive) ──────────────────────────────────────────
 
-function ChainArrow() {
-  return (
-    <div className="flex flex-col items-center">
-      <div className="h-5 w-px bg-slate-200 dark:bg-slate-700" />
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
-        fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-        className="text-slate-300 dark:text-slate-600">
-        <line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/>
-      </svg>
-      <div className="h-5 w-px bg-slate-200 dark:bg-slate-700" />
-    </div>
-  );
-}
-
-// ── Desktop: full item node ───────────────────────────────────────────────────
-
-interface ItemNodeProps {
-  di:            DealItem;
-  item:          InventoryItemWithValue | undefined;
-  brand:         string;
-  photoUrl:      string | undefined;
-  isCurrentItem: boolean;
-}
-
-function ItemNode({ di, item, brand, photoUrl, isCurrentItem }: ItemNodeProps) {
-  if (!item) return null;
-  const costValue = Number(di.total_value ?? 0);
-  const estSold   = item.estimated_sold_value != null ? Number(item.estimated_sold_value) : null;
-
-  return (
-    <Link href={`/inventory/${item.id}`}
-      className={`group flex gap-4 rounded-2xl border p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/30 ${
-        isCurrentItem
-          ? 'border-violet-200 bg-violet-50/60 dark:border-violet-700/50 dark:bg-violet-900/10'
-          : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800'
-      }`}
-    >
-      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
-        {photoUrl
-          ? <Image src={photoUrl} alt={`${brand} ${item.model}`} fill className="object-cover" sizes="80px" unoptimized />
-          : <PhotoPlaceholder />}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate font-semibold text-slate-900 group-hover:underline dark:text-white">{brand} {item.model}</p>
-            {(item.year || item.color || item.condition) && (
-              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                {[item.year, item.color, item.condition].filter(Boolean).join(' · ')}
-              </p>
-            )}
-          </div>
-          {isCurrentItem && (
-            <span className="shrink-0 rounded-full bg-violet-100 px-2.5 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
-              Current item
-            </span>
-          )}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-xs">
-          {costValue > 0 && (
-            <span>
-              <span className="text-slate-400 dark:text-slate-500">Cost </span>
-              <span className="font-medium text-slate-700 dark:text-slate-200">{fmtMoney(costValue)}</span>
-            </span>
-          )}
-          {estSold != null && estSold > 0 && (
-            <span>
-              <span className="text-slate-400 dark:text-slate-500">Est. sold </span>
-              <span className="font-medium text-slate-700 dark:text-slate-200">{fmtMoney(estSold)}</span>
-            </span>
-          )}
-        </div>
-        {item.status && (
-          <span className={`mt-1.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${STATUS_STYLES[item.status] ?? STATUS_STYLES.owned}`}>
-            {item.status}
-          </span>
-        )}
-      </div>
-    </Link>
-  );
-}
-
-// ── Desktop: compact secondary node ──────────────────────────────────────────
-
-interface CompactItemNodeProps {
-  item:     InventoryItemWithValue | undefined;
-  brand:    string;
-  photoUrl: string | undefined;
-}
-
-function CompactItemNode({ item, brand, photoUrl }: CompactItemNodeProps) {
-  if (!item) return null;
-  return (
-    <Link href={`/inventory/${item.id}`}
-      className="group flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700/30"
-    >
-      <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-700">
-        {photoUrl
-          ? <Image src={photoUrl} alt={`${brand} ${item.model}`} fill className="object-cover" sizes="40px" unoptimized />
-          : <PhotoPlaceholder small />}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-slate-800 group-hover:underline dark:text-slate-200">{brand} {item.model}</p>
-        {item.status && (
-          <span className={`mt-0.5 inline-block rounded-full px-1.5 py-0 text-[10px] font-medium capitalize ${STATUS_STYLES[item.status] ?? STATUS_STYLES.owned}`}>
-            {item.status}
-          </span>
-        )}
-      </div>
-    </Link>
-  );
-}
-
-// ── Desktop: deal connector ───────────────────────────────────────────────────
-
-interface DealConnectorProps {
+interface DealCardProps {
   deal:          Deal;
   outgoing:      DealItem[];
   itemMap:       Record<number, InventoryItemWithValue>;
   runningProfit: number;
 }
 
-function DealConnector({ deal, outgoing, itemMap, runningProfit }: DealConnectorProps) {
-  const isValueDeal = deal.deal_type === 'sale' || deal.deal_type === 'trade';
-  const profit = isValueDeal
-    ? outgoing.reduce((sum, di) => {
-        const item = itemMap[di.item_id];
-        return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0));
-      }, 0)
-    : null;
-  const typeColor = DEAL_TYPE_COLORS[deal.deal_type] ?? DEAL_TYPE_COLORS.purchase;
-
-  return (
-    <div>
-      <Link href={`/operations/${deal.id}`}
-        className="group flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/70 dark:hover:bg-slate-700/70"
-      >
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1">
-          <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${typeColor}`}>
-            {deal.deal_type.charAt(0).toUpperCase() + deal.deal_type.slice(1)}
-          </span>
-          <span className="text-sm text-slate-600 dark:text-slate-300">{formatDate(deal.deal_date)}</span>
-          {deal.channel && (
-            <>
-              <span className="text-slate-300 dark:text-slate-600">·</span>
-              <span className="text-sm text-slate-500 dark:text-slate-400">{deal.channel}</span>
-            </>
-          )}
-          {deal.cash_paid != null && Number(deal.cash_paid) > 0 && (
-            <>
-              <span className="text-slate-300 dark:text-slate-600">·</span>
-              <span className="text-sm font-medium text-rose-600 dark:text-rose-400">−{fmtMoney(Number(deal.cash_paid))} cash</span>
-            </>
-          )}
-          {deal.cash_received != null && Number(deal.cash_received) > 0 && (
-            <>
-              <span className="text-slate-300 dark:text-slate-600">·</span>
-              <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">+{fmtMoney(Number(deal.cash_received))} cash</span>
-            </>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {profit !== null && (
-            <span className={`text-sm font-bold ${profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-              {profit >= 0 ? '+' : '−'}{fmtMoney(profit)}
-            </span>
-          )}
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            className="shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100">
-            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-          </svg>
-        </div>
-      </Link>
-      {isValueDeal && runningProfit !== 0 && (
-        <div className="mt-1.5 flex items-center justify-end gap-1.5 pr-1 text-xs text-slate-400 dark:text-slate-500">
-          Running profit
-          <span className={`font-semibold tabular-nums ${runningProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-            {runningProfit >= 0 ? '+' : '−'}{fmtMoney(runningProfit)}
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Mobile: deal card ─────────────────────────────────────────────────────────
-
-interface MobileDealCardProps {
-  deal:          Deal;
-  outgoing:      DealItem[];
-  itemMap:       Record<number, InventoryItemWithValue>;
-  runningProfit: number;
-}
-
-function MobileDealCard({ deal, outgoing, itemMap, runningProfit }: MobileDealCardProps) {
+function DealCard({ deal, outgoing, itemMap, runningProfit }: DealCardProps) {
   const isValueDeal  = deal.deal_type === 'sale' || deal.deal_type === 'trade';
   const cashPaid     = Number(deal.cash_paid ?? 0);
   const cashReceived = Number(deal.cash_received ?? 0);
@@ -271,20 +81,21 @@ function MobileDealCard({ deal, outgoing, itemMap, runningProfit }: MobileDealCa
   const typeColor = DEAL_TYPE_COLORS[deal.deal_type] ?? DEAL_TYPE_COLORS.purchase;
 
   return (
-    <Link href={`/operations/${deal.id}`}
-      className="group block rounded-xl border border-slate-200 bg-slate-50 p-3 transition-colors active:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/70 dark:active:bg-slate-700/70"
+    <Link
+      href={`/operations/${deal.id}`}
+      className="group block rounded-xl border border-slate-200 bg-slate-50 p-3 transition-colors hover:bg-slate-100 active:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/70 dark:hover:bg-slate-700/70 md:rounded-2xl md:p-4"
     >
       {/* Type · date · channel */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${typeColor}`}>
+          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold md:px-2.5 md:text-xs ${typeColor}`}>
             {deal.deal_type.charAt(0).toUpperCase() + deal.deal_type.slice(1)}
           </span>
-          <span className="text-xs text-slate-500 dark:text-slate-400">{formatDate(deal.deal_date)}</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400 md:text-sm">{formatDate(deal.deal_date)}</span>
           {deal.channel && (
             <>
               <span className="text-slate-300 dark:text-slate-600">·</span>
-              <span className="text-xs text-slate-400 dark:text-slate-500">{deal.channel}</span>
+              <span className="text-xs text-slate-400 dark:text-slate-500 md:text-sm">{deal.channel}</span>
             </>
           )}
         </div>
@@ -295,19 +106,21 @@ function MobileDealCard({ deal, outgoing, itemMap, runningProfit }: MobileDealCa
         </svg>
       </div>
 
-      {/* Cash */}
+      {/* Cash in / out */}
       {(cashPaid > 0 || cashReceived > 0) && (
-        <div className="mt-1.5 flex flex-wrap gap-2.5 text-xs">
+        <div className="mt-1.5 flex flex-wrap gap-2.5 text-xs md:text-sm">
           {cashPaid     > 0 && <span className="font-medium text-rose-600 dark:text-rose-400">−{fmtMoney(cashPaid)} cash</span>}
           {cashReceived > 0 && <span className="font-medium text-emerald-600 dark:text-emerald-400">+{fmtMoney(cashReceived)} cash</span>}
         </div>
       )}
 
-      {/* Profit — emphasized */}
+      {/* Profit — emphasized with border separator */}
       {profit !== null && (
         <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-2 dark:border-slate-700">
-          <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">Profit</span>
-          <span className={`text-base font-bold tabular-nums ${profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+          <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500 md:text-xs">
+            Profit
+          </span>
+          <span className={`text-base font-bold tabular-nums md:text-lg ${profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
             {profit >= 0 ? '+' : '−'}{fmtMoney(profit)}
           </span>
         </div>
@@ -326,9 +139,11 @@ function MobileDealCard({ deal, outgoing, itemMap, runningProfit }: MobileDealCa
   );
 }
 
-// ── Mobile: timeline ──────────────────────────────────────────────────────────
+// ── Chain timeline (unified, responsive) ─────────────────────────────────────
+// Mobile (< md): 30px dot column, 48px photos, secondary items collapsed.
+// Desktop (≥ md): 44px dot column, 64px photos, secondary items as compact cards.
 
-interface MobileTimelineProps {
+interface ChainTimelineProps {
   steps:          ChainStep[];
   itemId:         number;
   itemMap:        Record<number, InventoryItemWithValue>;
@@ -338,7 +153,9 @@ interface MobileTimelineProps {
   runningProfits: number[];
 }
 
-function MobileTimeline({ steps, itemId, itemMap, brandMap, photoByItemId, mainItemIds, runningProfits }: MobileTimelineProps) {
+function ChainTimeline({
+  steps, itemId, itemMap, brandMap, photoByItemId, mainItemIds, runningProfits,
+}: ChainTimelineProps) {
   const [expandedDeals, setExpandedDeals] = useState(new Set<number>());
 
   function toggleExpand(dealId: number) {
@@ -351,8 +168,8 @@ function MobileTimeline({ steps, itemId, itemMap, brandMap, photoByItemId, mainI
 
   return (
     <div className="relative">
-      {/* Vertical rail — centered on the 30px dot column */}
-      <div className="absolute left-[15px] top-3 bottom-3 w-px bg-slate-200 dark:bg-slate-700" />
+      {/* Vertical rail — dot column is 30px on mobile, 44px on desktop */}
+      <div className="absolute left-[15px] top-3 bottom-3 w-px bg-slate-200 dark:bg-slate-700 md:left-[22px]" />
 
       {steps.map((step, index) => {
         const mainIn      = step.incoming.filter((di) =>  mainItemIds.has(di.item_id));
@@ -363,18 +180,19 @@ function MobileTimeline({ steps, itemId, itemMap, brandMap, photoByItemId, mainI
         const dotColor    = DOT_COLORS[step.deal.deal_type] ?? 'bg-slate-300 dark:bg-slate-600';
 
         return (
-          <div key={step.deal.id} className={`relative flex gap-3 ${index < steps.length - 1 ? 'pb-4' : ''}`}>
-
-            {/* Dot column — 30px wide keeps rail centered */}
-            <div className="relative z-10 flex w-[30px] shrink-0 flex-col items-center pt-[13px]">
-              <div className={`h-2.5 w-2.5 rounded-full border-2 border-white dark:border-slate-800 ${dotColor}`} />
+          <div key={step.deal.id}
+            className={`relative flex gap-3 md:gap-5 ${index < steps.length - 1 ? 'pb-4 md:pb-6' : ''}`}
+          >
+            {/* Dot column */}
+            <div className="relative z-10 flex w-[30px] shrink-0 flex-col items-center pt-[13px] md:w-[44px] md:pt-[15px]">
+              <div className={`h-2.5 w-2.5 rounded-full border-2 border-white dark:border-slate-800 md:h-3 md:w-3 ${dotColor}`} />
             </div>
 
             {/* Content column */}
             <div className="min-w-0 flex-1 pb-1">
 
               {/* Deal card */}
-              <MobileDealCard
+              <DealCard
                 deal={step.deal}
                 outgoing={step.outgoing}
                 itemMap={itemMap}
@@ -383,24 +201,25 @@ function MobileTimeline({ steps, itemId, itemMap, brandMap, photoByItemId, mainI
 
               {/* Primary item cards */}
               {primaryIn.length > 0 && (
-                <div className="mt-2 space-y-1.5">
+                <div className="mt-2 space-y-1.5 md:mt-3 md:space-y-2">
                   {primaryIn.map((di) => {
-                    const item        = itemMap[di.item_id];
-                    const brand       = brandMap[item?.brand_id ?? 0] ?? 'Unknown';
-                    const photoUrl    = photoByItemId[di.item_id];
-                    const isCurrent   = di.item_id === itemId;
-                    const costValue   = Number(di.total_value ?? 0);
-                    const estSold     = item?.estimated_sold_value != null ? Number(item.estimated_sold_value) : null;
+                    const item      = itemMap[di.item_id];
+                    const brand     = brandMap[item?.brand_id ?? 0] ?? 'Unknown';
+                    const photoUrl  = photoByItemId[di.item_id];
+                    const isCurrent = di.item_id === itemId;
+                    const cost      = Number(di.total_value ?? 0);
+                    const estSold   = item?.estimated_sold_value != null ? Number(item.estimated_sold_value) : null;
                     if (!item) return null;
 
                     return (
                       <Link key={di.id} href={`/inventory/${item.id}`}
-                        className={`group block rounded-xl border p-3 transition-colors ${
+                        className={`group block rounded-xl border p-3 transition-colors md:rounded-2xl md:p-4 ${
                           isCurrent
                             ? 'border-violet-200 bg-violet-50/60 dark:border-violet-700/50 dark:bg-violet-900/10'
-                            : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800'
+                            : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700/30'
                         }`}
                       >
+                        {/* Current item badge */}
                         {isCurrent && (
                           <div className="mb-2">
                             <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
@@ -408,27 +227,40 @@ function MobileTimeline({ steps, itemId, itemMap, brandMap, photoByItemId, mainI
                             </span>
                           </div>
                         )}
-                        <div className="flex items-center gap-3">
-                          <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-700">
+
+                        <div className="flex items-center gap-3 md:gap-4">
+                          {/* Photo */}
+                          <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-700 md:h-16 md:w-16 md:rounded-xl">
                             {photoUrl
-                              ? <Image src={photoUrl} alt={`${brand} ${item.model}`} fill className="object-cover" sizes="48px" unoptimized />
-                              : <PhotoPlaceholder small />}
+                              ? <Image src={photoUrl} alt={`${brand} ${item.model}`} fill className="object-cover"
+                                  sizes="(min-width: 768px) 64px, 48px" unoptimized />
+                              : <PhotoPlaceholder />}
                           </div>
+
+                          {/* Info */}
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold text-slate-900 group-hover:underline dark:text-white">
-                              {brand} {item.model}
-                            </p>
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="truncate text-sm font-semibold text-slate-900 group-hover:underline dark:text-white md:text-base">
+                                {brand} {item.model}
+                              </p>
+                              {/* Status badge — desktop only (mobile is too tight) */}
+                              {item.status && (
+                                <span className={`hidden shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize md:inline-block ${STATUS_STYLES[item.status] ?? STATUS_STYLES.owned}`}>
+                                  {item.status}
+                                </span>
+                              )}
+                            </div>
                             {(item.year || item.color) && (
-                              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 md:text-xs">
                                 {[item.year, item.color].filter(Boolean).join(' · ')}
                               </p>
                             )}
-                            {(costValue > 0 || (estSold != null && estSold > 0)) && (
-                              <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px]">
-                                {costValue > 0 && (
+                            {(cost > 0 || (estSold != null && estSold > 0)) && (
+                              <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] md:mt-1 md:text-xs">
+                                {cost > 0 && (
                                   <span>
                                     <span className="text-slate-400 dark:text-slate-500">Cost </span>
-                                    <span className="font-medium text-slate-700 dark:text-slate-200">{fmtMoney(costValue)}</span>
+                                    <span className="font-medium text-slate-700 dark:text-slate-200">{fmtMoney(cost)}</span>
                                   </span>
                                 )}
                                 {estSold != null && estSold > 0 && (
@@ -447,29 +279,15 @@ function MobileTimeline({ steps, itemId, itemMap, brandMap, photoByItemId, mainI
                 </div>
               )}
 
-              {/* Secondary items — collapsed by default, expand on tap */}
+              {/* Secondary items */}
               {!allFull && secondaryIn.length > 0 && (
-                <div className="mt-1.5">
-                  <button
-                    type="button"
-                    onClick={() => toggleExpand(step.deal.id)}
-                    className="flex items-center gap-1.5 rounded-lg py-1 pl-1 pr-2 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
-                  >
-                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-300 text-[11px] font-bold leading-none dark:border-slate-600">
-                      {isExpanded ? '−' : '+'}
-                    </span>
-                    {isExpanded
-                      ? 'Hide additional'
-                      : `${secondaryIn.length} more item${secondaryIn.length > 1 ? 's' : ''}`}
-                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
-                      fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                      className={`shrink-0 transition-transform ${isExpanded ? 'rotate-90' : '-rotate-90'}`}>
-                      <polyline points="15 18 9 12 15 6"/>
-                    </svg>
-                  </button>
-
-                  {isExpanded && (
-                    <div className="mt-1.5 space-y-1.5">
+                <>
+                  {/* Desktop: compact cards, always expanded */}
+                  <div className="mt-2 hidden md:block">
+                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
+                      Also received
+                    </p>
+                    <div className={`grid gap-2 ${secondaryIn.length >= 2 ? 'md:grid-cols-2' : ''}`}>
                       {secondaryIn.map((di) => {
                         const item     = itemMap[di.item_id];
                         const brand    = brandMap[item?.brand_id ?? 0] ?? 'Unknown';
@@ -477,27 +295,77 @@ function MobileTimeline({ steps, itemId, itemMap, brandMap, photoByItemId, mainI
                         if (!item) return null;
                         return (
                           <Link key={di.id} href={`/inventory/${item.id}`}
-                            className="group flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-2.5 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700/30"
+                            className="group flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700/30"
                           >
-                            <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-700">
+                            <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-700">
                               {photoUrl
-                                ? <Image src={photoUrl} alt={`${brand} ${item.model}`} fill className="object-cover" sizes="32px" unoptimized />
+                                ? <Image src={photoUrl} alt={`${brand} ${item.model}`} fill className="object-cover" sizes="40px" unoptimized />
                                 : <PhotoPlaceholder small />}
                             </div>
-                            <p className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800 group-hover:underline dark:text-slate-200">
-                              {brand} {item.model}
-                            </p>
-                            {item.status && (
-                              <span className={`ml-auto shrink-0 rounded-full px-1.5 text-[10px] font-medium capitalize ${STATUS_STYLES[item.status] ?? STATUS_STYLES.owned}`}>
-                                {item.status}
-                              </span>
-                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-slate-800 group-hover:underline dark:text-slate-200">
+                                {brand} {item.model}
+                              </p>
+                              {item.status && (
+                                <span className={`mt-0.5 inline-block rounded-full px-1.5 text-[10px] font-medium capitalize ${STATUS_STYLES[item.status] ?? STATUS_STYLES.owned}`}>
+                                  {item.status}
+                                </span>
+                              )}
+                            </div>
                           </Link>
                         );
                       })}
                     </div>
-                  )}
-                </div>
+                  </div>
+
+                  {/* Mobile: collapsed, expand on tap */}
+                  <div className="mt-1.5 md:hidden">
+                    <button type="button" onClick={() => toggleExpand(step.deal.id)}
+                      className="flex items-center gap-1.5 rounded-lg py-1 pl-1 pr-2 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                    >
+                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-300 text-[11px] font-bold leading-none dark:border-slate-600">
+                        {isExpanded ? '−' : '+'}
+                      </span>
+                      {isExpanded
+                        ? 'Hide additional'
+                        : `${secondaryIn.length} more item${secondaryIn.length > 1 ? 's' : ''}`}
+                      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                        className={`shrink-0 transition-transform ${isExpanded ? 'rotate-90' : '-rotate-90'}`}>
+                        <polyline points="15 18 9 12 15 6"/>
+                      </svg>
+                    </button>
+                    {isExpanded && (
+                      <div className="mt-1.5 space-y-1.5">
+                        {secondaryIn.map((di) => {
+                          const item     = itemMap[di.item_id];
+                          const brand    = brandMap[item?.brand_id ?? 0] ?? 'Unknown';
+                          const photoUrl = photoByItemId[di.item_id];
+                          if (!item) return null;
+                          return (
+                            <Link key={di.id} href={`/inventory/${item.id}`}
+                              className="group flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-2.5 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700/30"
+                            >
+                              <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-700">
+                                {photoUrl
+                                  ? <Image src={photoUrl} alt={`${brand} ${item.model}`} fill className="object-cover" sizes="32px" unoptimized />
+                                  : <PhotoPlaceholder small />}
+                              </div>
+                              <p className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800 group-hover:underline dark:text-slate-200">
+                                {brand} {item.model}
+                              </p>
+                              {item.status && (
+                                <span className={`ml-auto shrink-0 rounded-full px-1.5 text-[10px] font-medium capitalize ${STATUS_STYLES[item.status] ?? STATUS_STYLES.owned}`}>
+                                  {item.status}
+                                </span>
+                              )}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -510,11 +378,12 @@ function MobileTimeline({ steps, itemId, itemMap, brandMap, photoByItemId, mainI
 // ── Chain summary ─────────────────────────────────────────────────────────────
 
 interface ChainSummaryProps {
-  steps:   ChainStep[];
-  itemMap: Record<number, InventoryItemWithValue>;
+  steps:              ChainStep[];
+  itemMap:            Record<number, InventoryItemWithValue>;
+  finalRunningProfit: number;
 }
 
-function ChainSummary({ steps, itemMap }: ChainSummaryProps) {
+function ChainSummary({ steps, itemMap, finalRunningProfit }: ChainSummaryProps) {
   const startingCost = steps[0]?.incoming.reduce(
     (s, di) => s + Number(di.total_value ?? 0), 0,
   ) ?? 0;
@@ -523,6 +392,7 @@ function ChainSummary({ steps, itemMap }: ChainSummaryProps) {
     (s, step) => s + Number(step.deal.cash_received ?? 0), 0,
   );
 
+  // Current asset value: owned/listed items, deduplicated by item ID
   const heldValues = new Map<number, number>();
   steps.forEach((step) => {
     [...step.incoming, ...step.outgoing].forEach((di) => {
@@ -534,28 +404,37 @@ function ChainSummary({ steps, itemMap }: ChainSummaryProps) {
     });
   });
   const currentAssetValue = Array.from(heldValues.values()).reduce((a, b) => a + b, 0);
+
+  // ROI = (cash extracted + current assets) / starting cost − 1
   const totalValueCreated = cashExtracted + currentAssetValue;
   const chainRoi = startingCost > 0 ? ((totalValueCreated / startingCost) - 1) * 100 : null;
 
   const metrics: { label: string; value: string; accent?: string }[] = [
-    { label: 'Chain Started', value: steps[0]?.deal.deal_date ? formatDate(steps[0].deal.deal_date) : '—' },
-    { label: 'Operations',    value: String(steps.length) },
-    { label: 'Starting Cost', value: startingCost > 0 ? fmtMoney(startingCost) : '—' },
     {
-      label: 'Cash Extracted', value: fmtMoney(cashExtracted),
+      label: 'Started',
+      value: steps[0]?.deal.deal_date ? formatDate(steps[0].deal.deal_date) : '—',
+    },
+    { label: 'Operations', value: String(steps.length) },
+    { label: 'Cost Basis', value: startingCost > 0 ? fmtMoney(startingCost) : '—' },
+    {
+      label: 'Cash Extracted',
+      value: cashExtracted > 0 ? fmtMoney(cashExtracted) : '—',
       accent: cashExtracted > 0 ? 'text-emerald-600 dark:text-emerald-400' : undefined,
     },
-    { label: 'Current Assets', value: fmtMoney(currentAssetValue) },
     {
-      label: 'Total Value', value: fmtMoney(totalValueCreated),
-      accent: totalValueCreated > startingCost
+      label: 'Running Profit',
+      value: finalRunningProfit !== 0
+        ? (finalRunningProfit >= 0 ? '+' : '−') + fmtMoney(finalRunningProfit)
+        : '—',
+      accent: finalRunningProfit > 0
         ? 'text-emerald-600 dark:text-emerald-400'
-        : totalValueCreated < startingCost
+        : finalRunningProfit < 0
         ? 'text-rose-600 dark:text-rose-400'
         : undefined,
     },
+    { label: 'Current Assets', value: fmtMoney(currentAssetValue) },
     ...(chainRoi !== null ? [{
-      label: 'Chain ROI',
+      label: 'ROI',
       value: (chainRoi >= 0 ? '+' : '') + chainRoi.toFixed(0) + '%',
       accent: chainRoi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400',
     }] : []),
@@ -616,12 +495,16 @@ export default function TradeChainPage() {
   const steps: ChainStep[] = useMemo(
     () => (data?.deals ?? []).map((deal) => {
       const slots = dealItemsByDealId[deal.id] ?? [];
-      return { deal, incoming: slots.filter((di) => di.direction === 'in'), outgoing: slots.filter((di) => di.direction === 'out') };
+      return {
+        deal,
+        incoming: slots.filter((di) => di.direction === 'in'),
+        outgoing: slots.filter((di) => di.direction === 'out'),
+      };
     }),
     [data, dealItemsByDealId],
   );
 
-  // Backward-lineage path: current item + all ancestors (items given away to get it)
+  // Backward-lineage: current item + all ancestors (items traded away to acquire it)
   const mainItemIds = useMemo(() => {
     const ids = new Set<number>([itemId]);
     const acqDeal: Record<number, number>    = {};
@@ -645,7 +528,7 @@ export default function TradeChainPage() {
     return ids;
   }, [data, itemId]);
 
-  // Cumulative profit after each step
+  // Cumulative profit after each sale/trade step
   const runningProfits = useMemo(() => {
     let running = 0;
     return steps.map((step) => {
@@ -658,6 +541,8 @@ export default function TradeChainPage() {
       return running;
     });
   }, [steps, itemMap]);
+
+  const finalRunningProfit = runningProfits[runningProfits.length - 1] ?? 0;
 
   const rootItem  = itemMap[itemId];
   const rootBrand = brandMap[rootItem?.brand_id ?? 0] ?? '';
@@ -686,7 +571,7 @@ export default function TradeChainPage() {
 
       {/* Chain summary */}
       {!loading && !error && steps.length > 0 && (
-        <ChainSummary steps={steps} itemMap={itemMap} />
+        <ChainSummary steps={steps} itemMap={itemMap} finalRunningProfit={finalRunningProfit} />
       )}
 
       {/* Chain timeline */}
@@ -701,76 +586,15 @@ export default function TradeChainPage() {
         ) : steps.length === 0 ? (
           <p className="py-4 text-sm text-slate-500 dark:text-slate-400">No trade chain yet.</p>
         ) : (
-          <>
-            {/* ── Mobile timeline (< md) ──────────────────────────────── */}
-            <div className="md:hidden">
-              <MobileTimeline
-                steps={steps}
-                itemId={itemId}
-                itemMap={itemMap}
-                brandMap={brandMap}
-                photoByItemId={data?.photoByItemId ?? {}}
-                mainItemIds={mainItemIds}
-                runningProfits={runningProfits}
-              />
-            </div>
-
-            {/* ── Desktop timeline (≥ md) ─────────────────────────────── */}
-            <div className="hidden md:block">
-              {steps.map((step, index) => {
-                const mainIn      = step.incoming.filter((di) =>  mainItemIds.has(di.item_id));
-                const secondaryIn = step.incoming.filter((di) => !mainItemIds.has(di.item_id));
-                const allFull     = mainIn.length === 0;
-                const primaryIn   = allFull ? step.incoming : mainIn;
-
-                return (
-                  <div key={step.deal.id}>
-                    {index > 0 && <div className="flex justify-center"><ChainArrow /></div>}
-
-                    <DealConnector
-                      deal={step.deal}
-                      outgoing={step.outgoing}
-                      itemMap={itemMap}
-                      runningProfit={runningProfits[index]}
-                    />
-
-                    {step.incoming.length > 0 && (
-                      <>
-                        <div className="flex justify-center"><ChainArrow /></div>
-                        <div className={`grid gap-3 ${primaryIn.length >= 2 ? 'sm:grid-cols-2' : ''}`}>
-                          {primaryIn.map((di) => (
-                            <ItemNode
-                              key={di.id}
-                              di={di}
-                              item={itemMap[di.item_id]}
-                              brand={brandMap[itemMap[di.item_id]?.brand_id ?? 0] ?? 'Unknown'}
-                              photoUrl={data?.photoByItemId[di.item_id]}
-                              isCurrentItem={di.item_id === itemId}
-                            />
-                          ))}
-                        </div>
-                        {!allFull && secondaryIn.length > 0 && (
-                          <div className="mt-3">
-                            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Also received</p>
-                            <div className={`grid gap-2 ${secondaryIn.length >= 2 ? 'sm:grid-cols-2' : ''}`}>
-                              {secondaryIn.map((di) => (
-                                <CompactItemNode
-                                  key={di.id}
-                                  item={itemMap[di.item_id]}
-                                  brand={brandMap[itemMap[di.item_id]?.brand_id ?? 0] ?? 'Unknown'}
-                                  photoUrl={data?.photoByItemId[di.item_id]}
-                                />
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </>
+          <ChainTimeline
+            steps={steps}
+            itemId={itemId}
+            itemMap={itemMap}
+            brandMap={brandMap}
+            photoByItemId={data?.photoByItemId ?? {}}
+            mainItemIds={mainItemIds}
+            runningProfits={runningProfits}
+          />
         )}
       </section>
 
