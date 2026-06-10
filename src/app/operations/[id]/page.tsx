@@ -953,7 +953,9 @@ export default function OperationDetailPage() {
                             {addIncomingResults.map((res) => {
                               const alreadyIn = dealItems.some((di) => di.item_id === res.id && !removedDealItemIds.includes(di.id));
                               const alreadyPending = pendingIncoming.some((p) => p.item.id === res.id);
-                              const disabled = alreadyIn || alreadyPending;
+                              const invalidStatus = res.status === 'sold' || res.status === 'traded';
+                              const disabled = alreadyIn || alreadyPending || invalidStatus;
+                              const disabledReason = alreadyIn || alreadyPending ? 'already in trade' : invalidStatus ? `item is ${res.status}` : '';
                               return (
                                 <button
                                   key={res.id}
@@ -973,7 +975,7 @@ export default function OperationDetailPage() {
                                   </p>
                                   <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                                     {res.status}{res.condition ? ` · ${res.condition}` : ''}
-                                    {disabled ? ' · already in trade' : ''}
+                                    {disabledReason ? ` · ${disabledReason}` : ''}
                                   </p>
                                 </button>
                               );
