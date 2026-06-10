@@ -235,6 +235,84 @@ export async function getDealItemsByItemId(itemId: number) {
   return supabase.from('deal_items').select('*').eq('item_id', itemId);
 }
 
+// ─── Historical import helpers ────────────────────────────────────────────────
+
+export interface HistoricalImportInfo {
+  dealItemId:  number;
+  dealId:      number;
+  total_value: number;
+  deal_date:   string;
+}
+
+/** Returns the Historical Import deal_item for an item, or null if none exists. */
+export async function getHistoricalImportByItemId(
+  itemId: number,
+): Promise<{ data: HistoricalImportInfo | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from('deal_items')
+    .select('id, deal_id, total_value, deals(id, deal_date, deal_type)')
+    .eq('item_id', itemId)
+    .eq('direction', 'in');
+
+  if (error) return { data: null, error: error.message };
+
+  const hit = (data as any[] | null)?.find(
+    (di) => (di.deals as any)?.deal_type === 'Historical Import',
+  );
+
+  if (!hit) return { data: null, error: null };
+
+  return {
+    data: {
+      dealItemId:  hit.id,
+      dealId:      hit.deal_id,
+      total_value: Number(hit.total_value ?? 0),
+      deal_date:   (hit.deals as any)?.deal_date ?? '',
+    },
+    error: null,
+  };
+}
+
+export interface CreateItemWithHistoricalImportParams {
+  brandId:             number;
+  itemType:            string;
+  itemSubtypeId:       number | null;
+  model:               string;
+  serialNumber:        string | null;
+  year:                number | null;
+  color:               string | null;
+  condition:           string | null;
+  collectionType:      string | null;
+  estimatedSoldValue:  number | null;
+  notes:               string | null;
+  acquisitionDate:     string;   // ISO date string, e.g. "2024-03-15"
+  valueIn:             number;
+}
+
+/** Calls the create_item_with_historical_import RPC (atomic transaction). */
+export async function createItemWithHistoricalImport(
+  params: CreateItemWithHistoricalImportParams,
+): Promise<{ data: { item_id: number; deal_id: number } | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('create_item_with_historical_import', {
+    p_brand_id:             params.brandId,
+    p_item_type:            params.itemType,
+    p_item_subtype_id:      params.itemSubtypeId,
+    p_model:                params.model,
+    p_serial_number:        params.serialNumber,
+    p_year:                 params.year,
+    p_color:                params.color,
+    p_condition:            params.condition,
+    p_collection_type:      params.collectionType,
+    p_estimated_sold_value: params.estimatedSoldValue,
+    p_notes:                params.notes,
+    p_acquisition_date:     params.acquisitionDate,
+    p_value_in:             params.valueIn,
+  });
+
+  if (error) return { data: null, error: error.message };
+  return { data: data as { item_id: number; deal_id: number }, error: null };
+}
+
 export async function createInventoryItem(item: NewInventoryItem) {
   return supabase.from('inventory_items').insert(item).select().single();
 }

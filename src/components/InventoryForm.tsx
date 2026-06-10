@@ -20,14 +20,17 @@ import type {
 import {
   createBrand,
   createInventoryItem,
+  createItemWithHistoricalImport,
   getBrands,
-  getItemSubtypes,
+  getHistoricalImportByItemId,
   getInventoryItemById,
   getInventoryItemWithValueById,
+  getItemSubtypes,
   getDealItemsByItemId,
   getMainPhotosForItems,
   getPhotoUrl,
   updateInventoryItem,
+  type HistoricalImportInfo,
 } from '@/lib/supabase';
 
 const SUBTYPE_TO_LEGACY_TYPE: Record<string, ItemType> = {
@@ -148,6 +151,13 @@ export default function InventoryForm({
   const [valueIn, setValueIn] = useState<number | null>(null);
   const [valueOut, setValueOut] = useState<number | null>(null);
 
+  // Historical import state
+  const [historicalImport,    setHistoricalImport]    = useState(false);
+  const [histAcquisitionDate, setHistAcquisitionDate] = useState('');
+  const [histValueIn,         setHistValueIn]         = useState('');
+  // Edit mode: existing historical import record (read-only display)
+  const [existingHistImport, setExistingHistImport] = useState<HistoricalImportInfo | null>(null);
+
   const existingBrand = useMemo(
     () => brands.find((b) => b.name.toLowerCase() === brandInput.trim().toLowerCase()),
     [brandInput, brands],
@@ -197,11 +207,12 @@ export default function InventoryForm({
 
     async function loadItem() {
       setLoading(true);
-      const [itemResult, withValueResult, dealItemsResult, photosResult] = await Promise.all([
+      const [itemResult, withValueResult, dealItemsResult, photosResult, histImportResult] = await Promise.all([
         getInventoryItemById(Number(itemId)),
         getInventoryItemWithValueById(Number(itemId)),
         getDealItemsByItemId(Number(itemId)),
         getMainPhotosForItems([Number(itemId)]),
+        getHistoricalImportByItemId(Number(itemId)),
       ]);
       setLoading(false);
 
@@ -252,6 +263,11 @@ export default function InventoryForm({
           .filter((di) => di.direction === 'out')
           .reduce((s, di) => s + Number(di.total_value ?? 0), 0);
         setValueOut(outSum > 0 ? outSum : null);
+      }
+
+      // Historical import (read-only display in edit mode)
+      if (!histImportResult.error && histImportResult.data) {
+        setExistingHistImport(histImportResult.data);
       }
     }
 
@@ -309,6 +325,19 @@ export default function InventoryForm({
       }
     }
 
+    // Historical import validation (create mode only)
+    if (!itemId && historicalImport) {
+      if (!histAcquisitionDate) {
+        setError('Acquisition date is required for Historical Import.');
+        return;
+      }
+      const parsedValueIn = Number(histValueIn);
+      if (!histValueIn || isNaN(parsedValueIn) || parsedValueIn <= 0) {
+        setError('Value In must be greater than 0 for Historical Import.');
+        return;
+      }
+    }
+
     setSaving(true);
 
     let brandId = selectedBrandId;
@@ -326,6 +355,50 @@ export default function InventoryForm({
     const derivedItemType: ItemType =
       (selectedSubtype && SUBTYPE_TO_LEGACY_TYPE[selectedSubtype.name]) ?? 'guitar';
 
+    // ── Create mode + Historical Import: use atomic RPC ───────────────────────
+    if (!itemId && historicalImport) {
+      const rpcResult = await createItemWithHistoricalImport({
+        brandId:            brandId!,
+        itemType:           derivedItemType,
+        itemSubtypeId:      selectedSubtypeId,
+        model:              model.trim(),
+        serialNumber:       serialNumber.trim() || null,
+        year:               year ? Number(year) : null,
+        color:              color.trim() || null,
+        condition:          condition || null,
+        collectionType:     collectionType || null,
+        estimatedSoldValue: estimatedSoldValue ? Number(estimatedSoldValue) : null,
+        notes:              notes.trim() || null,
+        acquisitionDate:    histAcquisitionDate,
+        valueIn:            Number(histValueIn),
+      });
+      setSaving(false);
+      if (rpcResult.error || !rpcResult.data) {
+        setError(rpcResult.error ?? 'Could not create item with historical import.');
+        return;
+      }
+      // Standalone form: navigate to inventory
+      if (!hideHeader) {
+        router.push(backHref ?? '/inventory');
+        return;
+      }
+      // Embedded form: fetch and return the created item
+      const created = await import('@/lib/supabase').then((m) =>
+        m.getInventoryItemById(rpcResult.data!.item_id),
+      );
+      if (onCreated && created.data) onCreated(created.data as any);
+      // Reset form
+      setBrandInput(''); setSelectedBrandId(null);
+      const firstSub = allSubtypes.find((s) => s.is_active) ?? allSubtypes[0] ?? null;
+      setSelectedSubtypeId(firstSub?.id ?? null);
+      setModel(''); setSerialNumber(''); setYear(''); setColor('');
+      setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes('');
+      setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
+      setSuccessMessage('Item saved.'); setError(null);
+      return;
+    }
+
+    // ── Normal create / update path ───────────────────────────────────────────
     const payload: NewInventoryItem = {
       brand_id: brandId!,
       item_type: derivedItemType,
@@ -381,6 +454,9 @@ export default function InventoryForm({
     setCollectionType('');
     setEstimatedSoldValue('');
     setNotes('');
+    setHistoricalImport(false);
+    setHistAcquisitionDate('');
+    setHistValueIn('');
     setSuccessMessage('Item saved.');
     setError(null);
   };
@@ -610,6 +686,97 @@ export default function InventoryForm({
           className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
         />
       </div>
+
+      {/* ── Historical import ───────────────────────────────────────────────── */}
+
+      {/* Create mode: checkbox + conditional fields */}
+      {!itemId && (
+        <div className="sm:col-span-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+            <label className="flex cursor-pointer items-center gap-2.5">
+              <input
+                type="checkbox"
+                id="historicalImport"
+                checked={historicalImport}
+                onChange={(e) => setHistoricalImport(e.target.checked)}
+                disabled={disabled}
+                className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-slate-800 dark:border-slate-600"
+              />
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Historical import
+              </span>
+            </label>
+            <p className="mt-1 pl-6 text-xs text-slate-500 dark:text-slate-400">
+              Records acquisition date and cost without affecting cash balance.
+            </p>
+
+            {historicalImport && (
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                {/* Acquisition date */}
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Acquisition date <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={histAcquisitionDate}
+                    onChange={(e) => setHistAcquisitionDate(e.target.value)}
+                    disabled={disabled}
+                    className={inputClass}
+                  />
+                </div>
+
+                {/* Value in */}
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Value in <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">$</span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={histValueIn}
+                      onChange={(e) => setHistValueIn(e.target.value)}
+                      disabled={disabled}
+                      placeholder="0.00"
+                      className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Edit mode: show existing historical import as read-only */}
+      {itemId && existingHistImport && (
+        <div className="sm:col-span-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+            <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+              Historical import
+            </p>
+            <div className="mt-2 flex flex-wrap gap-6 text-sm">
+              <div>
+                <span className="text-slate-500 dark:text-slate-400">Acquired </span>
+                <span className="font-medium text-slate-900 dark:text-slate-100">
+                  {new Date(existingHistImport.deal_date + 'T12:00:00').toLocaleDateString('en-US', {
+                    month: 'short', day: 'numeric', year: 'numeric',
+                  })}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-500 dark:text-slate-400">Value in </span>
+                <span className="font-medium text-slate-900 dark:text-slate-100">
+                  ${existingHistImport.total_value.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
