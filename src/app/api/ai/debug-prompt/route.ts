@@ -144,6 +144,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Load photos (best-effort) ─────────────────────────────────────────────────
+  let photoUrls: string[] = [];
+  try {
+    const { data: photos } = await db
+      .from('inventory_item_photos')
+      .select('storage_path, is_main, sort_order')
+      .eq('inventory_item_id', inventoryItemId)
+      .order('is_main', { ascending: false })
+      .order('sort_order', { ascending: true })
+      .limit(4);
+
+    if (photos?.length) {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const storageBase = `${supabaseUrl}/storage/v1/object/public/inventory-photos`;
+      photoUrls = (photos as { storage_path: string }[]).map(
+        (p) => `${storageBase}/${p.storage_path}`,
+      );
+    }
+  } catch {
+    // Continue without photos
+  }
+
   // ── Build messages (mirrors generateListing, no OpenAI call) ─────────────────
   const listingItem = {
     brandName:          (item.brands as any)?.name ?? 'Unknown brand',
@@ -161,7 +183,7 @@ export async function POST(req: NextRequest) {
   const itemDataBlock = buildItemContext(listingItem);
   const draftText     = typeof currentDraft === 'string' ? currentDraft.trim() : '';
 
-  const userMessageParts = [
+  const textContent = [
     'Item details:',
     itemDataBlock,
     '',
@@ -169,12 +191,24 @@ export async function POST(req: NextRequest) {
     draftText
       ? `\nThe seller has an existing draft they would like improved:\n"""\n${draftText}\n"""`
       : '',
-  ].filter((l) => l !== '');
+  ].filter((l) => l !== '').join('\n');
 
-  const finalUserMessage   = userMessageParts.join('\n');
+  const hasPhotos = photoUrls.length > 0;
+
+  const userContentForDebug = hasPhotos
+    ? [
+        { type: 'text', text: textContent },
+        ...photoUrls.map((url) => ({
+          type: 'image_url',
+          image_url: { url, detail: 'low' },
+        })),
+      ]
+    : textContent;
+
+  const finalUserMessage   = textContent;
   const fullMessagesPayload = [
     { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user',   content: finalUserMessage },
+    { role: 'user',   content: userContentForDebug },
   ];
 
   return NextResponse.json({
@@ -192,5 +226,7 @@ export async function POST(req: NextRequest) {
     existingDraft:       draftText || null,
     finalUserMessage,
     fullMessagesPayload,
+    photoCount:          photoUrls.length,
+    photoUrls,
   });
 }

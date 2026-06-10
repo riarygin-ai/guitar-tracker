@@ -50,7 +50,9 @@ interface DebugPayload {
   taskPrompt:          string;
   existingDraft:       string | null;
   finalUserMessage:    string;
-  fullMessagesPayload: Array<{ role: string; content: string }>;
+  fullMessagesPayload: Array<{ role: string; content: unknown }>;
+  photoCount:          number;
+  photoUrls:           string[];
 }
 
 // ── Props ──────────────────────────────────────────────────────────────────────
@@ -687,6 +689,32 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
                     <code className="font-mono text-slate-800 dark:text-slate-200">{v}</code>
                   </span>
                 ))}
+              </div>
+
+              {/* Photos */}
+              <div className="mt-3">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-400">
+                  Photos sent to vision
+                  <span className="ml-2 font-normal normal-case text-slate-500 dark:text-slate-400">
+                    {debugPayload.photoCount === 0 ? '(none)' : `${debugPayload.photoCount} photo${debugPayload.photoCount > 1 ? 's' : ''}`}
+                  </span>
+                </p>
+                {debugPayload.photoUrls.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {debugPayload.photoUrls.map((url, i) => (
+                      <a
+                        key={i}
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-slate-700"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt={`Photo ${i + 1}`} className="h-full w-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* System message */}

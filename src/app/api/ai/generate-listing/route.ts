@@ -127,9 +127,30 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Load photos for vision (best-effort; fails silently) ────────────────────
+  let imageUrls: string[] = [];
+  try {
+    const { data: photos } = await db
+      .from('inventory_item_photos')
+      .select('storage_path, is_main, sort_order')
+      .eq('inventory_item_id', inventoryItemId)
+      .order('is_main', { ascending: false })
+      .order('sort_order', { ascending: true })
+      .limit(4);
+
+    if (photos?.length) {
+      const storageBase = `${SUPABASE_URL}/storage/v1/object/public/inventory-photos`;
+      imageUrls = (photos as { storage_path: string }[]).map(
+        (p) => `${storageBase}/${p.storage_path}`,
+      );
+    }
+  } catch {
+    // Continue without photos
+  }
+
   // ── Call OpenAI (server-side only) ───────────────────────────────────────────
   try {
-    const { text, model, promptSnapshot } = await generateListing(
+    const { text, model, promptSnapshot, visionNotes } = await generateListing(
       {
         brandName:          (item.brands as any)?.name       ?? 'Unknown brand',
         model:              item.model,
@@ -147,9 +168,17 @@ export async function POST(req: NextRequest) {
       listingType as ListingType,
       typeof currentDraft === 'string' ? currentDraft : undefined,
       promptOverride,
+      imageUrls,
     );
 
-    return NextResponse.json({ text, ai_model: model, ai_prompt_id: aiPromptId, prompt_snapshot: promptSnapshot });
+    return NextResponse.json({
+      text,
+      ai_model:           model,
+      ai_prompt_id:       aiPromptId,
+      prompt_snapshot:    promptSnapshot,
+      vision_photo_count: imageUrls.length,
+      vision_notes:       visionNotes,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Generation failed';
     console.error('[generate-listing] OpenAI error:', message);

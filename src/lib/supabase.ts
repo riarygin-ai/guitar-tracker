@@ -644,6 +644,20 @@ export async function getDisplayPhotosForItems(
   return result;
 }
 
+// Up to 4 photos for AI listing generation: main first, then by sort_order.
+export async function prepareListingImages(itemId: number): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('inventory_item_photos')
+    .select('storage_path, is_main, sort_order')
+    .eq('inventory_item_id', itemId)
+    .order('is_main', { ascending: false })
+    .order('sort_order', { ascending: true })
+    .limit(4);
+
+  if (error || !data?.length) return [];
+  return (data as { storage_path: string }[]).map((row) => getPhotoUrl(row.storage_path));
+}
+
 export async function uploadItemPhoto(
   itemId: number,
   file: File

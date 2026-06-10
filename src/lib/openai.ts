@@ -78,7 +78,19 @@ Accuracy Requirements:
 - Never create fictional stories, provenance, studio use history, celebrity connections, or ownership history.
 - Never use knowledge about a model that was not provided in the input.
 - If information is not present in the provided data, do not use prior knowledge about the model.
-- Every factual statement in the listing must be supported by the provided input.`;
+- Every factual statement in the listing must be supported by the provided input.
+
+Photo Analysis (when photos are provided):
+- If one or more photos are included, observe them before writing the listing.
+- At the very start of your response, output a brief internal observation block in this exact format:
+  <vision_notes>
+  [2–4 concise lines describing visible condition, color/finish, and any notable cosmetic details]
+  </vision_notes>
+- After the closing tag, write the listing as instructed.
+- Only describe what is clearly and directly visible in the photos.
+- Do not infer pickup models, wood species, hardware brand, country of origin, serial number, or any specification that cannot be read directly as text from the photo.
+- Use visual observations to confirm or supplement the provided item data, not to contradict it.
+- Do not claim modifications, damage, or accessories that are not clearly visible.`;
 
 export const LISTING_INSTRUCTIONS: Record<ListingType, string> = {
   reverb: `Write a Reverb.com listing body (no title needed).
@@ -143,7 +155,8 @@ export async function generateListing(
   listingType: ListingType,
   currentDraft?: string,
   promptOverride?: PromptOverride,
-): Promise<{ text: string; model: string; promptSnapshot: string }> {
+  imageUrls?: string[],
+): Promise<{ text: string; model: string; promptSnapshot: string; visionNotes: string | null }> {
   const client = getClient();
 
   // Prefer DB-loaded values; fall back to hardcoded constants.
@@ -151,7 +164,7 @@ export async function generateListing(
   const resolvedTemperature = promptOverride?.temperature               ?? TEMPERATURE;
   const resolvedInstruction = promptOverride?.promptText                ?? LISTING_INSTRUCTIONS[listingType];
 
-  const userMessage = [
+  const textContent = [
     'Item details:',
     buildItemContext(item),
     '',
@@ -163,17 +176,45 @@ export async function generateListing(
     .filter((l) => l !== '')
     .join('\n');
 
+  const hasImages = (imageUrls?.length ?? 0) > 0;
+
+  type ContentPart =
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string; detail: 'low' } };
+
+  const userContent: string | ContentPart[] = hasImages
+    ? [
+        { type: 'text', text: textContent },
+        ...imageUrls!.map((url): ContentPart => ({
+          type: 'image_url',
+          image_url: { url, detail: 'low' },
+        })),
+      ]
+    : textContent;
+
   const response = await client.chat.completions.create({
     model:       resolvedModel,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user',   content: userMessage },
+      { role: 'user',   content: userContent as any },
     ],
     max_tokens:  MAX_TOKENS,
     temperature: resolvedTemperature,
   });
 
-  const text = response.choices[0]?.message?.content?.trim();
-  if (!text) throw new Error('OpenAI returned an empty response');
-  return { text, model: resolvedModel, promptSnapshot: resolvedInstruction };
+  const raw = response.choices[0]?.message?.content?.trim();
+  if (!raw) throw new Error('OpenAI returned an empty response');
+
+  let text        = raw;
+  let visionNotes: string | null = null;
+
+  if (hasImages) {
+    const match = raw.match(/<vision_notes>([\s\S]*?)<\/vision_notes>/);
+    if (match) {
+      visionNotes = match[1].trim();
+      text = raw.replace(/<vision_notes>[\s\S]*?<\/vision_notes>\s*/g, '').trim();
+    }
+  }
+
+  return { text, model: resolvedModel, promptSnapshot: resolvedInstruction, visionNotes };
 }
