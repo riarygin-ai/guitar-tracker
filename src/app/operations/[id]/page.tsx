@@ -83,10 +83,8 @@ export default function OperationDetailPage() {
       getDisplayPhotosForItems(allPhotoItemIds).then(setPhotoByItemId);
     }
 
-    // Load all expenses for outgoing items across all deals (non-blocking) — used for realized gain
-    const outgoingItemIds = (dealItemsResult.data || [])
-      .filter((di: any) => di.direction === 'out')
-      .map((di: any) => di.item_id as number);
+    // Load expenses for all deal items (non-blocking) — outgoing: realized gain; incoming: potential reward
+    const outgoingItemIds = (dealItemsResult.data || []).map((di: any) => di.item_id as number);
     if (outgoingItemIds.length > 0) {
       getInventoryExpensesByItemIds(outgoingItemIds).then((result) => {
         if (!result.error && result.data) {
@@ -599,7 +597,8 @@ export default function OperationDetailPage() {
                     ? (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0))
                     : Number(di.total_value ?? 0);
                   const estimatedSold = Number(item.estimated_sold_value ?? 0);
-                  const potentialReward = estimatedSold - valueIn;
+                  const incomingItemExpenses = itemExpensesByItemId[item.id] ?? 0;
+                  const potentialReward = estimatedSold - valueIn - incomingItemExpenses;
                   return (
                     <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
                       <div className="flex gap-4">

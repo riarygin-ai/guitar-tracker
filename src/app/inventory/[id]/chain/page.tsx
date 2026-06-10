@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { getItemLineage, type ItemTimelineData } from '@/lib/supabase';
+import { getItemLineage, getInventoryExpensesByItemIds, type ItemTimelineData } from '@/lib/supabase';
 import type { Deal, DealItem, InventoryItemWithValue } from '@/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -62,20 +62,22 @@ function PhotoPlaceholder({ small }: { small?: boolean }) {
 // ── Deal card (unified, responsive) ──────────────────────────────────────────
 
 interface DealCardProps {
-  deal:          Deal;
-  outgoing:      DealItem[];
-  itemMap:       Record<number, InventoryItemWithValue>;
-  runningProfit: number;
+  deal:              Deal;
+  outgoing:          DealItem[];
+  itemMap:           Record<number, InventoryItemWithValue>;
+  expensesByItemId:  Record<number, number>;
+  runningProfit:     number;
 }
 
-function DealCard({ deal, outgoing, itemMap, runningProfit }: DealCardProps) {
+function DealCard({ deal, outgoing, itemMap, expensesByItemId, runningProfit }: DealCardProps) {
   const isValueDeal  = deal.deal_type === 'sale' || deal.deal_type === 'trade';
   const cashPaid     = Number(deal.cash_paid ?? 0);
   const cashReceived = Number(deal.cash_received ?? 0);
   const profit = isValueDeal
     ? outgoing.reduce((sum, di) => {
         const item = itemMap[di.item_id];
-        return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0));
+        const itemExpenses = expensesByItemId[di.item_id] ?? 0;
+        return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0) - itemExpenses);
       }, 0)
     : null;
   const typeColor = DEAL_TYPE_COLORS[deal.deal_type] ?? DEAL_TYPE_COLORS.purchase;
@@ -144,17 +146,18 @@ function DealCard({ deal, outgoing, itemMap, runningProfit }: DealCardProps) {
 // Desktop (≥ md): 44px dot column, 64px photos, secondary items as compact cards.
 
 interface ChainTimelineProps {
-  steps:          ChainStep[];
-  itemId:         number;
-  itemMap:        Record<number, InventoryItemWithValue>;
-  brandMap:       Record<number, string>;
-  photoByItemId:  Record<number, string>;
-  mainItemIds:    Set<number>;
-  runningProfits: number[];
+  steps:             ChainStep[];
+  itemId:            number;
+  itemMap:           Record<number, InventoryItemWithValue>;
+  brandMap:          Record<number, string>;
+  photoByItemId:     Record<number, string>;
+  mainItemIds:       Set<number>;
+  runningProfits:    number[];
+  expensesByItemId:  Record<number, number>;
 }
 
 function ChainTimeline({
-  steps, itemId, itemMap, brandMap, photoByItemId, mainItemIds, runningProfits,
+  steps, itemId, itemMap, brandMap, photoByItemId, mainItemIds, runningProfits, expensesByItemId,
 }: ChainTimelineProps) {
   const [expandedDeals, setExpandedDeals] = useState(new Set<number>());
 
@@ -196,6 +199,7 @@ function ChainTimeline({
                 deal={step.deal}
                 outgoing={step.outgoing}
                 itemMap={itemMap}
+                expensesByItemId={expensesByItemId}
                 runningProfit={runningProfits[index]}
               />
 
@@ -381,9 +385,10 @@ interface ChainSummaryProps {
   steps:              ChainStep[];
   itemMap:            Record<number, InventoryItemWithValue>;
   finalRunningProfit: number;
+  totalChainExpenses: number;
 }
 
-function ChainSummary({ steps, itemMap, finalRunningProfit }: ChainSummaryProps) {
+function ChainSummary({ steps, itemMap, finalRunningProfit, totalChainExpenses }: ChainSummaryProps) {
   const startingCost = steps[0]?.incoming.reduce(
     (s, di) => s + Number(di.total_value ?? 0), 0,
   ) ?? 0;
@@ -405,9 +410,10 @@ function ChainSummary({ steps, itemMap, finalRunningProfit }: ChainSummaryProps)
   });
   const currentAssetValue = Array.from(heldValues.values()).reduce((a, b) => a + b, 0);
 
-  // ROI = (cash extracted + current assets) / starting cost − 1
+  // ROI = (cash extracted + current assets) / (starting cost + total expenses) − 1
   const totalValueCreated = cashExtracted + currentAssetValue;
-  const chainRoi = startingCost > 0 ? ((totalValueCreated / startingCost) - 1) * 100 : null;
+  const totalInvested = startingCost + totalChainExpenses;
+  const chainRoi = totalInvested > 0 ? ((totalValueCreated / totalInvested) - 1) * 100 : null;
 
   const metrics: { label: string; value: string; accent?: string }[] = [
     {
@@ -466,14 +472,27 @@ export default function TradeChainPage() {
   const params = useParams();
   const itemId = Number(params.id);
 
-  const [data,    setData]    = useState<ItemTimelineData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState<string | null>(null);
+  const [data,             setData]             = useState<ItemTimelineData | null>(null);
+  const [loading,          setLoading]          = useState(true);
+  const [error,            setError]            = useState<string | null>(null);
+  const [expensesByItemId, setExpensesByItemId] = useState<Record<number, number>>({});
 
   useEffect(() => {
     let cancelled = false;
     getItemLineage(itemId).then(({ data, error }) => {
       if (!cancelled) { setData(data); setError(error); setLoading(false); }
+
+      const allItemIds = (data?.inventoryItems ?? []).map((i: any) => i.id as number);
+      if (allItemIds.length > 0) {
+        getInventoryExpensesByItemIds(allItemIds).then((result) => {
+          if (cancelled || result.error || !result.data) return;
+          const map: Record<number, number> = {};
+          for (const exp of result.data) {
+            if (exp.item_id != null) map[exp.item_id] = (map[exp.item_id] ?? 0) + exp.amount;
+          }
+          if (!cancelled) setExpensesByItemId(map);
+        });
+      }
     });
     return () => { cancelled = true; };
   }, [itemId]);
@@ -535,14 +554,16 @@ export default function TradeChainPage() {
       if (step.deal.deal_type === 'sale' || step.deal.deal_type === 'trade') {
         running += step.outgoing.reduce((sum, di) => {
           const item = itemMap[di.item_id];
-          return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0));
+          const itemExpenses = expensesByItemId[di.item_id] ?? 0;
+          return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0) - itemExpenses);
         }, 0);
       }
       return running;
     });
-  }, [steps, itemMap]);
+  }, [steps, itemMap, expensesByItemId]);
 
   const finalRunningProfit = runningProfits[runningProfits.length - 1] ?? 0;
+  const totalChainExpenses = Object.values(expensesByItemId).reduce((sum, v) => sum + v, 0);
 
   const rootItem  = itemMap[itemId];
   const rootBrand = brandMap[rootItem?.brand_id ?? 0] ?? '';
@@ -571,7 +592,7 @@ export default function TradeChainPage() {
 
       {/* Chain summary */}
       {!loading && !error && steps.length > 0 && (
-        <ChainSummary steps={steps} itemMap={itemMap} finalRunningProfit={finalRunningProfit} />
+        <ChainSummary steps={steps} itemMap={itemMap} finalRunningProfit={finalRunningProfit} totalChainExpenses={totalChainExpenses} />
       )}
 
       {/* Chain timeline */}
@@ -594,6 +615,7 @@ export default function TradeChainPage() {
             photoByItemId={data?.photoByItemId ?? {}}
             mainItemIds={mainItemIds}
             runningProfits={runningProfits}
+            expensesByItemId={expensesByItemId}
           />
         )}
       </section>

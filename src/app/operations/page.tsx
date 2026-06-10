@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems, getDisplayPhotosForItems } from '@/lib/supabase';
+import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems, getDisplayPhotosForItems, getInventoryExpenses } from '@/lib/supabase';
+import type { InventoryExpense } from '@/types';
 import { splitSearchTerms } from '@/lib/search';
 import type { Brand, Deal, DealItem, InventoryItemWithValue } from '@/types';
 
@@ -85,6 +86,7 @@ export default function OperationsPage() {
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemWithValue[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [expenses, setExpenses] = useState<InventoryExpense[]>([]);
   const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,11 +103,12 @@ export default function OperationsPage() {
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [dealsResult, dealItemsResult, itemsResult, brandsResult] = await Promise.all([
+      const [dealsResult, dealItemsResult, itemsResult, brandsResult, expensesResult] = await Promise.all([
         getDeals(),
         getDealItems(),
         getInventoryItemsWithValue(),
         getBrands(),
+        getInventoryExpenses(),
       ]);
       setLoading(false);
 
@@ -118,6 +121,7 @@ export default function OperationsPage() {
       setDealItems(dealItemsResult.data || []);
       setInventoryItems(itemsResult.data || []);
       setBrands(brandsResult.data || []);
+      setExpenses(expensesResult.data || []);
 
       // Load photos for all referenced items in one extra query (non-blocking)
       const allItemIds = Array.from(new Set((dealItemsResult.data || []).map((di) => di.item_id)));
@@ -169,6 +173,14 @@ export default function OperationsPage() {
     [inventoryItems]
   );
 
+  const expensesByItemId = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const exp of expenses) {
+      if (exp.item_id != null) map[exp.item_id] = (map[exp.item_id] ?? 0) + exp.amount;
+    }
+    return map;
+  }, [expenses]);
+
   const getDealTypeColor = (dealType: string) => {
     switch (dealType) {
       case 'purchase': return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700';
@@ -196,9 +208,10 @@ export default function OperationsPage() {
     if (deal.deal_type !== 'sale' && deal.deal_type !== 'trade') return null;
     const items = dealItemsByDealId[deal.id] ?? [];
     const out = items.filter((di) => di.direction === 'out');
-    const outValue = out.reduce((s, di) => s + Number(di.total_value ?? 0), 0);
-    const outCost  = out.reduce((s, di) => s + Number(valueInByItemId[di.item_id] ?? 0), 0);
-    return outValue - outCost;
+    const outValue    = out.reduce((s, di) => s + Number(di.total_value ?? 0), 0);
+    const outCost     = out.reduce((s, di) => s + Number(valueInByItemId[di.item_id] ?? 0), 0);
+    const outExpenses = out.reduce((s, di) => s + (expensesByItemId[di.item_id] ?? 0), 0);
+    return outValue - outCost - outExpenses;
   };
 
   const getCashColor = (v: number) => v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-slate-600';

@@ -8,6 +8,7 @@ import {
   createSellOperation,
   getBrands,
   getInventoryItemWithValueById,
+  getInventoryExpensesByItemIds,
   searchInventoryItems,
   getDisplayPhotosForItems,
 } from '@/lib/supabase';
@@ -37,6 +38,7 @@ export default function SellOperationForm() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [valueIn, setValueIn] = useState<number | null>(null);
+  const [totalExpenses, setTotalExpenses] = useState(0);
   const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -75,10 +77,14 @@ export default function SellOperationForm() {
   }, []);
 
   useEffect(() => {
-    if (!selectedItem) { setValueIn(null); return; }
+    if (!selectedItem) { setValueIn(null); setTotalExpenses(0); return; }
     getInventoryItemWithValueById(selectedItem.id).then((r) => {
       if (!r.error && r.data) setValueIn((r.data as any).value_in ?? null);
       else setValueIn(null);
+    });
+    getInventoryExpensesByItemIds([selectedItem.id]).then((r) => {
+      if (!r.error && r.data) setTotalExpenses(r.data.reduce((sum, exp) => sum + exp.amount, 0));
+      else setTotalExpenses(0);
     });
   }, [selectedItem]);
 
@@ -165,8 +171,9 @@ export default function SellOperationForm() {
   };
 
   const valueOutNum = Number(cashReceived) || 0;
-  const realizedGain = valueIn != null ? valueOutNum - valueIn : null;
-  const realizedRoi = realizedGain != null && valueIn != null && valueIn > 0 ? (realizedGain / valueIn) * 100 : null;
+  const costBasis = (valueIn ?? 0) + totalExpenses;
+  const realizedGain = valueIn != null ? valueOutNum - valueIn - totalExpenses : null;
+  const realizedRoi = realizedGain != null && costBasis > 0 ? (realizedGain / costBasis) * 100 : null;
   const fmt = (v: number | null) => v != null ? `$${v.toFixed(2)}` : '—';
   const fmtPct = (v: number | null) => v != null ? `${v.toFixed(2)}%` : '—';
   const metricColor = (v: number | null) =>

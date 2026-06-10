@@ -84,6 +84,11 @@ export default function HomePage() {
     inventoryItems.map((item) => [item.id, Number(item.value_in ?? 0)])
   )
 
+  const expensesByItemId: Record<number, number> = {}
+  for (const exp of inventoryExpenses) {
+    if (exp.item_id != null) expensesByItemId[exp.item_id] = (expensesByItemId[exp.item_id] ?? 0) + Number(exp.amount ?? 0)
+  }
+
   const dealItemsByDealId = dealItems.reduce<Record<number, any[]>>((map, item) => {
     map[item.deal_id] ??= []
     map[item.deal_id].push(item)
@@ -115,8 +120,9 @@ export default function HomePage() {
     const outgoingItems = items.filter((item) => item.direction === 'out')
     const outgoingValue = outgoingItems.reduce((sum, item) => sum + Number(item.total_value ?? 0), 0)
     const outgoingCost = outgoingItems.reduce((sum, item) => sum + Number(valueInByItemId[item.item_id] ?? 0), 0)
+    const outgoingExpenses = outgoingItems.reduce((sum, item) => sum + (expensesByItemId[item.item_id] ?? 0), 0)
 
-    getMonthRow(month).profit += outgoingValue - outgoingCost
+    getMonthRow(month).profit += outgoingValue - outgoingCost - outgoingExpenses
   })
 
   inventoryExpenses.forEach((expense) => {
