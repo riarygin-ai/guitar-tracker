@@ -935,6 +935,12 @@ export default function InventoryForm({
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Est. Sold</p>
                                 <p className="mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-100">{fmt(parsedEstimated)}</p>
                               </div>
+                              {totalItemExpenses > 0 && (
+                                <div>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400">Expenses</p>
+                                  <p className="mt-0.5 text-lg font-semibold text-rose-600 dark:text-rose-400">−{fmt(totalItemExpenses)}</p>
+                                </div>
+                              )}
                               <div>
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Potential Reward</p>
                                 <p className={`mt-0.5 text-lg font-semibold ${metricColor(potentialReward)}`}>{fmt(potentialReward)}</p>
@@ -951,6 +957,12 @@ export default function InventoryForm({
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Value Out</p>
                                 <p className="mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-100">{fmt(valueOut)}</p>
                               </div>
+                              {totalItemExpenses > 0 && (
+                                <div>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400">Expenses</p>
+                                  <p className="mt-0.5 text-lg font-semibold text-rose-600 dark:text-rose-400">−{fmt(totalItemExpenses)}</p>
+                                </div>
+                              )}
                               <div>
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Realized Gain</p>
                                 <p className={`mt-0.5 text-lg font-semibold ${metricColor(realizedGain)}`}>{fmt(realizedGain)}</p>

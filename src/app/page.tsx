@@ -95,10 +95,10 @@ export default function HomePage() {
     return map
   }, {})
 
-  const monthlyRowsMap: Record<string, { month: string; cashReceived: number; profit: number; expenses: number; dealsCount: number }> = {}
+  const monthlyRowsMap: Record<string, { month: string; cashReceived: number; profit: number; dealsCount: number }> = {}
 
   const getMonthRow = (month: string) => {
-    monthlyRowsMap[month] ??= { month, cashReceived: 0, profit: 0, expenses: 0, dealsCount: 0 }
+    monthlyRowsMap[month] ??= { month, cashReceived: 0, profit: 0, dealsCount: 0 }
     return monthlyRowsMap[month]
   }
 
@@ -125,14 +125,8 @@ export default function HomePage() {
     getMonthRow(month).profit += outgoingValue - outgoingCost - outgoingExpenses
   })
 
-  inventoryExpenses.forEach((expense) => {
-    const month = expense.expense_date?.slice(0, 7)
-    if (!month) return
-    getMonthRow(month).expenses += Number(expense.amount ?? 0)
-  })
-
   const monthlyRows = Object.values(monthlyRowsMap)
-    .filter((row) => row.profit !== 0 || row.expenses !== 0)
+    .filter((row) => row.profit !== 0)
     .sort((a, b) => b.month.localeCompare(a.month))
 
   const availableYears = useMemo(() => {
@@ -151,7 +145,6 @@ export default function HomePage() {
       cashReceived: filteredMonthlyRows.reduce((sum, r) => sum + r.cashReceived, 0),
       dealsCount: filteredMonthlyRows.reduce((sum, r) => sum + r.dealsCount, 0),
       profit: filteredMonthlyRows.reduce((sum, r) => sum + r.profit, 0),
-      expenses: filteredMonthlyRows.reduce((sum, r) => sum + r.expenses, 0),
     }),
     [filteredMonthlyRows]
   )
@@ -577,7 +570,6 @@ export default function HomePage() {
                     <th className="px-4 py-3">Month</th>
                     <th className="px-4 py-3 text-right">Cash Received</th>
                     <th className="px-4 py-3 text-right">Deals</th>
-                    <th className="px-4 py-3 text-right">Expenses</th>
                     <th className="px-4 py-3 text-right">Profit</th>
                   </tr>
                 </thead>
@@ -599,9 +591,6 @@ export default function HomePage() {
                       <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{formatMonthLabel(row.month)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-900 dark:text-slate-100">{formatMoney(row.cashReceived)}</td>
                       <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.dealsCount}</td>
-                      <td className={`px-4 py-3 text-right tabular-nums ${row.expenses > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-500'}`}>
-                        {row.expenses > 0 ? `−${formatMoney(row.expenses)}` : '—'}
-                      </td>
                       <td className={`px-4 py-3 text-right font-medium tabular-nums ${row.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                         {row.profit >= 0 ? '+' : '−'}{formatMoney(Math.abs(row.profit))}
                       </td>
@@ -611,9 +600,6 @@ export default function HomePage() {
                     <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-900 dark:text-white">{formatMoney(monthlyTotals.cashReceived)}</td>
                     <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{monthlyTotals.dealsCount}</td>
-                    <td className={`px-4 py-3 text-right tabular-nums ${monthlyTotals.expenses > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-500'}`}>
-                      {monthlyTotals.expenses > 0 ? `−${formatMoney(monthlyTotals.expenses)}` : '—'}
-                    </td>
                     <td className={`px-4 py-3 text-right tabular-nums ${monthlyTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                       {monthlyTotals.profit >= 0 ? '+' : '−'}{formatMoney(Math.abs(monthlyTotals.profit))}
                     </td>
@@ -640,9 +626,6 @@ export default function HomePage() {
                   <div className="flex flex-wrap gap-3 text-sm text-slate-500 dark:text-slate-400">
                     <span>Cash in: {formatMoney(row.cashReceived)}</span>
                     <span>Deals: {row.dealsCount}</span>
-                    {row.expenses > 0 && (
-                      <span className="text-rose-500 dark:text-rose-400">Expenses: −{formatMoney(row.expenses)}</span>
-                    )}
                   </div>
                 </button>
               ))}
@@ -656,9 +639,6 @@ export default function HomePage() {
                 <div className="flex flex-wrap gap-3 text-sm text-slate-500 dark:text-slate-400">
                   <span>Cash in: {formatMoney(monthlyTotals.cashReceived)}</span>
                   <span>Deals: {monthlyTotals.dealsCount}</span>
-                  {monthlyTotals.expenses > 0 && (
-                    <span className="text-rose-500 dark:text-rose-400">Expenses: −{formatMoney(monthlyTotals.expenses)}</span>
-                  )}
                 </div>
               </div>
             </div>
