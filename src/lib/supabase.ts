@@ -462,17 +462,15 @@ export async function createExpenseOperation(params: {
 
 export async function createBuyOperation(params: {
   dealDate: string;
-  cashPaid: number;
   channel: string;
-  itemId: number;
+  incomingItems: { item_id: number; total_value: number }[];
   notes?: string | null;
   cfDescription: string;
 }) {
   return supabase.rpc('create_buy_operation', {
     p_deal_date:      params.dealDate,
-    p_cash_paid:      params.cashPaid,
     p_channel:        params.channel,
-    p_item_id:        params.itemId,
+    p_incoming_items: params.incomingItems,
     p_notes:          params.notes ?? null,
     p_cf_description: params.cfDescription,
   });
