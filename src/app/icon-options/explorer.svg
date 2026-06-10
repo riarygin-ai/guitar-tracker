@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!--
+    Explorer style: neck center-top, angular left wing sweeps low-left,
+    angular right wing sweeps right, body block at bottom-center.
+    Rotated to fill square: neck at top, wings mid, body bottom.
+  -->
+  <path fill="#14b8a6" d="
+    M14 0 L18 0
+    L19 11
+    L28 9 L31 14 L21 16
+    L22 31 L10 31
+    L11 16 L1 14 L4 9
+    L13 11 Z
+  "/>
+</svg>

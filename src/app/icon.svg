@@ -1,24 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <!--
-    Superstrat silhouette (Suhr/Ibanez AZ/Charvel style)
-    Clockwise from neck TL:
-      neck → treble horn (right, lower) → body right + bottom →
-      body left → bass horn (left, higher) → neck Z
+    Active favicon. To switch, replace path contents with one of:
+      icon-options/rg.svg        (superstrat double-cutaway)
+      icon-options/explorer.svg  (Explorer angular wings)
+      icon-options/monogram.svg  (GT lettermark)
   -->
+  <!-- Explorer style: neck top, angular wings, body bottom -->
   <path fill="#14b8a6" d="
-    M12 0 L20 0 L21 9
-    C24 8 27 8 30 10
-    C32 13 31 17 28 19
-    C25 21 22 20 22 17
-    C22 14 21 11 21 9
-    C27 12 28 18 28 25
-    C28 29 24 32 19 32
-    L13 32
-    C8 32 4 29 4 25
-    C4 18 5 12 10 9
-    C8 7 4 6 2 8
-    C1 10 1 12 3 13
-    C6 13 10 10 12 9
-    Z
+    M14 0 L18 0
+    L19 11
+    L28 9 L31 14 L21 16
+    L22 31 L10 31
+    L11 16 L1 14 L4 9
+    L13 11 Z
   "/>
 </svg>

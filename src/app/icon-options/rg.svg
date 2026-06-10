@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Ibanez RG superstrat: sharp asymmetric double cutaway, vertical -->
+  <path fill="#14b8a6" d="
+    M14 1 L18 1 L18 2
+    L19 10
+    C21 9 24 9 27 11 C29 13 29 16 27 18 C25 20 22 19 21 17
+    C20 15 19 12 19 10
+    C24 13 26 19 26 24 C26 29 23 31 18 31 L14 31
+    C9 31 6 29 6 24 C6 19 8 13 13 10
+    C13 12 12 15 11 17 C10 19 7 20 5 18 C3 16 3 13 5 11
+    C8 9 11 9 13 10
+    L13 2 Z
+  "/>
+</svg>

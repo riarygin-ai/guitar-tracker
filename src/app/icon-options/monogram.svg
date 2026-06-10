@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Stylized "GT" monogram for Guitar Tracker, angular/modern -->
+  <path fill="#14b8a6" d="
+    M2 6 L2 10 L11 10 L11 15 L6 15 L6 19 L11 19 L11 26 L2 26 L2 30 L15 30 L15 6 Z
+    M18 6 L18 30 L22 30 L22 20 L28 30 L32 30 L25 18 L32 6 L28 6 L22 16 L22 6 Z
+  "/>
+</svg>
