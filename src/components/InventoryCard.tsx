@@ -48,6 +48,8 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
 
   const roiColor = (roi: number | null) =>
     roi == null ? '' : roi > 0 ? 'text-emerald-600' : roi < 0 ? 'text-rose-600' : '';
+  const fmtRoi = (roi: number | null, gain: number | null) =>
+    roi != null ? `${roi.toFixed(1)}%` : gain != null ? 'N/A' : '—';
 
   return (
     <Link
@@ -119,7 +121,7 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
                 <span>
                   <span className="text-slate-500 dark:text-slate-400">Potential ROI:</span>{' '}
                   <span className={roiColor(potentialRoi)}>
-                    {potentialRoi != null ? `${potentialRoi.toFixed(1)}%` : '—'}
+                    {fmtRoi(potentialRoi, potentialReward)}
                   </span>
                 </span>
               </>
@@ -132,7 +134,7 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
                 <span>
                   <span className="text-slate-500 dark:text-slate-400">Realized ROI:</span>{' '}
                   <span className={roiColor(realizedRoi)}>
-                    {realizedRoi != null ? `${realizedRoi.toFixed(1)}%` : '—'}
+                    {fmtRoi(realizedRoi, realizedGain)}
                   </span>
                 </span>
               </>

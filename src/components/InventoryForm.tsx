@@ -490,7 +490,8 @@ export default function InventoryForm({
   const isSoldOrTraded = existingItem?.status === 'sold' || existingItem?.status === 'traded';
   const showMetrics = !!itemId && !!existingItem && !hideSidebar;
   const fmt = (v: number | null) => (v != null ? `$${v.toFixed(2)}` : '—');
-  const fmtPct = (v: number | null) => (v != null ? `${v.toFixed(1)}%` : '—');
+  const fmtPct = (v: number | null, gain?: number | null) =>
+    v != null ? `${v.toFixed(1)}%` : gain != null ? 'N/A' : '—';
   const metricColor = (v: number | null) =>
     v == null ? 'text-slate-900 dark:text-slate-100' : v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-slate-900 dark:text-slate-100';
 
@@ -947,7 +948,7 @@ export default function InventoryForm({
                               </div>
                               <div>
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Potential ROI</p>
-                                <p className={`mt-0.5 text-lg font-semibold ${metricColor(potentialRoi)}`}>{fmtPct(potentialRoi)}</p>
+                                <p className={`mt-0.5 text-lg font-semibold ${metricColor(potentialRoi)}`}>{fmtPct(potentialRoi, potentialReward)}</p>
                               </div>
                             </>
                           )}
@@ -969,7 +970,7 @@ export default function InventoryForm({
                               </div>
                               <div>
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Realized ROI</p>
-                                <p className={`mt-0.5 text-lg font-semibold ${metricColor(realizedRoi)}`}>{fmtPct(realizedRoi)}</p>
+                                <p className={`mt-0.5 text-lg font-semibold ${metricColor(realizedRoi)}`}>{fmtPct(realizedRoi, realizedGain)}</p>
                               </div>
                             </>
                           )}
