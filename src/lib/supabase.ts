@@ -544,6 +544,24 @@ export async function editTradeOperation(params: {
   });
 }
 
+export async function editBuyOperation(params: {
+  dealId: number;
+  dealDate: string;
+  channel: string | null;
+  notes: string | null;
+  incomingItems: { item_id: number; total_value: number }[];
+  cfDescription?: string | null;
+}) {
+  return supabase.rpc('edit_buy_operation', {
+    p_deal_id:        params.dealId,
+    p_deal_date:      params.dealDate,
+    p_channel:        params.channel,
+    p_notes:          params.notes,
+    p_incoming_items: params.incomingItems,
+    p_cf_description: params.cfDescription ?? null,
+  });
+}
+
 // ─── AI prompt functions ──────────────────────────────────────────────────────
 
 export async function getAiPrompts() {

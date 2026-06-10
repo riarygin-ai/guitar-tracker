@@ -17,6 +17,7 @@ import {
   updateInventoryExpense,
   recalculateCashFlowBalancesFrom,
   editTradeOperation,
+  editBuyOperation,
   getDisplayPhotosForItems,
   searchInventoryItems,
 } from '@/lib/supabase';
@@ -138,7 +139,9 @@ export default function OperationDetailPage() {
 
     setAddSearching(direction);
     addSearchTimerRef.current = setTimeout(async () => {
-      const statuses = direction === 'out' ? ['owned', 'listed'] : undefined;
+      const statuses = direction === 'out'
+        ? ['owned', 'listed']
+        : deal?.deal_type === 'purchase' ? ['new'] : undefined;
       const result = await searchInventoryItems(query, statuses);
       setAddSearching(null);
       const found = (result.data ?? []) as InventoryItem[];
@@ -250,8 +253,34 @@ export default function OperationDetailPage() {
           setError('Could not save trade: ' + result.error.message);
           return;
         }
+      } else if (deal.deal_type === 'purchase') {
+        const kept = dealItems.filter((di) => di.direction === 'in' && !removedDealItemIds.includes(di.id));
+        const cashFlowRow = cashFlows[0] ?? null;
+
+        const result = await editBuyOperation({
+          dealId: deal.id,
+          dealDate: editedDeal?.deal_date ?? deal.deal_date,
+          channel: editedDeal?.channel ?? deal.channel ?? null,
+          notes: editedDeal?.notes ?? deal.notes ?? null,
+          incomingItems: [
+            ...kept.map((di) => ({
+              item_id: di.item_id,
+              total_value: editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0),
+            })),
+            ...pendingIncoming.map((p) => ({ item_id: p.item.id, total_value: p.value })),
+          ],
+          cfDescription: cashFlowRow
+            ? (editedCashFlows[cashFlowRow.id]?.description ?? cashFlowRow.description ?? null)
+            : null,
+        });
+
+        if (result.error) {
+          setSaving(false);
+          setError('Could not save purchase: ' + result.error.message);
+          return;
+        }
       } else {
-        // Purchase / sale / expense: individual field updates
+        // Sale / expense: individual field updates
         const cashFlowsWithDateChange: { id: number; oldDate: string; newDate: string }[] = [];
 
         if (editedDeal && (editedDeal.deal_date !== deal.deal_date || editedDeal.channel !== deal.channel || editedDeal.notes !== deal.notes)) {
@@ -611,7 +640,7 @@ export default function OperationDetailPage() {
                                   {item.year && `${item.year} • `}{item.color && `${item.color} • `}{item.condition}
                                 </p>
                               </div>
-                              {editMode && deal.deal_type === 'trade' && (
+                              {editMode && (deal.deal_type === 'trade' || deal.deal_type === 'purchase') && (
                                 <button
                                   type="button"
                                   onClick={() => setRemovedDealItemIds((prev) => [...prev, di.id])}
@@ -671,7 +700,9 @@ export default function OperationDetailPage() {
                   <div key={`pending-out-${i}`} className="rounded-2xl border border-teal-200 bg-teal-50/40 p-4 dark:border-teal-700/50 dark:bg-teal-900/10">
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-teal-700 dark:text-teal-400">Adding to trade</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-teal-700 dark:text-teal-400">
+                          {deal.deal_type === 'purchase' ? 'Adding to purchase' : 'Adding to trade'}
+                        </p>
                         <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-white">
                           {brandMap[p.item.brand_id] || 'Unknown'} {p.item.model}
                           {p.item.year ? ` (${p.item.year})` : ''}
@@ -777,18 +808,20 @@ export default function OperationDetailPage() {
           )}
 
           {/* Received / Incoming Items */}
-          {(incomingItems.length > 0 || (editMode && deal.deal_type === 'trade')) && (
+          {(incomingItems.length > 0 || (editMode && (deal.deal_type === 'trade' || deal.deal_type === 'purchase'))) && (
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Received / Incoming</h2>
-                {editMode && deal.deal_type === 'trade' && !showAddIncoming && (
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                  {deal.deal_type === 'purchase' ? 'Purchased Items' : 'Received / Incoming'}
+                </h2>
+                {editMode && (deal.deal_type === 'trade' || deal.deal_type === 'purchase') && !showAddIncoming && (
                   <button
                     type="button"
                     onClick={() => setShowAddIncoming(true)}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    <span className="hidden sm:inline">Add incoming item</span>
+                    <span className="hidden sm:inline">{deal.deal_type === 'purchase' ? 'Add item' : 'Add incoming item'}</span>
                   </button>
                 )}
               </div>
@@ -800,7 +833,7 @@ export default function OperationDetailPage() {
                     const item = itemMap[di.item_id];
                     if (!item) return null;
                     const brand = brandMap[item.brand_id] || 'Unknown';
-                    const valueIn = editMode && deal.deal_type === 'trade'
+                    const valueIn = editMode && (deal.deal_type === 'trade' || deal.deal_type === 'purchase')
                       ? (editedDealItems[di.id]?.total_value ?? Number(di.total_value ?? 0))
                       : Number(di.total_value ?? 0);
                     const estimatedSold = Number(item.estimated_sold_value ?? 0);
@@ -822,7 +855,7 @@ export default function OperationDetailPage() {
                                   {item.year && `${item.year} • `}{item.color && `${item.color} • `}{item.condition}
                                 </p>
                               </div>
-                              {editMode && deal.deal_type === 'trade' && (
+                              {editMode && (deal.deal_type === 'trade' || deal.deal_type === 'purchase') && (
                                 <button
                                   type="button"
                                   onClick={() => setRemovedDealItemIds((prev) => [...prev, di.id])}
@@ -835,8 +868,10 @@ export default function OperationDetailPage() {
                             </div>
                             <div className="grid gap-3 sm:grid-cols-3">
                               <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
-                                {editMode && deal.deal_type === 'trade' ? (
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">
+                                  {deal.deal_type === 'purchase' ? 'Purchase Cost' : 'Value In'}
+                                </p>
+                                {editMode && (deal.deal_type === 'trade' || deal.deal_type === 'purchase') ? (
                                   <input
                                     type="number"
                                     step="0.01"
@@ -876,7 +911,9 @@ export default function OperationDetailPage() {
                   <div key={`pending-in-${i}`} className="rounded-2xl border border-teal-200 bg-teal-50/40 p-4 dark:border-teal-700/50 dark:bg-teal-900/10">
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-teal-700 dark:text-teal-400">Adding to trade</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-teal-700 dark:text-teal-400">
+                          {deal.deal_type === 'purchase' ? 'Adding to purchase' : 'Adding to trade'}
+                        </p>
                         <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-white">
                           {brandMap[p.item.brand_id] || 'Unknown'} {p.item.model}
                           {p.item.year ? ` (${p.item.year})` : ''}
@@ -893,7 +930,9 @@ export default function OperationDetailPage() {
                       </button>
                     </div>
                     <div className="mt-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
+                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">
+                        {deal.deal_type === 'purchase' ? 'Purchase Cost' : 'Value In'}
+                      </p>
                       <input
                         type="number"
                         step="0.01"
@@ -911,10 +950,12 @@ export default function OperationDetailPage() {
                 ))}
 
                 {/* Add incoming search panel */}
-                {editMode && deal.deal_type === 'trade' && showAddIncoming && (
+                {editMode && (deal.deal_type === 'trade' || deal.deal_type === 'purchase') && showAddIncoming && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
                     <div className="mb-3 flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Add an incoming item</p>
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                        {deal.deal_type === 'purchase' ? 'Add a purchased item' : 'Add an incoming item'}
+                      </p>
                       <button
                         type="button"
                         onClick={() => {
@@ -955,7 +996,8 @@ export default function OperationDetailPage() {
                               const alreadyPending = pendingIncoming.some((p) => p.item.id === res.id);
                               const invalidStatus = res.status === 'sold' || res.status === 'traded';
                               const disabled = alreadyIn || alreadyPending || invalidStatus;
-                              const disabledReason = alreadyIn || alreadyPending ? 'already in trade' : invalidStatus ? `item is ${res.status}` : '';
+                              const alreadyInLabel = deal.deal_type === 'purchase' ? 'already in purchase' : 'already in trade';
+                              const disabledReason = alreadyIn || alreadyPending ? alreadyInLabel : invalidStatus ? `item is ${res.status}` : '';
                               return (
                                 <button
                                   key={res.id}
