@@ -50,11 +50,16 @@ const DOT_COLORS: Record<string, string> = {
 //   ─────────────────────────────────────────────
 //   PROFIT                               ±$X,XXX
 //   Running                              ±$X,XXX
+//   ─────────────────────────────────────────────
+//   Additional items in this deal
+//   + Fender Stratocaster
+//   − Gibson Les Paul
 
 interface DealCardProps {
   deal:             Deal;
   primaryIn:        DealItem[];
   outgoing:         DealItem[];
+  bundleItems:      DealItem[];
   mainItemIds:      Set<number>;
   itemMap:          Record<number, InventoryItemWithValue>;
   brandMap:         Record<number, string>;
@@ -64,19 +69,22 @@ interface DealCardProps {
 }
 
 function DealCard({
-  deal, primaryIn, outgoing, mainItemIds,
+  deal, primaryIn, outgoing, bundleItems, mainItemIds,
   itemMap, brandMap, photoByItemId, expensesByItemId, runningProfit,
 }: DealCardProps) {
   const isValueDeal  = deal.deal_type === 'sale' || deal.deal_type === 'trade';
   const cashPaid     = Number(deal.cash_paid ?? 0);
   const cashReceived = Number(deal.cash_received ?? 0);
 
+  // Only count profit for main-chain items — bundle siblings must not inflate this
   const profit = isValueDeal
-    ? outgoing.reduce((sum, di) => {
-        const item         = itemMap[di.item_id];
-        const itemExpenses = expensesByItemId[di.item_id] ?? 0;
-        return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0) - itemExpenses);
-      }, 0)
+    ? outgoing
+        .filter((di) => mainItemIds.has(di.item_id))
+        .reduce((sum, di) => {
+          const item         = itemMap[di.item_id];
+          const itemExpenses = expensesByItemId[di.item_id] ?? 0;
+          return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0) - itemExpenses);
+        }, 0)
     : null;
 
   const typeColor = DEAL_TYPE_COLORS[deal.deal_type] ?? DEAL_TYPE_COLORS.purchase;
@@ -174,6 +182,27 @@ function DealCard({
           )}
         </div>
       )}
+
+      {/* Bundle context: other items in this deal not on the main chain */}
+      {bundleItems.length > 0 && (
+        <div className="mt-2 border-t border-slate-100 pt-2 dark:border-slate-700">
+          <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
+            Additional items in this deal
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {bundleItems.map((di) => {
+              const item = itemMap[di.item_id];
+              if (!item) return null;
+              const brand = brandMap[item.brand_id] ?? 'Unknown';
+              return (
+                <span key={di.item_id} className="truncate text-xs text-slate-400 dark:text-slate-500">
+                  {di.direction === 'in' ? '+' : '−'} {brand} {item.model}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </Link>
   );
 }
@@ -199,9 +228,13 @@ function ChainTimeline({
       <div className="absolute bottom-3 left-[15px] top-3 w-px bg-slate-200 dark:bg-slate-700 md:left-[22px]" />
 
       {steps.map((step, index) => {
-        const mainIn    = step.incoming.filter((di) => mainItemIds.has(di.item_id));
-        const primaryIn = mainIn.length > 0 ? mainIn : step.incoming;
-        const dotColor  = DOT_COLORS[step.deal.deal_type] ?? 'bg-slate-300 dark:bg-slate-600';
+        const mainIn      = step.incoming.filter((di) =>  mainItemIds.has(di.item_id));
+        const primaryIn   = mainIn.length > 0 ? mainIn : step.incoming;
+        // Bundle context: items in this deal that are NOT on the main chain
+        const bundleIn    = step.incoming.filter((di) => !mainItemIds.has(di.item_id));
+        const bundleOut   = step.outgoing.filter((di) => !mainItemIds.has(di.item_id));
+        const bundleItems = [...bundleIn, ...bundleOut];
+        const dotColor    = DOT_COLORS[step.deal.deal_type] ?? 'bg-slate-300 dark:bg-slate-600';
 
         return (
           <div
@@ -219,6 +252,7 @@ function ChainTimeline({
                 deal={step.deal}
                 primaryIn={primaryIn}
                 outgoing={step.outgoing}
+                bundleItems={bundleItems}
                 mainItemIds={mainItemIds}
                 itemMap={itemMap}
                 brandMap={brandMap}
@@ -238,29 +272,34 @@ function ChainTimeline({
 
 interface ChainSummaryProps {
   steps:              ChainStep[];
+  mainItemIds:        Set<number>;
   itemMap:            Record<number, InventoryItemWithValue>;
   finalRunningProfit: number;
   totalChainExpenses: number;
 }
 
-function ChainSummary({ steps, itemMap, finalRunningProfit, totalChainExpenses }: ChainSummaryProps) {
-  const startingCost = steps[0]?.incoming.reduce(
-    (s, di) => s + Number(di.total_value ?? 0), 0,
-  ) ?? 0;
+function ChainSummary({ steps, mainItemIds, itemMap, finalRunningProfit, totalChainExpenses }: ChainSummaryProps) {
+  // Cost basis = only the selected item's acquisition value, not full bundle deal cost
+  const startingCost = steps[0]?.incoming
+    .filter((di) => mainItemIds.has(di.item_id))
+    .reduce((s, di) => s + Number(di.total_value ?? 0), 0) ?? 0;
 
   const cashExtracted = steps.reduce(
     (s, step) => s + Number(step.deal.cash_received ?? 0), 0,
   );
 
+  // Only count currently-held items that are on the main chain
   const heldValues = new Map<number, number>();
   steps.forEach((step) => {
-    [...step.incoming, ...step.outgoing].forEach((di) => {
-      if (heldValues.has(di.item_id)) return;
-      const item = itemMap[di.item_id];
-      if (item?.status === 'owned' || item?.status === 'listed') {
-        heldValues.set(di.item_id, Number(item.estimated_sold_value ?? 0));
-      }
-    });
+    [...step.incoming, ...step.outgoing]
+      .filter((di) => mainItemIds.has(di.item_id))
+      .forEach((di) => {
+        if (heldValues.has(di.item_id)) return;
+        const item = itemMap[di.item_id];
+        if (item?.status === 'owned' || item?.status === 'listed') {
+          heldValues.set(di.item_id, Number(item.estimated_sold_value ?? 0));
+        }
+      });
   });
   const currentAssetValue = Array.from(heldValues.values()).reduce((a, b) => a + b, 0);
 
@@ -361,57 +400,105 @@ export default function TradeChainPage() {
     return map;
   }, [data]);
 
-  const steps: ChainStep[] = useMemo(
-    () => (data?.deals ?? []).map((deal) => {
-      const slots = dealItemsByDealId[deal.id] ?? [];
-      return {
-        deal,
-        incoming: slots.filter((di) => di.direction === 'in'),
-        outgoing: slots.filter((di) => di.direction === 'out'),
-      };
-    }),
-    [data, dealItemsByDealId],
-  );
-
+  // Direct lineage walk — avoids sibling-branch pollution.
+  //
+  // Algorithm:
+  //   Walk BACKWARD: if item X was received in a trade, the items that went OUT
+  //   in that same trade are X's "predecessors" (what was given up). Add them to
+  //   the chain and recurse. Purchase deals have no outgoing items, so the walk
+  //   stops at the first purchase.
+  //
+  //   Walk FORWARD: if item X was traded away, the items that came IN via that
+  //   trade are X's "successors". Add them and recurse. Sale deals have no
+  //   incoming items, so the walk stops at a sale.
+  //
+  //   Siblings (other items received in the SAME bundle deal) are in
+  //   inItemsByDealId[deal], NOT outItemsByDealId[deal]. They are never
+  //   added here, so their future deals never appear in steps.
   const mainItemIds = useMemo(() => {
     const ids = new Set<number>([itemId]);
-    const acqDeal: Record<number, number>    = {};
-    const outItems: Record<number, number[]> = {};
-    (data?.dealItems ?? []).forEach((di) => {
-      if (di.direction === 'in'  && acqDeal[di.item_id]  === undefined) acqDeal[di.item_id] = di.deal_id;
-      if (di.direction === 'out') { outItems[di.deal_id] ??= []; outItems[di.deal_id].push(di.item_id); }
-    });
-    let queue = [itemId];
-    while (queue.length > 0) {
-      const next: number[] = [];
-      for (const id of queue) {
-        const deal = acqDeal[id];
-        if (deal === undefined) continue;
-        for (const prev of outItems[deal] ?? []) {
-          if (!ids.has(prev)) { ids.add(prev); next.push(prev); }
-        }
-      }
-      queue = next;
+
+    const acqDealByItemId:      Record<number, number>   = {};
+    const disposalDealByItemId: Record<number, number>   = {};
+    const inItemsByDealId:      Record<number, number[]> = {};
+    const outItemsByDealId:     Record<number, number[]> = {};
+    const dealTypeById:         Record<number, string>   = {};
+
+    for (const deal of data?.deals ?? []) {
+      dealTypeById[deal.id] = deal.deal_type;
     }
+    for (const di of data?.dealItems ?? []) {
+      if (di.direction === 'in') {
+        if (acqDealByItemId[di.item_id] === undefined) acqDealByItemId[di.item_id] = di.deal_id;
+        (inItemsByDealId[di.deal_id] ??= []).push(di.item_id);
+      } else {
+        disposalDealByItemId[di.item_id] = di.deal_id;
+        (outItemsByDealId[di.deal_id] ??= []).push(di.item_id);
+      }
+    }
+
+    const walkBackward = (id: number) => {
+      const acqDeal = acqDealByItemId[id];
+      if (acqDeal === undefined || dealTypeById[acqDeal] !== 'trade') return;
+      for (const prevId of outItemsByDealId[acqDeal] ?? []) {
+        if (!ids.has(prevId)) { ids.add(prevId); walkBackward(prevId); }
+      }
+    };
+
+    const walkForward = (id: number) => {
+      const disposalDeal = disposalDealByItemId[id];
+      if (disposalDeal === undefined || dealTypeById[disposalDeal] !== 'trade') return;
+      for (const nextId of inItemsByDealId[disposalDeal] ?? []) {
+        if (!ids.has(nextId)) { ids.add(nextId); walkForward(nextId); }
+      }
+    };
+
+    walkBackward(itemId);
+    walkForward(itemId);
+
     return ids;
   }, [data, itemId]);
+
+  // Only include deals where at least one main-chain item is directly involved.
+  // Deals that only contain siblings are excluded entirely.
+  const steps: ChainStep[] = useMemo(
+    () => (data?.deals ?? [])
+      .filter((deal) => {
+        const slots = dealItemsByDealId[deal.id] ?? [];
+        return slots.some((di) => mainItemIds.has(di.item_id));
+      })
+      .map((deal) => {
+        const slots = dealItemsByDealId[deal.id] ?? [];
+        return {
+          deal,
+          incoming: slots.filter((di) => di.direction === 'in'),
+          outgoing: slots.filter((di) => di.direction === 'out'),
+        };
+      }),
+    [data, dealItemsByDealId, mainItemIds],
+  );
 
   const runningProfits = useMemo(() => {
     let running = 0;
     return steps.map((step) => {
       if (step.deal.deal_type === 'sale' || step.deal.deal_type === 'trade') {
-        running += step.outgoing.reduce((sum, di) => {
-          const item         = itemMap[di.item_id];
-          const itemExpenses = expensesByItemId[di.item_id] ?? 0;
-          return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0) - itemExpenses);
-        }, 0);
+        running += step.outgoing
+          .filter((di) => mainItemIds.has(di.item_id))
+          .reduce((sum, di) => {
+            const item         = itemMap[di.item_id];
+            const itemExpenses = expensesByItemId[di.item_id] ?? 0;
+            return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0) - itemExpenses);
+          }, 0);
       }
       return running;
     });
-  }, [steps, itemMap, expensesByItemId]);
+  }, [steps, itemMap, expensesByItemId, mainItemIds]);
 
   const finalRunningProfit = runningProfits[runningProfits.length - 1] ?? 0;
-  const totalChainExpenses = Object.values(expensesByItemId).reduce((sum, v) => sum + v, 0);
+  // Expenses scoped to main-chain items only
+  const totalChainExpenses = Array.from(mainItemIds).reduce(
+    (sum, id) => sum + (expensesByItemId[id] ?? 0), 0,
+  );
 
   const rootItem  = itemMap[itemId];
   const rootBrand = brandMap[rootItem?.brand_id ?? 0] ?? '';
@@ -434,13 +521,19 @@ export default function TradeChainPage() {
           {rootItem ? `${rootBrand} ${rootItem.model}` : 'Item Lineage'}
         </h1>
         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-          Full connected trade, purchase, and sale history for this item.
+          Direct lineage of trades, purchases, and sales for this item.
         </p>
       </section>
 
       {/* Chain summary */}
       {!loading && !error && steps.length > 0 && (
-        <ChainSummary steps={steps} itemMap={itemMap} finalRunningProfit={finalRunningProfit} totalChainExpenses={totalChainExpenses} />
+        <ChainSummary
+          steps={steps}
+          mainItemIds={mainItemIds}
+          itemMap={itemMap}
+          finalRunningProfit={finalRunningProfit}
+          totalChainExpenses={totalChainExpenses}
+        />
       )}
 
       {/* Chain timeline */}
