@@ -907,24 +907,27 @@ export default function InventoryForm({
                 {/* Item summary */}
                 {existingItem && (
                   <div className="p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="min-w-0 truncate text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                        {selectedSubtype?.name ?? existingItem.item_type}
-                      </p>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusClasses[existingItem.status] ?? 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200'}`}>
-                          {existingItem.status}
-                        </span>
-                        <Link
-                          href={`/inventory/${itemId}/chain`}
-                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                        >
-                          View Chain
-                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-                          </svg>
-                        </Link>
-                      </div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                      {selectedSubtype?.name ?? existingItem.item_type}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusClasses[existingItem.status] ?? 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200'}`}>
+                        {existingItem.status}
+                      </span>
+                      {/* View Chain — chain count can be added later: View Chain (5) → */}
+                      <Link
+                        href={`/inventory/${itemId}/chain`}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                        </svg>
+                        View Chain
+                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                        </svg>
+                      </Link>
                     </div>
                     <p className="mt-1 text-base font-semibold leading-snug text-slate-900 dark:text-white">
                       {itemTitle}
