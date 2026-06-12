@@ -385,7 +385,7 @@ export default function InventoryPage() {
                     : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700/80 dark:text-slate-300 dark:hover:bg-slate-600'
                 }`}
               >
-                Subtypes
+                Types
                 {selectedSubtypeNames.length > 0 && (
                   <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-slate-700 px-1 text-[10px] font-bold text-white dark:bg-slate-200 dark:text-slate-900">
                     {selectedSubtypeNames.length}
@@ -412,7 +412,7 @@ export default function InventoryPage() {
           {/* Subtypes chip row — visible only when panel is open */}
           {showSubtypes && selectedCategoryNames.length > 0 && visibleSubtypes.length > 0 && (
             <div className="mt-3">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Subtypes</p>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Types</p>
               <div className="flex flex-wrap gap-2">
                 {visibleSubtypes.map((sub) => (
                   <button

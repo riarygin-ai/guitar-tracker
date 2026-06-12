@@ -262,7 +262,7 @@ export default function AdminPage() {
     if (catSubs.length > 0) {
       setCatDelMsg((prev) => ({
         ...prev,
-        [cat.id]: `"${cat.name}" has ${catSubs.length} subtype${catSubs.length !== 1 ? 's' : ''} and cannot be deleted. Move or remove its subtypes first, or deactivate the category instead.`,
+        [cat.id]: `"${cat.name}" has ${catSubs.length} type${catSubs.length !== 1 ? 's' : ''} and cannot be deleted. Move or remove its types first, or deactivate the category instead.`,
       }));
       return;
     }
@@ -312,7 +312,7 @@ export default function AdminPage() {
     setSubEditError(null);
     const { error } = await updateItemSubtype(subEditing.id, { name: trimmed });
     setSubEditSaving(false);
-    if (error) { setSubEditError(error.message || 'Could not update subtype.'); return; }
+    if (error) { setSubEditError(error.message || 'Could not update type.'); return; }
     setSubtypes((prev) => prev.map((s) => s.id === subEditing.id ? { ...s, name: trimmed } : s));
     setSubEditing(null);
   }
@@ -331,7 +331,7 @@ export default function AdminPage() {
     setSubCreateErrors((prev) => { const n = { ...prev }; delete n[catId]; return n; });
     const { data, error } = await createItemSubtype(catId, trimmed);
     setSubCreatingCatId(null);
-    if (error) { setSubCreateErrors((prev) => ({ ...prev, [catId]: error.message || 'Could not create subtype.' })); return; }
+    if (error) { setSubCreateErrors((prev) => ({ ...prev, [catId]: error.message || 'Could not create type.' })); return; }
     setSubtypes((prev) => [...prev, data as ItemSubtype]);
     setSubCreateNames((prev) => ({ ...prev, [catId]: '' }));
   }
@@ -364,7 +364,7 @@ export default function AdminPage() {
     setSubDelPhase((prev) => ({ ...prev, [id]: 'deleting' }));
     const { error } = await deleteItemSubtype(id);
     if (error) {
-      setSubDelMsg((prev) => ({ ...prev, [id]: 'Could not delete subtype.' }));
+      setSubDelMsg((prev) => ({ ...prev, [id]: 'Could not delete type.' }));
       setSubDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
       return;
     }
@@ -584,7 +584,7 @@ export default function AdminPage() {
         <div className="mb-4">
           <h2 className="text-base font-semibold text-slate-900 dark:text-white">Item Categories</h2>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            {categories.length} categor{categories.length !== 1 ? 'ies' : 'y'} · {subtypes.length} subtype{subtypes.length !== 1 ? 's' : ''}
+            {categories.length} categor{categories.length !== 1 ? 'ies' : 'y'} · {subtypes.length} type{subtypes.length !== 1 ? 's' : ''}
           </p>
         </div>
 
@@ -719,7 +719,7 @@ export default function AdminPage() {
                     <div className="ml-5 mt-1.5 rounded-lg border border-slate-100 dark:border-slate-700/50">
 
                       {catSubs.length === 0 ? (
-                        <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">No subtypes yet.</p>
+                        <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">No types yet.</p>
                       ) : (
                         <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
                           {catSubs.map((sub) => {
@@ -817,7 +817,7 @@ export default function AdminPage() {
                             value={subCreateNames[cat.id] ?? ''}
                             onChange={(e) => setSubCreateNames((prev) => ({ ...prev, [cat.id]: e.target.value }))}
                             onKeyDown={(e) => { if (e.key === 'Enter') handleCreateSubtype(cat.id); }}
-                            placeholder="Add subtype…"
+                            placeholder="Add type…"
                             disabled={subCreatingCatId === cat.id}
                             className={inputClass}
                           />

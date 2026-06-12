@@ -324,7 +324,7 @@ export default function InventoryForm({
 
     if (!model.trim()) { setError('Model is required.'); return; }
     if (!brandInput.trim() && !selectedBrandId) { setError('Brand is required.'); return; }
-    if (!selectedSubtypeId) { setError('Item subtype is required.'); return; }
+    if (!selectedSubtypeId) { setError('Item type is required.'); return; }
     if (year) {
       const n = Number(year);
       const max = new Date().getFullYear() + 1;
@@ -655,7 +655,7 @@ export default function InventoryForm({
 
       {/* Collection */}
       <div className="space-y-1.5">
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Purpose / collection</label>
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Purpose</label>
         <select
           value={collectionType}
           onChange={(e) => setCollectionType(e.target.value as CollectionType)}
