@@ -24,6 +24,18 @@ import {
 import InventoryForm from '@/components/InventoryForm';
 import type { Brand, Deal, DealItem, InventoryItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
 
+function ItemCardLink({ href, clickable, children }: { href: string; clickable: boolean; children: React.ReactNode }) {
+  const base = 'rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700';
+  if (clickable) {
+    return (
+      <Link href={href} className={`block ${base} transition-colors hover:border-slate-300 hover:bg-white dark:hover:border-slate-500 dark:hover:bg-slate-600`}>
+        {children}
+      </Link>
+    );
+  }
+  return <div className={base}>{children}</div>;
+}
+
 export default function OperationDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -625,7 +637,7 @@ export default function OperationDetailPage() {
                     const itemExpenses = itemExpensesByItemId[item.id] ?? 0;
                     const realizedGain = valueOut - valueIn - itemExpenses;
                     return (
-                      <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
+                      <ItemCardLink key={di.id} href={`/inventory/${item.id}`} clickable={!editMode}>
                         <div className="flex gap-4">
                           {photoByItemId[item.id] && (
                             <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
@@ -691,7 +703,7 @@ export default function OperationDetailPage() {
                             </div>
                           </div>
                         </div>
-                      </div>
+                      </ItemCardLink>
                     );
                   })}
 
@@ -840,7 +852,7 @@ export default function OperationDetailPage() {
                     const incomingItemExpenses = itemExpensesByItemId[item.id] ?? 0;
                     const potentialReward = estimatedSold - valueIn - incomingItemExpenses;
                     return (
-                      <div key={di.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700">
+                      <ItemCardLink key={di.id} href={`/inventory/${item.id}`} clickable={!editMode}>
                         <div className="flex gap-4">
                           {photoByItemId[item.id] && (
                             <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
@@ -902,7 +914,7 @@ export default function OperationDetailPage() {
                             </div>
                           </div>
                         </div>
-                      </div>
+                      </ItemCardLink>
                     );
                   })}
 
