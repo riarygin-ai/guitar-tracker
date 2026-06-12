@@ -17,6 +17,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
+  const [inventoryGroupView, setInventoryGroupView] = useState<'category' | 'type' | 'purpose'>('category')
 
   useEffect(() => {
     async function loadData() {
@@ -179,6 +180,22 @@ export default function HomePage() {
     )
   }, [itemCategoriesData, itemSubtypes])
 
+  const subtypeNameById = useMemo(
+    () => Object.fromEntries(itemSubtypes.map((s: any) => [s.id, s.name])),
+    [itemSubtypes],
+  )
+
+  const legacyTypeToSubtypeName: Record<string, string> = {
+    guitar: 'Electric Guitar', bass: 'Bass', 'acoustic guitar': 'Acoustic Guitar',
+    amp: 'Amp', cab: 'Cabinet', processor: 'Processor',
+    pedal: 'Pedal', parts: 'Parts', pickups: 'Pickups',
+  }
+
+  const getItemSubtypeName = (item: any): string => {
+    if (item.item_subtype_id != null) return subtypeNameById[item.item_subtype_id] ?? 'Unknown Type'
+    return legacyTypeToSubtypeName[item.item_type?.toLowerCase()] ?? 'Unknown Type'
+  }
+
   const getItemCategoryName = (item: any): string => {
     if (item.item_subtype_id != null) {
       return categoryNameBySubtypeId[item.item_subtype_id] ?? legacyTypeToCategory[item.item_type?.toLowerCase()] ?? 'Other'
@@ -209,6 +226,31 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInventory, categoryNameBySubtypeId])
 
+  const inventoryBySubtype = useMemo(() => {
+    const values: Record<string, { count: number; costBasis: number; estimatedValue: number }> = {}
+    activeInventory.forEach((item) => {
+      const key = getItemSubtypeName(item)
+      if (!values[key]) values[key] = { count: 0, costBasis: 0, estimatedValue: 0 }
+      values[key].count += 1
+      values[key].costBasis += Number(item.value_in ?? 0)
+      values[key].estimatedValue += Number(item.estimated_sold_value ?? 0)
+    })
+    return values
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeInventory, subtypeNameById])
+
+  const inventoryByPurpose = useMemo(() => {
+    const values: Record<string, { count: number; costBasis: number; estimatedValue: number }> = {}
+    activeInventory.forEach((item) => {
+      const key = (item.collection_type as string | null) ?? 'Unassigned'
+      if (!values[key]) values[key] = { count: 0, costBasis: 0, estimatedValue: 0 }
+      values[key].count += 1
+      values[key].costBasis += Number(item.value_in ?? 0)
+      values[key].estimatedValue += Number(item.estimated_sold_value ?? 0)
+    })
+    return values
+  }, [activeInventory])
+
   const businessInventoryByType = useMemo(() => {
     const counts: Record<string, { listed: number; unlisted: number }> = {}
     businessInventory.forEach((item) => {
@@ -230,6 +272,21 @@ export default function HomePage() {
   const totalEstimatedValue = Object.values(inventoryValueByType).reduce((sum, v) => sum + v.estimatedValue, 0)
   const totalBusinessListed = Object.values(businessInventoryByType).reduce((sum, v) => sum + v.listed, 0)
   const totalBusinessUnlisted = Object.values(businessInventoryByType).reduce((sum, v) => sum + v.unlisted, 0)
+
+  // Active group data for the segmented inventory table
+  const activeGroupData =
+    inventoryGroupView === 'type'    ? inventoryBySubtype :
+    inventoryGroupView === 'purpose' ? inventoryByPurpose :
+    inventoryValueByType
+  const activeGroupLabel =
+    inventoryGroupView === 'type'    ? 'Type' :
+    inventoryGroupView === 'purpose' ? 'Purpose' :
+    'Category'
+  const activeGroupRows  = Object.keys(activeGroupData).sort()
+  const activeGroupTotal = Object.values(activeGroupData).reduce(
+    (acc, v) => ({ count: acc.count + v.count, costBasis: acc.costBasis + v.costBasis, estimatedValue: acc.estimatedValue + v.estimatedValue }),
+    { count: 0, costBasis: 0, estimatedValue: 0 },
+  )
 
   const brandPerformance = useMemo(() => {
     const brandNameById: Record<number, string> = Object.fromEntries(
@@ -321,9 +378,30 @@ export default function HomePage() {
         <>
           {/* ── Inventory section ──────────────────────────────────────── */}
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Current Inventory</p>
-              <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">By category</h2>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Current Inventory</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">
+                  {inventoryGroupView === 'type' ? 'By type' : inventoryGroupView === 'purpose' ? 'By purpose' : 'By category'}
+                </h2>
+              </div>
+              {/* Grouping segmented control */}
+              <div className="flex rounded-xl border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-700/60">
+                {(['category', 'type', 'purpose'] as const).map((view) => (
+                  <button
+                    key={view}
+                    type="button"
+                    onClick={() => setInventoryGroupView(view)}
+                    className={`rounded-lg px-3 py-1.5 text-sm font-medium capitalize transition ${
+                      inventoryGroupView === view
+                        ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white'
+                        : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {view.charAt(0).toUpperCase() + view.slice(1)}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Inventory summary cards */}
@@ -389,7 +467,7 @@ export default function HomePage() {
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                   <tr>
-                    <th className="px-4 py-3">Category</th>
+                    <th className="px-4 py-3">{activeGroupLabel}</th>
                     <th className="px-4 py-3 text-right">Count</th>
                     <th className="px-4 py-3 text-right">Cost Basis</th>
                     <th className="px-4 py-3 text-right">Estimated Value</th>
@@ -397,12 +475,12 @@ export default function HomePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                  {inventoryValueTypes.map((type) => {
-                    const v = inventoryValueByType[type]
+                  {activeGroupRows.map((key) => {
+                    const v = activeGroupData[key]
                     const equity = v.estimatedValue - v.costBasis
                     return (
-                      <tr key={type}>
-                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{type}</td>
+                      <tr key={key}>
+                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{key}</td>
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{v.count}</td>
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(v.costBasis)}</td>
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(v.estimatedValue)}</td>
@@ -414,11 +492,11 @@ export default function HomePage() {
                   })}
                   <tr className="bg-slate-50 font-semibold dark:bg-slate-700">
                     <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
-                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{totalInventoryCount}</td>
-                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(totalCostBasis)}</td>
-                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(totalEstimatedValue)}</td>
-                    <td className={`px-4 py-3 text-right tabular-nums ${(totalEstimatedValue - totalCostBasis) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                      {(totalEstimatedValue - totalCostBasis) >= 0 ? '+' : '−'}{formatMoney(Math.abs(totalEstimatedValue - totalCostBasis))}
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{activeGroupTotal.count}</td>
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(activeGroupTotal.costBasis)}</td>
+                    <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{formatMoney(activeGroupTotal.estimatedValue)}</td>
+                    <td className={`px-4 py-3 text-right tabular-nums ${(activeGroupTotal.estimatedValue - activeGroupTotal.costBasis) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {(activeGroupTotal.estimatedValue - activeGroupTotal.costBasis) >= 0 ? '+' : '−'}{formatMoney(Math.abs(activeGroupTotal.estimatedValue - activeGroupTotal.costBasis))}
                     </td>
                   </tr>
                 </tbody>
@@ -427,13 +505,13 @@ export default function HomePage() {
 
             {/* Mobile cards */}
             <div className="mt-5 space-y-3 md:hidden">
-              {inventoryValueTypes.map((type) => {
-                const v = inventoryValueByType[type]
+              {activeGroupRows.map((key) => {
+                const v = activeGroupData[key]
                 const equity = v.estimatedValue - v.costBasis
                 return (
-                  <div key={type} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                  <div key={key} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
                     <div className="mb-2 flex items-center justify-between">
-                      <span className="font-semibold text-slate-900 dark:text-white">{type}</span>
+                      <span className="font-semibold text-slate-900 dark:text-white">{key}</span>
                       <span className="text-sm text-slate-500 dark:text-slate-400">{v.count} items</span>
                     </div>
                     <div className="grid grid-cols-3 gap-3 text-xs">
@@ -458,21 +536,21 @@ export default function HomePage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="font-semibold text-slate-900 dark:text-white">Total</span>
-                  <span className="text-sm text-slate-500 dark:text-slate-400">{totalInventoryCount} items</span>
+                  <span className="text-sm text-slate-500 dark:text-slate-400">{activeGroupTotal.count} items</span>
                 </div>
                 <div className="grid grid-cols-3 gap-3 text-xs">
                   <div>
                     <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Cost Basis</span>
-                    <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(totalCostBasis)}</span>
+                    <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(activeGroupTotal.costBasis)}</span>
                   </div>
                   <div>
                     <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Est. Value</span>
-                    <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(totalEstimatedValue)}</span>
+                    <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{formatMoney(activeGroupTotal.estimatedValue)}</span>
                   </div>
                   <div>
                     <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Equity</span>
-                    <span className={`mt-0.5 block font-medium tabular-nums ${(totalEstimatedValue - totalCostBasis) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                      {(totalEstimatedValue - totalCostBasis) >= 0 ? '+' : '−'}{formatMoney(Math.abs(totalEstimatedValue - totalCostBasis))}
+                    <span className={`mt-0.5 block font-medium tabular-nums ${(activeGroupTotal.estimatedValue - activeGroupTotal.costBasis) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {(activeGroupTotal.estimatedValue - activeGroupTotal.costBasis) >= 0 ? '+' : '−'}{formatMoney(Math.abs(activeGroupTotal.estimatedValue - activeGroupTotal.costBasis))}
                     </span>
                   </div>
                 </div>
