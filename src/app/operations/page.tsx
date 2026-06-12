@@ -24,7 +24,8 @@ function computeDealVisual(
   items: DealItem[],
   itemMap: Record<number, InventoryItemWithValue>,
   brandMap: Record<number, string>,
-  photoByItemId: Record<number, string>
+  photoByItemId: Record<number, string>,
+  expenseItemIdByDealId: Record<number, number>
 ): DealVisual {
   // "Gibson SG Junior" — used for alt text and trade title
   function brandModel(item: InventoryItemWithValue): string {
@@ -68,12 +69,18 @@ function computeDealVisual(
 
   // purchase, sale, expense: single item
   const di = items[0];
-  const item = di ? itemMap[di.item_id] : null;
+  let item: InventoryItemWithValue | null = di ? (itemMap[di.item_id] ?? null) : null;
+  // Expense deals have no deal_items rows — resolve item via inventory_expenses link
+  if (!item && deal.deal_type === 'expense') {
+    const linkedId = expenseItemIdByDealId[deal.id];
+    if (linkedId != null) item = itemMap[linkedId] ?? null;
+  }
   return {
     kind: 'single',
     photoUrl: item ? photoByItemId[item.id] : undefined,
     alt: item ? brandModel(item) : (deal.notes || '—'),
-    title: item ? yearBrandModel(item) : (deal.notes || '—'),
+    // Expense title is always the expense description, never the item name
+    title: deal.deal_type === 'expense' ? (deal.notes || '—') : (item ? yearBrandModel(item) : (deal.notes || '—')),
   };
 }
 
@@ -123,8 +130,13 @@ export default function OperationsPage() {
       setBrands(brandsResult.data || []);
       setExpenses(expensesResult.data || []);
 
-      // Load photos for all referenced items in one extra query (non-blocking)
-      const allItemIds = Array.from(new Set((dealItemsResult.data || []).map((di) => di.item_id)));
+      // Load photos for all referenced items — includes expense-linked items which
+      // have no deal_items rows and are linked only via inventory_expenses.item_id
+      const dealItemIds = (dealItemsResult.data || []).map((di) => di.item_id);
+      const expLinkedIds = (expensesResult.data || [])
+        .filter((e) => e.item_id != null)
+        .map((e) => e.item_id as number);
+      const allItemIds = Array.from(new Set([...dealItemIds, ...expLinkedIds]));
       if (allItemIds.length > 0) {
         getDisplayPhotosForItems(allItemIds).then(setPhotoByItemId);
       }
@@ -177,6 +189,15 @@ export default function OperationsPage() {
     const map: Record<number, number> = {};
     for (const exp of expenses) {
       if (exp.item_id != null) map[exp.item_id] = (map[exp.item_id] ?? 0) + exp.amount;
+    }
+    return map;
+  }, [expenses]);
+
+  // Maps deal_id → item_id for expense deals (expense deals have no deal_items rows)
+  const expenseItemIdByDealId = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const exp of expenses) {
+      if (exp.deal_id != null && exp.item_id != null) map[exp.deal_id] = exp.item_id;
     }
     return map;
   }, [expenses]);
@@ -436,7 +457,8 @@ export default function OperationsPage() {
                   dealItemsByDealId[deal.id] || [],
                   itemMap,
                   brandMap,
-                  photoByItemId
+                  photoByItemId,
+                  expenseItemIdByDealId
                 );
                 const cash = getCashForDeal(deal);
                 const profit = getProfitForDeal(deal);
