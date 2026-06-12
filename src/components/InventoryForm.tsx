@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ItemPhotos, { type ItemPhotosHandle } from '@/components/ItemPhotos';
 import AiAssistantCard from '@/components/AiAssistantCard';
-import InventoryLifeCard from '@/components/InventoryLifeCard';
 import type {
   Brand,
   CollectionType,
@@ -909,12 +908,23 @@ export default function InventoryForm({
                 {existingItem && (
                   <div className="p-4">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                      <p className="min-w-0 truncate text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                         {selectedSubtype?.name ?? existingItem.item_type}
                       </p>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusClasses[existingItem.status] ?? 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200'}`}>
-                        {existingItem.status}
-                      </span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusClasses[existingItem.status] ?? 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200'}`}>
+                          {existingItem.status}
+                        </span>
+                        <Link
+                          href={`/inventory/${itemId}/chain`}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                        >
+                          View Chain
+                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                          </svg>
+                        </Link>
+                      </div>
                     </div>
                     <p className="mt-1 text-base font-semibold leading-snug text-slate-900 dark:text-white">
                       {itemTitle}
@@ -1024,10 +1034,6 @@ export default function InventoryForm({
                   itemId={Number(itemId)}
                   itemLabel={`${brandInput} ${model}`.trim()}
                 />
-              )}
-
-              {existingItem && (
-                <InventoryLifeCard itemId={Number(itemId)} />
               )}
             </div>
           </div>
