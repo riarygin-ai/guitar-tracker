@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemSubtypes } from '@/lib/supabase'
+import { supabase, getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemSubtypes } from '@/lib/supabase'
 
 export default function HomePage() {
   const router = useRouter()
@@ -23,6 +23,17 @@ export default function HomePage() {
     async function loadData() {
       setLoading(true)
 
+      // ── DIAGNOSTICS (temporary) ──────────────────────────────────────────────
+      // Remove once the multi-user data leak is confirmed fixed.
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      const { data: dbCtx } = await supabase.rpc('debug_auth_context')
+      console.group('[Dashboard] Auth + RLS diagnostics')
+      console.log('auth.email       :', authUser?.email ?? '(none)')
+      console.log('auth.id (JWT uid):', authUser?.id ?? '(none)')
+      console.log('DB context       :', dbCtx)
+      console.groupEnd()
+      // ────────────────────────────────────────────────────────────────────────
+
       const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, brandsResult, catsResult, subsResult] = await Promise.all([
         getCashFlows(),
         getInventoryItemsWithValue(),
@@ -33,6 +44,20 @@ export default function HomePage() {
         getItemCategories(),
         getItemSubtypes(),
       ])
+
+      // ── DIAGNOSTICS (temporary) ──────────────────────────────────────────────
+      console.group('[Dashboard] Query row counts')
+      console.log('inventory_items_with_value :', inventoryResult.data?.length ?? 'error', inventoryResult.error?.message ?? '')
+      console.log('deals                      :', dealsResult.data?.length ?? 'error', dealsResult.error?.message ?? '')
+      console.log('deal_items                 :', dealItemsResult.data?.length ?? 'error', dealItemsResult.error?.message ?? '')
+      console.log('cash_flow                  :', cashFlowResult.data?.length ?? 'error', cashFlowResult.error?.message ?? '')
+      console.log('inventory_expenses         :', inventoryExpensesResult.data?.length ?? 'error', inventoryExpensesResult.error?.message ?? '')
+      const activeRows = (inventoryResult.data ?? []).filter((i: any) => i.status === 'owned' || i.status === 'listed')
+      const estValue = activeRows.reduce((s: number, i: any) => s + Number(i.estimated_sold_value ?? 0), 0)
+      const costBasis = activeRows.reduce((s: number, i: any) => s + Number(i.value_in ?? 0), 0)
+      console.log('active items               :', activeRows.length, '→ est_value', estValue, 'cost_basis', costBasis)
+      console.groupEnd()
+      // ────────────────────────────────────────────────────────────────────────
 
       if (cashFlowResult.error || inventoryResult.error || dealsResult.error || dealItemsResult.error || inventoryExpensesResult.error || brandsResult.error) {
         setError('Could not load dashboard data.')

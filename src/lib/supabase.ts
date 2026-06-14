@@ -55,6 +55,14 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 let _appUserId: number | null = null;
 
+// Clear the cached app user ID when the session changes so a new login
+// does not accidentally inherit the previous user's cached ID.
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+    _appUserId = null;
+  }
+});
+
 export async function getOrCreateAppUser(): Promise<AppUser | null> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
