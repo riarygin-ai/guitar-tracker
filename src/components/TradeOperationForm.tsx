@@ -134,10 +134,7 @@ export default function TradeOperationForm() {
 
         setOutgoingItems((current) => [
             ...current,
-            {
-                item,
-                value: item.estimated_sold_value != null ? String(item.estimated_sold_value) : '',
-            },
+            { item, value: '' },
         ])
         setShowOutgoingForm(false)
         setSuccessMessage('Outgoing item created and selected.')
@@ -356,13 +353,7 @@ export default function TradeOperationForm() {
                                         onClick={() => {
                                             setOutgoingItems((current) => [
                                                 ...current,
-                                                {
-                                                    item,
-                                                    value:
-                                                        item.estimated_sold_value != null
-                                                            ? String(item.estimated_sold_value)
-                                                            : '',
-                                                },
+                                                { item, value: '' },
                                             ])
 
                                             setSearchQuery('')
@@ -436,8 +427,17 @@ export default function TradeOperationForm() {
                                                     </div>
                                                 </div>
 
-                                                <div className="flex w-full gap-2 sm:w-48">
+                                                <div className="flex w-full items-end gap-2 sm:w-48">
                                                     <div className="flex-1">
+                                                        {tradeItem.item.estimated_sold_value != null && (
+                                                            <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+                                                                Est. value:{' '}
+                                                                <span className="font-medium text-slate-700 dark:text-slate-300">
+                                                                    ${Number(tradeItem.item.estimated_sold_value).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                                                </span>
+                                                            </p>
+                                                        )}
+
                                                         <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                                                             Value out
                                                         </label>
@@ -468,7 +468,7 @@ export default function TradeOperationForm() {
                                                                 current.filter((_, entryIndex) => entryIndex !== index)
                                                             )
                                                         }}
-                                                        className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
+                                                        className="h-9 shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
                                                     >
                                                         ×
                                                     </button>
