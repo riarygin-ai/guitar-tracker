@@ -160,6 +160,7 @@ export default function InventoryForm({
 
   // Listed / sold dates
   const [listedDate,          setListedDate]          = useState('');
+  const [editingListedDate,   setEditingListedDate]   = useState(false);
   // Edit mode: existing historical import record (read-only display)
   const [existingHistImport, setExistingHistImport] = useState<HistoricalImportInfo | null>(null);
 
@@ -408,7 +409,7 @@ export default function InventoryForm({
       const firstSub = allSubtypes.find((s) => s.is_active) ?? allSubtypes[0] ?? null;
       setSelectedSubtypeId(firstSub?.id ?? null);
       setModel(''); setSerialNumber(''); setYear(''); setColor('');
-      setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes(''); setListedDate('');
+      setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes(''); setListedDate(''); setEditingListedDate(false);
       setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
       setSuccessMessage('Item saved.'); setError(null);
       return;
@@ -471,6 +472,7 @@ export default function InventoryForm({
     setEstimatedSoldValue('');
     setNotes('');
     setListedDate('');
+    setEditingListedDate(false);
     setHistoricalImport(false);
     setHistAcquisitionDate('');
     setHistValueIn('');
@@ -699,13 +701,57 @@ export default function InventoryForm({
       {/* Listed date */}
       <div className="space-y-1.5">
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Listed date</label>
-        <input
-          type="date"
-          value={listedDate}
-          onChange={(e) => setListedDate(e.target.value)}
-          disabled={disabled}
-          className={inputClass}
-        />
+        {listedDate && !editingListedDate ? (
+          <div className="flex h-10 items-center gap-3">
+            <span className="text-sm text-slate-900 dark:text-slate-100">
+              {new Date(listedDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            </span>
+            <button
+              type="button"
+              onClick={() => setEditingListedDate(true)}
+              disabled={disabled}
+              className="text-xs text-slate-500 underline underline-offset-2 hover:text-slate-800 disabled:cursor-not-allowed dark:text-slate-400 dark:hover:text-slate-200"
+            >
+              Change
+            </button>
+            <button
+              type="button"
+              onClick={() => setListedDate('')}
+              disabled={disabled}
+              className="text-xs text-slate-500 underline underline-offset-2 hover:text-rose-600 disabled:cursor-not-allowed dark:text-slate-400 dark:hover:text-rose-400"
+            >
+              Clear
+            </button>
+          </div>
+        ) : editingListedDate ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={listedDate}
+              onChange={(e) => setListedDate(e.target.value)}
+              disabled={disabled}
+              autoFocus
+              className={inputClass}
+            />
+            <button
+              type="button"
+              onClick={() => setEditingListedDate(false)}
+              disabled={disabled}
+              className="shrink-0 text-xs text-slate-500 underline underline-offset-2 hover:text-slate-800 disabled:cursor-not-allowed dark:text-slate-400 dark:hover:text-slate-200"
+            >
+              Done
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setListedDate(new Date().toISOString().split('T')[0])}
+            disabled={disabled}
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+          >
+            List item
+          </button>
+        )}
       </div>
 
       {/* Notes */}
