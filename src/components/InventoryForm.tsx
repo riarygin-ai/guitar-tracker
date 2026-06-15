@@ -157,6 +157,10 @@ export default function InventoryForm({
   const [historicalImport,    setHistoricalImport]    = useState(false);
   const [histAcquisitionDate, setHistAcquisitionDate] = useState('');
   const [histValueIn,         setHistValueIn]         = useState('');
+  const [histListedDate,      setHistListedDate]      = useState('');
+
+  // Listed / sold dates
+  const [listedDate,          setListedDate]          = useState('');
   // Edit mode: existing historical import record (read-only display)
   const [existingHistImport, setExistingHistImport] = useState<HistoricalImportInfo | null>(null);
 
@@ -248,6 +252,7 @@ export default function InventoryForm({
       setCollectionType(item.collection_type ?? '');
       setEstimatedSoldValue(item.estimated_sold_value?.toString() ?? '');
       setNotes(item.notes ?? '');
+      setListedDate(item.date_listed ?? '');
       setSelectedBrandId(item.brand_id);
       const brand = brands.find((b) => b.id === item.brand_id);
       setBrandInput(brand?.name ?? '');
@@ -386,6 +391,9 @@ export default function InventoryForm({
         setError(rpcResult.error ?? 'Could not create item with historical import.');
         return;
       }
+      if (histListedDate) {
+        await updateInventoryItem(rpcResult.data.item_id, { id: rpcResult.data.item_id, date_listed: histListedDate });
+      }
       // Standalone form: navigate to inventory
       if (!hideHeader) {
         router.push(backHref ?? '/inventory');
@@ -401,8 +409,8 @@ export default function InventoryForm({
       const firstSub = allSubtypes.find((s) => s.is_active) ?? allSubtypes[0] ?? null;
       setSelectedSubtypeId(firstSub?.id ?? null);
       setModel(''); setSerialNumber(''); setYear(''); setColor('');
-      setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes('');
-      setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
+      setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes(''); setListedDate('');
+      setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn(''); setHistListedDate('');
       setSuccessMessage('Item saved.'); setError(null);
       return;
     }
@@ -420,7 +428,7 @@ export default function InventoryForm({
       collection_type: collectionType || null,
       estimated_sold_value: estimatedSoldValue ? Number(estimatedSoldValue) : null,
       notes: notes.trim() || null,
-      date_listed: null,
+      date_listed: listedDate || (existingItem?.status === 'listed' ? new Date().toISOString().split('T')[0] : null),
       sold_date: existingItem?.sold_date ?? null,
       status: existingItem?.status ?? 'new',
     };
@@ -463,9 +471,11 @@ export default function InventoryForm({
     setCollectionType('');
     setEstimatedSoldValue('');
     setNotes('');
+    setListedDate('');
     setHistoricalImport(false);
     setHistAcquisitionDate('');
     setHistValueIn('');
+    setHistListedDate('');
     setSuccessMessage('Item saved.');
     setError(null);
   };
@@ -688,6 +698,18 @@ export default function InventoryForm({
         <p className="text-xs text-slate-500 dark:text-slate-400">Estimated values help track potential returns.</p>
       </div>
 
+      {/* Listed date */}
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Listed date</label>
+        <input
+          type="date"
+          value={listedDate}
+          onChange={(e) => setListedDate(e.target.value)}
+          disabled={disabled}
+          className={inputClass}
+        />
+      </div>
+
       {/* Notes */}
       <div className="space-y-1.5 sm:col-span-2">
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Notes</label>
@@ -758,6 +780,18 @@ export default function InventoryForm({
                       className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                     />
                   </div>
+                </div>
+
+                {/* Listed date (optional) */}
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Listed date</label>
+                  <input
+                    type="date"
+                    value={histListedDate}
+                    onChange={(e) => setHistListedDate(e.target.value)}
+                    disabled={disabled}
+                    className={inputClass}
+                  />
                 </div>
               </div>
             )}
@@ -952,6 +986,14 @@ export default function InventoryForm({
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Potential ROI</p>
                                 <p className={`mt-0.5 text-lg font-semibold ${metricColor(potentialRoi)}`}>{fmtPct(potentialRoi, potentialReward)}</p>
                               </div>
+                              {existingItem.date_listed && (
+                                <div>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400">Listed</p>
+                                  <p className="mt-0.5 text-sm font-medium text-slate-900 dark:text-slate-100">
+                                    {new Date(existingItem.date_listed + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  </p>
+                                </div>
+                              )}
                             </>
                           )}
                           {isSoldOrTraded && (
@@ -974,6 +1016,30 @@ export default function InventoryForm({
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Realized ROI</p>
                                 <p className={`mt-0.5 text-lg font-semibold ${metricColor(realizedRoi)}`}>{fmtPct(realizedRoi, realizedGain)}</p>
                               </div>
+                              {existingItem.date_listed && (
+                                <div>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400">Listed</p>
+                                  <p className="mt-0.5 text-sm font-medium text-slate-900 dark:text-slate-100">
+                                    {new Date(existingItem.date_listed + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  </p>
+                                </div>
+                              )}
+                              {existingItem.sold_date && (
+                                <div>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400">Sold</p>
+                                  <p className="mt-0.5 text-sm font-medium text-slate-900 dark:text-slate-100">
+                                    {new Date(existingItem.sold_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  </p>
+                                </div>
+                              )}
+                              {existingItem.date_listed && existingItem.sold_date && (
+                                <div>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400">Days to sell</p>
+                                  <p className="mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-100">
+                                    {Math.max(0, Math.round((new Date(existingItem.sold_date).getTime() - new Date(existingItem.date_listed).getTime()) / 86400000))}
+                                  </p>
+                                </div>
+                              )}
                             </>
                           )}
                         </div>
