@@ -189,6 +189,14 @@ export default function HomePage() {
     router.push(`/operations?from=${month}-01&to=${month}-${String(lastDay).padStart(2, '0')}&dealTypes=sale,trade,purchase`)
   }
 
+  const navigateToInventory = (key: string) => {
+    const params = new URLSearchParams({ status: 'owned,listed' })
+    if (inventoryGroupView === 'category') params.set('category', key)
+    else if (inventoryGroupView === 'type') params.set('type', key)
+    else if (inventoryGroupView === 'purpose') params.set('purpose', key)
+    router.push(`/inventory?${params.toString()}`)
+  }
+
   const legacyTypeToCategory: Record<string, string> = {
     guitar: 'Guitars', bass: 'Guitars', 'acoustic guitar': 'Guitars',
     amp: 'Amps', cab: 'Amps', processor: 'Amps',
@@ -504,8 +512,24 @@ export default function HomePage() {
                     const v = activeGroupData[key]
                     const equity = v.estimatedValue - v.costBasis
                     return (
-                      <tr key={key}>
-                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{key}</td>
+                      <tr
+                        key={key}
+                        role="button"
+                        tabIndex={0}
+                        className="cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-700/60"
+                        onClick={() => navigateToInventory(key)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateToInventory(key) }
+                        }}
+                      >
+                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">
+                          <span className="flex items-center gap-1.5">
+                            {key}
+                            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400 dark:text-slate-500">
+                              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                            </svg>
+                          </span>
+                        </td>
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{v.count}</td>
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(v.costBasis)}</td>
                         <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatMoney(v.estimatedValue)}</td>
@@ -534,9 +558,19 @@ export default function HomePage() {
                 const v = activeGroupData[key]
                 const equity = v.estimatedValue - v.costBasis
                 return (
-                  <div key={key} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => navigateToInventory(key)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700/60"
+                  >
                     <div className="mb-2 flex items-center justify-between">
-                      <span className="font-semibold text-slate-900 dark:text-white">{key}</span>
+                      <span className="flex items-center gap-1.5 font-semibold text-slate-900 dark:text-white">
+                        {key}
+                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400 dark:text-slate-500">
+                          <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                        </svg>
+                      </span>
                       <span className="text-sm text-slate-500 dark:text-slate-400">{v.count} items</span>
                     </div>
                     <div className="grid grid-cols-3 gap-3 text-xs">
@@ -555,7 +589,7 @@ export default function HomePage() {
                         </span>
                       </div>
                     </div>
-                  </div>
+                  </button>
                 )
               })}
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">

@@ -54,18 +54,24 @@ export default function InventoryPage() {
   const [selectedCategoryNames, setSelectedCategoryNames] = useState<string[]>(['Guitars']);
   const [selectedSubtypeNames, setSelectedSubtypeNames] = useState<string[]>([]);
   const [showSubtypes, setShowSubtypes] = useState(false);
+  const [selectedPurposes, setSelectedPurposes] = useState<string[]>([]);
 
   const isInitializedRef = useRef(false);
   useEffect(() => {
     if (isInitializedRef.current) return;
     const s = searchParams.get('status');
     const cat = searchParams.get('category');
-    const sub = searchParams.get('subtype');
+    // 'subtype' is the canonical param; 'type' is an alias from dashboard drill-down
+    const sub = searchParams.get('subtype') ?? searchParams.get('type');
+    const purpose = searchParams.get('purpose');
     const q = searchParams.get('search');
     setSearch(q ?? '');
     setSelectedStatuses(s ? (s.split(',').filter(Boolean) as Status[]) : ['owned', 'listed']);
-    setSelectedCategoryNames(cat ? cat.split(',').filter(Boolean) : ['Guitars']);
+    // When drilling in via type/subtype/purpose without an explicit category, clear the default
+    const hasDrilldown = !cat && (searchParams.has('type') || searchParams.has('subtype') || searchParams.has('purpose'));
+    setSelectedCategoryNames(cat ? cat.split(',').filter(Boolean) : (hasDrilldown ? [] : ['Guitars']));
     setSelectedSubtypeNames(sub ? sub.split(',').filter(Boolean) : []);
+    setSelectedPurposes(purpose ? purpose.split(',').filter(Boolean) : []);
     isInitializedRef.current = true;
   }, [searchParams]);
 
@@ -76,9 +82,10 @@ export default function InventoryPage() {
     if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
     if (selectedCategoryNames.length > 0) params.set('category', [...selectedCategoryNames].sort().join(','));
     if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
+    if (selectedPurposes.length > 0) params.set('purpose', [...selectedPurposes].sort().join(','));
     const qs = params.toString();
     router.replace(`/inventory${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, router]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposes, router]);
 
   const backQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -86,8 +93,9 @@ export default function InventoryPage() {
     if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
     if (selectedCategoryNames.length > 0) params.set('category', [...selectedCategoryNames].sort().join(','));
     if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
+    if (selectedPurposes.length > 0) params.set('purpose', [...selectedPurposes].sort().join(','));
     return params.toString();
-  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposes]);
 
   useEffect(() => {
     async function loadData() {
@@ -209,6 +217,12 @@ export default function InventoryPage() {
     });
   }, [allSubtypes, selectedCategoryNames, categoryNameBySubtypeId]);
 
+  const availablePurposes = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((item) => set.add((item.collection_type as string | null) ?? 'Unassigned'));
+    return Array.from(set).sort();
+  }, [items]);
+
   const filteredItems = useMemo(() => {
     const searchTerms = splitSearchTerms(search);
 
@@ -245,7 +259,11 @@ export default function InventoryPage() {
       const matchesSubtype =
         selectedSubtypeNames.length === 0 || selectedSubtypeNames.includes(itemSubtypeName);
 
-      return matchesSearch && matchesStatus && matchesCategory && matchesSubtype;
+      const matchesPurpose =
+        selectedPurposes.length === 0 ||
+        selectedPurposes.includes((item.collection_type as string | null) ?? 'Unassigned');
+
+      return matchesSearch && matchesStatus && matchesCategory && matchesSubtype && matchesPurpose;
     });
   }, [brandMap, itemsWithComputedValues, search, selectedCategoryNames, selectedSubtypeNames, selectedStatuses, subtypeNameById, categoryNameBySubtypeId]);
 
@@ -432,6 +450,35 @@ export default function InventoryPage() {
                     }`}
                   >
                     {sub.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Purpose filter */}
+          {availablePurposes.length > 0 && (
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Purpose</p>
+              <div className="flex flex-wrap gap-2">
+                {availablePurposes.map((purpose) => (
+                  <button
+                    key={purpose}
+                    type="button"
+                    onClick={() =>
+                      setSelectedPurposes((current) =>
+                        current.includes(purpose)
+                          ? current.filter((v) => v !== purpose)
+                          : [...current, purpose]
+                      )
+                    }
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                      selectedPurposes.includes(purpose)
+                        ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                    }`}
+                  >
+                    {purpose}
                   </button>
                 ))}
               </div>
