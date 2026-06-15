@@ -397,50 +397,101 @@ export default function TradeOperationForm() {
 
                         {outgoingItems.length > 0 && (
                             <div className="space-y-3">
-                                {outgoingItems.map((tradeItem, index) => (
-                                    <div
-                                        key={`${tradeItem.item.id}-${index}`}
-                                        className="rounded-2xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-700 dark:bg-purple-900/20"
-                                    >
-                                        <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
-                                            {/* Left: photo + est. value stacked */}
-                                            <div className="w-16 shrink-0">
-                                                {photoByItemId[tradeItem.item.id] ? (
-                                                    <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
-                                                        <Image src={photoByItemId[tradeItem.item.id]} alt={formatItemLabel(tradeItem.item)} fill className="object-cover" unoptimized sizes="64px" />
-                                                    </div>
-                                                ) : (
-                                                    <div className="h-16 w-16 rounded-xl bg-slate-100 dark:bg-slate-700" />
-                                                )}
-                                                {tradeItem.item.estimated_sold_value != null && (
-                                                    <div className="mt-2 text-center">
-                                                        <p className="text-xs text-slate-500 dark:text-slate-400">Est. Value</p>
-                                                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                                                            ${Number(tradeItem.item.estimated_sold_value).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                                                        </p>
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                            {/* Item info */}
-                                            <div className="min-w-0 flex-1">
-                                                <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                                                    {formatItemLabel(tradeItem.item)}
-                                                </p>
-                                                <div className="mt-2 flex flex-wrap gap-2">
-                                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                                        {tradeItem.item.status}
-                                                    </span>
-                                                    {tradeItem.item.condition && (
-                                                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                                                            {tradeItem.item.condition}
-                                                        </span>
+                                {outgoingItems.map((tradeItem, index) => {
+                                    const estVal = tradeItem.item.estimated_sold_value
+                                    const fmtEstVal = estVal != null
+                                        ? `$${Number(estVal).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+                                        : null
+                                    const onChangeValue = (event: React.ChangeEvent<HTMLInputElement>) => {
+                                        const value = event.target.value
+                                        setOutgoingItems((current) =>
+                                            current.map((entry, entryIndex) =>
+                                                entryIndex === index ? { ...entry, value } : entry
+                                            )
+                                        )
+                                    }
+                                    const onRemove = () => {
+                                        setOutgoingItems((current) =>
+                                            current.filter((_, entryIndex) => entryIndex !== index)
+                                        )
+                                    }
+                                    return (
+                                        <div
+                                            key={`${tradeItem.item.id}-${index}`}
+                                            className="rounded-2xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-700 dark:bg-purple-900/20"
+                                        >
+                                            {/* Top row: photo | info (+ right group on desktop) */}
+                                            <div className="flex items-start gap-4">
+                                                {/* Photo */}
+                                                <div className="shrink-0">
+                                                    {photoByItemId[tradeItem.item.id] ? (
+                                                        <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                                                            <Image src={photoByItemId[tradeItem.item.id]} alt={formatItemLabel(tradeItem.item)} fill className="object-cover" unoptimized sizes="64px" />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="h-16 w-16 rounded-xl bg-slate-100 dark:bg-slate-700" />
                                                     )}
+                                                </div>
+
+                                                {/* Item info — Est. Value visible here on mobile only */}
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                                                        {formatItemLabel(tradeItem.item)}
+                                                    </p>
+                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                        <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
+                                                            {tradeItem.item.status}
+                                                        </span>
+                                                        {tradeItem.item.condition && (
+                                                            <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
+                                                                {tradeItem.item.condition}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {fmtEstVal && (
+                                                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 sm:hidden">
+                                                            Est. Value:{' '}
+                                                            <span className="font-semibold text-slate-700 dark:text-slate-300">{fmtEstVal}</span>
+                                                        </p>
+                                                    )}
+                                                </div>
+
+                                                {/* Right group — desktop only: Est. Value + Value Out + × */}
+                                                <div className="hidden shrink-0 sm:flex sm:flex-col sm:gap-3">
+                                                    {fmtEstVal && (
+                                                        <div>
+                                                            <p className="text-xs text-slate-500 dark:text-slate-400">Est. Value</p>
+                                                            <p className="mt-0.5 text-sm font-semibold text-slate-700 dark:text-slate-300">{fmtEstVal}</p>
+                                                        </div>
+                                                    )}
+                                                    <div>
+                                                        <label className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                                                            Value out
+                                                        </label>
+                                                        <div className="flex items-center gap-2">
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                min="0"
+                                                                value={tradeItem.value}
+                                                                onChange={onChangeValue}
+                                                                className="w-28 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
+                                                                placeholder="0.00"
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={onRemove}
+                                                                className="h-9 shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
+                                                            >
+                                                                ×
+                                                            </button>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
 
-                                            {/* Value out + × — full-width on mobile (wraps below), fixed on desktop (stays inline) */}
-                                            <div className="flex w-full items-end gap-2 sm:w-48 sm:shrink-0">
+                                            {/* Value Out row — mobile only */}
+                                            <div className="mt-3 flex items-end gap-2 sm:hidden">
                                                 <div className="flex-1">
                                                     <label className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                                                         Value out
@@ -450,33 +501,22 @@ export default function TradeOperationForm() {
                                                         step="0.01"
                                                         min="0"
                                                         value={tradeItem.value}
-                                                        onChange={(event) => {
-                                                            const value = event.target.value
-                                                            setOutgoingItems((current) =>
-                                                                current.map((entry, entryIndex) =>
-                                                                    entryIndex === index ? { ...entry, value } : entry
-                                                                )
-                                                            )
-                                                        }}
+                                                        onChange={onChangeValue}
                                                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
                                                         placeholder="0.00"
                                                     />
                                                 </div>
                                                 <button
                                                     type="button"
-                                                    onClick={() => {
-                                                        setOutgoingItems((current) =>
-                                                            current.filter((_, entryIndex) => entryIndex !== index)
-                                                        )
-                                                    }}
+                                                    onClick={onRemove}
                                                     className="h-9 shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
                                                 >
                                                     ×
                                                 </button>
                                             </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    )
+                                })}
                             </div>
                         )}
 
