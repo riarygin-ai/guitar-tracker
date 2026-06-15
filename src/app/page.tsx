@@ -344,7 +344,7 @@ export default function HomePage() {
 
     const brandData: Record<number, {
       name: string
-      items: { roi: number; profit: number; daysHeld: number }[]
+      items: { roi: number; profit: number; daysOnMarket: number | null }[]
     }> = {}
 
     inventoryItems.forEach((item) => {
@@ -358,16 +358,17 @@ export default function HomePage() {
 
       const inDi = inDealItemByItemId[item.id]
       if (!inDi) return
-      const acquisitionDeal = dealById[inDi.deal_id]
-      if (!acquisitionDeal?.deal_date) return
 
       if (!item.sold_date) return
 
-      const daysHeld = Math.round(
-        (new Date(item.sold_date).getTime() - new Date(acquisitionDeal.deal_date).getTime()) /
-        (1000 * 60 * 60 * 24)
-      )
-      if (daysHeld < 0) return
+      // days on market = sold_date - listed_date; null when listed_date is absent
+      const daysOnMarket = item.date_listed
+        ? Math.round(
+            (new Date(item.sold_date).getTime() - new Date(item.date_listed).getTime()) /
+            (1000 * 60 * 60 * 24)
+          )
+        : null
+      if (daysOnMarket !== null && daysOnMarket < 0) return
 
       const itemExpenses = expensesByItemId[item.id] ?? 0
       const profit = valueOut - valueIn - itemExpenses
@@ -377,7 +378,7 @@ export default function HomePage() {
       if (!brandData[brandId]) {
         brandData[brandId] = { name: brandNameById[brandId] ?? `Brand ${brandId}`, items: [] }
       }
-      brandData[brandId].items.push({ roi, profit, daysHeld })
+      brandData[brandId].items.push({ roi, profit, daysOnMarket })
     })
 
     return Object.values(brandData)
@@ -386,8 +387,12 @@ export default function HomePage() {
         const soldQty = b.items.length
         const avgRoi = b.items.reduce((sum, i) => sum + i.roi, 0) / soldQty
         const avgProfit = b.items.reduce((sum, i) => sum + i.profit, 0) / soldQty
-        const avgDaysHeld = Math.round(b.items.reduce((sum, i) => sum + i.daysHeld, 0) / soldQty)
-        return { name: b.name, soldQty, avgRoi, avgProfit, avgDaysHeld }
+        // Only average items that have a listed_date; items without are excluded entirely
+        const marketItems = b.items.filter((i) => i.daysOnMarket !== null)
+        const avgDaysOnMarket = marketItems.length > 0
+          ? Math.round(marketItems.reduce((sum, i) => sum + i.daysOnMarket!, 0) / marketItems.length)
+          : null
+        return { name: b.name, soldQty, avgRoi, avgProfit, avgDaysOnMarket }
       })
       .sort((a, b) => b.avgRoi - a.avgRoi)
       .slice(0, 15)
@@ -798,7 +803,7 @@ export default function HomePage() {
                       <th className="px-4 py-3 text-center">Sold</th>
                       <th className="px-4 py-3 text-right">Avg ROI</th>
                       <th className="px-4 py-3 text-right">Avg Profit</th>
-                      <th className="px-4 py-3 text-right">Avg Days Held</th>
+                      <th className="px-4 py-3 text-right" title="Average number of days between listing and sale.">Avg Days on Market</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
@@ -817,7 +822,9 @@ export default function HomePage() {
                           {row.avgRoi >= 0 ? '+' : ''}{row.avgRoi.toFixed(1)}%
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-900 dark:text-slate-100">{formatMoney(row.avgProfit)}</td>
-                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{row.avgDaysHeld}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">
+                          {row.avgDaysOnMarket !== null ? row.avgDaysOnMarket : <span className="text-slate-400 dark:text-slate-500">—</span>}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -848,9 +855,11 @@ export default function HomePage() {
                         <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg Profit</span>
                         <span className="mt-0.5 block font-medium tabular-nums text-slate-700 dark:text-slate-300">{formatMoney(row.avgProfit)}</span>
                       </div>
-                      <div>
-                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg Days</span>
-                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">{row.avgDaysHeld}</span>
+                      <div title="Average number of days between listing and sale.">
+                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg Days on Mkt</span>
+                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">
+                          {row.avgDaysOnMarket !== null ? row.avgDaysOnMarket : <span className="text-slate-400 dark:text-slate-500">—</span>}
+                        </span>
                       </div>
                     </div>
                   </div>
