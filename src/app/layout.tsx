@@ -9,7 +9,7 @@ import ThemeToggle from '@/components/ThemeToggle'
 export const metadata = {
   title: 'Guitar Tracker',
   description: 'A guitar inventory tracking app built with Next.js, Supabase, and Tailwind CSS',
-  icons: { icon: '/favicon.png' },
+  icons: { icon: '/icon.svg' },
 };
 
 const RootLayout = ({ children }: { children: React.ReactNode }) => {
