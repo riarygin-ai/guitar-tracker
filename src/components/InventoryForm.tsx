@@ -157,7 +157,6 @@ export default function InventoryForm({
   const [historicalImport,    setHistoricalImport]    = useState(false);
   const [histAcquisitionDate, setHistAcquisitionDate] = useState('');
   const [histValueIn,         setHistValueIn]         = useState('');
-  const [histListedDate,      setHistListedDate]      = useState('');
 
   // Listed / sold dates
   const [listedDate,          setListedDate]          = useState('');
@@ -391,8 +390,8 @@ export default function InventoryForm({
         setError(rpcResult.error ?? 'Could not create item with historical import.');
         return;
       }
-      if (histListedDate) {
-        await updateInventoryItem(rpcResult.data.item_id, { id: rpcResult.data.item_id, date_listed: histListedDate });
+      if (listedDate) {
+        await updateInventoryItem(rpcResult.data.item_id, { id: rpcResult.data.item_id, date_listed: listedDate });
       }
       // Standalone form: navigate to inventory
       if (!hideHeader) {
@@ -410,7 +409,7 @@ export default function InventoryForm({
       setSelectedSubtypeId(firstSub?.id ?? null);
       setModel(''); setSerialNumber(''); setYear(''); setColor('');
       setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes(''); setListedDate('');
-      setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn(''); setHistListedDate('');
+      setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
       setSuccessMessage('Item saved.'); setError(null);
       return;
     }
@@ -475,7 +474,6 @@ export default function InventoryForm({
     setHistoricalImport(false);
     setHistAcquisitionDate('');
     setHistValueIn('');
-    setHistListedDate('');
     setSuccessMessage('Item saved.');
     setError(null);
   };
@@ -780,18 +778,6 @@ export default function InventoryForm({
                       className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                     />
                   </div>
-                </div>
-
-                {/* Listed date (optional) */}
-                <div className="space-y-1.5">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Listed date</label>
-                  <input
-                    type="date"
-                    value={histListedDate}
-                    onChange={(e) => setHistListedDate(e.target.value)}
-                    disabled={disabled}
-                    className={inputClass}
-                  />
                 </div>
               </div>
             )}
