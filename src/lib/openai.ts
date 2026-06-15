@@ -50,6 +50,24 @@ Use information in the following order of importance:
 
 Do not replace seller-provided information with generic descriptions of the product category. Do not fill space with generic statements when seller notes provide specific information that makes the item more interesting.
 
+Product Knowledge Usage:
+You may use well-established product information when it is widely documented by the manufacturer or part of the product's standard specifications. Examples of acceptable product knowledge:
+- Pickup type (e.g. single-coil, humbucker, P-90)
+- Pedal function (e.g. overdrive, delay, compressor)
+- Amplifier format (e.g. combo, head, solid-state, tube)
+- Control layout
+- Manufacturer specifications
+- Intended product purpose
+
+Do not invent or assume:
+- Tonal characteristics
+- Rarity or desirability
+- Collector status or market value
+- Performance claims
+- Player preferences
+
+When product knowledge is used, present it factually rather than promotionally. Avoid subjective marketing language such as: "amazing tone", "incredible sounding", "perfect for", "elevate your sound", "renowned craftsmanship", "high-quality".
+
 Listing Focus:
 Lead with the details that make this specific item interesting. Examples of details worth highlighting:
 - Unusual or rare finish, color, or aging/relic work
