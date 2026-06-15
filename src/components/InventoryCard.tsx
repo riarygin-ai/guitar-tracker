@@ -154,28 +154,6 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
             )}
           </div>
 
-          {(item.date_listed || (isSoldOrTraded && item.sold_date)) && (
-            <div className="mt-1 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
-              {item.date_listed && (
-                <span>
-                  <span className="text-slate-500 dark:text-slate-400">Listed:</span>{' '}
-                  {new Date(item.date_listed + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </span>
-              )}
-              {isSoldOrTraded && item.sold_date && (
-                <span>
-                  <span className="text-slate-500 dark:text-slate-400">Sold:</span>{' '}
-                  {new Date(item.sold_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </span>
-              )}
-              {isSoldOrTraded && item.date_listed && item.sold_date && (
-                <span>
-                  <span className="text-slate-500 dark:text-slate-400">Days to sell:</span>{' '}
-                  {Math.max(0, Math.round((new Date(item.sold_date).getTime() - new Date(item.date_listed).getTime()) / 86400000))}
-                </span>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>
