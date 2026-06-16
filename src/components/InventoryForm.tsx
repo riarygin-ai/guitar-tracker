@@ -430,7 +430,9 @@ export default function InventoryForm({
       notes: notes.trim() || null,
       date_listed: listedDate || (existingItem?.status === 'listed' ? new Date().toISOString().split('T')[0] : null),
       sold_date: existingItem?.sold_date ?? null,
-      status: existingItem?.status ?? 'new',
+      status: listedDate && (existingItem?.status === 'new' || existingItem?.status === 'owned')
+        ? 'listed'
+        : existingItem?.status ?? 'new',
     };
 
     const result = itemId
