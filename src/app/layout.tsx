@@ -3,8 +3,14 @@ import './globals.css';
 import AdminNavButton from '@/components/AdminNavButton'
 import AuthGuard from '@/components/AuthGuard'
 import LogoutButton from '@/components/LogoutButton'
+import PwaUpdater from '@/components/PwaUpdater'
 import QuickAddButton from '@/components/QuickAddButton'
 import ThemeToggle from '@/components/ThemeToggle'
+
+// themeColor belongs in viewport (not metadata) in Next.js 14+
+export const viewport = {
+  themeColor: '#0f172a',
+};
 
 export const metadata = {
   title: 'Guitar Tracker',
@@ -16,10 +22,21 @@ export const metadata = {
   },
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'black-translucent',
+    statusBarStyle: 'black-translucent' as const,
     title: 'Guitar Tracker',
+    startupImage: [
+      // iPhone SE / 8  (375×667 @2x)
+      { url: '/splash-750x1334.png',   media: '(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)' },
+      // iPhone XR / 11  (414×896 @2x)
+      { url: '/splash-828x1792.png',   media: '(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)' },
+      // iPhone 12–15    (390×844 @3x)
+      { url: '/splash-1170x2532.png',  media: '(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)' },
+      // iPhone 14/15 Pro  (393×852 @3x)
+      { url: '/splash-1179x2556.png',  media: '(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)' },
+      // iPhone Plus / Max  (428×926 @3x)
+      { url: '/splash-1284x2778.png',  media: '(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)' },
+    ],
   },
-  themeColor: '#0f172a',
 };
 
 const RootLayout = ({ children }: { children: React.ReactNode }) => {
@@ -75,6 +92,7 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
         <AuthGuard>
           <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
         </AuthGuard>
+        <PwaUpdater />
       </body>
     </html>
   );
