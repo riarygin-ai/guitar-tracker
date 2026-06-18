@@ -9,7 +9,17 @@ import ThemeToggle from '@/components/ThemeToggle'
 export const metadata = {
   title: 'Guitar Tracker',
   description: 'A guitar inventory tracking app built with Next.js, Supabase, and Tailwind CSS',
-  icons: { icon: '/icon.svg' },
+  manifest: '/manifest.json',
+  icons: {
+    icon: '/icon.svg',
+    apple: '/apple-touch-icon.png',
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Guitar Tracker',
+  },
+  themeColor: '#0f172a',
 };
 
 const RootLayout = ({ children }: { children: React.ReactNode }) => {
