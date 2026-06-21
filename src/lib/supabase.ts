@@ -301,6 +301,10 @@ export interface CreateItemWithHistoricalImportParams {
 export async function createItemWithHistoricalImport(
   params: CreateItemWithHistoricalImportParams,
 ): Promise<{ data: { item_id: number; deal_id: number } | null; error: string | null }> {
+  if (!params.condition)            return { data: null, error: 'Condition is required.' };
+  if (!params.collectionType)       return { data: null, error: 'Purpose is required.' };
+  if (params.estimatedSoldValue == null) return { data: null, error: 'Estimated Sold Value is required.' };
+
   const { data, error } = await supabase.rpc('create_item_with_historical_import', {
     p_brand_id:             params.brandId,
     p_item_type:            params.itemType,
@@ -322,6 +326,9 @@ export async function createItemWithHistoricalImport(
 }
 
 export async function createInventoryItem(item: NewInventoryItem) {
+  if (!item.condition)            return { data: null, error: { message: 'Condition is required.' }, status: 422, statusText: 'Unprocessable Entity', count: null } as const;
+  if (!item.collection_type)      return { data: null, error: { message: 'Purpose is required.' }, status: 422, statusText: 'Unprocessable Entity', count: null } as const;
+  if (item.estimated_sold_value == null) return { data: null, error: { message: 'Estimated Sold Value is required.' }, status: 422, statusText: 'Unprocessable Entity', count: null } as const;
   return supabase.from('inventory_items').insert(item).select().single();
 }
 

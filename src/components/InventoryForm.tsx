@@ -120,6 +120,9 @@ export default function InventoryForm({
   const [collectionType, setCollectionType] = useState<CollectionType | ''>('');
   const [estimatedSoldValue, setEstimatedSoldValue] = useState('');
   const [notes, setNotes] = useState('');
+  const [conditionError, setConditionError] = useState<string | null>(null);
+  const [collectionTypeError, setCollectionTypeError] = useState<string | null>(null);
+  const [estimatedSoldValueError, setEstimatedSoldValueError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -348,6 +351,15 @@ export default function InventoryForm({
       }
     }
 
+    // Per-field required validation (applies to create and update)
+    const conditionErr   = !condition        ? 'Please select a Condition.'               : null;
+    const collectionErr  = !collectionType   ? 'Please select a Purpose.'                 : null;
+    const estValueErr    = !estimatedSoldValue ? 'Please enter an Estimated Sold Value.'  : null;
+    setConditionError(conditionErr);
+    setCollectionTypeError(collectionErr);
+    setEstimatedSoldValueError(estValueErr);
+    if (conditionErr || collectionErr || estValueErr) return;
+
     setSaving(true);
 
     let brandId = selectedBrandId;
@@ -405,6 +417,7 @@ export default function InventoryForm({
       setSelectedSubtypeId(null);
       setModel(''); setSerialNumber(''); setYear(''); setColor('');
       setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes(''); setListedDate(''); setEditingListedDate(false);
+      setConditionError(null); setCollectionTypeError(null); setEstimatedSoldValueError(null);
       setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
       setSuccessMessage('Item saved.'); setError(null);
       return;
@@ -468,6 +481,9 @@ export default function InventoryForm({
     setNotes('');
     setListedDate('');
     setEditingListedDate(false);
+    setConditionError(null);
+    setCollectionTypeError(null);
+    setEstimatedSoldValueError(null);
     setHistoricalImport(false);
     setHistAcquisitionDate('');
     setHistValueIn('');
@@ -507,6 +523,7 @@ export default function InventoryForm({
     : null;
 
   const inputClass = 'h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600';
+  const errorInputClass = 'h-10 w-full rounded-xl border border-rose-300 bg-rose-50 px-3 text-sm text-slate-900 outline-none transition focus:border-rose-400 focus:ring-2 focus:ring-rose-100 dark:border-rose-700 dark:bg-rose-900/20 dark:text-slate-100 dark:focus:ring-rose-900/30';
 
   // Shared form fields used in both single-column and two-column layouts
   const formFields = (
@@ -644,39 +661,47 @@ export default function InventoryForm({
 
       {/* Condition */}
       <div className="space-y-1.5">
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condition</label>
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+          Condition <span className="text-rose-500">*</span>
+        </label>
         <select
           value={condition}
-          onChange={(e) => setCondition(e.target.value as Condition)}
+          onChange={(e) => { setCondition(e.target.value as Condition); setConditionError(null); }}
           disabled={disabled}
-          className={inputClass}
+          className={conditionError ? errorInputClass : inputClass}
         >
-          <option value="">Choose condition</option>
+          <option value="">Select Condition</option>
           {conditionOptions.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
+        {conditionError && <p className="text-xs text-rose-600 dark:text-rose-400">{conditionError}</p>}
       </div>
 
       {/* Collection */}
       <div className="space-y-1.5">
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Purpose</label>
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+          Purpose <span className="text-rose-500">*</span>
+        </label>
         <select
           value={collectionType}
-          onChange={(e) => setCollectionType(e.target.value as CollectionType)}
+          onChange={(e) => { setCollectionType(e.target.value as CollectionType); setCollectionTypeError(null); }}
           disabled={disabled}
-          className={inputClass}
+          className={collectionTypeError ? errorInputClass : inputClass}
         >
-          <option value="">Choose type</option>
+          <option value="">Select Purpose</option>
           {collectionOptions.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
+        {collectionTypeError && <p className="text-xs text-rose-600 dark:text-rose-400">{collectionTypeError}</p>}
       </div>
 
       {/* Estimated sold value */}
       <div className="space-y-1.5">
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Estimated sold value</label>
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+          Estimated sold value <span className="text-rose-500">*</span>
+        </label>
         <div className="relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">$</span>
           <input
@@ -684,13 +709,17 @@ export default function InventoryForm({
             min="0"
             step="0.01"
             value={estimatedSoldValue}
-            onChange={(e) => setEstimatedSoldValue(e.target.value)}
+            onChange={(e) => { setEstimatedSoldValue(e.target.value); setEstimatedSoldValueError(null); }}
             disabled={disabled}
             placeholder="0.00"
-            className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+            className={estimatedSoldValueError
+              ? 'h-10 w-full rounded-xl border border-rose-300 bg-rose-50 pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-rose-400 focus:ring-2 focus:ring-rose-100 dark:border-rose-700 dark:bg-rose-900/20 dark:text-slate-100 dark:focus:ring-rose-900/30'
+              : 'h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600'}
           />
         </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">Estimated values help track potential returns.</p>
+        {estimatedSoldValueError
+          ? <p className="text-xs text-rose-600 dark:text-rose-400">{estimatedSoldValueError}</p>
+          : <p className="text-xs text-slate-500 dark:text-slate-400">Estimated values help track potential returns.</p>}
       </div>
 
       {/* Listed date */}
