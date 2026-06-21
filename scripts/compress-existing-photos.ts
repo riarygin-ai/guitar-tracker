@@ -219,7 +219,13 @@ async function main() {
   console.log('\nGuitar Tracker — Photo Compression');
   console.log('====================================');
   console.log(`Bucket  : ${BUCKET}`);
-  console.log(`Key     : ${SUPABASE_SERVICE_KEY!.slice(0, 20)}...${SUPABASE_SERVICE_KEY!.slice(-5)} (len ${SUPABASE_SERVICE_KEY!.length})`);
+  const keyRole = (() => {
+    try {
+      const payload = JSON.parse(Buffer.from(SUPABASE_SERVICE_KEY!.split('.')[1], 'base64url').toString());
+      return `role=${payload.role ?? '?'}, iss=${payload.iss ?? '?'}`;
+    } catch { return 'decode failed'; }
+  })();
+  console.log(`Key     : ${SUPABASE_SERVICE_KEY!.slice(0, 20)}...${SUPABASE_SERVICE_KEY!.slice(-5)} (len ${SUPABASE_SERVICE_KEY!.length}, ${keyRole})`);
   console.log(`Mode    : ${isDryRun ? 'DRY-RUN (no uploads)' : 'UPDATE (will replace files)'}`);
   if (targetPath) console.log(`Path    : ${targetPath}`);
   if (limit)      console.log(`Limit   : ${limit}`);
