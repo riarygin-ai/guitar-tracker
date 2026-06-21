@@ -184,11 +184,7 @@ export default function InventoryForm({
       setBrandSuggestions(fetchedBrands);
       const fetchedSubs = (subsResult.data || []) as ItemSubtype[];
       setAllSubtypes(fetchedSubs);
-      // Default for new items: first active subtype
-      if (!itemId) {
-        const firstSub = fetchedSubs.find((s) => s.is_active) ?? fetchedSubs[0] ?? null;
-        if (firstSub) setSelectedSubtypeId(firstSub.id);
-      }
+      // New items start with no type selected; user must choose explicitly
       setFormDataReady(true);
     }
     loadFormData();
@@ -406,8 +402,7 @@ export default function InventoryForm({
       if (onCreated && created.data) onCreated(created.data as any);
       // Reset form
       setBrandInput(''); setSelectedBrandId(null);
-      const firstSub = allSubtypes.find((s) => s.is_active) ?? allSubtypes[0] ?? null;
-      setSelectedSubtypeId(firstSub?.id ?? null);
+      setSelectedSubtypeId(null);
       setModel(''); setSerialNumber(''); setYear(''); setColor('');
       setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes(''); setListedDate(''); setEditingListedDate(false);
       setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
@@ -462,9 +457,7 @@ export default function InventoryForm({
     if (onCreated) onCreated(result.data);
     setBrandInput('');
     setSelectedBrandId(null);
-    // Reset to default subtype
-    const firstSub = allSubtypes.find((s) => s.is_active) ?? allSubtypes[0] ?? null;
-    setSelectedSubtypeId(firstSub?.id ?? null);
+    setSelectedSubtypeId(null);
     setModel('');
     setSerialNumber('');
     setYear('');
@@ -530,7 +523,7 @@ export default function InventoryForm({
           disabled={disabled || activeSubtypes.length === 0}
           className={inputClass}
         >
-          <option value="" disabled>Choose type</option>
+          <option value="" disabled>Select Type</option>
           {activeSubtypes.map((s) => (
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
