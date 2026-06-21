@@ -18,10 +18,11 @@
  *   PHOTO_BUCKET  (optional, defaults to "inventory-photos")
  */
 
-import { config as loadEnv } from 'dotenv';
-// Load .env.local first (Next.js convention), fall back to .env
-loadEnv({ path: '.env.local' });
-loadEnv();
+import dotenv from 'dotenv';
+// Load .env.local first (takes priority), then .env as fallback.
+// Must happen before any process.env reads.
+dotenv.config({ path: '.env.local' });
+dotenv.config();
 import * as fs from 'fs';
 import * as path from 'path';
 import { createClient } from '@supabase/supabase-js';
@@ -40,9 +41,10 @@ const DRY_RUN_PREVIEW_PATH  = path.join(process.cwd(), '.tmp', 'compressed-previ
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
-const args     = process.argv.slice(2);
-const isDryRun = args.includes('--dry-run');
-const isAll    = args.includes('--all');
+const args      = process.argv.slice(2);
+const isDryRun  = args.includes('--dry-run');
+const isAll     = args.includes('--all');
+const isDebug   = args.includes('--debug-env');
 
 const pathFlagIdx  = args.indexOf('--path');
 const targetPath   = pathFlagIdx !== -1 ? args[pathFlagIdx + 1] : null;
@@ -50,6 +52,86 @@ const targetPath   = pathFlagIdx !== -1 ? args[pathFlagIdx + 1] : null;
 const limitFlagIdx = args.indexOf('--limit');
 const limitRaw     = limitFlagIdx !== -1 ? args[limitFlagIdx + 1] : null;
 const limit        = limitRaw ? parseInt(limitRaw, 10) : null;
+
+// ── Debug-env mode ────────────────────────────────────────────────────────────
+
+if (isDebug) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
+
+  // Parse project ref from URL: https://<ref>.supabase.co
+  const urlRef = url.match(/https?:\/\/([^.]+)\.supabase\.co/)?.[1] ?? null;
+
+  console.log('\nGuitar Tracker — Env Debug');
+  console.log('===========================');
+  console.log(`NEXT_PUBLIC_SUPABASE_URL : ${url || '(not set)'}`);
+  console.log(`Project ref from URL     : ${urlRef ?? '(could not parse)'}`);
+  console.log(`SUPABASE_SERVICE_ROLE_KEY: ${key ? `set (len ${key.length}, starts ${key.slice(0, 12)}...ends ...${key.slice(-6)})` : '(not set — add it to .env.local)'}`);
+
+  if (!key) {
+    console.error('\nERROR: SUPABASE_SERVICE_ROLE_KEY is missing from .env.local.');
+    process.exit(1);
+  }
+
+  // Decode JWT payload (no verification — just inspect claims)
+  let payload: Record<string, unknown> = {};
+  let decodeErr = '';
+  try {
+    const parts = key.split('.');
+    if (parts.length !== 3) throw new Error('not a 3-part JWT');
+    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch (e) {
+    decodeErr = (e as Error).message;
+  }
+
+  if (decodeErr) {
+    console.error(`\nERROR: Could not decode JWT payload — ${decodeErr}`);
+    console.error('The key may be corrupted or truncated.');
+    process.exit(1);
+  }
+
+  const jwtRole = payload.role as string | undefined;
+  const jwtRef  = payload.ref  as string | undefined;
+  const jwtIss  = payload.iss  as string | undefined;
+  const jwtExp  = typeof payload.exp === 'number'
+    ? new Date(payload.exp * 1000).toISOString()
+    : String(payload.exp ?? '(none)');
+
+  console.log('\nDecoded JWT payload:');
+  console.log(`  role : ${jwtRole ?? '(missing)'}`);
+  console.log(`  ref  : ${jwtRef  ?? '(missing)'}`);
+  console.log(`  iss  : ${jwtIss  ?? '(missing)'}`);
+  console.log(`  exp  : ${jwtExp}`);
+
+  // Checks
+  let ok = true;
+
+  if (jwtRole !== 'service_role') {
+    console.error('\nERROR: Key role is not "service_role". You may have used the anon key by mistake.');
+    console.error('Go to Supabase Dashboard → Settings → API and copy the service_role key.');
+    ok = false;
+  } else {
+    console.log('\n✓ role is service_role');
+  }
+
+  if (urlRef && jwtRef && urlRef !== jwtRef) {
+    console.error(`\nERROR: Service role key belongs to a different Supabase project than NEXT_PUBLIC_SUPABASE_URL.`);
+    console.error(`  URL project ref : ${urlRef}`);
+    console.error(`  Key project ref : ${jwtRef}`);
+    ok = false;
+  } else if (urlRef && jwtRef) {
+    console.log(`✓ JWT ref matches URL project ref (${urlRef})`);
+  } else {
+    console.log('  (ref claim not present in JWT — cannot cross-check project)');
+  }
+
+  if (ok) {
+    console.log('\nAll checks passed. If storage auth still fails, copy a fresh service_role key');
+    console.log('from Supabase Dashboard → Settings → API and update .env.local.');
+  }
+
+  process.exit(ok ? 0 : 1);
+}
 
 // ── Validate args ─────────────────────────────────────────────────────────────
 
@@ -59,6 +141,9 @@ Guitar Tracker — Photo Compression Tool
 ========================================
 
 USAGE:
+
+  Debug env / key:
+    npx tsx scripts/compress-existing-photos.ts --debug-env
 
   Single file (recommended for first test):
     npx tsx scripts/compress-existing-photos.ts --path "STORAGE_PATH" --dry-run
@@ -70,6 +155,7 @@ USAGE:
     npx tsx scripts/compress-existing-photos.ts --all
 
 FLAGS:
+  --debug-env     Print env/key diagnostics and exit. No files are read or modified.
   --path "..."    Process exactly one file by its storage path.
   --all           Process all eligible files. Must be explicit.
   --dry-run       Simulate only. No uploads. For --path, saves preview to .tmp/compressed-preview.jpg
@@ -219,13 +305,7 @@ async function main() {
   console.log('\nGuitar Tracker — Photo Compression');
   console.log('====================================');
   console.log(`Bucket  : ${BUCKET}`);
-  const keyRole = (() => {
-    try {
-      const payload = JSON.parse(Buffer.from(SUPABASE_SERVICE_KEY!.split('.')[1], 'base64url').toString());
-      return `role=${payload.role ?? '?'}, iss=${payload.iss ?? '?'}`;
-    } catch { return 'decode failed'; }
-  })();
-  console.log(`Key     : ${SUPABASE_SERVICE_KEY!.slice(0, 20)}...${SUPABASE_SERVICE_KEY!.slice(-5)} (len ${SUPABASE_SERVICE_KEY!.length}, ${keyRole})`);
+  console.log(`Key     : ${SUPABASE_SERVICE_KEY!.slice(0, 12)}...${SUPABASE_SERVICE_KEY!.slice(-6)} (len ${SUPABASE_SERVICE_KEY!.length})`);
   console.log(`Mode    : ${isDryRun ? 'DRY-RUN (no uploads)' : 'UPDATE (will replace files)'}`);
   if (targetPath) console.log(`Path    : ${targetPath}`);
   if (limit)      console.log(`Limit   : ${limit}`);
