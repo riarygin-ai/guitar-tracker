@@ -136,11 +136,18 @@ async function compressImage(buffer: Buffer): Promise<Buffer> {
 }
 
 async function downloadFile(storagePath: string): Promise<Buffer> {
-  // The bucket is public, so use the public URL — no JWT signing required.
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
-  const res = await fetch(data.publicUrl);
+  // Hit the storage REST API directly with the service role key as Bearer token.
+  // This bypasses the JS SDK's download() quirks and works for private buckets.
+  const url = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${storagePath}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      apikey: SUPABASE_SERVICE_KEY!,
+    },
+  });
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText} — ${data.publicUrl}`);
+    const body = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} ${res.statusText}${body ? `\n    ${body}` : ''}`);
   }
   return Buffer.from(await res.arrayBuffer());
 }
@@ -212,6 +219,7 @@ async function main() {
   console.log('\nGuitar Tracker — Photo Compression');
   console.log('====================================');
   console.log(`Bucket  : ${BUCKET}`);
+  console.log(`Key     : ${SUPABASE_SERVICE_KEY!.slice(0, 20)}...${SUPABASE_SERVICE_KEY!.slice(-5)} (len ${SUPABASE_SERVICE_KEY!.length})`);
   console.log(`Mode    : ${isDryRun ? 'DRY-RUN (no uploads)' : 'UPDATE (will replace files)'}`);
   if (targetPath) console.log(`Path    : ${targetPath}`);
   if (limit)      console.log(`Limit   : ${limit}`);
