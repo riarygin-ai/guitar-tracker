@@ -136,19 +136,11 @@ async function compressImage(buffer: Buffer): Promise<Buffer> {
 }
 
 async function downloadFile(storagePath: string): Promise<Buffer> {
-  // Generate a short-lived signed URL then fetch it — more reliable than
-  // supabase.storage.download() for nested paths with the service role key.
-  const { data: signed, error: signErr } = await supabase.storage
-    .from(BUCKET)
-    .createSignedUrl(storagePath, 120);
-
-  if (signErr || !signed?.signedUrl) {
-    throw new Error(`Signed URL failed: ${signErr?.message ?? 'no URL returned'}`);
-  }
-
-  const res = await fetch(signed.signedUrl);
+  // The bucket is public, so use the public URL — no JWT signing required.
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
+  const res = await fetch(data.publicUrl);
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText} for ${storagePath}`);
+    throw new Error(`HTTP ${res.status} ${res.statusText} — ${data.publicUrl}`);
   }
   return Buffer.from(await res.arrayBuffer());
 }
