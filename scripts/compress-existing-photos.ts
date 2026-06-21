@@ -137,8 +137,8 @@ async function compressImage(buffer: Buffer): Promise<Buffer> {
 
 async function downloadFile(storagePath: string): Promise<Buffer> {
   // Hit the storage REST API directly with the service role key as Bearer token.
-  // This bypasses the JS SDK's download() quirks and works for private buckets.
-  const url = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${storagePath}`;
+  // Must use /object/authenticated/ — the plain /object/ path is public-only.
+  const url = `${SUPABASE_URL}/storage/v1/object/authenticated/${BUCKET}/${storagePath}`;
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
