@@ -9,6 +9,7 @@ import {
   setMainPhoto,
   uploadItemPhoto,
 } from '@/lib/supabase';
+import { compressImage, MAX_ORIGINAL_BYTES } from '@/lib/images/compressImage';
 import type { InventoryItemPhoto } from '@/types';
 
 export interface ItemPhotosHandle {
@@ -28,16 +29,24 @@ interface ItemPhotosProps {
   onClose?: () => void;
 }
 
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const MAX_BYTES = 10 * 1024 * 1024;
+// Types accepted before compression. HEIC/HEIF depend on browser support.
+const ALLOWED_INPUT_TYPES = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+];
 
 const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
   function ItemPhotos({ itemId, onMainPhotoChange, onClose }, ref) {
-    const [photos,    setPhotos]    = useState<InventoryItemPhoto[]>([]);
-    const [pending,   setPending]   = useState<PendingPhoto[]>([]);
-    const [loading,   setLoading]   = useState(true);
-    const [uploading, setUploading] = useState(false);
-    const [error,     setError]     = useState<string | null>(null);
+    const [photos,      setPhotos]      = useState<InventoryItemPhoto[]>([]);
+    const [pending,     setPending]     = useState<PendingPhoto[]>([]);
+    const [loading,     setLoading]     = useState(true);
+    const [compressing, setCompressing] = useState(false);
+    const [uploading,   setUploading]   = useState(false);
+    const [error,       setError]       = useState<string | null>(null);
 
     const fileInputRef         = useRef<HTMLInputElement>(null);
     const onMainPhotoChangeRef = useRef(onMainPhotoChange);
@@ -110,27 +119,43 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
       return () => { pending.forEach((p) => URL.revokeObjectURL(p.previewUrl)); };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── File selection ─────────────────────────────────────────────────────────
+    // ── File selection — validates then compresses before queuing ──────────────
 
-    function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
       const file = e.target.files?.[0];
       if (!file) return;
       e.target.value = '';
 
-      if (!ALLOWED_TYPES.includes(file.type)) {
-        setError('Only JPEG, PNG, and WebP images are allowed.');
+      if (!ALLOWED_INPUT_TYPES.includes(file.type.toLowerCase())) {
+        setError('Only JPEG, PNG, WebP, and HEIC images are allowed.');
         return;
       }
-      if (file.size > MAX_BYTES) {
-        setError('File size must be 10 MB or less.');
+      if (file.size > MAX_ORIGINAL_BYTES) {
+        setError(`File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum is 30 MB.`);
         return;
       }
 
       setError(null);
+      setCompressing(true);
+
+      let compressed: File;
+      try {
+        compressed = await compressImage(file);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Compression failed. Please try again.');
+        setCompressing(false);
+        return;
+      }
+
       setPending((prev) => [
         ...prev,
-        { tempId: `pending-${Date.now()}-${Math.random()}`, file, previewUrl: URL.createObjectURL(file) },
+        {
+          tempId:     `pending-${Date.now()}-${Math.random()}`,
+          file:       compressed,
+          previewUrl: URL.createObjectURL(compressed),
+        },
       ]);
+      setCompressing(false);
     }
 
     function handleRemovePending(tempId: string) {
@@ -170,6 +195,7 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
     // ── Derived ────────────────────────────────────────────────────────────────
 
     const hasThumbnails = !loading && (photos.length > 0 || pending.length > 0);
+    const isBusy        = compressing || uploading;
 
     // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -196,7 +222,7 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
             <button
               type="button"
               onClick={onClose}
-              disabled={uploading}
+              disabled={isBusy}
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -294,7 +320,7 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
         )}
 
         {/* ── Pending notice ──────────────────────────────────────────────── */}
-        {pending.length > 0 && (
+        {pending.length > 0 && !compressing && (
           <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
             {pending.length} photo{pending.length !== 1 ? 's' : ''} queued — will upload when you click{' '}
             <strong>Update item</strong>.
@@ -305,11 +331,16 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
         <div className="mt-4">
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+            onClick={() => !isBusy && fileInputRef.current?.click()}
+            disabled={isBusy}
             className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-7 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed dark:border-slate-600 dark:hover:border-slate-400 dark:hover:bg-slate-700/30"
           >
-            {uploading ? (
+            {compressing ? (
+              <>
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600 dark:border-slate-700 dark:border-t-slate-300" />
+                <span className="text-sm text-slate-500 dark:text-slate-400">Compressing photo…</span>
+              </>
+            ) : uploading ? (
               <>
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600 dark:border-slate-700 dark:border-t-slate-300" />
                 <span className="text-sm text-slate-500 dark:text-slate-400">Uploading…</span>
@@ -323,7 +354,7 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
                   Click to select a photo
                 </span>
                 <span className="text-xs text-slate-400 dark:text-slate-500">
-                  JPEG, PNG, WebP · up to 10 MB
+                  JPEG, PNG, WebP, HEIC · up to 30 MB · auto-compressed before upload
                 </span>
               </>
             )}
@@ -333,7 +364,7 @@ const ItemPhotos = forwardRef<ItemPhotosHandle, ItemPhotosProps>(
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
           className="hidden"
           onChange={handleFileChange}
         />

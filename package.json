@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.106.0",
+    "browser-image-compression": "^2.0.2",
     "dotenv": "^17.4.2",
     "next": "^15.3.2",
     "openai": "^6.42.0",

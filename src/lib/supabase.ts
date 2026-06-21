@@ -628,8 +628,10 @@ export async function upsertItemListing(data: UpsertItemListing) {
 // ─── Photo functions ──────────────────────────────────────────────────────────
 
 const PHOTO_BUCKET = 'inventory-photos';
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+// Accepts compressed JPEG (always) plus the original types as a safety net.
+// HEIC/HEIF are compressed to JPEG client-side before reaching this function.
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+const MAX_SIZE_BYTES = 30 * 1024 * 1024; // 30 MB — originals validated client-side; compressed files are tiny
 
 export function getPhotoUrl(storagePath: string): string {
   return supabase.storage.from(PHOTO_BUCKET).getPublicUrl(storagePath).data.publicUrl;
@@ -700,10 +702,10 @@ export async function uploadItemPhoto(
   file: File
 ): Promise<{ data: InventoryItemPhoto | null; error: string | null }> {
   if (!ALLOWED_TYPES.includes(file.type)) {
-    return { data: null, error: 'Only JPEG, PNG, and WebP images are allowed.' };
+    return { data: null, error: 'Only JPEG, PNG, WebP, and HEIC images are allowed.' };
   }
   if (file.size > MAX_SIZE_BYTES) {
-    return { data: null, error: 'File size must be 10 MB or less.' };
+    return { data: null, error: 'File size must be 30 MB or less.' };
   }
 
   const userResult = await supabase.auth.getUser();
