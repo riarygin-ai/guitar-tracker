@@ -359,10 +359,11 @@ export async function getCashFlows() {
   return supabase.from('cash_flow').select('*').order('transaction_date', { ascending: false });
 }
 
-export async function recalculateCashFlowBalancesFrom(cashFlowId: number) {
+export async function recalculateCashFlowBalancesFrom(cashFlowId: number, seedBalance?: number) {
   return supabase.rpc('recalculate_cash_flow_balances_from', {
-    p_start_id: cashFlowId,
-  })
+    p_start_id:     cashFlowId,
+    ...(seedBalance !== undefined ? { p_seed_balance: seedBalance } : {}),
+  });
 }
 
 export async function createCashFlow(cashFlow: NewCashFlow) {
