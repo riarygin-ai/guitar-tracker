@@ -135,17 +135,32 @@ async function compressImage(buffer: Buffer): Promise<Buffer> {
     .toBuffer();
 }
 
-async function processFile(storagePath: string, dryRun: boolean): Promise<{ saved: number; skipped: boolean; error?: string }> {
-  // ── Download ────────────────────────────────────────────────────────────────
-  const { data: blob, error: downloadErr } = await supabase.storage
+async function downloadFile(storagePath: string): Promise<Buffer> {
+  // Generate a short-lived signed URL then fetch it — more reliable than
+  // supabase.storage.download() for nested paths with the service role key.
+  const { data: signed, error: signErr } = await supabase.storage
     .from(BUCKET)
-    .download(storagePath);
+    .createSignedUrl(storagePath, 120);
 
-  if (downloadErr || !blob) {
-    return { saved: 0, skipped: false, error: `Download failed: ${downloadErr?.message ?? 'no data'}` };
+  if (signErr || !signed?.signedUrl) {
+    throw new Error(`Signed URL failed: ${signErr?.message ?? 'no URL returned'}`);
   }
 
-  const originalBuffer = Buffer.from(await blob.arrayBuffer());
+  const res = await fetch(signed.signedUrl);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText} for ${storagePath}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function processFile(storagePath: string, dryRun: boolean): Promise<{ saved: number; skipped: boolean; error?: string }> {
+  // ── Download ────────────────────────────────────────────────────────────────
+  let originalBuffer: Buffer;
+  try {
+    originalBuffer = await downloadFile(storagePath);
+  } catch (err) {
+    return { saved: 0, skipped: false, error: `Download failed: ${(err as Error).message}` };
+  }
   const originalSize   = originalBuffer.byteLength;
 
   // ── Skip small files ────────────────────────────────────────────────────────
@@ -224,22 +239,37 @@ async function main() {
     return;
   }
 
-  // ── List all objects in bucket ─────────────────────────────────────────────
-  const allObjects: StorageObject[] = [];
-  let offset = 0;
+  // ── List all objects in bucket (recursive) ────────────────────────────────
+  // The bucket has structure: {user-uuid}/{item-id}/{filename}
+  // list('') only returns top-level folder entries (the UUID folders), so we
+  // must recurse: list each UUID folder, then each item-id subfolder.
   const PAGE = 100;
 
-  while (true) {
-    const { data, error } = await supabase.storage
-      .from(BUCKET)
-      .list('', { limit: PAGE, offset, sortBy: { column: 'name', order: 'asc' } });
-
-    if (error) { console.error('ERROR listing bucket:', error.message); process.exit(1); }
-    if (!data || data.length === 0) break;
-    allObjects.push(...(data as StorageObject[]));
-    if (data.length < PAGE) break;
-    offset += PAGE;
+  async function listAll(prefix: string): Promise<StorageObject[]> {
+    const results: StorageObject[] = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await supabase.storage
+        .from(BUCKET)
+        .list(prefix, { limit: PAGE, offset, sortBy: { column: 'name', order: 'asc' } });
+      if (error) { console.error(`ERROR listing ${prefix || 'root'}:`, error.message); process.exit(1); }
+      if (!data || data.length === 0) break;
+      for (const entry of data as StorageObject[]) {
+        const fullPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (!entry.metadata) {
+          // It's a folder — recurse one level deeper
+          results.push(...await listAll(fullPath));
+        } else {
+          results.push({ name: fullPath, metadata: entry.metadata });
+        }
+      }
+      if (data.length < PAGE) break;
+      offset += PAGE;
+    }
+    return results;
   }
+
+  const allObjects = await listAll('');
 
   const images = allObjects.filter(isImageFile);
   const eligible = images.filter(obj => getFileSize(obj) >= MIN_SIZE_BYTES);
