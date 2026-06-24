@@ -302,7 +302,7 @@ export default function BuyOperationForm() {
         {showNewItemForm ? (
           <div className="space-y-4">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
-              <InventoryForm onCreated={handleItemCreated} hideHeader hideSidebar />
+              <InventoryForm onCreated={handleItemCreated} onClose={() => setShowNewItemForm(false)} hideHeader hideSidebar />
             </div>
             <button
               type="button"

@@ -525,6 +525,7 @@ export default function TradeOperationForm() {
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
                                     <InventoryForm
                                         onCreated={handleOutgoingItemCreated}
+                                        onClose={() => setShowOutgoingForm(false)}
                                         hideHeader
                                         hideSidebar
                                     />
@@ -662,6 +663,7 @@ export default function TradeOperationForm() {
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
                                     <InventoryForm
                                         onCreated={handleIncomingItemCreated}
+                                        onClose={() => setShowIncomingForm(false)}
                                         hideHeader
                                         hideSidebar
                                     />

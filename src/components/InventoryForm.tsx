@@ -885,7 +885,7 @@ export default function InventoryForm({
   );
 
   const formActionButtons = (
-    <div className="mt-6 hidden lg:flex lg:items-center lg:gap-3">
+    <div className={`mt-6 ${hideHeader ? 'flex' : 'hidden lg:flex'} items-center gap-3`}>
       {/* Add image — only in edit mode */}
       {existingItem && (
         <button
