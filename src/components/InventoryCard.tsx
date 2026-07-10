@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { InventoryItemWithValue, InventoryTag } from '@/types';
+import type { InventoryItemWithValue } from '@/types';
 import { calculateItemProfitMetrics } from '@/lib/profit';
 
 const statusClasses: Record<string, string> = {
@@ -21,12 +21,9 @@ interface InventoryCardProps {
   mainPhotoUrl?: string | null;
   subtypeName?: string;
   totalExpenses?: number;
-  tags?: InventoryTag[];
 }
 
-const TAG_LIMIT = 3;
-
-export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl, subtypeName, totalExpenses = 0, tags }: InventoryCardProps) {
+export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl, subtypeName, totalExpenses = 0 }: InventoryCardProps) {
   const router = useRouter();
   const title = [item.year, brandName, item.model].filter(Boolean).join(' ');
   const subtitle = item.color ? `${title} — ${item.color}` : title;
@@ -156,24 +153,6 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
               </>
             )}
           </div>
-
-          {tags && tags.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {tags.slice(0, TAG_LIMIT).map((tag) => (
-                <span
-                  key={tag.id}
-                  className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300"
-                >
-                  {tag.name}
-                </span>
-              ))}
-              {tags.length > TAG_LIMIT && (
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-                  +{tags.length - TAG_LIMIT} more
-                </span>
-              )}
-            </div>
-          )}
 
         </div>
       </div>
