@@ -3,9 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getBrands, getDealItems, getInventoryItems, getInventoryExpenses, getItemAcquisitionDates, getItemCategories, getItemSubtypes, getMainPhotosForItems, getPhotoUrl, getTags, getTagsForItems } from '@/lib/supabase';
+import { getBrands, getDealItems, getInventoryItems, getInventoryExpenses, getItemAcquisitionDates, getItemCategories, getItemPurposes, getItemSubtypes, getMainPhotosForItems, getPhotoUrl, getTags, getTagsForItems } from '@/lib/supabase';
 import { splitSearchTerms } from '@/lib/search';
-import type { Brand, DealItem, InventoryExpense, InventoryItemWithValue, InventoryTag, ItemCategory, ItemSubtype, Status } from '@/types';
+import type { Brand, DealItem, InventoryExpense, InventoryItemWithValue, InventoryTag, ItemCategory, ItemPurpose, ItemSubtype, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
 
 const DISPLAY_LIMIT = 100;
@@ -48,6 +48,7 @@ export default function InventoryPage() {
   const [mainPhotoByItemId, setMainPhotoByItemId] = useState<Record<number, string>>({});
   const [allTags, setAllTags] = useState<InventoryTag[]>([]);
   const [tagsByItemId, setTagsByItemId] = useState<Record<number, InventoryTag[]>>({});
+  const [allPurposes, setAllPurposes] = useState<ItemPurpose[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,7 +57,7 @@ export default function InventoryPage() {
   const [selectedCategoryNames, setSelectedCategoryNames] = useState<string[]>(['Guitars']);
   const [selectedSubtypeNames, setSelectedSubtypeNames] = useState<string[]>([]);
   const [showSubtypes, setShowSubtypes] = useState(false);
-  const [selectedPurposes, setSelectedPurposes] = useState<string[]>([]);
+  const [selectedPurposeIds, setSelectedPurposeIds] = useState<number[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
 
   const isInitializedRef = useRef(false);
@@ -66,16 +67,16 @@ export default function InventoryPage() {
     const cat = searchParams.get('category');
     // 'subtype' is the canonical param; 'type' is an alias from dashboard drill-down
     const sub = searchParams.get('subtype') ?? searchParams.get('type');
-    const purpose = searchParams.get('purpose');
+    const purposeParam = searchParams.get('purpose_id');
     const tagParam = searchParams.get('tag_id');
     const q = searchParams.get('search');
     setSearch(q ?? '');
     setSelectedStatuses(s ? (s.split(',').filter(Boolean) as Status[]) : ['owned', 'listed']);
-    // When drilling in via type/subtype/purpose without an explicit category, clear the default
-    const hasDrilldown = !cat && (searchParams.has('type') || searchParams.has('subtype') || searchParams.has('purpose'));
+    // When drilling in via type/subtype/purpose_id without an explicit category, clear the default
+    const hasDrilldown = !cat && (searchParams.has('type') || searchParams.has('subtype') || searchParams.has('purpose_id'));
     setSelectedCategoryNames(cat ? cat.split(',').filter(Boolean) : (hasDrilldown ? [] : ['Guitars']));
     setSelectedSubtypeNames(sub ? sub.split(',').filter(Boolean) : []);
-    setSelectedPurposes(purpose ? purpose.split(',').filter(Boolean) : []);
+    setSelectedPurposeIds(purposeParam ? purposeParam.split(',').map(Number).filter(Boolean) : []);
     setSelectedTagIds(tagParam ? tagParam.split(',').map(Number).filter(Boolean) : []);
     isInitializedRef.current = true;
   }, [searchParams]);
@@ -87,11 +88,11 @@ export default function InventoryPage() {
     if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
     if (selectedCategoryNames.length > 0) params.set('category', [...selectedCategoryNames].sort().join(','));
     if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
-    if (selectedPurposes.length > 0) params.set('purpose', [...selectedPurposes].sort().join(','));
+    if (selectedPurposeIds.length > 0) params.set('purpose_id', [...selectedPurposeIds].sort((a, b) => a - b).join(','));
     if (selectedTagIds.length > 0) params.set('tag_id', [...selectedTagIds].sort((a, b) => a - b).join(','));
     const qs = params.toString();
     router.replace(`/inventory${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposes, selectedTagIds, router]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds, router]);
 
   const backQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -99,15 +100,15 @@ export default function InventoryPage() {
     if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
     if (selectedCategoryNames.length > 0) params.set('category', [...selectedCategoryNames].sort().join(','));
     if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
-    if (selectedPurposes.length > 0) params.set('purpose', [...selectedPurposes].sort().join(','));
+    if (selectedPurposeIds.length > 0) params.set('purpose_id', [...selectedPurposeIds].sort((a, b) => a - b).join(','));
     if (selectedTagIds.length > 0) params.set('tag_id', [...selectedTagIds].sort((a, b) => a - b).join(','));
     return params.toString();
-  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposes, selectedTagIds]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds]);
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [brandResult, itemResult, dealItemsResult, acquisitionDatesResult, catsResult, subsResult, expensesResult, tagsResult] = await Promise.all([
+      const [brandResult, itemResult, dealItemsResult, acquisitionDatesResult, catsResult, subsResult, expensesResult, tagsResult, purposesResult] = await Promise.all([
         getBrands(),
         getInventoryItems(),
         getDealItems(),
@@ -116,6 +117,7 @@ export default function InventoryPage() {
         getItemSubtypes(),
         getInventoryExpenses(),
         getTags(),
+        getItemPurposes(),
       ]);
 
       if (brandResult.error || itemResult.error || dealItemsResult.error) {
@@ -134,6 +136,7 @@ export default function InventoryPage() {
 
       const tagsData = (!tagsResult.error ? (tagsResult.data ?? []) : []) as InventoryTag[];
       setAllTags(tagsData);
+      if (!purposesResult.error) setAllPurposes((purposesResult.data ?? []) as ItemPurpose[]);
       const tagById = Object.fromEntries(tagsData.map((t) => [t.id, t]));
 
       if (!acquisitionDatesResult.error && acquisitionDatesResult.data) {
@@ -243,11 +246,7 @@ export default function InventoryPage() {
     });
   }, [allSubtypes, selectedCategoryNames, categoryNameBySubtypeId]);
 
-  const availablePurposes = useMemo(() => {
-    const set = new Set<string>();
-    items.forEach((item) => set.add((item.collection_type as string | null) ?? 'Unassigned'));
-    return Array.from(set).sort();
-  }, [items]);
+  const activePurposes = useMemo(() => allPurposes.filter((p) => p.is_active), [allPurposes]);
 
   const filteredItems = useMemo(() => {
     const searchTerms = splitSearchTerms(search);
@@ -286,8 +285,8 @@ export default function InventoryPage() {
         selectedSubtypeNames.length === 0 || selectedSubtypeNames.includes(itemSubtypeName);
 
       const matchesPurpose =
-        selectedPurposes.length === 0 ||
-        selectedPurposes.includes((item.collection_type as string | null) ?? 'Unassigned');
+        selectedPurposeIds.length === 0 ||
+        (item.purpose_id != null && selectedPurposeIds.includes(item.purpose_id));
 
       const itemTagIds = (tagsByItemId[item.id] ?? []).map((t) => t.id);
       const matchesTags =
@@ -296,7 +295,7 @@ export default function InventoryPage() {
 
       return matchesSearch && matchesStatus && matchesCategory && matchesSubtype && matchesPurpose && matchesTags;
     });
-  }, [brandMap, itemsWithComputedValues, search, selectedCategoryNames, selectedSubtypeNames, selectedStatuses, subtypeNameById, categoryNameBySubtypeId, selectedPurposes, selectedTagIds, tagsByItemId]);
+  }, [brandMap, itemsWithComputedValues, search, selectedCategoryNames, selectedSubtypeNames, selectedStatuses, subtypeNameById, categoryNameBySubtypeId, selectedPurposeIds, selectedTagIds, tagsByItemId]);
 
   const sortedFilteredItems = useMemo(() => {
     return [...filteredItems].sort((a, b) => {
@@ -488,28 +487,28 @@ export default function InventoryPage() {
           )}
 
           {/* Purpose filter */}
-          {availablePurposes.length > 0 && (
+          {activePurposes.length > 0 && (
             <div className="mt-4">
               <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Purpose</p>
               <div className="flex flex-wrap gap-2">
-                {availablePurposes.map((purpose) => (
+                {activePurposes.map((purpose) => (
                   <button
-                    key={purpose}
+                    key={purpose.id}
                     type="button"
                     onClick={() =>
-                      setSelectedPurposes((current) =>
-                        current.includes(purpose)
-                          ? current.filter((v) => v !== purpose)
-                          : [...current, purpose]
+                      setSelectedPurposeIds((current) =>
+                        current.includes(purpose.id)
+                          ? current.filter((v) => v !== purpose.id)
+                          : [...current, purpose.id]
                       )
                     }
                     className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                      selectedPurposes.includes(purpose)
+                      selectedPurposeIds.includes(purpose.id)
                         ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
                         : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
                     }`}
                   >
-                    {purpose}
+                    {purpose.name}
                   </button>
                 ))}
               </div>

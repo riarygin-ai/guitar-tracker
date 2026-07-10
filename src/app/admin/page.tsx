@@ -6,26 +6,31 @@ import AiPromptsCard from '@/components/AiPromptsCard';
 import {
   createBrand,
   createItemCategory,
+  createItemPurpose,
   createItemSubtype,
   createTag,
   deleteBrand,
   deleteItemCategory,
+  deleteItemPurpose,
   deleteItemSubtype,
   deleteTag,
   getBrandUsageCount,
   getBrands,
   getItemCategories,
+  getItemPurposes,
   getItemSubtypes,
   getOrCreateAppUser,
+  getPurposeUsageCount,
   getSubtypeUsageCount,
   getTagUsageCount,
   getTags,
   updateBrand,
   updateItemCategory,
+  updateItemPurpose,
   updateItemSubtype,
   updateTag,
 } from '@/lib/supabase';
-import type { AppUser, Brand, InventoryTag, ItemCategory, ItemSubtype } from '@/types';
+import type { AppUser, Brand, InventoryTag, ItemCategory, ItemPurpose, ItemSubtype } from '@/types';
 
 const BRAND_PAGE_SIZE = 5;
 
@@ -100,6 +105,22 @@ export default function AdminPage() {
   // move
   const [subMovingId, setSubMovingId] = useState<number | null>(null);
 
+  // ── Purposes ──────────────────────────────────────────────────────────────
+  const [purposes,        setPurposes]       = useState<ItemPurpose[]>([]);
+  const [purposesLoading, setPurposesLoading] = useState(false);
+  const [purposeSearch,   setPurposeSearch]   = useState('');
+  const [purposeCreateName,  setPurposeCreateName]  = useState('');
+  const [purposeCreating,    setPurposeCreating]    = useState(false);
+  const [purposeCreateError, setPurposeCreateError] = useState<string | null>(null);
+  const [purposeEditing,    setPurposeEditing]   = useState<EditState | null>(null);
+  const [purposeEditSaving, setPurposeEditSaving] = useState(false);
+  const [purposeEditError,  setPurposeEditError]  = useState<string | null>(null);
+  const purposeEditInputRef = useRef<HTMLInputElement>(null);
+  const [purposeToggling, setPurposeToggling] = useState<Set<number>>(new Set());
+  type PurposeDelPhase = 'checking' | 'confirm' | 'deleting';
+  const [purposeDelPhase, setPurposeDelPhase] = useState<Record<number, PurposeDelPhase>>({});
+  const [purposeDelMsg,   setPurposeDelMsg]   = useState<Record<number, string>>({});
+
   // ── Tags ──────────────────────────────────────────────────────────────────
   const [tags,        setTags]        = useState<InventoryTag[]>([]);
   const [tagsLoading, setTagsLoading] = useState(false);
@@ -135,6 +156,7 @@ export default function AdminPage() {
     loadBrands();
     loadCategories();
     loadSubtypes();
+    loadPurposes();
     loadTags();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -396,6 +418,98 @@ export default function AdminPage() {
     }
     setSubtypes((prev) => prev.filter((s) => s.id !== id));
     setSubDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
+  // ── Purposes CRUD ─────────────────────────────────────────────────────────
+
+  async function loadPurposes() {
+    setPurposesLoading(true);
+    const { data, error } = await getItemPurposes();
+    setPurposesLoading(false);
+    if (!error) setPurposes((data as ItemPurpose[]) ?? []);
+  }
+
+  useEffect(() => {
+    if (purposeEditing) purposeEditInputRef.current?.focus();
+  }, [purposeEditing?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const filteredPurposes = purposes.filter((p) =>
+    p.name.toLowerCase().includes(purposeSearch.trim().toLowerCase())
+  );
+
+  async function handleCreatePurpose() {
+    const trimmed = purposeCreateName.trim();
+    if (!trimmed) { setPurposeCreateError('Name is required.'); return; }
+    const dup = purposes.find((p) => p.name.toLowerCase() === trimmed.toLowerCase());
+    if (dup) { setPurposeCreateError('A purpose with this name already exists.'); return; }
+    setPurposeCreating(true);
+    setPurposeCreateError(null);
+    const { data, error } = await createItemPurpose(trimmed);
+    setPurposeCreating(false);
+    if (error) { setPurposeCreateError((error as { message?: string })?.message || 'Could not create purpose.'); return; }
+    setPurposes((prev) => [...prev, data as ItemPurpose].sort((a, b) => a.name.localeCompare(b.name)));
+    setPurposeCreateName('');
+  }
+
+  function startPurposeEdit(purpose: ItemPurpose) { setPurposeEditing({ id: purpose.id, name: purpose.name }); setPurposeEditError(null); }
+  function cancelPurposeEdit() { setPurposeEditing(null); setPurposeEditError(null); }
+
+  async function savePurposeEdit() {
+    if (!purposeEditing) return;
+    const trimmed = purposeEditing.name.trim();
+    if (!trimmed) { setPurposeEditError('Name is required.'); return; }
+    const dup = purposes.find((p) => p.name.toLowerCase() === trimmed.toLowerCase() && p.id !== purposeEditing.id);
+    if (dup) { setPurposeEditError('A purpose with this name already exists.'); return; }
+    setPurposeEditSaving(true);
+    setPurposeEditError(null);
+    const { error } = await updateItemPurpose(purposeEditing.id, { name: trimmed });
+    setPurposeEditSaving(false);
+    if (error) { setPurposeEditError((error as { message?: string })?.message || 'Could not update purpose.'); return; }
+    setPurposes((prev) => prev.map((p) => p.id === purposeEditing.id ? { ...p, name: trimmed } : p));
+    setPurposeEditing(null);
+  }
+
+  async function togglePurposeActive(purpose: ItemPurpose) {
+    setPurposeToggling((s) => new Set(s).add(purpose.id));
+    const { error } = await updateItemPurpose(purpose.id, { is_active: !purpose.is_active });
+    setPurposeToggling((s) => { const n = new Set(s); n.delete(purpose.id); return n; });
+    if (!error) setPurposes((prev) => prev.map((p) => p.id === purpose.id ? { ...p, is_active: !purpose.is_active } : p));
+  }
+
+  async function startPurposeDelete(purpose: ItemPurpose) {
+    setPurposeDelPhase((prev) => ({ ...prev, [purpose.id]: 'checking' }));
+    const { count, error } = await getPurposeUsageCount(purpose.id);
+    if (error) {
+      setPurposeDelMsg((prev) => ({ ...prev, [purpose.id]: 'Could not check usage.' }));
+      setPurposeDelPhase((prev) => { const n = { ...prev }; delete n[purpose.id]; return n; });
+      return;
+    }
+    if ((count ?? 0) > 0) {
+      setPurposeDelMsg((prev) => ({
+        ...prev,
+        [purpose.id]: `"${purpose.name}" is used by ${count} item${count !== 1 ? 's' : ''} and cannot be deleted. Deactivate it instead.`,
+      }));
+      setPurposeDelPhase((prev) => { const n = { ...prev }; delete n[purpose.id]; return n; });
+      return;
+    }
+    setPurposeDelPhase((prev) => ({ ...prev, [purpose.id]: 'confirm' }));
+  }
+
+  function cancelPurposeDelete(id: number) {
+    setPurposeDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setPurposeDelMsg((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
+  async function confirmPurposeDelete(id: number) {
+    setPurposeDelPhase((prev) => ({ ...prev, [id]: 'deleting' }));
+    const { error } = await deleteItemPurpose(id);
+    if (error) {
+      setPurposeDelMsg((prev) => ({ ...prev, [id]: 'Could not delete purpose.' }));
+      setPurposeDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
+      return;
+    }
+    setPurposes((prev) => prev.filter((p) => p.id !== id));
+    setPurposeDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
   }
 
   // ── Tags CRUD ─────────────────────────────────────────────────────────────
@@ -960,6 +1074,128 @@ export default function AdminPage() {
               );
             })}
           </div>
+        )}
+      </div>
+
+      {/* ── Purposes ──────────────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Purposes</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {purposes.length} purpose{purposes.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+
+        {/* Create purpose */}
+        <div className="mb-4 space-y-1.5">
+          <div className="flex gap-2">
+            <input
+              value={purposeCreateName}
+              onChange={(e) => setPurposeCreateName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreatePurpose(); }}
+              placeholder="New purpose name…"
+              disabled={purposeCreating}
+              className={inputClass}
+            />
+            <button type="button" onClick={handleCreatePurpose} disabled={purposeCreating || !purposeCreateName.trim()} className={btnPrimary}>
+              {purposeCreating ? 'Creating…' : 'Add'}
+            </button>
+          </div>
+          {purposeCreateError && <p className="text-xs text-rose-600 dark:text-rose-400">{purposeCreateError}</p>}
+        </div>
+
+        {/* Search */}
+        <div className="mb-3">
+          <input
+            value={purposeSearch}
+            onChange={(e) => setPurposeSearch(e.target.value)}
+            placeholder="Search purposes…"
+            className={inputClass}
+          />
+        </div>
+
+        {/* Purpose list */}
+        {purposesLoading ? (
+          <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">Loading…</p>
+        ) : filteredPurposes.length === 0 ? (
+          <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">
+            {purposeSearch ? 'No matching purposes.' : 'No purposes yet.'}
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+            {filteredPurposes.map((purpose) => {
+              const delPhase = purposeDelPhase[purpose.id];
+              const delMsg   = purposeDelMsg[purpose.id];
+              const isEditingPurpose = purposeEditing?.id === purpose.id;
+
+              return (
+                <li key={purpose.id} className="py-2">
+                  {isEditingPurpose ? (
+                    <div className="space-y-1.5">
+                      <div className="flex gap-2">
+                        <input
+                          ref={purposeEditInputRef}
+                          value={purposeEditing.name}
+                          onChange={(e) => setPurposeEditing({ ...purposeEditing, name: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === 'Enter') savePurposeEdit(); if (e.key === 'Escape') cancelPurposeEdit(); }}
+                          disabled={purposeEditSaving}
+                          className={inputClass}
+                        />
+                        <button type="button" onClick={savePurposeEdit} disabled={purposeEditSaving || !purposeEditing.name.trim()} className={btnPrimary}>
+                          {purposeEditSaving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button type="button" onClick={cancelPurposeEdit} disabled={purposeEditSaving} className={btnSecondary}>Cancel</button>
+                      </div>
+                      {purposeEditError && <p className="text-xs text-rose-600 dark:text-rose-400">{purposeEditError}</p>}
+                    </div>
+                  ) : delPhase === 'checking' ? (
+                    <span className="text-xs text-slate-400 dark:text-slate-500">Checking…</span>
+                  ) : delPhase === 'confirm' || delPhase === 'deleting' ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1 text-xs text-slate-700 dark:text-slate-200">
+                        Delete <span className="font-semibold">{purpose.name}</span>?
+                      </span>
+                      <button type="button" onClick={() => confirmPurposeDelete(purpose.id)} disabled={delPhase === 'deleting'} className={btnDangerSolid}>
+                        {delPhase === 'deleting' ? 'Deleting…' : 'Delete'}
+                      </button>
+                      <button type="button" onClick={() => cancelPurposeDelete(purpose.id)} disabled={delPhase === 'deleting'} className={btnSecondary}>Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={`min-w-0 flex-1 truncate text-sm ${purpose.is_active ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 line-through dark:text-slate-500'}`}>
+                        {purpose.name}
+                      </span>
+                      {!purpose.is_active && (
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-700 dark:text-slate-400">inactive</span>
+                      )}
+                      <button type="button" onClick={() => startPurposeEdit(purpose)} className={btnAction}>Edit</button>
+                      <button
+                        type="button"
+                        onClick={() => togglePurposeActive(purpose)}
+                        disabled={purposeToggling.has(purpose.id)}
+                        className={`${btnAction} disabled:opacity-50`}
+                      >
+                        {purposeToggling.has(purpose.id) ? '…' : purpose.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button type="button" onClick={() => startPurposeDelete(purpose)} className={btnDanger}>Delete</button>
+                    </div>
+                  )}
+
+                  {delMsg && !delPhase && (
+                    <div className="mt-1 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-300">
+                      <span className="flex-1">{delMsg}</span>
+                      <button type="button" onClick={() => cancelPurposeDelete(purpose.id)} aria-label="Dismiss" className="shrink-0 text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-200">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
 

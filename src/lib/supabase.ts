@@ -13,6 +13,7 @@ import type {
   InventoryItemWithValue,
   ItemCategory,
   ItemListing,
+  ItemPurpose,
   ItemSubtype,
   NewBrand,
   NewCashFlow,
@@ -290,10 +291,10 @@ export interface CreateItemWithHistoricalImportParams {
   year:                number | null;
   color:               string | null;
   condition:           string | null;
-  collectionType:      string | null;
+  purposeId:           number | null;
   estimatedSoldValue:  number | null;
   notes:               string | null;
-  acquisitionDate:     string;   // ISO date string, e.g. "2024-03-15"
+  acquisitionDate:     string;
   valueIn:             number;
 }
 
@@ -301,8 +302,8 @@ export interface CreateItemWithHistoricalImportParams {
 export async function createItemWithHistoricalImport(
   params: CreateItemWithHistoricalImportParams,
 ): Promise<{ data: { item_id: number; deal_id: number } | null; error: string | null }> {
-  if (!params.condition)            return { data: null, error: 'Condition is required.' };
-  if (!params.collectionType)       return { data: null, error: 'Purpose is required.' };
+  if (!params.condition)           return { data: null, error: 'Condition is required.' };
+  if (params.purposeId == null)    return { data: null, error: 'Purpose is required.' };
   if (params.estimatedSoldValue == null) return { data: null, error: 'Estimated Sold Value is required.' };
 
   const { data, error } = await supabase.rpc('create_item_with_historical_import', {
@@ -314,11 +315,12 @@ export async function createItemWithHistoricalImport(
     p_year:                 params.year,
     p_color:                params.color,
     p_condition:            params.condition,
-    p_collection_type:      params.collectionType,
+    p_collection_type:      null,
     p_estimated_sold_value: params.estimatedSoldValue,
     p_notes:                params.notes,
     p_acquisition_date:     params.acquisitionDate,
     p_value_in:             params.valueIn,
+    p_purpose_id:           params.purposeId,
   });
 
   if (error) return { data: null, error: error.message };
@@ -327,7 +329,7 @@ export async function createItemWithHistoricalImport(
 
 export async function createInventoryItem(item: NewInventoryItem) {
   if (!item.condition)            return { data: null, error: { message: 'Condition is required.' }, status: 422, statusText: 'Unprocessable Entity', count: null } as const;
-  if (!item.collection_type)      return { data: null, error: { message: 'Purpose is required.' }, status: 422, statusText: 'Unprocessable Entity', count: null } as const;
+  if (item.purpose_id == null)    return { data: null, error: { message: 'Purpose is required.' }, status: 422, statusText: 'Unprocessable Entity', count: null } as const;
   if (item.estimated_sold_value == null) return { data: null, error: { message: 'Estimated Sold Value is required.' }, status: 422, statusText: 'Unprocessable Entity', count: null } as const;
   return supabase.from('inventory_items').insert(item).select().single();
 }
@@ -976,5 +978,30 @@ export async function setItemTags(itemId: number, tagIds: number[]) {
     .from('inventory_item_tags')
     .insert(tagIds.map((tag_id) => ({ item_id: itemId, tag_id })));
   return { error: insErr };
+}
+
+// ─── Item purposes ─────────────────────────────────────────────────────────────
+
+export async function getItemPurposes() {
+  return supabase.from('item_purposes').select('*').order('name', { ascending: true });
+}
+
+export async function createItemPurpose(name: string) {
+  return supabase.from('item_purposes').insert({ name: name.trim() }).select().single();
+}
+
+export async function updateItemPurpose(id: number, updates: { name?: string; is_active?: boolean }) {
+  return supabase.from('item_purposes').update(updates).eq('id', id).select().single();
+}
+
+export async function deleteItemPurpose(id: number) {
+  return supabase.from('item_purposes').delete().eq('id', id);
+}
+
+export async function getPurposeUsageCount(purposeId: number) {
+  return supabase
+    .from('inventory_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('purpose_id', purposeId);
 }
 

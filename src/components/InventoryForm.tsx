@@ -9,9 +9,9 @@ import AiAssistantCard from '@/components/AiAssistantCard';
 import TagsSelector from '@/components/TagsSelector';
 import type {
   Brand,
-  CollectionType,
   Condition,
   InventoryTag,
+  ItemPurpose,
   ItemSubtype,
   ItemType,
   InventoryItem,
@@ -27,6 +27,7 @@ import {
   getInventoryExpensesByItemIds,
   getInventoryItemById,
   getInventoryItemWithValueById,
+  getItemPurposes,
   getItemSubtypes,
   getDealItemsByItemId,
   getItemTags,
@@ -70,11 +71,6 @@ const conditionOptions: Array<{ label: string; value: Condition }> = [
   { label: 'Fair', value: 'Fair' },
 ];
 
-const collectionOptions: Array<{ label: string; value: CollectionType }> = [
-  { label: 'Personal', value: 'Personal' },
-  { label: 'Hybrid', value: 'Hybrid' },
-  { label: 'Business', value: 'Business' },
-];
 
 const statusClasses: Record<string, string> = {
   new: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
@@ -122,11 +118,12 @@ export default function InventoryForm({
   const [year, setYear] = useState('');
   const [color, setColor] = useState('');
   const [condition, setCondition] = useState<Condition | ''>('');
-  const [collectionType, setCollectionType] = useState<CollectionType | ''>('');
+  const [purposeId, setPurposeId] = useState<number | null>(null);
+  const [allPurposes, setAllPurposes] = useState<ItemPurpose[]>([]);
   const [estimatedSoldValue, setEstimatedSoldValue] = useState('');
   const [notes, setNotes] = useState('');
   const [conditionError, setConditionError] = useState<string | null>(null);
-  const [collectionTypeError, setCollectionTypeError] = useState<string | null>(null);
+  const [purposeError, setPurposeError] = useState<string | null>(null);
   const [estimatedSoldValueError, setEstimatedSoldValueError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -181,14 +178,15 @@ export default function InventoryForm({
     [brandInput, brands],
   );
 
-  // Load brands and subtypes on mount
+  // Load brands, subtypes, tags, and purposes on mount
   useEffect(() => {
     async function loadFormData() {
       setLoading(true);
-      const [brandsResult, subsResult, tagsResult] = await Promise.all([
+      const [brandsResult, subsResult, tagsResult, purposesResult] = await Promise.all([
         getBrands(),
         getItemSubtypes(),
         getTags(),
+        getItemPurposes(),
       ]);
       setLoading(false);
       if (brandsResult.error) { setError('Could not load brands.'); return; }
@@ -198,7 +196,7 @@ export default function InventoryForm({
       const fetchedSubs = (subsResult.data || []) as ItemSubtype[];
       setAllSubtypes(fetchedSubs);
       if (!tagsResult.error) setAllTags((tagsResult.data ?? []) as InventoryTag[]);
-      // New items start with no type selected; user must choose explicitly
+      if (!purposesResult.error) setAllPurposes((purposesResult.data ?? []) as ItemPurpose[]);
       setFormDataReady(true);
     }
     loadFormData();
@@ -260,7 +258,7 @@ export default function InventoryForm({
       setYear(item.year != null ? String(item.year) : '');
       setColor(item.color ?? '');
       setCondition(item.condition ?? '');
-      setCollectionType(item.collection_type ?? '');
+      setPurposeId(item.purpose_id ?? null);
       setEstimatedSoldValue(item.estimated_sold_value?.toString() ?? '');
       setNotes(item.notes ?? '');
       setListedDate(item.date_listed ?? '');
@@ -369,13 +367,13 @@ export default function InventoryForm({
     }
 
     // Per-field required validation (applies to create and update)
-    const conditionErr   = !condition        ? 'Please select a Condition.'               : null;
-    const collectionErr  = !collectionType   ? 'Please select a Purpose.'                 : null;
-    const estValueErr    = !estimatedSoldValue ? 'Please enter an Estimated Sold Value.'  : null;
+    const conditionErr  = !condition       ? 'Please select a Condition.'              : null;
+    const purposeErr    = purposeId == null ? 'Please select a Purpose.'               : null;
+    const estValueErr   = !estimatedSoldValue ? 'Please enter an Estimated Sold Value.' : null;
     setConditionError(conditionErr);
-    setCollectionTypeError(collectionErr);
+    setPurposeError(purposeErr);
     setEstimatedSoldValueError(estValueErr);
-    if (conditionErr || collectionErr || estValueErr) return;
+    if (conditionErr || purposeErr || estValueErr) return;
 
     setSaving(true);
 
@@ -405,7 +403,7 @@ export default function InventoryForm({
         year:               year ? Number(year) : null,
         color:              color.trim() || null,
         condition:          condition || null,
-        collectionType:     collectionType || null,
+        purposeId:          purposeId,
         estimatedSoldValue: estimatedSoldValue ? Number(estimatedSoldValue) : null,
         notes:              notes.trim() || null,
         acquisitionDate:    histAcquisitionDate,
@@ -436,8 +434,8 @@ export default function InventoryForm({
       setBrandInput(''); setSelectedBrandId(null);
       setSelectedSubtypeId(null);
       setModel(''); setSerialNumber(''); setYear(''); setColor('');
-      setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes(''); setListedDate(''); setEditingListedDate(false);
-      setConditionError(null); setCollectionTypeError(null); setEstimatedSoldValueError(null);
+      setCondition(''); setPurposeId(null); setEstimatedSoldValue(''); setNotes(''); setListedDate(''); setEditingListedDate(false);
+      setConditionError(null); setPurposeError(null); setEstimatedSoldValueError(null);
       setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
       setSelectedTagIds([]);
       setSuccessMessage('Item saved.'); setError(null);
@@ -454,7 +452,8 @@ export default function InventoryForm({
       year: year ? Number(year) : null,
       color: color.trim() || null,
       condition: condition || null,
-      collection_type: collectionType || null,
+      collection_type: null,
+      purpose_id: purposeId,
       estimated_sold_value: estimatedSoldValue ? Number(estimatedSoldValue) : null,
       notes: notes.trim() || null,
       date_listed: listedDate || (existingItem?.status === 'listed' ? new Date().toISOString().split('T')[0] : null),
@@ -501,13 +500,13 @@ export default function InventoryForm({
     setYear('');
     setColor('');
     setCondition('');
-    setCollectionType('');
+    setPurposeId(null);
     setEstimatedSoldValue('');
     setNotes('');
     setListedDate('');
     setEditingListedDate(false);
     setConditionError(null);
-    setCollectionTypeError(null);
+    setPurposeError(null);
     setEstimatedSoldValueError(null);
     setHistoricalImport(false);
     setHistAcquisitionDate('');
@@ -704,23 +703,23 @@ export default function InventoryForm({
         {conditionError && <p className="text-xs text-rose-600 dark:text-rose-400">{conditionError}</p>}
       </div>
 
-      {/* Collection */}
+      {/* Purpose */}
       <div className="space-y-1.5">
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
           Purpose <span className="text-rose-500">*</span>
         </label>
         <select
-          value={collectionType}
-          onChange={(e) => { setCollectionType(e.target.value as CollectionType); setCollectionTypeError(null); }}
+          value={purposeId ?? ''}
+          onChange={(e) => { setPurposeId(e.target.value ? Number(e.target.value) : null); setPurposeError(null); }}
           disabled={disabled}
-          className={collectionTypeError ? errorInputClass : inputClass}
+          className={purposeError ? errorInputClass : inputClass}
         >
           <option value="">Select Purpose</option>
-          {collectionOptions.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+          {allPurposes.filter((p) => p.is_active || p.id === purposeId).map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
-        {collectionTypeError && <p className="text-xs text-rose-600 dark:text-rose-400">{collectionTypeError}</p>}
+        {purposeError && <p className="text-xs text-rose-600 dark:text-rose-400">{purposeError}</p>}
       </div>
 
       {/* Estimated sold value */}

@@ -37,6 +37,13 @@ export interface Brand {
   created_at: string;
 }
 
+export interface ItemPurpose {
+  id: number;
+  name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface InventoryItem {
   id: number;
   user_id: number;
@@ -49,6 +56,7 @@ export interface InventoryItem {
   sold_date: string | null;
   estimated_sold_value: number | null;
   collection_type: CollectionType | null;
+  purpose_id: number | null;
   condition: Condition | null;
   status: Status;
   notes: string | null;
@@ -62,6 +70,7 @@ export type InventoryItemWithValue = InventoryItem & {
   value_in: number | null;
   value_out?: number | null;
   acquired_date?: string | null;
+  purpose_name?: string | null;
 };
 
 export interface Deal {

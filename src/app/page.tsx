@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase, getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemSubtypes } from '@/lib/supabase'
+import { supabase, getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes } from '@/lib/supabase'
 
 export default function HomePage() {
   const router = useRouter()
@@ -14,6 +14,7 @@ export default function HomePage() {
   const [brands, setBrands] = useState<any[]>([])
   const [itemSubtypes, setItemSubtypes] = useState<any[]>([])
   const [itemCategoriesData, setItemCategoriesData] = useState<any[]>([])
+  const [itemPurposes, setItemPurposes] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
@@ -34,7 +35,7 @@ export default function HomePage() {
       console.groupEnd()
       // ────────────────────────────────────────────────────────────────────────
 
-      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, brandsResult, catsResult, subsResult] = await Promise.all([
+      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, brandsResult, catsResult, subsResult, purposesResult] = await Promise.all([
         getCashFlows(),
         getInventoryItemsWithValue(),
         getDeals(),
@@ -43,6 +44,7 @@ export default function HomePage() {
         getBrands(),
         getItemCategories(),
         getItemSubtypes(),
+        getItemPurposes(),
       ])
 
       // ── DIAGNOSTICS (temporary) ──────────────────────────────────────────────
@@ -73,6 +75,7 @@ export default function HomePage() {
       setBrands(brandsResult.data || [])
       setItemCategoriesData(catsResult.data || [])
       setItemSubtypes(subsResult.data || [])
+      if (!purposesResult.error) setItemPurposes(purposesResult.data || [])
       setLoading(false)
     }
 
@@ -80,7 +83,7 @@ export default function HomePage() {
   }, [])
 
   const activeInventory = inventoryItems.filter((item) => item.status === 'owned' || item.status === 'listed')
-  const businessInventory = inventoryItems.filter((item) => item.collection_type === 'Business' || item.collection_type === 'Hybrid')
+  const businessInventory = inventoryItems.filter((item) => item.purpose_name === 'Business' || item.purpose_name === 'Hybrid')
 
   const latestCashFlow = [...cashFlows].sort((a, b) => {
     const dateDiff = b.transaction_date.localeCompare(a.transaction_date)
@@ -193,7 +196,10 @@ export default function HomePage() {
     const params = new URLSearchParams({ status: 'owned,listed' })
     if (inventoryGroupView === 'category') params.set('category', key)
     else if (inventoryGroupView === 'type') params.set('type', key)
-    else if (inventoryGroupView === 'purpose') params.set('purpose', key)
+    else if (inventoryGroupView === 'purpose') {
+      const purposeId = purposeIdByName[key]
+      if (purposeId) params.set('purpose_id', String(purposeId))
+    }
     router.push(`/inventory?${params.toString()}`)
   }
 
@@ -272,10 +278,15 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInventory, subtypeNameById])
 
+  const purposeIdByName = useMemo(
+    () => Object.fromEntries(itemPurposes.map((p: any) => [p.name, p.id as number])),
+    [itemPurposes],
+  )
+
   const inventoryByPurpose = useMemo(() => {
     const values: Record<string, { count: number; costBasis: number; estimatedValue: number }> = {}
     activeInventory.forEach((item) => {
-      const key = (item.collection_type as string | null) ?? 'Unassigned'
+      const key = (item.purpose_name as string | null) ?? 'Unassigned'
       if (!values[key]) values[key] = { count: 0, costBasis: 0, estimatedValue: 0 }
       values[key].count += 1
       values[key].costBasis += Number(item.value_in ?? 0)
