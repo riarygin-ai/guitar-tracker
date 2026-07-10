@@ -12,8 +12,9 @@ import {
   getInventoryItemsWithValue,
   getBrands,
   getDisplayPhotosForItems,
+  getInventoryExpenses,
 } from '@/lib/supabase';
-import type { Brand, CashFlow, Deal, DealItem, InventoryItemWithValue } from '@/types';
+import type { Brand, CashFlow, Deal, DealItem, InventoryExpense, InventoryItemWithValue } from '@/types';
 
 // ─── Visual helper ────────────────────────────────────────────────────────────
 
@@ -29,6 +30,7 @@ function computeDealVisual(
   itemMap: Record<number, InventoryItemWithValue>,
   brandMap: Record<number, string>,
   photoByItemId: Record<number, string>,
+  expenseItemIdByDealId: Record<number, number>,
 ): DealVisual {
   function brandModel(item: InventoryItemWithValue): string {
     return `${brandMap[item.brand_id] || ''} ${item.model}`.trim() || 'Unknown';
@@ -68,12 +70,18 @@ function computeDealVisual(
   }
 
   const di = items[0];
-  const item = di ? itemMap[di.item_id] : null;
+  let item: InventoryItemWithValue | null = di ? (itemMap[di.item_id] ?? null) : null;
+  // Expense deals have no deal_items rows — resolve item via inventory_expenses link
+  if (!item && deal.deal_type === 'expense') {
+    const linkedId = expenseItemIdByDealId[deal.id];
+    if (linkedId != null) item = itemMap[linkedId] ?? null;
+  }
   return {
     kind: 'single',
     photoUrl: item ? photoByItemId[item.id] : undefined,
     alt:      item ? brandModel(item) : (deal.notes || '—'),
-    title:    item ? yearBrandModel(item) : (deal.notes || '—'),
+    // Expense title is always the expense description, never the item name
+    title:    deal.deal_type === 'expense' ? (deal.notes || '—') : (item ? yearBrandModel(item) : (deal.notes || '—')),
   };
 }
 
@@ -100,6 +108,7 @@ export default function CashFlowPage() {
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemWithValue[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [expenses, setExpenses] = useState<InventoryExpense[]>([]);
   const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -112,12 +121,13 @@ export default function CashFlowPage() {
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [cashFlowResult, dealsResult, dealItemsResult, itemsResult, brandsResult] = await Promise.all([
+      const [cashFlowResult, dealsResult, dealItemsResult, itemsResult, brandsResult, expensesResult] = await Promise.all([
         getCashFlows(),
         getDeals(),
         getDealItems(),
         getInventoryItemsWithValue(),
         getBrands(),
+        getInventoryExpenses(),
       ]);
       setLoading(false);
 
@@ -131,8 +141,14 @@ export default function CashFlowPage() {
       setDealItems(dealItemsResult.data || []);
       setInventoryItems(itemsResult.data || []);
       setBrands(brandsResult.data || []);
+      setExpenses(expensesResult.data || []);
 
-      const allItemIds = Array.from(new Set((dealItemsResult.data || []).map((di) => di.item_id)));
+      // Include expense-linked item IDs — expense deals have no deal_items rows
+      const dealItemIds = (dealItemsResult.data || []).map((di) => di.item_id);
+      const expLinkedIds = (expensesResult.data || [])
+        .filter((e) => e.item_id != null)
+        .map((e) => e.item_id as number);
+      const allItemIds = Array.from(new Set([...dealItemIds, ...expLinkedIds]));
       if (allItemIds.length > 0) {
         getDisplayPhotosForItems(allItemIds).then(setPhotoByItemId);
       }
@@ -160,6 +176,15 @@ export default function CashFlowPage() {
     });
     return map;
   }, [dealItems]);
+
+  // Maps deal_id → item_id for expense deals (expense deals have no deal_items rows)
+  const expenseItemIdByDealId = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const exp of expenses) {
+      if (exp.deal_id != null && exp.item_id != null) map[exp.deal_id] = exp.item_id;
+    }
+    return map;
+  }, [expenses]);
 
   const sortedRows = useMemo(
     () =>
@@ -360,7 +385,7 @@ export default function CashFlowPage() {
               const deal = cf.deal_id ? dealMap[cf.deal_id] : null;
               const items = cf.deal_id ? (dealItemsByDealId[cf.deal_id] || []) : [];
               const visual = deal
-                ? computeDealVisual(deal, items, itemMap, brandMap, photoByItemId)
+                ? computeDealVisual(deal, items, itemMap, brandMap, photoByItemId, expenseItemIdByDealId)
                 : null;
 
               const formattedDate = new Date(cf.transaction_date + 'T12:00:00').toLocaleDateString('en-US', {
