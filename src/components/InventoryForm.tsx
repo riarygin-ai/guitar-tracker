@@ -6,10 +6,12 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ItemPhotos, { type ItemPhotosHandle } from '@/components/ItemPhotos';
 import AiAssistantCard from '@/components/AiAssistantCard';
+import TagsSelector from '@/components/TagsSelector';
 import type {
   Brand,
   CollectionType,
   Condition,
+  InventoryTag,
   ItemSubtype,
   ItemType,
   InventoryItem,
@@ -27,8 +29,11 @@ import {
   getInventoryItemWithValueById,
   getItemSubtypes,
   getDealItemsByItemId,
+  getItemTags,
   getMainPhotosForItems,
   getPhotoUrl,
+  getTags,
+  setItemTags,
   updateInventoryItem,
   type HistoricalImportInfo,
 } from '@/lib/supabase';
@@ -132,6 +137,10 @@ export default function InventoryForm({
   const [mainPhotoUrl, setMainPhotoUrl] = useState<string | null>(null);
   const [showPhotos,   setShowPhotos]   = useState(false);
 
+  // Tags
+  const [allTags,        setAllTags]        = useState<InventoryTag[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
+
   // Scroll to photo card when opened, scroll back to form when closed.
   // Runs after React commits DOM changes so layout is stable.
   useEffect(() => {
@@ -176,9 +185,10 @@ export default function InventoryForm({
   useEffect(() => {
     async function loadFormData() {
       setLoading(true);
-      const [brandsResult, subsResult] = await Promise.all([
+      const [brandsResult, subsResult, tagsResult] = await Promise.all([
         getBrands(),
         getItemSubtypes(),
+        getTags(),
       ]);
       setLoading(false);
       if (brandsResult.error) { setError('Could not load brands.'); return; }
@@ -187,6 +197,7 @@ export default function InventoryForm({
       setBrandSuggestions(fetchedBrands);
       const fetchedSubs = (subsResult.data || []) as ItemSubtype[];
       setAllSubtypes(fetchedSubs);
+      if (!tagsResult.error) setAllTags((tagsResult.data ?? []) as InventoryTag[]);
       // New items start with no type selected; user must choose explicitly
       setFormDataReady(true);
     }
@@ -212,13 +223,14 @@ export default function InventoryForm({
 
     async function loadItem() {
       setLoading(true);
-      const [itemResult, withValueResult, dealItemsResult, photosResult, histImportResult, expensesResult] = await Promise.all([
+      const [itemResult, withValueResult, dealItemsResult, photosResult, histImportResult, expensesResult, itemTagsResult] = await Promise.all([
         getInventoryItemById(Number(itemId)),
         getInventoryItemWithValueById(Number(itemId)),
         getDealItemsByItemId(Number(itemId)),
         getMainPhotosForItems([Number(itemId)]),
         getHistoricalImportByItemId(Number(itemId)),
         getInventoryExpensesByItemIds([Number(itemId)]),
+        getItemTags(Number(itemId)),
       ]);
       setLoading(false);
 
@@ -281,6 +293,11 @@ export default function InventoryForm({
       if (!expensesResult.error && expensesResult.data) {
         const total = expensesResult.data.reduce((sum: number, exp: any) => sum + (exp.amount ?? 0), 0);
         setTotalItemExpenses(total);
+      }
+
+      // Load existing tags
+      if (!itemTagsResult.error && itemTagsResult.data) {
+        setSelectedTagIds((itemTagsResult.data as { tag_id: number }[]).map((r) => r.tag_id));
       }
     }
 
@@ -402,6 +419,9 @@ export default function InventoryForm({
       if (listedDate) {
         await updateInventoryItem(rpcResult.data.item_id, { id: rpcResult.data.item_id, date_listed: listedDate });
       }
+      if (selectedTagIds.length > 0) {
+        await setItemTags(rpcResult.data.item_id, selectedTagIds);
+      }
       // Standalone form: navigate to inventory
       if (!hideHeader) {
         router.push(backHref ?? '/inventory');
@@ -419,6 +439,7 @@ export default function InventoryForm({
       setCondition(''); setCollectionType(''); setEstimatedSoldValue(''); setNotes(''); setListedDate(''); setEditingListedDate(false);
       setConditionError(null); setCollectionTypeError(null); setEstimatedSoldValueError(null);
       setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
+      setSelectedTagIds([]);
       setSuccessMessage('Item saved.'); setError(null);
       return;
     }
@@ -449,6 +470,10 @@ export default function InventoryForm({
 
     setSaving(false);
     if (result.error || !result.data) { setError('Could not save inventory item.'); return; }
+
+    // Save tags
+    const savedItemId = (result.data as { id: number }).id;
+    await setItemTags(savedItemId, selectedTagIds);
 
     // Upload any pending photos that were queued before the form was submitted
     if (itemId && photosRef.current?.hasPending()) {
@@ -487,6 +512,7 @@ export default function InventoryForm({
     setHistoricalImport(false);
     setHistAcquisitionDate('');
     setHistValueIn('');
+    setSelectedTagIds([]);
     setSuccessMessage('Item saved.');
     setError(null);
   };
@@ -788,6 +814,18 @@ export default function InventoryForm({
           placeholder="Add any additional notes..."
           rows={3}
           className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+        />
+      </div>
+
+      {/* Tags */}
+      <div className="space-y-1.5 sm:col-span-2">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Tags</label>
+        <TagsSelector
+          allTags={allTags}
+          selectedTagIds={selectedTagIds}
+          onChange={setSelectedTagIds}
+          onTagCreated={(tag) => setAllTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)))}
+          disabled={disabled}
         />
       </div>
 

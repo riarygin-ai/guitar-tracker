@@ -925,5 +925,56 @@ export async function getItemTimeline(
   };
 }
 
+// ─── Tags ─────────────────────────────────────────────────────────────────────
 
+export async function getTags() {
+  return supabase.from('inventory_tags').select('*').order('name', { ascending: true });
+}
+
+export async function createTag(name: string) {
+  return supabase.from('inventory_tags').insert({ name: name.trim() }).select().single();
+}
+
+export async function updateTag(id: number, updates: { name?: string; is_active?: boolean }) {
+  return supabase.from('inventory_tags').update(updates).eq('id', id).select().single();
+}
+
+export async function deleteTag(id: number) {
+  return supabase.from('inventory_tags').delete().eq('id', id);
+}
+
+export async function getTagUsageCount(tagId: number) {
+  return supabase
+    .from('inventory_item_tags')
+    .select('id', { count: 'exact', head: true })
+    .eq('tag_id', tagId);
+}
+
+export async function getItemTags(itemId: number) {
+  return supabase
+    .from('inventory_item_tags')
+    .select('tag_id')
+    .eq('item_id', itemId);
+}
+
+export async function getTagsForItems(itemIds: number[]) {
+  if (itemIds.length === 0) return { data: [] as { item_id: number; tag_id: number }[], error: null };
+  return supabase
+    .from('inventory_item_tags')
+    .select('item_id, tag_id')
+    .in('item_id', itemIds);
+}
+
+export async function setItemTags(itemId: number, tagIds: number[]) {
+  const { error: delErr } = await supabase
+    .from('inventory_item_tags')
+    .delete()
+    .eq('item_id', itemId);
+  if (delErr) return { error: delErr };
+  if (tagIds.length === 0) return { error: null };
+  const { error: insErr } = await supabase
+    .from('inventory_item_tags')
+    .insert(tagIds.map((tag_id) => ({ item_id: itemId, tag_id })));
+  return { error: insErr };
+}
 

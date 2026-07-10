@@ -7,20 +7,25 @@ import {
   createBrand,
   createItemCategory,
   createItemSubtype,
+  createTag,
   deleteBrand,
   deleteItemCategory,
   deleteItemSubtype,
+  deleteTag,
   getBrandUsageCount,
   getBrands,
   getItemCategories,
   getItemSubtypes,
   getOrCreateAppUser,
   getSubtypeUsageCount,
+  getTagUsageCount,
+  getTags,
   updateBrand,
   updateItemCategory,
   updateItemSubtype,
+  updateTag,
 } from '@/lib/supabase';
-import type { AppUser, Brand, ItemCategory, ItemSubtype } from '@/types';
+import type { AppUser, Brand, InventoryTag, ItemCategory, ItemSubtype } from '@/types';
 
 const BRAND_PAGE_SIZE = 5;
 
@@ -95,6 +100,26 @@ export default function AdminPage() {
   // move
   const [subMovingId, setSubMovingId] = useState<number | null>(null);
 
+  // ── Tags ──────────────────────────────────────────────────────────────────
+  const [tags,        setTags]        = useState<InventoryTag[]>([]);
+  const [tagsLoading, setTagsLoading] = useState(false);
+  const [tagSearch,   setTagSearch]   = useState('');
+  // create
+  const [tagCreateName,  setTagCreateName]  = useState('');
+  const [tagCreating,    setTagCreating]    = useState(false);
+  const [tagCreateError, setTagCreateError] = useState<string | null>(null);
+  // edit
+  const [tagEditing,    setTagEditing]    = useState<EditState | null>(null);
+  const [tagEditSaving, setTagEditSaving] = useState(false);
+  const [tagEditError,  setTagEditError]  = useState<string | null>(null);
+  const tagEditInputRef = useRef<HTMLInputElement>(null);
+  // toggle active
+  const [tagToggling, setTagToggling] = useState<Set<number>>(new Set());
+  // delete
+  type TagDelPhase = 'checking' | 'confirm' | 'deleting';
+  const [tagDelPhase, setTagDelPhase] = useState<Record<number, TagDelPhase>>({});
+  const [tagDelMsg,   setTagDelMsg]   = useState<Record<number, string>>({});
+
   // ── Auth ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -110,6 +135,7 @@ export default function AdminPage() {
     loadBrands();
     loadCategories();
     loadSubtypes();
+    loadTags();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Brands CRUD ───────────────────────────────────────────────────────────
@@ -370,6 +396,98 @@ export default function AdminPage() {
     }
     setSubtypes((prev) => prev.filter((s) => s.id !== id));
     setSubDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
+  // ── Tags CRUD ─────────────────────────────────────────────────────────────
+
+  async function loadTags() {
+    setTagsLoading(true);
+    const { data, error } = await getTags();
+    setTagsLoading(false);
+    if (!error) setTags((data as InventoryTag[]) ?? []);
+  }
+
+  useEffect(() => {
+    if (tagEditing) tagEditInputRef.current?.focus();
+  }, [tagEditing?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const filteredTags = tags.filter((t) =>
+    t.name.toLowerCase().includes(tagSearch.trim().toLowerCase())
+  );
+
+  async function handleCreateTag() {
+    const trimmed = tagCreateName.trim();
+    if (!trimmed) { setTagCreateError('Name is required.'); return; }
+    const dup = tags.find((t) => t.name.toLowerCase() === trimmed.toLowerCase());
+    if (dup) { setTagCreateError('A tag with this name already exists.'); return; }
+    setTagCreating(true);
+    setTagCreateError(null);
+    const { data, error } = await createTag(trimmed);
+    setTagCreating(false);
+    if (error) { setTagCreateError((error as { message?: string })?.message || 'Could not create tag.'); return; }
+    setTags((prev) => [...prev, data as InventoryTag].sort((a, b) => a.name.localeCompare(b.name)));
+    setTagCreateName('');
+  }
+
+  function startTagEdit(tag: InventoryTag) { setTagEditing({ id: tag.id, name: tag.name }); setTagEditError(null); }
+  function cancelTagEdit() { setTagEditing(null); setTagEditError(null); }
+
+  async function saveTagEdit() {
+    if (!tagEditing) return;
+    const trimmed = tagEditing.name.trim();
+    if (!trimmed) { setTagEditError('Name is required.'); return; }
+    const dup = tags.find((t) => t.name.toLowerCase() === trimmed.toLowerCase() && t.id !== tagEditing.id);
+    if (dup) { setTagEditError('A tag with this name already exists.'); return; }
+    setTagEditSaving(true);
+    setTagEditError(null);
+    const { error } = await updateTag(tagEditing.id, { name: trimmed });
+    setTagEditSaving(false);
+    if (error) { setTagEditError((error as { message?: string })?.message || 'Could not update tag.'); return; }
+    setTags((prev) => prev.map((t) => t.id === tagEditing.id ? { ...t, name: trimmed } : t));
+    setTagEditing(null);
+  }
+
+  async function toggleTagActive(tag: InventoryTag) {
+    setTagToggling((s) => new Set(s).add(tag.id));
+    const { error } = await updateTag(tag.id, { is_active: !tag.is_active });
+    setTagToggling((s) => { const n = new Set(s); n.delete(tag.id); return n; });
+    if (!error) setTags((prev) => prev.map((t) => t.id === tag.id ? { ...t, is_active: !tag.is_active } : t));
+  }
+
+  async function startTagDelete(tag: InventoryTag) {
+    setTagDelPhase((prev) => ({ ...prev, [tag.id]: 'checking' }));
+    const { count, error } = await getTagUsageCount(tag.id);
+    if (error) {
+      setTagDelMsg((prev) => ({ ...prev, [tag.id]: 'Could not check usage.' }));
+      setTagDelPhase((prev) => { const n = { ...prev }; delete n[tag.id]; return n; });
+      return;
+    }
+    if ((count ?? 0) > 0) {
+      setTagDelMsg((prev) => ({
+        ...prev,
+        [tag.id]: `"${tag.name}" is used by ${count} item${count !== 1 ? 's' : ''} and cannot be deleted. Deactivate it instead.`,
+      }));
+      setTagDelPhase((prev) => { const n = { ...prev }; delete n[tag.id]; return n; });
+      return;
+    }
+    setTagDelPhase((prev) => ({ ...prev, [tag.id]: 'confirm' }));
+  }
+
+  function cancelTagDelete(id: number) {
+    setTagDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setTagDelMsg((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
+  async function confirmTagDelete(id: number) {
+    setTagDelPhase((prev) => ({ ...prev, [id]: 'deleting' }));
+    const { error } = await deleteTag(id);
+    if (error) {
+      setTagDelMsg((prev) => ({ ...prev, [id]: 'Could not delete tag.' }));
+      setTagDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
+      return;
+    }
+    setTags((prev) => prev.filter((t) => t.id !== id));
+    setTagDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
   }
 
   async function moveSubtype(sub: ItemSubtype, newCatId: number) {
@@ -842,6 +960,128 @@ export default function AdminPage() {
               );
             })}
           </div>
+        )}
+      </div>
+
+      {/* ── Tags ──────────────────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Tags</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {tags.length} tag{tags.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+
+        {/* Create tag */}
+        <div className="mb-4 space-y-1.5">
+          <div className="flex gap-2">
+            <input
+              value={tagCreateName}
+              onChange={(e) => setTagCreateName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateTag(); }}
+              placeholder="New tag name…"
+              disabled={tagCreating}
+              className={inputClass}
+            />
+            <button type="button" onClick={handleCreateTag} disabled={tagCreating || !tagCreateName.trim()} className={btnPrimary}>
+              {tagCreating ? 'Creating…' : 'Add'}
+            </button>
+          </div>
+          {tagCreateError && <p className="text-xs text-rose-600 dark:text-rose-400">{tagCreateError}</p>}
+        </div>
+
+        {/* Search */}
+        <div className="mb-3">
+          <input
+            value={tagSearch}
+            onChange={(e) => setTagSearch(e.target.value)}
+            placeholder="Search tags…"
+            className={inputClass}
+          />
+        </div>
+
+        {/* Tag list */}
+        {tagsLoading ? (
+          <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">Loading…</p>
+        ) : filteredTags.length === 0 ? (
+          <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">
+            {tagSearch ? 'No matching tags.' : 'No tags yet.'}
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+            {filteredTags.map((tag) => {
+              const delPhase = tagDelPhase[tag.id];
+              const delMsg   = tagDelMsg[tag.id];
+              const isEditingTag = tagEditing?.id === tag.id;
+
+              return (
+                <li key={tag.id} className="py-2">
+                  {isEditingTag ? (
+                    <div className="space-y-1.5">
+                      <div className="flex gap-2">
+                        <input
+                          ref={tagEditInputRef}
+                          value={tagEditing.name}
+                          onChange={(e) => setTagEditing({ ...tagEditing, name: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveTagEdit(); if (e.key === 'Escape') cancelTagEdit(); }}
+                          disabled={tagEditSaving}
+                          className={inputClass}
+                        />
+                        <button type="button" onClick={saveTagEdit} disabled={tagEditSaving || !tagEditing.name.trim()} className={btnPrimary}>
+                          {tagEditSaving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button type="button" onClick={cancelTagEdit} disabled={tagEditSaving} className={btnSecondary}>Cancel</button>
+                      </div>
+                      {tagEditError && <p className="text-xs text-rose-600 dark:text-rose-400">{tagEditError}</p>}
+                    </div>
+                  ) : delPhase === 'checking' ? (
+                    <span className="text-xs text-slate-400 dark:text-slate-500">Checking…</span>
+                  ) : delPhase === 'confirm' || delPhase === 'deleting' ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1 text-xs text-slate-700 dark:text-slate-200">
+                        Delete <span className="font-semibold">{tag.name}</span>?
+                      </span>
+                      <button type="button" onClick={() => confirmTagDelete(tag.id)} disabled={delPhase === 'deleting'} className={btnDangerSolid}>
+                        {delPhase === 'deleting' ? 'Deleting…' : 'Delete'}
+                      </button>
+                      <button type="button" onClick={() => cancelTagDelete(tag.id)} disabled={delPhase === 'deleting'} className={btnSecondary}>Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={`min-w-0 flex-1 truncate text-sm ${tag.is_active ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 line-through dark:text-slate-500'}`}>
+                        {tag.name}
+                      </span>
+                      {!tag.is_active && (
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-700 dark:text-slate-400">inactive</span>
+                      )}
+                      <button type="button" onClick={() => startTagEdit(tag)} className={btnAction}>Edit</button>
+                      <button
+                        type="button"
+                        onClick={() => toggleTagActive(tag)}
+                        disabled={tagToggling.has(tag.id)}
+                        className={`${btnAction} disabled:opacity-50`}
+                      >
+                        {tagToggling.has(tag.id) ? '…' : tag.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button type="button" onClick={() => startTagDelete(tag)} className={btnDanger}>Delete</button>
+                    </div>
+                  )}
+
+                  {delMsg && !delPhase && (
+                    <div className="mt-1 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-300">
+                      <span className="flex-1">{delMsg}</span>
+                      <button type="button" onClick={() => cancelTagDelete(tag.id)} aria-label="Dismiss" className="shrink-0 text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-200">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
 

@@ -112,6 +112,20 @@ export interface InventoryExpense {
   created_at: string;
 }
 
+export interface InventoryTag {
+  id: number;
+  name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface InventoryItemTag {
+  id: number;
+  item_id: number;
+  tag_id: number;
+  created_at: string;
+}
+
 export interface InventoryItemPhoto {
   id: number;
   user_id: number;

@@ -3,9 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getBrands, getDealItems, getInventoryItems, getInventoryExpenses, getItemAcquisitionDates, getItemCategories, getItemSubtypes, getMainPhotosForItems, getPhotoUrl } from '@/lib/supabase';
+import { getBrands, getDealItems, getInventoryItems, getInventoryExpenses, getItemAcquisitionDates, getItemCategories, getItemSubtypes, getMainPhotosForItems, getPhotoUrl, getTags, getTagsForItems } from '@/lib/supabase';
 import { splitSearchTerms } from '@/lib/search';
-import type { Brand, DealItem, InventoryExpense, InventoryItemWithValue, ItemCategory, ItemSubtype, Status } from '@/types';
+import type { Brand, DealItem, InventoryExpense, InventoryItemWithValue, InventoryTag, ItemCategory, ItemSubtype, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
 
 const DISPLAY_LIMIT = 100;
@@ -46,6 +46,8 @@ export default function InventoryPage() {
   const [expenses, setExpenses] = useState<InventoryExpense[]>([]);
   const [acquiredDateByItemId, setAcquiredDateByItemId] = useState<Record<number, string>>({});
   const [mainPhotoByItemId, setMainPhotoByItemId] = useState<Record<number, string>>({});
+  const [allTags, setAllTags] = useState<InventoryTag[]>([]);
+  const [tagsByItemId, setTagsByItemId] = useState<Record<number, InventoryTag[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,6 +57,7 @@ export default function InventoryPage() {
   const [selectedSubtypeNames, setSelectedSubtypeNames] = useState<string[]>([]);
   const [showSubtypes, setShowSubtypes] = useState(false);
   const [selectedPurposes, setSelectedPurposes] = useState<string[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
 
   const isInitializedRef = useRef(false);
   useEffect(() => {
@@ -64,6 +67,7 @@ export default function InventoryPage() {
     // 'subtype' is the canonical param; 'type' is an alias from dashboard drill-down
     const sub = searchParams.get('subtype') ?? searchParams.get('type');
     const purpose = searchParams.get('purpose');
+    const tagParam = searchParams.get('tag_id');
     const q = searchParams.get('search');
     setSearch(q ?? '');
     setSelectedStatuses(s ? (s.split(',').filter(Boolean) as Status[]) : ['owned', 'listed']);
@@ -72,6 +76,7 @@ export default function InventoryPage() {
     setSelectedCategoryNames(cat ? cat.split(',').filter(Boolean) : (hasDrilldown ? [] : ['Guitars']));
     setSelectedSubtypeNames(sub ? sub.split(',').filter(Boolean) : []);
     setSelectedPurposes(purpose ? purpose.split(',').filter(Boolean) : []);
+    setSelectedTagIds(tagParam ? tagParam.split(',').map(Number).filter(Boolean) : []);
     isInitializedRef.current = true;
   }, [searchParams]);
 
@@ -83,9 +88,10 @@ export default function InventoryPage() {
     if (selectedCategoryNames.length > 0) params.set('category', [...selectedCategoryNames].sort().join(','));
     if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
     if (selectedPurposes.length > 0) params.set('purpose', [...selectedPurposes].sort().join(','));
+    if (selectedTagIds.length > 0) params.set('tag_id', [...selectedTagIds].sort((a, b) => a - b).join(','));
     const qs = params.toString();
     router.replace(`/inventory${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposes, router]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposes, selectedTagIds, router]);
 
   const backQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -94,13 +100,14 @@ export default function InventoryPage() {
     if (selectedCategoryNames.length > 0) params.set('category', [...selectedCategoryNames].sort().join(','));
     if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
     if (selectedPurposes.length > 0) params.set('purpose', [...selectedPurposes].sort().join(','));
+    if (selectedTagIds.length > 0) params.set('tag_id', [...selectedTagIds].sort((a, b) => a - b).join(','));
     return params.toString();
-  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposes]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposes, selectedTagIds]);
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [brandResult, itemResult, dealItemsResult, acquisitionDatesResult, catsResult, subsResult, expensesResult] = await Promise.all([
+      const [brandResult, itemResult, dealItemsResult, acquisitionDatesResult, catsResult, subsResult, expensesResult, tagsResult] = await Promise.all([
         getBrands(),
         getInventoryItems(),
         getDealItems(),
@@ -108,6 +115,7 @@ export default function InventoryPage() {
         getItemCategories(),
         getItemSubtypes(),
         getInventoryExpenses(),
+        getTags(),
       ]);
 
       if (brandResult.error || itemResult.error || dealItemsResult.error) {
@@ -124,6 +132,10 @@ export default function InventoryPage() {
       setAllSubtypes((subsResult.data as ItemSubtype[]) || []);
       setExpenses((expensesResult.data as InventoryExpense[]) || []);
 
+      const tagsData = (!tagsResult.error ? (tagsResult.data ?? []) : []) as InventoryTag[];
+      setAllTags(tagsData);
+      const tagById = Object.fromEntries(tagsData.map((t) => [t.id, t]));
+
       if (!acquisitionDatesResult.error && acquisitionDatesResult.data) {
         const map: Record<number, string> = {};
         for (const row of acquisitionDatesResult.data as any[]) {
@@ -135,13 +147,27 @@ export default function InventoryPage() {
 
       if (loadedItems.length > 0) {
         const itemIds = loadedItems.map((i) => i.id);
-        const photosResult = await getMainPhotosForItems(itemIds);
+        const [photosResult, itemTagsResult] = await Promise.all([
+          getMainPhotosForItems(itemIds),
+          getTagsForItems(itemIds),
+        ]);
         if (!photosResult.error && photosResult.data) {
           const photoMap: Record<number, string> = {};
           for (const row of photosResult.data) {
             photoMap[row.inventory_item_id] = getPhotoUrl(row.storage_path);
           }
           setMainPhotoByItemId(photoMap);
+        }
+        if (!itemTagsResult.error && itemTagsResult.data) {
+          const tagsMap: Record<number, InventoryTag[]> = {};
+          for (const row of itemTagsResult.data as { item_id: number; tag_id: number }[]) {
+            const tag = tagById[row.tag_id];
+            if (tag) {
+              if (!tagsMap[row.item_id]) tagsMap[row.item_id] = [];
+              tagsMap[row.item_id].push(tag);
+            }
+          }
+          setTagsByItemId(tagsMap);
         }
       }
 
@@ -263,9 +289,14 @@ export default function InventoryPage() {
         selectedPurposes.length === 0 ||
         selectedPurposes.includes((item.collection_type as string | null) ?? 'Unassigned');
 
-      return matchesSearch && matchesStatus && matchesCategory && matchesSubtype && matchesPurpose;
+      const itemTagIds = (tagsByItemId[item.id] ?? []).map((t) => t.id);
+      const matchesTags =
+        selectedTagIds.length === 0 ||
+        selectedTagIds.every((tid) => itemTagIds.includes(tid));
+
+      return matchesSearch && matchesStatus && matchesCategory && matchesSubtype && matchesPurpose && matchesTags;
     });
-  }, [brandMap, itemsWithComputedValues, search, selectedCategoryNames, selectedSubtypeNames, selectedStatuses, subtypeNameById, categoryNameBySubtypeId]);
+  }, [brandMap, itemsWithComputedValues, search, selectedCategoryNames, selectedSubtypeNames, selectedStatuses, subtypeNameById, categoryNameBySubtypeId, selectedPurposes, selectedTagIds, tagsByItemId]);
 
   const sortedFilteredItems = useMemo(() => {
     return [...filteredItems].sort((a, b) => {
@@ -484,6 +515,35 @@ export default function InventoryPage() {
               </div>
             </div>
           )}
+
+          {/* Tag filter */}
+          {allTags.filter((t) => t.is_active).length > 0 && (
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Tags</p>
+              <div className="flex flex-wrap gap-2">
+                {allTags.filter((t) => t.is_active).map((tag) => (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    onClick={() =>
+                      setSelectedTagIds((current) =>
+                        current.includes(tag.id)
+                          ? current.filter((v) => v !== tag.id)
+                          : [...current, tag.id]
+                      )
+                    }
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                      selectedTagIds.includes(tag.id)
+                        ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                    }`}
+                  >
+                    {tag.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -520,6 +580,7 @@ export default function InventoryPage() {
                   mainPhotoUrl={mainPhotoByItemId[item.id] ?? null}
                   subtypeName={subtypeName}
                   totalExpenses={expensesByItemId[item.id] ?? 0}
+                  tags={tagsByItemId[item.id]}
                 />
               );
             })}
