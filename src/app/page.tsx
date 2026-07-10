@@ -192,6 +192,10 @@ export default function HomePage() {
     router.push(`/operations?from=${month}-01&to=${month}-${String(lastDay).padStart(2, '0')}&dealTypes=sale,trade,purchase`)
   }
 
+  const navigateToBrandOperations = (brandId: number) => {
+    router.push(`/operations?brand_id=${brandId}`)
+  }
+
   const navigateToInventory = (key: string) => {
     const params = new URLSearchParams({ status: 'owned,listed' })
     if (inventoryGroupView === 'category') params.set('category', key)
@@ -354,6 +358,7 @@ export default function HomePage() {
     const dealById: Record<number, any> = Object.fromEntries(deals.map((d) => [d.id, d]))
 
     const brandData: Record<number, {
+      id: number
       name: string
       items: { roi: number; profit: number; daysOnMarket: number | null }[]
     }> = {}
@@ -387,7 +392,7 @@ export default function HomePage() {
       const brandId = item.brand_id
 
       if (!brandData[brandId]) {
-        brandData[brandId] = { name: brandNameById[brandId] ?? `Brand ${brandId}`, items: [] }
+        brandData[brandId] = { id: brandId, name: brandNameById[brandId] ?? `Brand ${brandId}`, items: [] }
       }
       brandData[brandId].items.push({ roi, profit, daysOnMarket })
     })
@@ -403,7 +408,7 @@ export default function HomePage() {
         const avgDaysOnMarket = marketItems.length > 0
           ? Math.round(marketItems.reduce((sum, i) => sum + i.daysOnMarket!, 0) / marketItems.length)
           : null
-        return { name: b.name, soldQty, avgRoi, avgProfit, avgDaysOnMarket }
+        return { id: b.id, name: b.name, soldQty, avgRoi, avgProfit, avgDaysOnMarket }
       })
       .sort((a, b) => b.avgRoi - a.avgRoi)
       .slice(0, 15)
@@ -819,10 +824,24 @@ export default function HomePage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                     {brandPerformance.map((row, index) => (
-                      <tr key={row.name}>
+                      <tr
+                        key={row.name}
+                        role="button"
+                        tabIndex={0}
+                        className="cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-700/60"
+                        onClick={() => navigateToBrandOperations(row.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateToBrandOperations(row.id) }
+                        }}
+                      >
                         <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">
-                          <span className="mr-2 text-xs font-normal text-slate-400 dark:text-slate-500">#{index + 1}</span>
-                          {row.name}
+                          <span className="flex items-center gap-1.5">
+                            <span className="mr-1 text-xs font-normal text-slate-400 dark:text-slate-500">#{index + 1}</span>
+                            {row.name}
+                            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400 dark:text-slate-500">
+                              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                            </svg>
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-center">
                           <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
@@ -845,11 +864,21 @@ export default function HomePage() {
               {/* Mobile */}
               <div className="mt-5 space-y-3 md:hidden">
                 {brandPerformance.map((row, index) => (
-                  <div key={row.name} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                  <button
+                    key={row.name}
+                    type="button"
+                    onClick={() => navigateToBrandOperations(row.id)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700/60"
+                  >
                     <div className="mb-2 flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-slate-400 dark:text-slate-500">#{index + 1}</span>
-                        <span className="font-semibold text-slate-900 dark:text-white">{row.name}</span>
+                        <span className="flex items-center gap-1.5 font-semibold text-slate-900 dark:text-white">
+                          {row.name}
+                          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400 dark:text-slate-500">
+                            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                          </svg>
+                        </span>
                       </div>
                       <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
                         {row.soldQty} sold
@@ -873,7 +902,7 @@ export default function HomePage() {
                         </span>
                       </div>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>

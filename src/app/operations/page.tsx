@@ -106,6 +106,10 @@ export default function OperationsPage() {
   const [toDate, setToDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>(defaultDealTypes);
   const [showDateFilter, setShowDateFilter] = useState(false);
+  const [selectedBrandId, setSelectedBrandId] = useState<number | null>(null);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [brandFilterSearch, setBrandFilterSearch] = useState('');
+  const [brandFilterFocused, setBrandFilterFocused] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -155,10 +159,16 @@ export default function OperationsPage() {
       ? typesParam.split(',').map((v) => v.trim().toLowerCase()).filter((v) => defaultDealTypes.includes(v))
       : defaultDealTypes;
 
+    const brandParam = searchParams.get('brand_id');
+
     // Only override defaults when URL explicitly carries these params
     if (from !== null) setFromDate(from);
     if (to !== null) setToDate(to);
     setSelectedDealTypes(types.length > 0 ? types : defaultDealTypes);
+    if (brandParam) {
+      setSelectedBrandId(Number(brandParam));
+      setShowMoreFilters(true);
+    }
   }, [searchParams]);
 
   const brandMap = useMemo(
@@ -243,31 +253,37 @@ export default function OperationsPage() {
     return `${v > 0 ? '+' : '−'}$${Math.round(Math.abs(v)).toLocaleString()}`;
   };
 
-  const updateQueryParams = (params: Record<string, string | undefined>) => {
+  const updateUrl = (overrides: {
+    from?: string | null;
+    to?: string | null;
+    dealTypes?: string[];
+    brandId?: number | null;
+  } = {}) => {
     const query = new URLSearchParams();
-    if (params.from)      query.set('from', params.from);
-    if (params.to)        query.set('to', params.to);
-    if (params.dealTypes) query.set('dealTypes', params.dealTypes);
+    const _from = 'from' in overrides ? overrides.from : fromDate;
+    const _to = 'to' in overrides ? overrides.to : toDate;
+    const _types = 'dealTypes' in overrides ? overrides.dealTypes! : selectedDealTypes;
+    const _brandId = 'brandId' in overrides ? overrides.brandId : selectedBrandId;
+
+    if (_from) query.set('from', _from);
+    if (_to) query.set('to', _to);
+    if (_types.length > 0 && _types.length < defaultDealTypes.length) {
+      query.set('dealTypes', _types.join(','));
+    }
+    if (_brandId != null) query.set('brand_id', String(_brandId));
+
     const qs = query.toString();
-    router.replace(`/operations${qs ? `?${qs}` : ''}`);
+    router.replace(`/operations${qs ? `?${qs}` : ''}`, { scroll: false });
   };
 
   const handleFromDateChange = (value: string) => {
     setFromDate(value);
-    updateQueryParams({
-      from: value || undefined,
-      to: toDate || undefined,
-      dealTypes: selectedDealTypes.length === defaultDealTypes.length ? undefined : selectedDealTypes.join(','),
-    });
+    updateUrl({ from: value || null });
   };
 
   const handleToDateChange = (value: string) => {
     setToDate(value);
-    updateQueryParams({
-      from: fromDate || undefined,
-      to: value || undefined,
-      dealTypes: selectedDealTypes.length === defaultDealTypes.length ? undefined : selectedDealTypes.join(','),
-    });
+    updateUrl({ to: value || null });
   };
 
   const handleDealTypeToggle = (dealType: string) => {
@@ -276,12 +292,33 @@ export default function OperationsPage() {
       : [...selectedDealTypes, dealType];
     const types = next.length > 0 ? next : defaultDealTypes;
     setSelectedDealTypes(types);
-    updateQueryParams({
-      from: fromDate || undefined,
-      to: toDate || undefined,
-      dealTypes: types.length === defaultDealTypes.length ? undefined : types.join(','),
-    });
+    updateUrl({ dealTypes: types });
   };
+
+  const filteredBrandOptions = useMemo(
+    () =>
+      brands.filter(
+        (b) =>
+          b.id !== selectedBrandId &&
+          (brandFilterSearch.length === 0 || b.name.toLowerCase().includes(brandFilterSearch.toLowerCase()))
+      ),
+    [brands, selectedBrandId, brandFilterSearch]
+  );
+
+  const hiddenFilterCount = selectedBrandId != null ? 1 : 0;
+
+  const hasActiveFilters =
+    selectedBrandId != null ||
+    searchQuery.length > 0 ||
+    selectedDealTypes.length !== defaultDealTypes.length;
+
+  function clearFilters() {
+    setSelectedDealTypes(defaultDealTypes);
+    setSelectedBrandId(null);
+    setSearchQuery('');
+    setBrandFilterSearch('');
+    updateUrl({ dealTypes: defaultDealTypes, brandId: null });
+  }
 
   const filteredAndSortedDeals = useMemo(() => {
     const searchTerms = splitSearchTerms(searchQuery);
@@ -292,6 +329,20 @@ export default function OperationsPage() {
         if (fromDate && deal.deal_date < fromDate) return false;
         if (toDate   && deal.deal_date > toDate)   return false;
         return true;
+      })
+      .filter((deal) => {
+        if (selectedBrandId == null) return true;
+        const items = dealItemsByDealId[deal.id] ?? [];
+        if (items.length > 0) {
+          return items.some((di) => itemMap[di.item_id]?.brand_id === selectedBrandId);
+        }
+        // Expense deals have no deal_items — resolve via inventory_expenses link
+        if (deal.deal_type === 'expense') {
+          const linkedId = expenseItemIdByDealId[deal.id];
+          if (linkedId == null) return false;
+          return itemMap[linkedId]?.brand_id === selectedBrandId;
+        }
+        return false;
       })
       .filter((deal) => {
         if (searchTerms.length === 0) return true;
@@ -312,7 +363,7 @@ export default function OperationsPage() {
         return searchTerms.every((term) => [...dealFields, ...itemFields].some((f) => f.includes(term)));
       })
       .sort((a, b) => new Date(b.deal_date).getTime() - new Date(a.deal_date).getTime());
-  }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap]);
+  }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap, selectedBrandId, expenseItemIdByDealId]);
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
@@ -396,7 +447,7 @@ export default function OperationsPage() {
           )}
 
           {/* Desktop label */}
-          <p className="hidden text-sm font-medium text-slate-700 dark:text-slate-200 md:block">Deal type filter</p>
+          <p className="hidden text-sm font-medium text-slate-700 dark:text-slate-200 md:block">Operation type</p>
           <div className="flex flex-wrap gap-2 md:mt-3">
             {defaultDealTypes.map((dealType) => (
               <button
@@ -413,6 +464,115 @@ export default function OperationsPage() {
               </button>
             ))}
           </div>
+
+          {/* More Filters toggle + Clear Filters */}
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setShowMoreFilters((v) => !v)}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                showMoreFilters
+                  ? 'border-slate-400 bg-slate-200 text-slate-800 dark:border-slate-500 dark:bg-slate-600 dark:text-white'
+                  : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700/80 dark:text-slate-300 dark:hover:bg-slate-600'
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="18" x2="12" y2="18" strokeWidth="3"/>
+              </svg>
+              {showMoreFilters
+                ? 'Hide filters'
+                : `More filters${hiddenFilterCount > 0 ? ` (${hiddenFilterCount})` : ''}`}
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={`shrink-0 transition-transform duration-150 ${showMoreFilters ? 'rotate-180' : ''}`}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="text-sm text-slate-500 transition hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          {/* Expanded More Filters — Brand (and future filters) */}
+          {showMoreFilters && (
+            <div className="mt-3 space-y-4 border-t border-slate-200 pt-4 dark:border-slate-600">
+              {/* Brand — searchable single-select */}
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Brand</p>
+
+                {/* Selected brand chip */}
+                {selectedBrandId != null && (
+                  <div className="mb-2">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-950 px-2.5 py-1 text-xs font-medium text-white dark:bg-white dark:text-slate-900">
+                      {brandMap[selectedBrandId] ?? `Brand ${selectedBrandId}`}
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedBrandId(null); setBrandFilterSearch(''); updateUrl({ brandId: null }); }}
+                        aria-label="Clear brand filter"
+                        className="ml-0.5 rounded-full opacity-70 hover:opacity-100"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
+                    </span>
+                  </div>
+                )}
+
+                {/* Search input */}
+                <input
+                  type="text"
+                  value={brandFilterSearch}
+                  onChange={(e) => setBrandFilterSearch(e.target.value)}
+                  onFocus={() => setBrandFilterFocused(true)}
+                  onBlur={() => setTimeout(() => setBrandFilterFocused(false), 150)}
+                  placeholder="Search brands..."
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+                />
+
+                {/* Brand options — shown when focused or typing */}
+                {(brandFilterFocused || brandFilterSearch.length > 0) && (
+                  filteredBrandOptions.length > 0 ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {filteredBrandOptions.map((brand) => (
+                        <button
+                          key={brand.id}
+                          type="button"
+                          onMouseDown={() => {
+                            setSelectedBrandId(brand.id);
+                            setBrandFilterSearch('');
+                            updateUrl({ brandId: brand.id });
+                          }}
+                          className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500"
+                        >
+                          {brand.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                      {brandFilterSearch.length > 0 ? 'No brands match.' : 'No brands available.'}
+                    </p>
+                  )
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-6">
