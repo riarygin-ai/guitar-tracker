@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -8,6 +8,10 @@ import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems, getDispl
 import type { InventoryExpense } from '@/types';
 import { splitSearchTerms } from '@/lib/search';
 import type { Brand, Deal, DealItem, InventoryItemWithValue } from '@/types';
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
+
+const BATCH_SIZE = 25;
+const SESSION_KEY = 'ops-session';
 
 const defaultDealTypes = ['sale', 'purchase', 'trade', 'expense'];
 
@@ -110,6 +114,31 @@ export default function OperationsPage() {
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [brandFilterSearch, setBrandFilterSearch] = useState('');
   const [brandFilterFocused, setBrandFilterFocused] = useState(false);
+  const [renderCount, setRenderCount] = useState(BATCH_SIZE);
+  const scrollTargetRef = useRef<number | null>(null);
+  const isFirstFilterRef = useRef(true);
+
+  useEffect(() => {
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    if (!saved) return;
+    try {
+      const { scrollY, filterSig } = JSON.parse(saved) as { scrollY: number; filterSig: string };
+      if (filterSig === window.location.search) scrollTargetRef.current = scrollY;
+    } catch {}
+    sessionStorage.removeItem(SESSION_KEY);
+  }, []);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const save = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify({ scrollY: window.scrollY, filterSig: window.location.search }));
+      }, 400);
+    };
+    window.addEventListener('scroll', save, { passive: true });
+    return () => { window.removeEventListener('scroll', save); clearTimeout(timer); };
+  }, []);
 
   useEffect(() => {
     async function loadData() {
@@ -320,6 +349,20 @@ export default function OperationsPage() {
     updateUrl({ dealTypes: defaultDealTypes, brandId: null });
   }
 
+  const opsFilterSig = `${searchQuery}|${fromDate}|${toDate}|${selectedDealTypes.join(',')}|${selectedBrandId ?? ''}`;
+  useEffect(() => {
+    if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
+    setRenderCount(BATCH_SIZE);
+  }, [opsFilterSig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!loading && scrollTargetRef.current !== null) {
+      const y = scrollTargetRef.current;
+      scrollTargetRef.current = null;
+      setTimeout(() => window.scrollTo({ top: y, behavior: 'instant' }), 50);
+    }
+  }, [loading]);
+
   const filteredAndSortedDeals = useMemo(() => {
     const searchTerms = splitSearchTerms(searchQuery);
 
@@ -364,6 +407,11 @@ export default function OperationsPage() {
       })
       .sort((a, b) => new Date(b.deal_date).getTime() - new Date(a.deal_date).getTime());
   }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap, selectedBrandId, expenseItemIdByDealId]);
+
+  const displayedDeals = filteredAndSortedDeals.slice(0, renderCount);
+  const hasMoreDeals = filteredAndSortedDeals.length > renderCount;
+  const loadMoreDeals = useCallback(() => setRenderCount((c) => c + BATCH_SIZE), []);
+  const sentinelRef = useInfiniteScroll(loadMoreDeals, { hasMore: hasMoreDeals, isLoading: loading });
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
@@ -611,7 +659,12 @@ export default function OperationsPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredAndSortedDeals.map((deal) => {
+              {filteredAndSortedDeals.length > BATCH_SIZE && (
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  Showing {displayedDeals.length} of {filteredAndSortedDeals.length}
+                </p>
+              )}
+              {displayedDeals.map((deal) => {
                 const visual = computeDealVisual(
                   deal,
                   dealItemsByDealId[deal.id] || [],
@@ -765,6 +818,7 @@ export default function OperationsPage() {
                   </Link>
                 );
               })}
+              <div ref={sentinelRef} />
             </div>
           )}
         </div>

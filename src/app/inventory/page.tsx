@@ -1,14 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getBrands, getDealItems, getInventoryItems, getInventoryExpenses, getItemAcquisitionDates, getItemCategories, getItemPurposes, getItemSubtypes, getMainPhotosForItems, getPhotoUrl, getTags, getTagsForItems } from '@/lib/supabase';
 import { splitSearchTerms } from '@/lib/search';
 import type { Brand, DealItem, InventoryExpense, InventoryItemWithValue, InventoryTag, ItemCategory, ItemPurpose, ItemSubtype, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 
-const DISPLAY_LIMIT = 100;
+const BATCH_SIZE = 30;
+const SESSION_KEY = 'inv-session';
 
 const LEGACY_TYPE_TO_CATEGORY: Record<string, string> = {
   guitar: 'Guitars',
@@ -63,6 +65,39 @@ export default function InventoryPage() {
   const [selectedPurposeIds, setSelectedPurposeIds] = useState<number[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
 
+  const [renderCount, setRenderCount] = useState(BATCH_SIZE);
+  const scrollTargetRef = useRef<number | null>(null);
+  const isFirstFilterRef = useRef(true);
+
+  // Restore scroll position saved when user navigated away
+  useEffect(() => {
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    if (!saved) return;
+    try {
+      const { scrollY, filterSig } = JSON.parse(saved) as { scrollY: number; filterSig: string };
+      if (filterSig === window.location.search) {
+        scrollTargetRef.current = scrollY;
+      }
+    } catch {}
+    sessionStorage.removeItem(SESSION_KEY);
+  }, []);
+
+  // Save scroll position as user scrolls
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const save = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+          scrollY: window.scrollY,
+          filterSig: window.location.search,
+        }));
+      }, 400);
+    };
+    window.addEventListener('scroll', save, { passive: true });
+    return () => { window.removeEventListener('scroll', save); clearTimeout(timer); };
+  }, []);
+
   const isInitializedRef = useRef(false);
   useEffect(() => {
     if (isInitializedRef.current) return;
@@ -108,6 +143,22 @@ export default function InventoryPage() {
     if (selectedTagIds.length > 0) params.set('tag_id', [...selectedTagIds].sort((a, b) => a - b).join(','));
     return params.toString();
   }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds]);
+
+  // Reset display window when any filter changes (skip the very first run)
+  const filterSig = `${search}|${selectedStatuses.join(',')}|${selectedCategoryNames.join(',')}|${selectedSubtypeNames.join(',')}|${selectedPurposeIds.join(',')}|${selectedTagIds.join(',')}`;
+  useEffect(() => {
+    if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
+    setRenderCount(BATCH_SIZE);
+  }, [filterSig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Scroll to restored position after data loads
+  useEffect(() => {
+    if (!loading && scrollTargetRef.current !== null) {
+      const y = scrollTargetRef.current;
+      scrollTargetRef.current = null;
+      setTimeout(() => window.scrollTo({ top: y, behavior: 'instant' }), 50);
+    }
+  }, [loading]);
 
   useEffect(() => {
     async function loadData() {
@@ -344,8 +395,11 @@ export default function InventoryPage() {
     });
   }, [filteredItems]);
 
-  const displayItems = sortedFilteredItems.slice(0, DISPLAY_LIMIT);
-  const hasMore = sortedFilteredItems.length > DISPLAY_LIMIT;
+  const displayItems = sortedFilteredItems.slice(0, renderCount);
+  const hasMore = sortedFilteredItems.length > renderCount;
+
+  const loadMore = useCallback(() => setRenderCount((c) => c + BATCH_SIZE), []);
+  const sentinelRef = useInfiniteScroll(loadMore, { hasMore, isLoading: loading });
 
   const fmtCurrency = (v: number) => `$${Math.round(v).toLocaleString()}`;
 
@@ -685,9 +739,9 @@ export default function InventoryPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {hasMore && (
+            {sortedFilteredItems.length > BATCH_SIZE && (
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                Showing first {DISPLAY_LIMIT} items.
+                Showing {displayItems.length} of {sortedFilteredItems.length}
               </p>
             )}
             {displayItems.map((item) => {
@@ -706,6 +760,7 @@ export default function InventoryPage() {
                 />
               );
             })}
+            <div ref={sentinelRef} />
           </div>
         )}
       </div>

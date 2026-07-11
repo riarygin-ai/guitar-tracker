@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import {
@@ -15,6 +15,10 @@ import {
   getInventoryExpenses,
 } from '@/lib/supabase';
 import type { Brand, CashFlow, Deal, DealItem, InventoryExpense, InventoryItemWithValue } from '@/types';
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
+
+const BATCH_SIZE = 30;
+const SESSION_KEY = 'cf-session';
 
 // ─── Visual helper ────────────────────────────────────────────────────────────
 
@@ -117,6 +121,31 @@ export default function CashFlowPage() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>([...ALL_DEAL_TYPES]);
+  const [renderCount, setRenderCount] = useState(BATCH_SIZE);
+  const scrollTargetRef = useRef<number | null>(null);
+  const isFirstFilterRef = useRef(true);
+
+  useEffect(() => {
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    if (!saved) return;
+    try {
+      const { scrollY } = JSON.parse(saved) as { scrollY: number };
+      scrollTargetRef.current = scrollY;
+    } catch {}
+    sessionStorage.removeItem(SESSION_KEY);
+  }, []);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const save = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify({ scrollY: window.scrollY }));
+      }, 400);
+    };
+    window.addEventListener('scroll', save, { passive: true });
+    return () => { window.removeEventListener('scroll', save); clearTimeout(timer); };
+  }, []);
 
   useEffect(() => {
     async function loadData() {
@@ -225,6 +254,25 @@ export default function CashFlowPage() {
       }),
     [sortedRows, dateFrom, dateTo, allDealTypesSelected, selectedDealTypes, dealMap],
   );
+
+  const cfFilterSig = `${datePreset}|${customFrom}|${customTo}|${selectedDealTypes.join(',')}`;
+  useEffect(() => {
+    if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
+    setRenderCount(BATCH_SIZE);
+  }, [cfFilterSig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!loading && scrollTargetRef.current !== null) {
+      const y = scrollTargetRef.current;
+      scrollTargetRef.current = null;
+      setTimeout(() => window.scrollTo({ top: y, behavior: 'instant' }), 50);
+    }
+  }, [loading]);
+
+  const displayedRows = filteredRows.slice(0, renderCount);
+  const hasMoreRows = filteredRows.length > renderCount;
+  const loadMoreRows = useCallback(() => setRenderCount((c) => c + BATCH_SIZE), []);
+  const sentinelRef = useInfiniteScroll(loadMoreRows, { hasMore: hasMoreRows, isLoading: loading });
 
   const summaryStats = useMemo(() => {
     const currentBalance = sortedRows[0]?.closing_balance ?? 0;
@@ -381,7 +429,12 @@ export default function CashFlowPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {filteredRows.map((cf) => {
+            {filteredRows.length > BATCH_SIZE && (
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Showing {displayedRows.length} of {filteredRows.length}
+              </p>
+            )}
+            {displayedRows.map((cf) => {
               const deal = cf.deal_id ? dealMap[cf.deal_id] : null;
               const items = cf.deal_id ? (dealItemsByDealId[cf.deal_id] || []) : [];
               const visual = deal
@@ -541,6 +594,7 @@ export default function CashFlowPage() {
                 </div>
               );
             })}
+            <div ref={sentinelRef} />
           </div>
         )}
       </div>
