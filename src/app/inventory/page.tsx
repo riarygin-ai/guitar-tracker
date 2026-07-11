@@ -95,24 +95,14 @@ export default function InventoryPage() {
   // On browser Back: read saved state and prepare restoration
   useEffect(() => {
     const currentUrl = window.location.pathname + window.location.search;
-    console.log('[inventory restore] mounted', currentUrl);
     const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) return;
     try {
       const s = JSON.parse(raw) as { url: string; loadedCount: number; scrollY: number; anchorId: number; timestamp: number };
-      console.log('[inventory restore] saved state', s);
-      if (!window.history.state?._invRestore) {
-        console.log('[inventory restore] no _invRestore flag in history state');
-        return;
-      }
+      if (!window.history.state?._invRestore) return;
       const urlMatches = savedUrlMatchesCurrent(s.url, currentUrl);
-      console.log('[inventory restore] URL match', urlMatches, { saved: s.url, current: currentUrl });
       if (!urlMatches) return;
-      if (Date.now() - s.timestamp > 60 * 60 * 1000) {
-        console.log('[inventory restore] state expired');
-        sessionStorage.removeItem(SESSION_KEY);
-        return;
-      }
+      if (Date.now() - s.timestamp > 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
       restoredAnchorIdRef.current = s.anchorId;
       restoredScrollYRef.current = s.scrollY;
       restoredLoadedCountRef.current = s.loadedCount;
@@ -120,7 +110,6 @@ export default function InventoryPage() {
       setRenderCount(s.loadedCount);
       setIsRestoring(true);
       sessionStorage.removeItem(SESSION_KEY);
-      console.log('[inventory restore] restoring count', s.loadedCount);
     } catch { sessionStorage.removeItem(SESSION_KEY); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -421,23 +410,19 @@ export default function InventoryPage() {
   // Complete restoration once all required items are rendered
   useEffect(() => {
     if (!isRestoring || loading) return;
-    console.log('[inventory restore] current item count', items.length);
     const enoughRendered =
       renderCount >= restoredLoadedCountRef.current || totalFilteredCount <= renderCount;
     if (!enoughRendered) return;
 
-    console.log('[inventory restore] restoration ready');
     const anchorId = restoredAnchorIdRef.current;
     const el = anchorId != null
       ? document.querySelector(`[data-item-id="${anchorId}"]`)
       : null;
-    console.log('[inventory restore] anchor found', el);
 
     // Double-rAF: ensures browser has painted the newly rendered items and any
     // Next.js layout-effect scroll restoration has already run before we scroll.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        console.log('[inventory restore] applying scroll');
         if (el) {
           el.scrollIntoView({ block: 'center', behavior: 'auto' });
         } else {
@@ -445,21 +430,18 @@ export default function InventoryPage() {
         }
         isRestoringRef.current = false;
         setIsRestoring(false);
-        console.log('[inventory restore] state cleared');
       });
     });
   }, [isRestoring, loading, renderCount, totalFilteredCount, items.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function saveListState(anchorId: number) {
-    const state = {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
       url: window.location.pathname + window.location.search,
       loadedCount: renderCount,
       scrollY: window.scrollY,
       anchorId,
       timestamp: Date.now(),
-    };
-    console.log('[inventory restore] saving state', state);
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(state));
+    }));
     try {
       window.history.replaceState({ ...(window.history.state ?? {}), _invRestore: true }, '', window.location.href);
     } catch {}
