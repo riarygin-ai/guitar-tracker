@@ -475,7 +475,7 @@ export default function OperationsPage() {
         <div className="hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:block dark:border-slate-700 dark:bg-slate-800">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Operations</p>
+              <p className="page-overline">Operations</p>
               <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-white">Transactions</h1>
               <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
                 View all your buy, sell, trade, and expense operations.
@@ -492,7 +492,7 @@ export default function OperationsPage() {
 
         <div className="mt-6 hidden gap-4 md:grid lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
           <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date From</label>
+            <label className="form-label">Date From</label>
             <input
               type="date"
               value={fromDate}
@@ -501,7 +501,7 @@ export default function OperationsPage() {
             />
           </div>
           <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date To</label>
+            <label className="form-label">Date To</label>
             <input
               type="date"
               value={toDate}
@@ -515,7 +515,7 @@ export default function OperationsPage() {
 
           {/* Mobile header: compact label + date filter toggle */}
           <div className="mb-3 flex items-center justify-between md:hidden">
-            <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Operations</p>
+            <p className="page-overline">Operations</p>
             <button
               type="button"
               onClick={() => setShowDateFilter((v) => !v)}
@@ -529,7 +529,7 @@ export default function OperationsPage() {
           {showDateFilter && (
             <div className="mb-4 grid gap-3 md:hidden">
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date From</label>
+                <label className="form-label">Date From</label>
                 <input
                   type="date"
                   value={fromDate}
@@ -538,7 +538,7 @@ export default function OperationsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Date To</label>
+                <label className="form-label">Date To</label>
                 <input
                   type="date"
                   value={toDate}
@@ -550,7 +550,7 @@ export default function OperationsPage() {
           )}
 
           {/* Desktop label */}
-          <p className="hidden text-sm font-medium text-slate-700 dark:text-slate-200 md:block">Operation type</p>
+          <p className="hidden section-label md:block">Operation type</p>
           <div className="flex flex-wrap gap-2 md:mt-3">
             {defaultDealTypes.map((dealType) => (
               <button
@@ -616,7 +616,7 @@ export default function OperationsPage() {
             <div className="mt-3 space-y-4 border-t border-slate-200 pt-4 dark:border-slate-600">
               {/* Brand — searchable single-select */}
               <div>
-                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Brand</p>
+                <p className="mb-2 section-label">Brand</p>
 
                 {/* Selected brand chip */}
                 {selectedBrandId != null && (

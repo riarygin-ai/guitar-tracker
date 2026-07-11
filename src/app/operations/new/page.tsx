@@ -45,7 +45,7 @@ export default function NewOperationPage() {
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Operations</p>
+              <p className="page-overline">Operations</p>
               <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-white">New operation</h1>
               <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
                 Record buy, sell, and trade operations for your inventory.

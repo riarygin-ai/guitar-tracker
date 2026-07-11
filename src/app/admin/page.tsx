@@ -655,7 +655,7 @@ export default function AdminPage() {
 
       {/* Page header */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-slate-400">Admin</p>
+        <p className="page-overline">Admin</p>
         <h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">Admin Panel</h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Signed in as {user.email ?? user.display_name}

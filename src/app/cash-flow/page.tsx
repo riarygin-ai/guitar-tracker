@@ -377,7 +377,7 @@ export default function CashFlowPage() {
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
 
         {/* Title + summary */}
-        <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Cash Flow</p>
+        <p className="page-overline">Cash Flow</p>
         {!loading && (
           <>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -443,7 +443,7 @@ export default function CashFlowPage() {
         {datePreset === 'custom' && (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">From</label>
+              <label className="form-label">From</label>
               <input
                 type="date"
                 value={customFrom}
@@ -452,7 +452,7 @@ export default function CashFlowPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">To</label>
+              <label className="form-label">To</label>
               <input
                 type="date"
                 value={customTo}

@@ -467,7 +467,7 @@ export default function InventoryPage() {
         {/* Header: label + [+] button */}
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Inventory</p>
+            <p className="page-overline">Inventory</p>
             {!loading && (
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                 {summaryStats.count} items · Total Value {fmtCurrency(summaryStats.totalValue)} · Equity {fmtCurrency(summaryStats.equity)}
@@ -511,7 +511,7 @@ export default function InventoryPage() {
 
         {/* Filters — Status + Category in one card */}
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700/50">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Status</p>
+          <p className="mb-2 section-label">Status</p>
           <div className="flex flex-wrap gap-2">
             {(['new', 'owned', 'listed', 'sold', 'traded'] as Status[]).map((status) => (
               <button
@@ -535,7 +535,7 @@ export default function InventoryPage() {
             ))}
           </div>
 
-          <p className="mb-2 mt-4 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Category</p>
+          <p className="mb-2 mt-4 section-label">Category</p>
           <div className="flex flex-wrap items-center gap-2">
             {categories.filter((c) => c.is_active).map((cat) => (
               <button
@@ -607,7 +607,7 @@ export default function InventoryPage() {
           {/* Subtypes chip row — visible only when panel is open */}
           {showSubtypes && selectedCategoryNames.length > 0 && visibleSubtypes.length > 0 && (
             <div className="mt-3">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Types</p>
+              <p className="mb-2 section-label">Types</p>
               <div className="flex flex-wrap gap-2">
                 {visibleSubtypes.map((sub) => (
                   <button
@@ -682,7 +682,7 @@ export default function InventoryPage() {
               {/* Purpose */}
               {activePurposes.length > 0 && (
                 <div>
-                  <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Purpose</p>
+                  <p className="mb-2 section-label">Purpose</p>
                   <div className="flex flex-wrap gap-2">
                     {activePurposes.map((purpose) => (
                       <button
@@ -710,7 +710,7 @@ export default function InventoryPage() {
 
               {/* Tags — searchable multi-select (OR logic) */}
               <div>
-                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Tags</p>
+                <p className="mb-2 section-label">Tags</p>
 
                 {/* Selected tag chips */}
                 {selectedTagIds.length > 0 && (

@@ -417,7 +417,7 @@ export default function HomePage() {
   return (
     <div className="space-y-6">
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Dashboard</p>
+        <p className="page-overline">Dashboard</p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-white">Business overview</h1>
         <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
           Track cash, inventory, and business performance.
@@ -434,8 +434,8 @@ export default function HomePage() {
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Current Inventory</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">
+                <p className="page-overline">Current Inventory</p>
+                <h2 className="mt-2 section-title">
                   {inventoryGroupView === 'type' ? 'By type' : inventoryGroupView === 'purpose' ? 'By purpose' : 'By category'}
                 </h2>
               </div>
@@ -642,8 +642,8 @@ export default function HomePage() {
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Monthly performance</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Monthly performance</h2>
+                <p className="page-overline">Monthly performance</p>
+                <h2 className="mt-2 section-title">Monthly performance</h2>
               </div>
               <select
                 value={selectedYear}
@@ -806,8 +806,8 @@ export default function HomePage() {
           {brandPerformance.length > 0 && (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Brand Performance</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Top brands by ROI</h2>
+                <p className="page-overline">Brand Performance</p>
+                <h2 className="mt-2 section-title">Top brands by ROI</h2>
               </div>
 
               {/* Desktop table */}
@@ -912,8 +912,8 @@ export default function HomePage() {
           {businessInventoryTypes.length > 0 && (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Business Inventory</p>
-                <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">Status by category</h2>
+                <p className="page-overline">Business Inventory</p>
+                <h2 className="mt-2 section-title">Status by category</h2>
               </div>
               <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
                 <table className="w-full text-left text-sm">

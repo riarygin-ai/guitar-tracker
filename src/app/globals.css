@@ -12,3 +12,21 @@ input[type="number"]::-webkit-inner-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+@layer components {
+  .page-overline {
+    @apply text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400;
+  }
+  .section-label {
+    @apply text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400;
+  }
+  .section-title {
+    @apply text-xl font-semibold text-slate-900 dark:text-white;
+  }
+  .secondary-text {
+    @apply text-xs text-slate-500 dark:text-slate-400;
+  }
+  .form-label {
+    @apply block text-sm font-medium text-slate-700 dark:text-slate-200;
+  }
+}
