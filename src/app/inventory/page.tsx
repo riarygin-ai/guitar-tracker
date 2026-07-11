@@ -36,6 +36,24 @@ const LEGACY_TYPE_TO_SUBTYPE_NAME: Record<string, string> = {
   pickups: 'Pickups',
 };
 
+function savedUrlMatchesCurrent(saved: string, current: string): boolean {
+  try {
+    const parse = (u: string) => {
+      const qi = u.indexOf('?');
+      const path = qi === -1 ? u : u.slice(0, qi);
+      const qs = qi === -1 ? '' : u.slice(qi + 1);
+      const params = Array.from(new URLSearchParams(qs).entries()).sort(([a], [b]) => a.localeCompare(b));
+      return { path, params };
+    };
+    const a = parse(saved), b = parse(current);
+    if (a.path !== b.path) return false;
+    if (a.params.length !== b.params.length) return false;
+    return a.params.every(([k, v], i) => k === b.params[i][0] && v === b.params[i][1]);
+  } catch {
+    return saved === current;
+  }
+}
+
 export default function InventoryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -70,23 +88,39 @@ export default function InventoryPage() {
   const restoredAnchorIdRef = useRef<number | null>(null);
   const restoredScrollYRef = useRef<number>(0);
   const restoredLoadedCountRef = useRef<number>(BATCH_SIZE);
+  // Ref mirrors isRestoring so filterSig effect can read it without being in its deps
+  const isRestoringRef = useRef(false);
   const isFirstFilterRef = useRef(true);
 
   // On browser Back: read saved state and prepare restoration
   useEffect(() => {
+    const currentUrl = window.location.pathname + window.location.search;
+    console.log('[inventory restore] mounted', currentUrl);
     const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) return;
     try {
-      if (!window.history.state?._invRestore) return;
       const s = JSON.parse(raw) as { url: string; loadedCount: number; scrollY: number; anchorId: number; timestamp: number };
-      if (s.url !== window.location.pathname + window.location.search) return;
-      if (Date.now() - s.timestamp > 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
+      console.log('[inventory restore] saved state', s);
+      if (!window.history.state?._invRestore) {
+        console.log('[inventory restore] no _invRestore flag in history state');
+        return;
+      }
+      const urlMatches = savedUrlMatchesCurrent(s.url, currentUrl);
+      console.log('[inventory restore] URL match', urlMatches, { saved: s.url, current: currentUrl });
+      if (!urlMatches) return;
+      if (Date.now() - s.timestamp > 60 * 60 * 1000) {
+        console.log('[inventory restore] state expired');
+        sessionStorage.removeItem(SESSION_KEY);
+        return;
+      }
       restoredAnchorIdRef.current = s.anchorId;
       restoredScrollYRef.current = s.scrollY;
       restoredLoadedCountRef.current = s.loadedCount;
+      isRestoringRef.current = true;
       setRenderCount(s.loadedCount);
       setIsRestoring(true);
       sessionStorage.removeItem(SESSION_KEY);
+      console.log('[inventory restore] restoring count', s.loadedCount);
     } catch { sessionStorage.removeItem(SESSION_KEY); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -136,10 +170,12 @@ export default function InventoryPage() {
     return params.toString();
   }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds]);
 
-  // Reset display window when any filter changes (skip the very first run)
+  // Reset display window when any filter changes (skip the very first run and any run during restoration)
   const filterSig = `${search}|${selectedStatuses.join(',')}|${selectedCategoryNames.join(',')}|${selectedSubtypeNames.join(',')}|${selectedPurposeIds.join(',')}|${selectedTagIds.join(',')}`;
   useEffect(() => {
     if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
+    // Do not cancel restoration when URL-param initialization triggers a filterSig change on mount
+    if (isRestoringRef.current) return;
     sessionStorage.removeItem(SESSION_KEY);
     setRenderCount(BATCH_SIZE);
     setIsRestoring(false);
@@ -385,33 +421,47 @@ export default function InventoryPage() {
   // Complete restoration once all required items are rendered
   useEffect(() => {
     if (!isRestoring || loading) return;
+    console.log('[inventory restore] current item count', items.length);
     const enoughRendered =
       renderCount >= restoredLoadedCountRef.current || totalFilteredCount <= renderCount;
     if (!enoughRendered) return;
 
+    console.log('[inventory restore] restoration ready');
     const anchorId = restoredAnchorIdRef.current;
     const el = anchorId != null
       ? document.querySelector(`[data-item-id="${anchorId}"]`)
       : null;
+    console.log('[inventory restore] anchor found', el);
 
-    if (el) {
-      el.scrollIntoView({ block: 'center', behavior: 'auto' });
-    } else {
-      window.scrollTo({ top: restoredScrollYRef.current, behavior: 'auto' });
-    }
-    setIsRestoring(false);
-  }, [isRestoring, loading, renderCount, totalFilteredCount]);
+    // Double-rAF: ensures browser has painted the newly rendered items and any
+    // Next.js layout-effect scroll restoration has already run before we scroll.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        console.log('[inventory restore] applying scroll');
+        if (el) {
+          el.scrollIntoView({ block: 'center', behavior: 'auto' });
+        } else {
+          window.scrollTo({ top: restoredScrollYRef.current, behavior: 'auto' });
+        }
+        isRestoringRef.current = false;
+        setIsRestoring(false);
+        console.log('[inventory restore] state cleared');
+      });
+    });
+  }, [isRestoring, loading, renderCount, totalFilteredCount, items.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function saveListState(anchorId: number) {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+    const state = {
       url: window.location.pathname + window.location.search,
       loadedCount: renderCount,
       scrollY: window.scrollY,
       anchorId,
       timestamp: Date.now(),
-    }));
+    };
+    console.log('[inventory restore] saving state', state);
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(state));
     try {
-      window.history.replaceState({ ...(window.history.state ?? {}), _invRestore: true }, '');
+      window.history.replaceState({ ...(window.history.state ?? {}), _invRestore: true }, '', window.location.href);
     } catch {}
   }
 
