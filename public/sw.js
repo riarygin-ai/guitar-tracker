@@ -60,7 +60,11 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached;
       return fetch(request).then((response) => {
         if (response.ok) {
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
+          // Clone synchronously before the body is consumed by the caller.
+          // Calling clone() inside caches.open().then() is too late — by then
+          // the original response body may already be consumed.
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         }
         return response;
       });
