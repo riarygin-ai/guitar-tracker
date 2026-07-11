@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import DateRangeFilter from '@/components/DateRangeFilter';
+import { type DatePreset, DATE_PRESETS, presetToDateRange, DEFAULT_PRESET } from '@/lib/dateRange';
 import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems, getDisplayPhotosForItems, getInventoryExpenses } from '@/lib/supabase';
 import type { InventoryExpense } from '@/types';
 import { splitSearchTerms } from '@/lib/search';
@@ -122,14 +124,10 @@ export default function OperationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 6);
-    return d.toISOString().split('T')[0];
-  });
-  const [toDate, setToDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [datePreset, setDatePreset] = useState<DatePreset>('6m');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>(defaultDealTypes);
-  const [showDateFilter, setShowDateFilter] = useState(false);
   const [selectedBrandId, setSelectedBrandId] = useState<number | null>(null);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [brandFilterSearch, setBrandFilterSearch] = useState('');
@@ -204,18 +202,30 @@ export default function OperationsPage() {
   useEffect(() => {
     if (!searchParams) return;
 
+    const presetParam = searchParams.get('preset') as DatePreset | null;
     const from = searchParams.get('from');
     const to = searchParams.get('to');
     const typesParam = searchParams.get('dealTypes') || '';
     const types = typesParam
       ? typesParam.split(',').map((v) => v.trim().toLowerCase()).filter((v) => defaultDealTypes.includes(v))
       : defaultDealTypes;
-
     const brandParam = searchParams.get('brand_id');
 
-    // Only override defaults when URL explicitly carries these params
-    if (from !== null) setFromDate(from);
-    if (to !== null) setToDate(to);
+    if (presetParam && DATE_PRESETS.some((p) => p.key === presetParam)) {
+      setDatePreset(presetParam);
+      if (presetParam === 'custom') {
+        if (from !== null) setCustomFrom(from);
+        if (to !== null) setCustomTo(to);
+      }
+      if (presetParam !== DEFAULT_PRESET) setShowMoreFilters(true);
+    } else if (from !== null || to !== null) {
+      // Backward compat: Dashboard links use raw from/to with no preset
+      setDatePreset('custom');
+      if (from !== null) setCustomFrom(from);
+      if (to !== null) setCustomTo(to);
+      setShowMoreFilters(true);
+    }
+
     setSelectedDealTypes(types.length > 0 ? types : defaultDealTypes);
     if (brandParam) {
       setSelectedBrandId(Number(brandParam));
@@ -264,6 +274,11 @@ export default function OperationsPage() {
     return map;
   }, [expenses]);
 
+  const { dateFrom: fromDate, dateTo: toDate } = useMemo(
+    () => presetToDateRange(datePreset, customFrom, customTo),
+    [datePreset, customFrom, customTo],
+  );
+
   const getDealTypeColor = (dealType: string) => {
     switch (dealType) {
       case 'purchase': return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700';
@@ -306,19 +321,24 @@ export default function OperationsPage() {
   };
 
   const updateUrl = (overrides: {
-    from?: string | null;
-    to?: string | null;
+    preset?: DatePreset;
+    customFrom?: string;
+    customTo?: string;
     dealTypes?: string[];
     brandId?: number | null;
   } = {}) => {
     const query = new URLSearchParams();
-    const _from = 'from' in overrides ? overrides.from : fromDate;
-    const _to = 'to' in overrides ? overrides.to : toDate;
+    const _preset = 'preset' in overrides ? overrides.preset! : datePreset;
+    const _customFrom = 'customFrom' in overrides ? (overrides.customFrom ?? '') : customFrom;
+    const _customTo = 'customTo' in overrides ? (overrides.customTo ?? '') : customTo;
     const _types = 'dealTypes' in overrides ? overrides.dealTypes! : selectedDealTypes;
     const _brandId = 'brandId' in overrides ? overrides.brandId : selectedBrandId;
 
-    if (_from) query.set('from', _from);
-    if (_to) query.set('to', _to);
+    if (_preset !== DEFAULT_PRESET) query.set('preset', _preset);
+    if (_preset === 'custom') {
+      if (_customFrom) query.set('from', _customFrom);
+      if (_customTo) query.set('to', _customTo);
+    }
     if (_types.length > 0 && _types.length < defaultDealTypes.length) {
       query.set('dealTypes', _types.join(','));
     }
@@ -326,16 +346,6 @@ export default function OperationsPage() {
 
     const qs = query.toString();
     router.replace(`/operations${qs ? `?${qs}` : ''}`, { scroll: false });
-  };
-
-  const handleFromDateChange = (value: string) => {
-    setFromDate(value);
-    updateUrl({ from: value || null });
-  };
-
-  const handleToDateChange = (value: string) => {
-    setToDate(value);
-    updateUrl({ to: value || null });
   };
 
   const handleDealTypeToggle = (dealType: string) => {
@@ -357,19 +367,25 @@ export default function OperationsPage() {
     [brands, selectedBrandId, brandFilterSearch]
   );
 
-  const hiddenFilterCount = selectedBrandId != null ? 1 : 0;
+  const hiddenFilterCount =
+    (selectedBrandId != null ? 1 : 0) +
+    (datePreset !== DEFAULT_PRESET ? 1 : 0);
 
   const hasActiveFilters =
     selectedBrandId != null ||
     searchQuery.length > 0 ||
-    selectedDealTypes.length !== defaultDealTypes.length;
+    selectedDealTypes.length !== defaultDealTypes.length ||
+    datePreset !== DEFAULT_PRESET;
 
   function clearFilters() {
     setSelectedDealTypes(defaultDealTypes);
     setSelectedBrandId(null);
     setSearchQuery('');
     setBrandFilterSearch('');
-    updateUrl({ dealTypes: defaultDealTypes, brandId: null });
+    setDatePreset(DEFAULT_PRESET);
+    setCustomFrom('');
+    setCustomTo(new Date().toISOString().split('T')[0]);
+    updateUrl({ preset: DEFAULT_PRESET, customFrom: '', customTo: '', dealTypes: defaultDealTypes, brandId: null });
   }
 
   const opsFilterSig = `${searchQuery}|${fromDate}|${toDate}|${selectedDealTypes.join(',')}|${selectedBrandId ?? ''}`;
@@ -490,64 +506,10 @@ export default function OperationsPage() {
           </div>
         </div>
 
-        <div className="mt-6 hidden gap-4 md:grid lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-            <label className="form-label">Date From</label>
-            <input
-              type="date"
-              value={fromDate}
-              onChange={(e) => handleFromDateChange(e.target.value)}
-              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-            />
-          </div>
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-            <label className="form-label">Date To</label>
-            <input
-              type="date"
-              value={toDate}
-              onChange={(e) => handleToDateChange(e.target.value)}
-              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-            />
-          </div>
-        </div>
-
         <div className="mt-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:mt-6 md:p-6 dark:border-slate-700 dark:bg-slate-800">
 
-          {/* Mobile header: compact label + date filter toggle */}
-          <div className="mb-3 flex items-center justify-between md:hidden">
-            <p className="page-overline">Operations</p>
-            <button
-              type="button"
-              onClick={() => setShowDateFilter((v) => !v)}
-              className="shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-            >
-              {showDateFilter ? 'Hide dates' : 'Date filter'}
-            </button>
-          </div>
-
-          {/* Mobile: collapsible date fields */}
-          {showDateFilter && (
-            <div className="mb-4 grid gap-3 md:hidden">
-              <div>
-                <label className="form-label">Date From</label>
-                <input
-                  type="date"
-                  value={fromDate}
-                  onChange={(e) => handleFromDateChange(e.target.value)}
-                  className="mt-1.5 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-                />
-              </div>
-              <div>
-                <label className="form-label">Date To</label>
-                <input
-                  type="date"
-                  value={toDate}
-                  onChange={(e) => handleToDateChange(e.target.value)}
-                  className="mt-1.5 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-                />
-              </div>
-            </div>
-          )}
+          {/* Mobile header */}
+          <p className="mb-3 page-overline md:hidden">Operations</p>
 
           {/* Desktop label */}
           <p className="hidden section-label md:block">Operation type</p>
@@ -611,9 +573,28 @@ export default function OperationsPage() {
             )}
           </div>
 
-          {/* Expanded More Filters — Brand (and future filters) */}
+          {/* Expanded More Filters — Date Range + Brand */}
           {showMoreFilters && (
             <div className="mt-3 space-y-4 border-t border-slate-200 pt-4 dark:border-slate-600">
+              {/* Date Range */}
+              <DateRangeFilter
+                preset={datePreset}
+                onPresetChange={(p) => {
+                  setDatePreset(p);
+                  updateUrl({ preset: p });
+                }}
+                customFrom={customFrom}
+                onCustomFromChange={(v) => {
+                  setCustomFrom(v);
+                  updateUrl({ customFrom: v });
+                }}
+                customTo={customTo}
+                onCustomToChange={(v) => {
+                  setCustomTo(v);
+                  updateUrl({ customTo: v });
+                }}
+              />
+
               {/* Brand — searchable single-select */}
               <div>
                 <p className="mb-2 section-label">Brand</p>

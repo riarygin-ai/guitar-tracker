@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   getCashFlows,
   getDeals,
@@ -16,6 +17,8 @@ import {
 } from '@/lib/supabase';
 import type { Brand, CashFlow, Deal, DealItem, InventoryExpense, InventoryItemWithValue } from '@/types';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
+import DateRangeFilter from '@/components/DateRangeFilter';
+import { type DatePreset, DATE_PRESETS, presetToDateRange, DEFAULT_PRESET } from '@/lib/dateRange';
 
 const BATCH_SIZE = 30;
 const SESSION_KEY = 'cash-flow-list-state';
@@ -89,18 +92,7 @@ function computeDealVisual(
   };
 }
 
-// ─── Date presets ─────────────────────────────────────────────────────────────
-
-type DatePreset = '30d' | '90d' | '6m' | '12m' | 'all' | 'custom';
-
-const DATE_PRESETS: { key: DatePreset; label: string }[] = [
-  { key: '30d',    label: '30 Days' },
-  { key: '90d',    label: '90 Days' },
-  { key: '6m',     label: '6 Months' },
-  { key: '12m',    label: '12 Months' },
-  { key: 'all',    label: 'All Time' },
-  { key: 'custom', label: 'Custom' },
-];
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const ALL_DEAL_TYPES = ['sale', 'purchase', 'trade', 'expense'] as const;
 
@@ -127,6 +119,9 @@ function savedUrlMatchesCurrent(saved: string, current: string): boolean {
 let _cfClickTs = 0;
 
 export default function CashFlowPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [rows, setRows] = useState<CashFlow[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
@@ -141,6 +136,7 @@ export default function CashFlowPage() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>([...ALL_DEAL_TYPES]);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [renderCount, setRenderCount] = useState(BATCH_SIZE);
   const [isRestoring, setIsRestoring] = useState(false);
   const restoredAnchorIdRef = useRef<number | null>(null);
@@ -148,6 +144,7 @@ export default function CashFlowPage() {
   const restoredLoadedCountRef = useRef<number>(BATCH_SIZE);
   const isRestoringRef = useRef(false);
   const isFirstFilterRef = useRef(true);
+  const isInitializedRef = useRef(false);
 
   useEffect(() => {
     const currentUrl = window.location.pathname + window.location.search;
@@ -169,6 +166,46 @@ export default function CashFlowPage() {
       sessionStorage.removeItem(SESSION_KEY);
     } catch { sessionStorage.removeItem(SESSION_KEY); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Read URL params on mount (once)
+  useEffect(() => {
+    if (isInitializedRef.current) return;
+    const presetParam = searchParams.get('preset') as DatePreset | null;
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
+    const typesParam = searchParams.get('dealTypes') || '';
+    const types = typesParam
+      ? typesParam.split(',').filter((v) => (ALL_DEAL_TYPES as readonly string[]).includes(v))
+      : [];
+    if (presetParam && DATE_PRESETS.some((p) => p.key === presetParam)) {
+      setDatePreset(presetParam);
+      if (presetParam === 'custom') {
+        if (from !== null) setCustomFrom(from);
+        if (to !== null) setCustomTo(to);
+      }
+      if (presetParam !== DEFAULT_PRESET) setShowMoreFilters(true);
+    }
+    if (types.length > 0 && types.length < ALL_DEAL_TYPES.length) {
+      setSelectedDealTypes(types);
+    }
+    isInitializedRef.current = true;
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Write URL when filter state changes
+  useEffect(() => {
+    if (!isInitializedRef.current) return;
+    const params = new URLSearchParams();
+    if (datePreset !== DEFAULT_PRESET) params.set('preset', datePreset);
+    if (datePreset === 'custom') {
+      if (customFrom) params.set('from', customFrom);
+      if (customTo) params.set('to', customTo);
+    }
+    if (selectedDealTypes.length > 0 && selectedDealTypes.length < ALL_DEAL_TYPES.length) {
+      params.set('dealTypes', [...selectedDealTypes].sort().join(','));
+    }
+    const qs = params.toString();
+    router.replace(`/cash-flow${qs ? `?${qs}` : ''}`, { scroll: false });
+  }, [datePreset, customFrom, customTo, selectedDealTypes, router]);
 
   useEffect(() => {
     async function loadData() {
@@ -248,17 +285,10 @@ export default function CashFlowPage() {
     [rows],
   );
 
-  const { dateFrom, dateTo } = useMemo(() => {
-    if (datePreset === 'all') return { dateFrom: '', dateTo: '' };
-    if (datePreset === 'custom') return { dateFrom: customFrom, dateTo: customTo };
-    const now = new Date();
-    const from = new Date(now);
-    if (datePreset === '30d') from.setDate(from.getDate() - 30);
-    else if (datePreset === '90d') from.setDate(from.getDate() - 90);
-    else if (datePreset === '6m')  from.setMonth(from.getMonth() - 6);
-    else if (datePreset === '12m') from.setMonth(from.getMonth() - 12);
-    return { dateFrom: from.toISOString().split('T')[0], dateTo: now.toISOString().split('T')[0] };
-  }, [datePreset, customFrom, customTo]);
+  const { dateFrom, dateTo } = useMemo(
+    () => presetToDateRange(datePreset, customFrom, customTo),
+    [datePreset, customFrom, customTo],
+  );
 
   const allDealTypesSelected = selectedDealTypes.length === ALL_DEAL_TYPES.length;
 
@@ -356,6 +386,19 @@ export default function CashFlowPage() {
 
   const fmtCompact = (v: number) => `$${Math.round(Math.abs(v)).toLocaleString()}`;
 
+  const hiddenFilterCount = datePreset !== DEFAULT_PRESET ? 1 : 0;
+
+  const hasActiveFilters =
+    datePreset !== DEFAULT_PRESET ||
+    selectedDealTypes.length < ALL_DEAL_TYPES.length;
+
+  function clearFilters() {
+    setDatePreset(DEFAULT_PRESET);
+    setCustomFrom('');
+    setCustomTo(new Date().toISOString().split('T')[0]);
+    setSelectedDealTypes([...ALL_DEAL_TYPES]);
+  }
+
   // ── Shared photo placeholders ──────────────────────────────────────────────
 
   const photoPlaceholder = (
@@ -373,10 +416,8 @@ export default function CashFlowPage() {
   return (
     <div className="space-y-4">
 
-      {/* Header card */}
+      {/* Header card — summary metrics only */}
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-
-        {/* Title + summary */}
         <p className="page-overline">Cash Flow</p>
         {!loading && (
           <>
@@ -395,27 +436,12 @@ export default function CashFlowPage() {
             )}
           </>
         )}
+      </div>
 
-        {/* Date preset pills */}
-        <div className="mt-4 flex flex-wrap gap-2">
-          {DATE_PRESETS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setDatePreset(key)}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                datePreset === key
-                  ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Deal type filter pills */}
-        <div className="mt-3 flex flex-wrap gap-2">
+      {/* Filter card */}
+      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <p className="mb-2 section-label">Transaction Type</p>
+        <div className="flex flex-wrap gap-2">
           {ALL_DEAL_TYPES.map((dealType) => (
             <button
               key={dealType}
@@ -431,7 +457,7 @@ export default function CashFlowPage() {
               className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
                 selectedDealTypes.includes(dealType)
                   ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
               }`}
             >
               {dealType}
@@ -439,27 +465,60 @@ export default function CashFlowPage() {
           ))}
         </div>
 
-        {/* Custom date inputs — only shown when Custom is selected */}
-        {datePreset === 'custom' && (
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="form-label">From</label>
-              <input
-                type="date"
-                value={customFrom}
-                onChange={(e) => setCustomFrom(e.target.value)}
-                className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-              />
-            </div>
-            <div>
-              <label className="form-label">To</label>
-              <input
-                type="date"
-                value={customTo}
-                onChange={(e) => setCustomTo(e.target.value)}
-                className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-              />
-            </div>
+        {/* More Filters toggle + Clear Filters */}
+        <div className="mt-4 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setShowMoreFilters((v) => !v)}
+            className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+              showMoreFilters
+                ? 'border-slate-400 bg-slate-200 text-slate-800 dark:border-slate-500 dark:bg-slate-600 dark:text-white'
+                : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700/80 dark:text-slate-300 dark:hover:bg-slate-600'
+            }`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+              <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="18" x2="12" y2="18" strokeWidth="3"/>
+            </svg>
+            {showMoreFilters
+              ? 'Hide filters'
+              : `More filters${hiddenFilterCount > 0 ? ` (${hiddenFilterCount})` : ''}`}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`shrink-0 transition-transform duration-150 ${showMoreFilters ? 'rotate-180' : ''}`}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-sm text-slate-500 transition hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
+        {/* Expanded More Filters — Date Range */}
+        {showMoreFilters && (
+          <div className="mt-3 border-t border-slate-200 pt-4 dark:border-slate-600">
+            <DateRangeFilter
+              preset={datePreset}
+              onPresetChange={setDatePreset}
+              customFrom={customFrom}
+              onCustomFromChange={setCustomFrom}
+              customTo={customTo}
+              onCustomToChange={setCustomTo}
+            />
           </div>
         )}
       </div>
