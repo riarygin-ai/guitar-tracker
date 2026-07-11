@@ -54,6 +54,11 @@ function savedUrlMatchesCurrent(saved: string, current: string): boolean {
   }
 }
 
+// Module-level: set when a card is clicked, consumed on next mount.
+// Lives outside React so Next.js router.push cannot overwrite it
+// (unlike window.history.state which Next.js replaces before pushState).
+let _invClickTs = 0;
+
 export default function InventoryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -99,7 +104,9 @@ export default function InventoryPage() {
     if (!raw) return;
     try {
       const s = JSON.parse(raw) as { url: string; loadedCount: number; scrollY: number; anchorId: number; timestamp: number };
-      if (!window.history.state?._invRestore) return;
+      const clickAge = Date.now() - _invClickTs;
+      if (!_invClickTs || clickAge > 60 * 60 * 1000) { _invClickTs = 0; return; }
+      _invClickTs = 0;
       const urlMatches = savedUrlMatchesCurrent(s.url, currentUrl);
       if (!urlMatches) return;
       if (Date.now() - s.timestamp > 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
@@ -435,6 +442,7 @@ export default function InventoryPage() {
   }, [isRestoring, loading, renderCount, totalFilteredCount, items.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function saveListState(anchorId: number) {
+    _invClickTs = Date.now();
     sessionStorage.setItem(SESSION_KEY, JSON.stringify({
       url: window.location.pathname + window.location.search,
       loadedCount: renderCount,
@@ -442,9 +450,6 @@ export default function InventoryPage() {
       anchorId,
       timestamp: Date.now(),
     }));
-    try {
-      window.history.replaceState({ ...(window.history.state ?? {}), _invRestore: true }, '', window.location.href);
-    } catch {}
   }
 
   const displayItems = sortedFilteredItems.slice(0, renderCount);
