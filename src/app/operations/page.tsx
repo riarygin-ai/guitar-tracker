@@ -6,9 +6,10 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import DateRangeFilter from '@/components/DateRangeFilter';
 import MoreFiltersToggle from '@/components/MoreFiltersToggle';
+import TagsFilter from '@/components/TagsFilter';
 import { type DatePreset, DATE_PRESETS, presetToDateRange, DEFAULT_PRESET } from '@/lib/dateRange';
-import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems, getDisplayPhotosForItems, getInventoryExpenses } from '@/lib/supabase';
-import type { InventoryExpense } from '@/types';
+import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems, getDisplayPhotosForItems, getInventoryExpenses, getTags, getTagsForItems } from '@/lib/supabase';
+import type { InventoryExpense, InventoryTag } from '@/types';
 import { splitSearchTerms } from '@/lib/search';
 import type { Brand, Deal, DealItem, InventoryItemWithValue } from '@/types';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
@@ -129,10 +130,10 @@ export default function OperationsPage() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>(defaultDealTypes);
-  const [selectedBrandId, setSelectedBrandId] = useState<number | null>(null);
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
+  const [allTags, setAllTags] = useState<InventoryTag[]>([]);
+  const [tagsByItemId, setTagsByItemId] = useState<Record<number, InventoryTag[]>>({});
   const [showMoreFilters, setShowMoreFilters] = useState(false);
-  const [brandFilterSearch, setBrandFilterSearch] = useState('');
-  const [brandFilterFocused, setBrandFilterFocused] = useState(false);
   const [renderCount, setRenderCount] = useState(BATCH_SIZE);
   const [isRestoring, setIsRestoring] = useState(false);
   const restoredAnchorIdRef = useRef<number | null>(null);
@@ -165,12 +166,13 @@ export default function OperationsPage() {
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [dealsResult, dealItemsResult, itemsResult, brandsResult, expensesResult] = await Promise.all([
+      const [dealsResult, dealItemsResult, itemsResult, brandsResult, expensesResult, tagsResult] = await Promise.all([
         getDeals(),
         getDealItems(),
         getInventoryItemsWithValue(),
         getBrands(),
         getInventoryExpenses(),
+        getTags(),
       ]);
       setLoading(false);
 
@@ -185,15 +187,33 @@ export default function OperationsPage() {
       setBrands(brandsResult.data || []);
       setExpenses(expensesResult.data || []);
 
-      // Load photos for all referenced items — includes expense-linked items which
-      // have no deal_items rows and are linked only via inventory_expenses.item_id
+      const tagsData = (!tagsResult.error ? (tagsResult.data ?? []) : []) as InventoryTag[];
+      setAllTags(tagsData);
+
+      // Load photos and item-tags for all referenced items
       const dealItemIds = (dealItemsResult.data || []).map((di) => di.item_id);
       const expLinkedIds = (expensesResult.data || [])
         .filter((e) => e.item_id != null)
         .map((e) => e.item_id as number);
       const allItemIds = Array.from(new Set([...dealItemIds, ...expLinkedIds]));
       if (allItemIds.length > 0) {
-        getDisplayPhotosForItems(allItemIds).then(setPhotoByItemId);
+        const [photosMap, itemTagsResult] = await Promise.all([
+          getDisplayPhotosForItems(allItemIds),
+          getTagsForItems(allItemIds),
+        ]);
+        setPhotoByItemId(photosMap);
+        if (!itemTagsResult.error && itemTagsResult.data) {
+          const tagById = Object.fromEntries(tagsData.map((t) => [t.id, t]));
+          const tagsMap: Record<number, InventoryTag[]> = {};
+          for (const row of itemTagsResult.data as { item_id: number; tag_id: number }[]) {
+            const tag = tagById[row.tag_id];
+            if (tag) {
+              if (!tagsMap[row.item_id]) tagsMap[row.item_id] = [];
+              tagsMap[row.item_id].push(tag);
+            }
+          }
+          setTagsByItemId(tagsMap);
+        }
       }
     }
 
@@ -210,7 +230,8 @@ export default function OperationsPage() {
     const types = typesParam
       ? typesParam.split(',').map((v) => v.trim().toLowerCase()).filter((v) => defaultDealTypes.includes(v))
       : defaultDealTypes;
-    const brandParam = searchParams.get('brand_id');
+    const tagParam = searchParams.get('tag_id');
+    const tagIds = tagParam ? tagParam.split(',').map(Number).filter(Boolean) : [];
 
     if (presetParam && DATE_PRESETS.some((p) => p.key === presetParam)) {
       setDatePreset(presetParam);
@@ -228,10 +249,8 @@ export default function OperationsPage() {
     }
 
     setSelectedDealTypes(types.length > 0 ? types : defaultDealTypes);
-    if (brandParam) {
-      setSelectedBrandId(Number(brandParam));
-      setShowMoreFilters(true);
-    }
+    setSelectedTagIds(tagIds);
+    if (tagIds.length > 0) setShowMoreFilters(true);
   }, [searchParams]);
 
   const brandMap = useMemo(
@@ -326,14 +345,14 @@ export default function OperationsPage() {
     customFrom?: string;
     customTo?: string;
     dealTypes?: string[];
-    brandId?: number | null;
+    tagIds?: number[];
   } = {}) => {
     const query = new URLSearchParams();
     const _preset = 'preset' in overrides ? overrides.preset! : datePreset;
     const _customFrom = 'customFrom' in overrides ? (overrides.customFrom ?? '') : customFrom;
     const _customTo = 'customTo' in overrides ? (overrides.customTo ?? '') : customTo;
     const _types = 'dealTypes' in overrides ? overrides.dealTypes! : selectedDealTypes;
-    const _brandId = 'brandId' in overrides ? overrides.brandId : selectedBrandId;
+    const _tagIds = 'tagIds' in overrides ? overrides.tagIds! : selectedTagIds;
 
     if (_preset !== DEFAULT_PRESET) query.set('preset', _preset);
     if (_preset === 'custom') {
@@ -343,7 +362,9 @@ export default function OperationsPage() {
     if (_types.length > 0 && _types.length < defaultDealTypes.length) {
       query.set('dealTypes', _types.join(','));
     }
-    if (_brandId != null) query.set('brand_id', String(_brandId));
+    if (_tagIds.length > 0) {
+      query.set('tag_id', [..._tagIds].sort((a, b) => a - b).join(','));
+    }
 
     const qs = query.toString();
     router.replace(`/operations${qs ? `?${qs}` : ''}`, { scroll: false });
@@ -358,38 +379,27 @@ export default function OperationsPage() {
     updateUrl({ dealTypes: types });
   };
 
-  const filteredBrandOptions = useMemo(
-    () =>
-      brands.filter(
-        (b) =>
-          b.id !== selectedBrandId &&
-          (brandFilterSearch.length === 0 || b.name.toLowerCase().includes(brandFilterSearch.toLowerCase()))
-      ),
-    [brands, selectedBrandId, brandFilterSearch]
-  );
-
   const hiddenFilterCount =
-    (selectedBrandId != null ? 1 : 0) +
+    selectedTagIds.length +
     (datePreset !== DEFAULT_PRESET ? 1 : 0);
 
   const hasActiveFilters =
-    selectedBrandId != null ||
+    selectedTagIds.length > 0 ||
     searchQuery.length > 0 ||
     selectedDealTypes.length !== defaultDealTypes.length ||
     datePreset !== DEFAULT_PRESET;
 
   function clearFilters() {
     setSelectedDealTypes(defaultDealTypes);
-    setSelectedBrandId(null);
+    setSelectedTagIds([]);
     setSearchQuery('');
-    setBrandFilterSearch('');
     setDatePreset(DEFAULT_PRESET);
     setCustomFrom('');
     setCustomTo(new Date().toISOString().split('T')[0]);
-    updateUrl({ preset: DEFAULT_PRESET, customFrom: '', customTo: '', dealTypes: defaultDealTypes, brandId: null });
+    updateUrl({ preset: DEFAULT_PRESET, customFrom: '', customTo: '', dealTypes: defaultDealTypes, tagIds: [] });
   }
 
-  const opsFilterSig = `${searchQuery}|${fromDate}|${toDate}|${selectedDealTypes.join(',')}|${selectedBrandId ?? ''}`;
+  const opsFilterSig = `${searchQuery}|${fromDate}|${toDate}|${selectedDealTypes.join(',')}|${selectedTagIds.join(',')}`;
   useEffect(() => {
     if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
     if (isRestoringRef.current) return;
@@ -409,18 +419,17 @@ export default function OperationsPage() {
         return true;
       })
       .filter((deal) => {
-        if (selectedBrandId == null) return true;
+        if (selectedTagIds.length === 0) return true;
         const items = dealItemsByDealId[deal.id] ?? [];
-        if (items.length > 0) {
-          return items.some((di) => itemMap[di.item_id]?.brand_id === selectedBrandId);
-        }
-        // Expense deals have no deal_items — resolve via inventory_expenses link
+        const allItemIds = items.map((di) => di.item_id);
         if (deal.deal_type === 'expense') {
           const linkedId = expenseItemIdByDealId[deal.id];
-          if (linkedId == null) return false;
-          return itemMap[linkedId]?.brand_id === selectedBrandId;
+          if (linkedId != null) allItemIds.push(linkedId);
         }
-        return false;
+        return allItemIds.some((itemId) => {
+          const itemTagIds = (tagsByItemId[itemId] ?? []).map((t) => t.id);
+          return selectedTagIds.every((tid) => itemTagIds.includes(tid));
+        });
       })
       .filter((deal) => {
         if (searchTerms.length === 0) return true;
@@ -441,7 +450,7 @@ export default function OperationsPage() {
         return searchTerms.every((term) => [...dealFields, ...itemFields].some((f) => f.includes(term)));
       })
       .sort((a, b) => new Date(b.deal_date).getTime() - new Date(a.deal_date).getTime());
-  }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap, selectedBrandId, expenseItemIdByDealId]);
+  }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap, selectedTagIds, expenseItemIdByDealId, tagsByItemId]);
 
   const totalFilteredDeals = filteredAndSortedDeals.length;
 
@@ -574,63 +583,14 @@ export default function OperationsPage() {
               }}
             />
 
-            {/* Brand — searchable single-select */}
-            <div>
-              <p className="mb-2 section-label">Brand</p>
-
-              {selectedBrandId != null && (
-                <div className="mb-2">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-950 px-2.5 py-1 text-xs font-medium text-white dark:bg-white dark:text-slate-900">
-                    {brandMap[selectedBrandId] ?? `Brand ${selectedBrandId}`}
-                    <button
-                      type="button"
-                      onClick={() => { setSelectedBrandId(null); setBrandFilterSearch(''); updateUrl({ brandId: null }); }}
-                      aria-label="Clear brand filter"
-                      className="ml-0.5 rounded-full opacity-70 hover:opacity-100"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </button>
-                  </span>
-                </div>
-              )}
-
-              <input
-                type="text"
-                value={brandFilterSearch}
-                onChange={(e) => setBrandFilterSearch(e.target.value)}
-                onFocus={() => setBrandFilterFocused(true)}
-                onBlur={() => setTimeout(() => setBrandFilterFocused(false), 150)}
-                placeholder="Search brands..."
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-              />
-
-              {(brandFilterFocused || brandFilterSearch.length > 0) && (
-                filteredBrandOptions.length > 0 ? (
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {filteredBrandOptions.map((brand) => (
-                      <button
-                        key={brand.id}
-                        type="button"
-                        onMouseDown={() => {
-                          setSelectedBrandId(brand.id);
-                          setBrandFilterSearch('');
-                          updateUrl({ brandId: brand.id });
-                        }}
-                        className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500"
-                      >
-                        {brand.name}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                    {brandFilterSearch.length > 0 ? 'No brands match.' : 'No brands available.'}
-                  </p>
-                )
-              )}
-            </div>
+            <TagsFilter
+              allTags={allTags}
+              selectedTagIds={selectedTagIds}
+              onTagIdsChange={(ids) => {
+                setSelectedTagIds(ids);
+                updateUrl({ tagIds: ids });
+              }}
+            />
           </MoreFiltersToggle>
         </div>
       </div>

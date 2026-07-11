@@ -14,11 +14,14 @@ import {
   getBrands,
   getDisplayPhotosForItems,
   getInventoryExpenses,
+  getTags,
+  getTagsForItems,
 } from '@/lib/supabase';
-import type { Brand, CashFlow, Deal, DealItem, InventoryExpense, InventoryItemWithValue } from '@/types';
+import type { Brand, CashFlow, Deal, DealItem, InventoryExpense, InventoryItemWithValue, InventoryTag } from '@/types';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import DateRangeFilter from '@/components/DateRangeFilter';
 import MoreFiltersToggle from '@/components/MoreFiltersToggle';
+import TagsFilter from '@/components/TagsFilter';
 import { type DatePreset, DATE_PRESETS, presetToDateRange, DEFAULT_PRESET } from '@/lib/dateRange';
 import { splitSearchTerms } from '@/lib/search';
 
@@ -138,6 +141,9 @@ export default function CashFlowPage() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>([...ALL_DEAL_TYPES]);
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
+  const [allTags, setAllTags] = useState<InventoryTag[]>([]);
+  const [tagsByItemId, setTagsByItemId] = useState<Record<number, InventoryTag[]>>({});
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [cfSearch, setCfSearch] = useState('');
   const [renderCount, setRenderCount] = useState(BATCH_SIZE);
@@ -193,6 +199,12 @@ export default function CashFlowPage() {
     }
     const searchParam = searchParams.get('search') ?? '';
     if (searchParam) setCfSearch(searchParam);
+    const tagParam = searchParams.get('tag_id');
+    const tagIds = tagParam ? tagParam.split(',').map(Number).filter(Boolean) : [];
+    if (tagIds.length > 0) {
+      setSelectedTagIds(tagIds);
+      setShowMoreFilters(true);
+    }
     isInitializedRef.current = true;
   }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -209,20 +221,24 @@ export default function CashFlowPage() {
       params.set('dealTypes', [...selectedDealTypes].sort().join(','));
     }
     if (cfSearch) params.set('search', cfSearch);
+    if (selectedTagIds.length > 0) {
+      params.set('tag_id', [...selectedTagIds].sort((a, b) => a - b).join(','));
+    }
     const qs = params.toString();
     router.replace(`/cash-flow${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [datePreset, customFrom, customTo, selectedDealTypes, cfSearch, router]);
+  }, [datePreset, customFrom, customTo, selectedDealTypes, cfSearch, selectedTagIds, router]);
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [cashFlowResult, dealsResult, dealItemsResult, itemsResult, brandsResult, expensesResult] = await Promise.all([
+      const [cashFlowResult, dealsResult, dealItemsResult, itemsResult, brandsResult, expensesResult, tagsResult] = await Promise.all([
         getCashFlows(),
         getDeals(),
         getDealItems(),
         getInventoryItemsWithValue(),
         getBrands(),
         getInventoryExpenses(),
+        getTags(),
       ]);
       setLoading(false);
 
@@ -238,6 +254,9 @@ export default function CashFlowPage() {
       setBrands(brandsResult.data || []);
       setExpenses(expensesResult.data || []);
 
+      const tagsData = (!tagsResult.error ? (tagsResult.data ?? []) : []) as InventoryTag[];
+      setAllTags(tagsData);
+
       // Include expense-linked item IDs — expense deals have no deal_items rows
       const dealItemIds = (dealItemsResult.data || []).map((di) => di.item_id);
       const expLinkedIds = (expensesResult.data || [])
@@ -245,7 +264,23 @@ export default function CashFlowPage() {
         .map((e) => e.item_id as number);
       const allItemIds = Array.from(new Set([...dealItemIds, ...expLinkedIds]));
       if (allItemIds.length > 0) {
-        getDisplayPhotosForItems(allItemIds).then(setPhotoByItemId);
+        const [photosMap, itemTagsResult] = await Promise.all([
+          getDisplayPhotosForItems(allItemIds),
+          getTagsForItems(allItemIds),
+        ]);
+        setPhotoByItemId(photosMap);
+        if (!itemTagsResult.error && itemTagsResult.data) {
+          const tagById = Object.fromEntries(tagsData.map((t) => [t.id, t]));
+          const tagsMap: Record<number, InventoryTag[]> = {};
+          for (const row of itemTagsResult.data as { item_id: number; tag_id: number }[]) {
+            const tag = tagById[row.tag_id];
+            if (tag) {
+              if (!tagsMap[row.item_id]) tagsMap[row.item_id] = [];
+              tagsMap[row.item_id].push(tag);
+            }
+          }
+          setTagsByItemId(tagsMap);
+        }
       }
     }
     loadData();
@@ -343,13 +378,26 @@ export default function CashFlowPage() {
           const lowerFields = textFields.map((f) => f.toLowerCase());
           if (!searchTerms.every((term) => lowerFields.some((f) => f.includes(term)))) return false;
         }
+        if (selectedTagIds.length > 0) {
+          const deal = row.deal_id ? dealMap[row.deal_id] : null;
+          if (!deal) return false;
+          const items = dealItemsByDealId[deal.id] ?? [];
+          const allItemIds = items.map((di) => di.item_id);
+          const expLinkedId = expenseItemIdByDealId[deal.id];
+          if (expLinkedId != null) allItemIds.push(expLinkedId);
+          const hasTag = allItemIds.some((itemId) => {
+            const itemTagIds = (tagsByItemId[itemId] ?? []).map((t) => t.id);
+            return selectedTagIds.every((tid) => itemTagIds.includes(tid));
+          });
+          if (!hasTag) return false;
+        }
         return true;
       });
     },
-    [sortedRows, dateFrom, dateTo, allDealTypesSelected, selectedDealTypes, dealMap, cfSearch, dealItemsByDealId, itemMap, brandMap, expenseItemIdByDealId],
+    [sortedRows, dateFrom, dateTo, allDealTypesSelected, selectedDealTypes, dealMap, cfSearch, dealItemsByDealId, itemMap, brandMap, expenseItemIdByDealId, selectedTagIds, tagsByItemId],
   );
 
-  const cfFilterSig = `${datePreset}|${customFrom}|${customTo}|${selectedDealTypes.join(',')}|${cfSearch}`;
+  const cfFilterSig = `${datePreset}|${customFrom}|${customTo}|${selectedDealTypes.join(',')}|${cfSearch}|${selectedTagIds.join(',')}`;
   useEffect(() => {
     if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
     if (isRestoringRef.current) return;
@@ -427,12 +475,13 @@ export default function CashFlowPage() {
 
   const fmtCompact = (v: number) => `$${Math.round(Math.abs(v)).toLocaleString()}`;
 
-  const hiddenFilterCount = datePreset !== DEFAULT_PRESET ? 1 : 0;
+  const hiddenFilterCount = selectedTagIds.length + (datePreset !== DEFAULT_PRESET ? 1 : 0);
 
   const hasActiveFilters =
     datePreset !== DEFAULT_PRESET ||
     selectedDealTypes.length < ALL_DEAL_TYPES.length ||
-    cfSearch.length > 0;
+    cfSearch.length > 0 ||
+    selectedTagIds.length > 0;
 
   function clearFilters() {
     setDatePreset(DEFAULT_PRESET);
@@ -440,6 +489,7 @@ export default function CashFlowPage() {
     setCustomTo(new Date().toISOString().split('T')[0]);
     setSelectedDealTypes([...ALL_DEAL_TYPES]);
     setCfSearch('');
+    setSelectedTagIds([]);
   }
 
   // ── Shared photo placeholders ──────────────────────────────────────────────
@@ -545,6 +595,11 @@ export default function CashFlowPage() {
               onCustomFromChange={setCustomFrom}
               customTo={customTo}
               onCustomToChange={setCustomTo}
+            />
+            <TagsFilter
+              allTags={allTags}
+              selectedTagIds={selectedTagIds}
+              onTagIdsChange={setSelectedTagIds}
             />
           </MoreFiltersToggle>
         </div>
