@@ -18,6 +18,7 @@ import {
 import type { Brand, CashFlow, Deal, DealItem, InventoryExpense, InventoryItemWithValue } from '@/types';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import DateRangeFilter from '@/components/DateRangeFilter';
+import CompactPageHeader from '@/components/CompactPageHeader';
 import { type DatePreset, DATE_PRESETS, presetToDateRange, DEFAULT_PRESET } from '@/lib/dateRange';
 
 const BATCH_SIZE = 30;
@@ -416,27 +417,28 @@ export default function CashFlowPage() {
   return (
     <div className="space-y-4">
 
-      {/* Header card — summary metrics only */}
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <p className="page-overline">Cash Flow</p>
-        {!loading && (
-          <>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              Current Balance {fmtCompact(summaryStats.currentBalance)}
-              {' · '}Cash In {fmtCompact(summaryStats.cashIn)}
-              {' · '}Cash Out {fmtCompact(summaryStats.cashOut)}
-              {' · '}Net {summaryStats.net >= 0 ? '+' : '−'}{fmtCompact(summaryStats.net)}
-            </p>
-            {cashRatioInfo !== null && (
-              <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-                Cash Ratio {cashRatioInfo.ratio}%
-                <span className="ml-1 text-slate-300 dark:text-slate-600">·</span>
-                <span className="ml-1">Inventory Cost {fmtCompact(cashRatioInfo.inventoryCost)}</span>
+      <CompactPageHeader
+        overline="Cash Flow"
+        summary={
+          !loading && (
+            <>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Current Balance {fmtCompact(summaryStats.currentBalance)}
+                {' · '}Cash In {fmtCompact(summaryStats.cashIn)}
+                {' · '}Cash Out {fmtCompact(summaryStats.cashOut)}
+                {' · '}Net {summaryStats.net >= 0 ? '+' : '−'}{fmtCompact(summaryStats.net)}
               </p>
-            )}
-          </>
-        )}
-      </div>
+              {cashRatioInfo !== null && (
+                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+                  Cash Ratio {cashRatioInfo.ratio}%
+                  <span className="ml-1 text-slate-300 dark:text-slate-600">·</span>
+                  <span className="ml-1">Inventory Cost {fmtCompact(cashRatioInfo.inventoryCost)}</span>
+                </p>
+              )}
+            </>
+          )
+        }
+      />
 
       {/* Filter card */}
       <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
