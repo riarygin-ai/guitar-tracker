@@ -90,6 +90,26 @@ function computeDealVisual(
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+function savedUrlMatchesCurrent(saved: string, current: string): boolean {
+  try {
+    const parse = (u: string) => {
+      const qi = u.indexOf('?');
+      const path = qi === -1 ? u : u.slice(0, qi);
+      const qs = qi === -1 ? '' : u.slice(qi + 1);
+      const params = Array.from(new URLSearchParams(qs).entries()).sort(([a], [b]) => a.localeCompare(b));
+      return { path, params };
+    };
+    const a = parse(saved), b = parse(current);
+    if (a.path !== b.path) return false;
+    if (a.params.length !== b.params.length) return false;
+    return a.params.every(([k, v], i) => k === b.params[i][0] && v === b.params[i][1]);
+  } catch {
+    return saved === current;
+  }
+}
+
+let _opsClickTs = 0;
+
 export default function OperationsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -119,19 +139,24 @@ export default function OperationsPage() {
   const restoredAnchorIdRef = useRef<number | null>(null);
   const restoredScrollYRef = useRef<number>(0);
   const restoredLoadedCountRef = useRef<number>(BATCH_SIZE);
+  const isRestoringRef = useRef(false);
   const isFirstFilterRef = useRef(true);
 
   useEffect(() => {
+    const currentUrl = window.location.pathname + window.location.search;
     const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) return;
     try {
-      if (!window.history.state?._opsRestore) return;
       const s = JSON.parse(raw) as { url: string; loadedCount: number; scrollY: number; anchorId: number; timestamp: number };
-      if (s.url !== window.location.pathname + window.location.search) return;
+      const clickAge = Date.now() - _opsClickTs;
+      if (!_opsClickTs || clickAge > 60 * 60 * 1000) { _opsClickTs = 0; return; }
+      _opsClickTs = 0;
+      if (!savedUrlMatchesCurrent(s.url, currentUrl)) return;
       if (Date.now() - s.timestamp > 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
       restoredAnchorIdRef.current = s.anchorId;
       restoredScrollYRef.current = s.scrollY;
       restoredLoadedCountRef.current = s.loadedCount;
+      isRestoringRef.current = true;
       setRenderCount(s.loadedCount);
       setIsRestoring(true);
       sessionStorage.removeItem(SESSION_KEY);
@@ -350,6 +375,7 @@ export default function OperationsPage() {
   const opsFilterSig = `${searchQuery}|${fromDate}|${toDate}|${selectedDealTypes.join(',')}|${selectedBrandId ?? ''}`;
   useEffect(() => {
     if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
+    if (isRestoringRef.current) return;
     sessionStorage.removeItem(SESSION_KEY);
     setRenderCount(BATCH_SIZE);
     setIsRestoring(false);
@@ -413,15 +439,21 @@ export default function OperationsPage() {
       ? document.querySelector(`[data-deal-id="${anchorId}"]`)
       : null;
 
-    if (el) {
-      el.scrollIntoView({ block: 'center', behavior: 'auto' });
-    } else {
-      window.scrollTo({ top: restoredScrollYRef.current, behavior: 'auto' });
-    }
-    setIsRestoring(false);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (el) {
+          el.scrollIntoView({ block: 'center', behavior: 'auto' });
+        } else {
+          window.scrollTo({ top: restoredScrollYRef.current, behavior: 'auto' });
+        }
+        isRestoringRef.current = false;
+        setIsRestoring(false);
+      });
+    });
   }, [isRestoring, loading, renderCount, totalFilteredDeals]);
 
   function saveListState(anchorId: number) {
+    _opsClickTs = Date.now();
     sessionStorage.setItem(SESSION_KEY, JSON.stringify({
       url: window.location.pathname + window.location.search,
       loadedCount: renderCount,
@@ -429,9 +461,6 @@ export default function OperationsPage() {
       anchorId,
       timestamp: Date.now(),
     }));
-    try {
-      window.history.replaceState({ ...(window.history.state ?? {}), _opsRestore: true }, '');
-    } catch {}
   }
 
   const displayedDeals = filteredAndSortedDeals.slice(0, renderCount);
