@@ -11,7 +11,7 @@ import type { Brand, Deal, DealItem, InventoryItemWithValue } from '@/types';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 
 const BATCH_SIZE = 25;
-const SESSION_KEY = 'ops-session';
+const SESSION_KEY = 'operations-list-state';
 
 const defaultDealTypes = ['sale', 'purchase', 'trade', 'expense'];
 
@@ -115,30 +115,28 @@ export default function OperationsPage() {
   const [brandFilterSearch, setBrandFilterSearch] = useState('');
   const [brandFilterFocused, setBrandFilterFocused] = useState(false);
   const [renderCount, setRenderCount] = useState(BATCH_SIZE);
-  const scrollTargetRef = useRef<number | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const restoredAnchorIdRef = useRef<number | null>(null);
+  const restoredScrollYRef = useRef<number>(0);
+  const restoredLoadedCountRef = useRef<number>(BATCH_SIZE);
   const isFirstFilterRef = useRef(true);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem(SESSION_KEY);
-    if (!saved) return;
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return;
     try {
-      const { scrollY, filterSig } = JSON.parse(saved) as { scrollY: number; filterSig: string };
-      if (filterSig === window.location.search) scrollTargetRef.current = scrollY;
-    } catch {}
-    sessionStorage.removeItem(SESSION_KEY);
-  }, []);
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const save = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify({ scrollY: window.scrollY, filterSig: window.location.search }));
-      }, 400);
-    };
-    window.addEventListener('scroll', save, { passive: true });
-    return () => { window.removeEventListener('scroll', save); clearTimeout(timer); };
-  }, []);
+      if (!window.history.state?._opsRestore) return;
+      const s = JSON.parse(raw) as { url: string; loadedCount: number; scrollY: number; anchorId: number; timestamp: number };
+      if (s.url !== window.location.pathname + window.location.search) return;
+      if (Date.now() - s.timestamp > 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
+      restoredAnchorIdRef.current = s.anchorId;
+      restoredScrollYRef.current = s.scrollY;
+      restoredLoadedCountRef.current = s.loadedCount;
+      setRenderCount(s.loadedCount);
+      setIsRestoring(true);
+      sessionStorage.removeItem(SESSION_KEY);
+    } catch { sessionStorage.removeItem(SESSION_KEY); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     async function loadData() {
@@ -352,16 +350,10 @@ export default function OperationsPage() {
   const opsFilterSig = `${searchQuery}|${fromDate}|${toDate}|${selectedDealTypes.join(',')}|${selectedBrandId ?? ''}`;
   useEffect(() => {
     if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
+    sessionStorage.removeItem(SESSION_KEY);
     setRenderCount(BATCH_SIZE);
+    setIsRestoring(false);
   }, [opsFilterSig]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!loading && scrollTargetRef.current !== null) {
-      const y = scrollTargetRef.current;
-      scrollTargetRef.current = null;
-      setTimeout(() => window.scrollTo({ top: y, behavior: 'instant' }), 50);
-    }
-  }, [loading]);
 
   const filteredAndSortedDeals = useMemo(() => {
     const searchTerms = splitSearchTerms(searchQuery);
@@ -408,10 +400,44 @@ export default function OperationsPage() {
       .sort((a, b) => new Date(b.deal_date).getTime() - new Date(a.deal_date).getTime());
   }, [deals, fromDate, toDate, selectedDealTypes, searchQuery, dealItemsByDealId, brandMap, itemMap, selectedBrandId, expenseItemIdByDealId]);
 
+  const totalFilteredDeals = filteredAndSortedDeals.length;
+
+  useEffect(() => {
+    if (!isRestoring || loading) return;
+    const enoughRendered =
+      renderCount >= restoredLoadedCountRef.current || totalFilteredDeals <= renderCount;
+    if (!enoughRendered) return;
+
+    const anchorId = restoredAnchorIdRef.current;
+    const el = anchorId != null
+      ? document.querySelector(`[data-deal-id="${anchorId}"]`)
+      : null;
+
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'auto' });
+    } else {
+      window.scrollTo({ top: restoredScrollYRef.current, behavior: 'auto' });
+    }
+    setIsRestoring(false);
+  }, [isRestoring, loading, renderCount, totalFilteredDeals]);
+
+  function saveListState(anchorId: number) {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      url: window.location.pathname + window.location.search,
+      loadedCount: renderCount,
+      scrollY: window.scrollY,
+      anchorId,
+      timestamp: Date.now(),
+    }));
+    try {
+      window.history.replaceState({ ...(window.history.state ?? {}), _opsRestore: true }, '');
+    } catch {}
+  }
+
   const displayedDeals = filteredAndSortedDeals.slice(0, renderCount);
   const hasMoreDeals = filteredAndSortedDeals.length > renderCount;
   const loadMoreDeals = useCallback(() => setRenderCount((c) => c + BATCH_SIZE), []);
-  const sentinelRef = useInfiniteScroll(loadMoreDeals, { hasMore: hasMoreDeals, isLoading: loading });
+  const sentinelRef = useInfiniteScroll(loadMoreDeals, { hasMore: hasMoreDeals, isLoading: loading, disabled: isRestoring });
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
@@ -695,6 +721,8 @@ export default function OperationsPage() {
                   <Link
                     key={deal.id}
                     href={`/operations/${deal.id}`}
+                    data-deal-id={deal.id}
+                    onClick={() => saveListState(deal.id)}
                     className="block rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
                   >
                     <div className="flex items-start gap-3">

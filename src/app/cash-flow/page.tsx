@@ -18,7 +18,7 @@ import type { Brand, CashFlow, Deal, DealItem, InventoryExpense, InventoryItemWi
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 
 const BATCH_SIZE = 30;
-const SESSION_KEY = 'cf-session';
+const SESSION_KEY = 'cash-flow-list-state';
 
 // ─── Visual helper ────────────────────────────────────────────────────────────
 
@@ -122,30 +122,28 @@ export default function CashFlowPage() {
   const [customTo, setCustomTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>([...ALL_DEAL_TYPES]);
   const [renderCount, setRenderCount] = useState(BATCH_SIZE);
-  const scrollTargetRef = useRef<number | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const restoredAnchorIdRef = useRef<number | null>(null);
+  const restoredScrollYRef = useRef<number>(0);
+  const restoredLoadedCountRef = useRef<number>(BATCH_SIZE);
   const isFirstFilterRef = useRef(true);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem(SESSION_KEY);
-    if (!saved) return;
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return;
     try {
-      const { scrollY } = JSON.parse(saved) as { scrollY: number };
-      scrollTargetRef.current = scrollY;
-    } catch {}
-    sessionStorage.removeItem(SESSION_KEY);
-  }, []);
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const save = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify({ scrollY: window.scrollY }));
-      }, 400);
-    };
-    window.addEventListener('scroll', save, { passive: true });
-    return () => { window.removeEventListener('scroll', save); clearTimeout(timer); };
-  }, []);
+      if (!window.history.state?._cfRestore) return;
+      const s = JSON.parse(raw) as { url: string; loadedCount: number; scrollY: number; anchorId: number; timestamp: number };
+      if (s.url !== window.location.pathname + window.location.search) return;
+      if (Date.now() - s.timestamp > 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
+      restoredAnchorIdRef.current = s.anchorId;
+      restoredScrollYRef.current = s.scrollY;
+      restoredLoadedCountRef.current = s.loadedCount;
+      setRenderCount(s.loadedCount);
+      setIsRestoring(true);
+      sessionStorage.removeItem(SESSION_KEY);
+    } catch { sessionStorage.removeItem(SESSION_KEY); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     async function loadData() {
@@ -258,21 +256,47 @@ export default function CashFlowPage() {
   const cfFilterSig = `${datePreset}|${customFrom}|${customTo}|${selectedDealTypes.join(',')}`;
   useEffect(() => {
     if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
+    sessionStorage.removeItem(SESSION_KEY);
     setRenderCount(BATCH_SIZE);
+    setIsRestoring(false);
   }, [cfFilterSig]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const totalFilteredCount = filteredRows.length;
   useEffect(() => {
-    if (!loading && scrollTargetRef.current !== null) {
-      const y = scrollTargetRef.current;
-      scrollTargetRef.current = null;
-      setTimeout(() => window.scrollTo({ top: y, behavior: 'instant' }), 50);
+    if (!isRestoring || loading) return;
+    const enoughRendered =
+      renderCount >= restoredLoadedCountRef.current || totalFilteredCount <= renderCount;
+    if (!enoughRendered) return;
+    const anchorId = restoredAnchorIdRef.current;
+    const el = anchorId != null
+      ? document.querySelector(`[data-cash-flow-id="${anchorId}"]`)
+      : null;
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'auto' });
+    } else {
+      window.scrollTo({ top: restoredScrollYRef.current, behavior: 'auto' });
     }
-  }, [loading]);
+    setIsRestoring(false);
+  }, [isRestoring, loading, renderCount, totalFilteredCount]);
 
   const displayedRows = filteredRows.slice(0, renderCount);
   const hasMoreRows = filteredRows.length > renderCount;
   const loadMoreRows = useCallback(() => setRenderCount((c) => c + BATCH_SIZE), []);
-  const sentinelRef = useInfiniteScroll(loadMoreRows, { hasMore: hasMoreRows, isLoading: loading });
+
+  function saveListState(anchorId: number) {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      url: window.location.pathname + window.location.search,
+      loadedCount: renderCount,
+      scrollY: window.scrollY,
+      anchorId,
+      timestamp: Date.now(),
+    }));
+    try {
+      window.history.replaceState({ ...(window.history.state ?? {}), _cfRestore: true }, '');
+    } catch {}
+  }
+
+  const sentinelRef = useInfiniteScroll(loadMoreRows, { hasMore: hasMoreRows, isLoading: loading, disabled: isRestoring });
 
   const summaryStats = useMemo(() => {
     const currentBalance = sortedRows[0]?.closing_balance ?? 0;
@@ -584,12 +608,14 @@ export default function CashFlowPage() {
                 <Link
                   key={cf.id}
                   href={`/operations/${cf.deal_id}`}
+                  data-cash-flow-id={cf.id}
+                  onClick={() => saveListState(cf.id)}
                   className={`block ${cardClass} transition hover:-translate-y-0.5 hover:shadow-md`}
                 >
                   <div className="flex items-start gap-3">{photoCol}{contentCol}</div>
                 </Link>
               ) : (
-                <div key={cf.id} className={cardClass}>
+                <div key={cf.id} data-cash-flow-id={cf.id} className={cardClass}>
                   <div className="flex items-start gap-3">{photoCol}{contentCol}</div>
                 </div>
               );

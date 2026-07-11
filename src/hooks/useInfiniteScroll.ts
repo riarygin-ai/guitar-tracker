@@ -2,14 +2,18 @@ import { useEffect, useRef } from 'react';
 
 export function useInfiniteScroll(
   onLoadMore: () => void,
-  { hasMore, isLoading }: { hasMore: boolean; isLoading: boolean },
+  {
+    hasMore,
+    isLoading,
+    disabled = false,
+  }: { hasMore: boolean; isLoading: boolean; disabled?: boolean },
 ) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const onLoadMoreRef = useRef(onLoadMore);
   onLoadMoreRef.current = onLoadMore;
 
   useEffect(() => {
-    if (!hasMore || isLoading) return;
+    if (!hasMore || isLoading || disabled) return;
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
 
@@ -22,7 +26,7 @@ export function useInfiniteScroll(
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, isLoading]);
+  }, [hasMore, isLoading, disabled]);
 
   return sentinelRef;
 }

@@ -21,9 +21,10 @@ interface InventoryCardProps {
   mainPhotoUrl?: string | null;
   subtypeName?: string;
   totalExpenses?: number;
+  onBeforeNavigate?: () => void;
 }
 
-export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl, subtypeName, totalExpenses = 0 }: InventoryCardProps) {
+export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl, subtypeName, totalExpenses = 0, onBeforeNavigate }: InventoryCardProps) {
   const router = useRouter();
   const title = [item.year, brandName, item.model].filter(Boolean).join(' ');
   const subtitle = item.color ? `${title} — ${item.color}` : title;
@@ -52,8 +53,9 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
 
   return (
     <div
+      data-item-id={item.id}
       className="cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
-      onClick={() => router.push(itemHref)}
+      onClick={() => { onBeforeNavigate?.(); router.push(itemHref); }}
     >
       <div className="flex items-start gap-3">
         {/* Thumbnail */}

@@ -10,7 +10,7 @@ import InventoryCard from '@/components/InventoryCard';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 
 const BATCH_SIZE = 30;
-const SESSION_KEY = 'inv-session';
+const SESSION_KEY = 'inventory-list-state';
 
 const LEGACY_TYPE_TO_CATEGORY: Record<string, string> = {
   guitar: 'Guitars',
@@ -66,37 +66,29 @@ export default function InventoryPage() {
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
 
   const [renderCount, setRenderCount] = useState(BATCH_SIZE);
-  const scrollTargetRef = useRef<number | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const restoredAnchorIdRef = useRef<number | null>(null);
+  const restoredScrollYRef = useRef<number>(0);
+  const restoredLoadedCountRef = useRef<number>(BATCH_SIZE);
   const isFirstFilterRef = useRef(true);
 
-  // Restore scroll position saved when user navigated away
+  // On browser Back: read saved state and prepare restoration
   useEffect(() => {
-    const saved = sessionStorage.getItem(SESSION_KEY);
-    if (!saved) return;
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return;
     try {
-      const { scrollY, filterSig } = JSON.parse(saved) as { scrollY: number; filterSig: string };
-      if (filterSig === window.location.search) {
-        scrollTargetRef.current = scrollY;
-      }
-    } catch {}
-    sessionStorage.removeItem(SESSION_KEY);
-  }, []);
-
-  // Save scroll position as user scrolls
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const save = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-          scrollY: window.scrollY,
-          filterSig: window.location.search,
-        }));
-      }, 400);
-    };
-    window.addEventListener('scroll', save, { passive: true });
-    return () => { window.removeEventListener('scroll', save); clearTimeout(timer); };
-  }, []);
+      if (!window.history.state?._invRestore) return;
+      const s = JSON.parse(raw) as { url: string; loadedCount: number; scrollY: number; anchorId: number; timestamp: number };
+      if (s.url !== window.location.pathname + window.location.search) return;
+      if (Date.now() - s.timestamp > 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
+      restoredAnchorIdRef.current = s.anchorId;
+      restoredScrollYRef.current = s.scrollY;
+      restoredLoadedCountRef.current = s.loadedCount;
+      setRenderCount(s.loadedCount);
+      setIsRestoring(true);
+      sessionStorage.removeItem(SESSION_KEY);
+    } catch { sessionStorage.removeItem(SESSION_KEY); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isInitializedRef = useRef(false);
   useEffect(() => {
@@ -148,17 +140,10 @@ export default function InventoryPage() {
   const filterSig = `${search}|${selectedStatuses.join(',')}|${selectedCategoryNames.join(',')}|${selectedSubtypeNames.join(',')}|${selectedPurposeIds.join(',')}|${selectedTagIds.join(',')}`;
   useEffect(() => {
     if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
+    sessionStorage.removeItem(SESSION_KEY);
     setRenderCount(BATCH_SIZE);
+    setIsRestoring(false);
   }, [filterSig]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Scroll to restored position after data loads
-  useEffect(() => {
-    if (!loading && scrollTargetRef.current !== null) {
-      const y = scrollTargetRef.current;
-      scrollTargetRef.current = null;
-      setTimeout(() => window.scrollTo({ top: y, behavior: 'instant' }), 50);
-    }
-  }, [loading]);
 
   useEffect(() => {
     async function loadData() {
@@ -395,11 +380,46 @@ export default function InventoryPage() {
     });
   }, [filteredItems]);
 
+  const totalFilteredCount = sortedFilteredItems.length;
+
+  // Complete restoration once all required items are rendered
+  useEffect(() => {
+    if (!isRestoring || loading) return;
+    const enoughRendered =
+      renderCount >= restoredLoadedCountRef.current || totalFilteredCount <= renderCount;
+    if (!enoughRendered) return;
+
+    const anchorId = restoredAnchorIdRef.current;
+    const el = anchorId != null
+      ? document.querySelector(`[data-item-id="${anchorId}"]`)
+      : null;
+
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'auto' });
+    } else {
+      window.scrollTo({ top: restoredScrollYRef.current, behavior: 'auto' });
+    }
+    setIsRestoring(false);
+  }, [isRestoring, loading, renderCount, totalFilteredCount]);
+
+  function saveListState(anchorId: number) {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      url: window.location.pathname + window.location.search,
+      loadedCount: renderCount,
+      scrollY: window.scrollY,
+      anchorId,
+      timestamp: Date.now(),
+    }));
+    try {
+      window.history.replaceState({ ...(window.history.state ?? {}), _invRestore: true }, '');
+    } catch {}
+  }
+
   const displayItems = sortedFilteredItems.slice(0, renderCount);
   const hasMore = sortedFilteredItems.length > renderCount;
 
   const loadMore = useCallback(() => setRenderCount((c) => c + BATCH_SIZE), []);
-  const sentinelRef = useInfiniteScroll(loadMore, { hasMore, isLoading: loading });
+  const sentinelRef = useInfiniteScroll(loadMore, { hasMore, isLoading: loading, disabled: isRestoring });
 
   const fmtCurrency = (v: number) => `$${Math.round(v).toLocaleString()}`;
 
@@ -757,6 +777,7 @@ export default function InventoryPage() {
                   mainPhotoUrl={mainPhotoByItemId[item.id] ?? null}
                   subtypeName={subtypeName}
                   totalExpenses={expensesByItemId[item.id] ?? 0}
+                  onBeforeNavigate={() => saveListState(item.id)}
                 />
               );
             })}
