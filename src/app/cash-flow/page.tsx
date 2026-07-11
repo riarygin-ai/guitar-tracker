@@ -18,9 +18,9 @@ import {
 import type { Brand, CashFlow, Deal, DealItem, InventoryExpense, InventoryItemWithValue } from '@/types';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import DateRangeFilter from '@/components/DateRangeFilter';
-import CompactPageHeader from '@/components/CompactPageHeader';
 import MoreFiltersToggle from '@/components/MoreFiltersToggle';
 import { type DatePreset, DATE_PRESETS, presetToDateRange, DEFAULT_PRESET } from '@/lib/dateRange';
+import { splitSearchTerms } from '@/lib/search';
 
 const BATCH_SIZE = 30;
 const SESSION_KEY = 'cash-flow-list-state';
@@ -139,6 +139,7 @@ export default function CashFlowPage() {
   const [customTo, setCustomTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedDealTypes, setSelectedDealTypes] = useState<string[]>([...ALL_DEAL_TYPES]);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [cfSearch, setCfSearch] = useState('');
   const [renderCount, setRenderCount] = useState(BATCH_SIZE);
   const [isRestoring, setIsRestoring] = useState(false);
   const restoredAnchorIdRef = useRef<number | null>(null);
@@ -190,6 +191,8 @@ export default function CashFlowPage() {
     if (types.length > 0 && types.length < ALL_DEAL_TYPES.length) {
       setSelectedDealTypes(types);
     }
+    const searchParam = searchParams.get('search') ?? '';
+    if (searchParam) setCfSearch(searchParam);
     isInitializedRef.current = true;
   }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -205,9 +208,10 @@ export default function CashFlowPage() {
     if (selectedDealTypes.length > 0 && selectedDealTypes.length < ALL_DEAL_TYPES.length) {
       params.set('dealTypes', [...selectedDealTypes].sort().join(','));
     }
+    if (cfSearch) params.set('search', cfSearch);
     const qs = params.toString();
     router.replace(`/cash-flow${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [datePreset, customFrom, customTo, selectedDealTypes, router]);
+  }, [datePreset, customFrom, customTo, selectedDealTypes, cfSearch, router]);
 
   useEffect(() => {
     async function loadData() {
@@ -295,8 +299,9 @@ export default function CashFlowPage() {
   const allDealTypesSelected = selectedDealTypes.length === ALL_DEAL_TYPES.length;
 
   const filteredRows = useMemo(
-    () =>
-      sortedRows.filter((row) => {
+    () => {
+      const searchTerms = splitSearchTerms(cfSearch);
+      return sortedRows.filter((row) => {
         if (dateFrom && row.transaction_date < dateFrom) return false;
         if (dateTo   && row.transaction_date > dateTo)   return false;
         if (!allDealTypesSelected) {
@@ -305,12 +310,46 @@ export default function CashFlowPage() {
           // Rows with no linked deal are untyped — only hide them if no deal types selected at all
           if (dealType !== null && !selectedDealTypes.includes(dealType)) return false;
         }
+        if (searchTerms.length > 0) {
+          const deal = row.deal_id ? dealMap[row.deal_id] : null;
+          const items = deal ? (dealItemsByDealId[deal.id] ?? []) : [];
+          const textFields: string[] = [
+            row.description ?? '',
+            row.transaction_date,
+            deal?.deal_type ?? '',
+            deal?.notes ?? '',
+            deal?.channel ?? '',
+            deal?.deal_date ?? '',
+          ];
+          for (const di of items) {
+            const item = itemMap[di.item_id];
+            if (item) {
+              textFields.push(brandMap[item.brand_id] ?? '');
+              textFields.push(item.model);
+              textFields.push(item.color ?? '');
+              textFields.push(String(item.year ?? ''));
+            }
+          }
+          const expLinkedItemId = deal ? expenseItemIdByDealId[deal.id] : undefined;
+          if (expLinkedItemId != null) {
+            const item = itemMap[expLinkedItemId];
+            if (item) {
+              textFields.push(brandMap[item.brand_id] ?? '');
+              textFields.push(item.model);
+              textFields.push(item.color ?? '');
+              textFields.push(String(item.year ?? ''));
+            }
+          }
+          const lowerFields = textFields.map((f) => f.toLowerCase());
+          if (!searchTerms.every((term) => lowerFields.some((f) => f.includes(term)))) return false;
+        }
         return true;
-      }),
-    [sortedRows, dateFrom, dateTo, allDealTypesSelected, selectedDealTypes, dealMap],
+      });
+    },
+    [sortedRows, dateFrom, dateTo, allDealTypesSelected, selectedDealTypes, dealMap, cfSearch, dealItemsByDealId, itemMap, brandMap, expenseItemIdByDealId],
   );
 
-  const cfFilterSig = `${datePreset}|${customFrom}|${customTo}|${selectedDealTypes.join(',')}`;
+  const cfFilterSig = `${datePreset}|${customFrom}|${customTo}|${selectedDealTypes.join(',')}|${cfSearch}`;
   useEffect(() => {
     if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
     if (isRestoringRef.current) return;
@@ -392,13 +431,15 @@ export default function CashFlowPage() {
 
   const hasActiveFilters =
     datePreset !== DEFAULT_PRESET ||
-    selectedDealTypes.length < ALL_DEAL_TYPES.length;
+    selectedDealTypes.length < ALL_DEAL_TYPES.length ||
+    cfSearch.length > 0;
 
   function clearFilters() {
     setDatePreset(DEFAULT_PRESET);
     setCustomFrom('');
     setCustomTo(new Date().toISOString().split('T')[0]);
     setSelectedDealTypes([...ALL_DEAL_TYPES]);
+    setCfSearch('');
   }
 
   // ── Shared photo placeholders ──────────────────────────────────────────────
@@ -418,72 +459,95 @@ export default function CashFlowPage() {
   return (
     <div className="space-y-4">
 
-      <CompactPageHeader
-        overline="Cash Flow"
-        summary={
-          !loading && (
-            <>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Current Balance {fmtCompact(summaryStats.currentBalance)}
-                {' · '}Cash In {fmtCompact(summaryStats.cashIn)}
-                {' · '}Cash Out {fmtCompact(summaryStats.cashOut)}
-                {' · '}Net {summaryStats.net >= 0 ? '+' : '−'}{fmtCompact(summaryStats.net)}
-              </p>
-              {cashRatioInfo !== null && (
-                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-                  Cash Ratio {cashRatioInfo.ratio}%
-                  <span className="ml-1 text-slate-300 dark:text-slate-600">·</span>
-                  <span className="ml-1">Inventory Cost {fmtCompact(cashRatioInfo.inventoryCost)}</span>
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="page-overline">Cash Flow</p>
+            {!loading && (
+              <div className="mt-1">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Current Balance {fmtCompact(summaryStats.currentBalance)}
+                  {' · '}Cash In {fmtCompact(summaryStats.cashIn)}
+                  {' · '}Cash Out {fmtCompact(summaryStats.cashOut)}
+                  {' · '}Net {summaryStats.net >= 0 ? '+' : '−'}{fmtCompact(summaryStats.net)}
                 </p>
-              )}
-            </>
-          )
-        }
-      />
-
-      {/* Filter card */}
-      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <p className="mb-2 section-label">Transaction Type</p>
-        <div className="flex flex-wrap gap-2">
-          {ALL_DEAL_TYPES.map((dealType) => (
-            <button
-              key={dealType}
-              type="button"
-              onClick={() => {
-                setSelectedDealTypes((current) => {
-                  const next = current.includes(dealType)
-                    ? current.filter((t) => t !== dealType)
-                    : [...current, dealType];
-                  return next.length > 0 ? next : [...ALL_DEAL_TYPES];
-                });
-              }}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                selectedDealTypes.includes(dealType)
-                  ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
-              }`}
-            >
-              {dealType}
-            </button>
-          ))}
+                {cashRatioInfo !== null && (
+                  <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+                    Cash Ratio {cashRatioInfo.ratio}%
+                    <span className="ml-1 text-slate-300 dark:text-slate-600">·</span>
+                    <span className="ml-1">Inventory Cost {fmtCompact(cashRatioInfo.inventoryCost)}</span>
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
-        <MoreFiltersToggle
-          isOpen={showMoreFilters}
-          onToggle={() => setShowMoreFilters((v) => !v)}
-          count={hiddenFilterCount}
-          hasActiveFilters={hasActiveFilters}
-          onClear={clearFilters}
-        >
-          <DateRangeFilter
-            preset={datePreset}
-            onPresetChange={setDatePreset}
-            customFrom={customFrom}
-            onCustomFromChange={setCustomFrom}
-            customTo={customTo}
-            onCustomToChange={setCustomTo}
+        <div className="relative mt-4">
+          <input
+            type="text"
+            value={cfSearch}
+            onChange={(e) => setCfSearch(e.target.value)}
+            placeholder="Search cash flow..."
+            className={`w-full rounded-2xl border border-slate-200 bg-slate-50 py-2.5 pl-4 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600 ${cfSearch ? 'pr-9' : 'pr-4'}`}
           />
-        </MoreFiltersToggle>
+          {cfSearch && (
+            <button
+              type="button"
+              onClick={() => setCfSearch('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          )}
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700/50">
+          <p className="mb-2 section-label">Transaction Type</p>
+          <div className="flex flex-wrap gap-2">
+            {ALL_DEAL_TYPES.map((dealType) => (
+              <button
+                key={dealType}
+                type="button"
+                onClick={() => {
+                  setSelectedDealTypes((current) => {
+                    const next = current.includes(dealType)
+                      ? current.filter((t) => t !== dealType)
+                      : [...current, dealType];
+                    return next.length > 0 ? next : [...ALL_DEAL_TYPES];
+                  });
+                }}
+                className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                  selectedDealTypes.includes(dealType)
+                    ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                }`}
+              >
+                {dealType}
+              </button>
+            ))}
+          </div>
+
+          <MoreFiltersToggle
+            isOpen={showMoreFilters}
+            onToggle={() => setShowMoreFilters((v) => !v)}
+            count={hiddenFilterCount}
+            hasActiveFilters={hasActiveFilters}
+            onClear={clearFilters}
+          >
+            <DateRangeFilter
+              preset={datePreset}
+              onPresetChange={setDatePreset}
+              customFrom={customFrom}
+              onCustomFromChange={setCustomFrom}
+              customTo={customTo}
+              onCustomToChange={setCustomTo}
+            />
+          </MoreFiltersToggle>
+        </div>
       </div>
 
       {/* Transaction list */}

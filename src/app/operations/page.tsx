@@ -5,7 +5,6 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import DateRangeFilter from '@/components/DateRangeFilter';
-import CompactPageHeader from '@/components/CompactPageHeader';
 import MoreFiltersToggle from '@/components/MoreFiltersToggle';
 import { type DatePreset, DATE_PRESETS, presetToDateRange, DEFAULT_PRESET } from '@/lib/dateRange';
 import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems, getDisplayPhotosForItems, getInventoryExpenses } from '@/lib/supabase';
@@ -487,32 +486,52 @@ export default function OperationsPage() {
   const sentinelRef = useInfiniteScroll(loadMoreDeals, { hasMore: hasMoreDeals, isLoading: loading, disabled: isRestoring });
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8 dark:bg-slate-900">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-        <CompactPageHeader
-          overline="Operations"
-          summary={
-            !loading && (
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+    <div className="space-y-4">
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="page-overline">Operations</p>
+            {!loading && (
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                 {deals.length} {deals.length === 1 ? 'transaction' : 'transactions'}
               </p>
-            )
-          }
-          action={
+            )}
+          </div>
+          <div className="shrink-0">
             <Link
               href="/operations/new"
               className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
             >
               New operation
             </Link>
-          }
-        />
+          </div>
+        </div>
 
-        <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:p-6 dark:border-slate-700 dark:bg-slate-800">
+        <div className="relative mt-4">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by brand, model, color, year, channel, date, notes..."
+            className={`w-full rounded-2xl border border-slate-200 bg-slate-50 py-2.5 pl-4 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600 ${searchQuery ? 'pr-9' : 'pr-4'}`}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          )}
+        </div>
 
-          {/* Desktop label */}
-          <p className="hidden section-label md:block">Operation type</p>
-          <div className="flex flex-wrap gap-2 md:mt-3">
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700/50">
+          <p className="mb-2 section-label">Operation Type</p>
+          <div className="flex flex-wrap gap-2">
             {defaultDealTypes.map((dealType) => (
               <button
                 key={dealType}
@@ -614,19 +633,9 @@ export default function OperationsPage() {
             </div>
           </MoreFiltersToggle>
         </div>
+      </div>
 
-        <div className="mt-6">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by brand, model, color, year, channel, date, notes..."
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-slate-600"
-          />
-        </div>
-
-        {/* Deal list */}
-        <div className="mt-6">
+      {/* Deal list */}
           {loading ? (
             <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
               Loading operations...
@@ -815,8 +824,6 @@ export default function OperationsPage() {
               <div ref={sentinelRef} />
             </div>
           )}
-        </div>
-      </div>
     </div>
   );
 }
