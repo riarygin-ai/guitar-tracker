@@ -7,6 +7,7 @@ import { getBrands, getDealItems, getInventoryItems, getInventoryExpenses, getIt
 import { splitSearchTerms } from '@/lib/search';
 import type { Brand, DealItem, InventoryExpense, InventoryItemWithValue, InventoryTag, ItemCategory, ItemPurpose, ItemSubtype, Status } from '@/types';
 import InventoryCard from '@/components/InventoryCard';
+import MoreFiltersToggle from '@/components/MoreFiltersToggle';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 
 const BATCH_SIZE = 30;
@@ -633,151 +634,108 @@ export default function InventoryPage() {
             </div>
           )}
 
-          {/* More Filters toggle + Clear Filters */}
-          <div className="mt-4 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => setShowMoreFilters((v) => !v)}
-              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition ${
-                showMoreFilters
-                  ? 'border-slate-400 bg-slate-200 text-slate-800 dark:border-slate-500 dark:bg-slate-600 dark:text-white'
-                  : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700/80 dark:text-slate-300 dark:hover:bg-slate-600'
-              }`}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="18" x2="12" y2="18" strokeWidth="3"/>
-              </svg>
-              {showMoreFilters
-                ? 'Hide filters'
-                : `More filters${hiddenFilterCount > 0 ? ` (${hiddenFilterCount})` : ''}`}
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="11"
-                height="11"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className={`shrink-0 transition-transform duration-150 ${showMoreFilters ? 'rotate-180' : ''}`}
-              >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </button>
-            {hasActiveFilters && (
-              <button
-                type="button"
-                onClick={clearFilters}
-                className="text-sm text-slate-500 transition hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-              >
-                Clear filters
-              </button>
+          <MoreFiltersToggle
+            isOpen={showMoreFilters}
+            onToggle={() => setShowMoreFilters((v) => !v)}
+            count={hiddenFilterCount}
+            hasActiveFilters={hasActiveFilters}
+            onClear={clearFilters}
+          >
+            {/* Purpose */}
+            {activePurposes.length > 0 && (
+              <div>
+                <p className="mb-2 section-label">Purpose</p>
+                <div className="flex flex-wrap gap-2">
+                  {activePurposes.map((purpose) => (
+                    <button
+                      key={purpose.id}
+                      type="button"
+                      onClick={() =>
+                        setSelectedPurposeIds((current) =>
+                          current.includes(purpose.id)
+                            ? current.filter((v) => v !== purpose.id)
+                            : [...current, purpose.id]
+                        )
+                      }
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                        selectedPurposeIds.includes(purpose.id)
+                          ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                      }`}
+                    >
+                      {purpose.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
-          </div>
 
-          {/* Expanded More Filters — Purpose + Tags */}
-          {showMoreFilters && (
-            <div className="mt-3 space-y-4 border-t border-slate-200 pt-4 dark:border-slate-600">
-              {/* Purpose */}
-              {activePurposes.length > 0 && (
-                <div>
-                  <p className="mb-2 section-label">Purpose</p>
-                  <div className="flex flex-wrap gap-2">
-                    {activePurposes.map((purpose) => (
-                      <button
-                        key={purpose.id}
-                        type="button"
-                        onClick={() =>
-                          setSelectedPurposeIds((current) =>
-                            current.includes(purpose.id)
-                              ? current.filter((v) => v !== purpose.id)
-                              : [...current, purpose.id]
-                          )
-                        }
-                        className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                          selectedPurposeIds.includes(purpose.id)
-                            ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
-                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
-                        }`}
+            {/* Tags — searchable multi-select */}
+            <div>
+              <p className="mb-2 section-label">Tags</p>
+
+              {selectedTagIds.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {selectedTagIds.map((tid) => {
+                    const tag = allTags.find((t) => t.id === tid);
+                    if (!tag) return null;
+                    return (
+                      <span
+                        key={tid}
+                        className="inline-flex items-center gap-1 rounded-full bg-slate-950 px-2.5 py-1 text-xs font-medium text-white dark:bg-white dark:text-slate-900"
                       >
-                        {purpose.name}
-                      </button>
-                    ))}
-                  </div>
+                        {tag.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTagIds((c) => c.filter((id) => id !== tid))}
+                          aria-label={`Remove ${tag.name} filter`}
+                          className="ml-0.5 rounded-full opacity-70 hover:opacity-100"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               )}
 
-              {/* Tags — searchable multi-select (OR logic) */}
-              <div>
-                <p className="mb-2 section-label">Tags</p>
+              <input
+                type="text"
+                value={tagFilterSearch}
+                onChange={(e) => setTagFilterSearch(e.target.value)}
+                onFocus={() => setTagFilterFocused(true)}
+                onBlur={() => setTimeout(() => setTagFilterFocused(false), 150)}
+                placeholder="Search tags..."
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+              />
 
-                {/* Selected tag chips */}
-                {selectedTagIds.length > 0 && (
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    {selectedTagIds.map((tid) => {
-                      const tag = allTags.find((t) => t.id === tid);
-                      if (!tag) return null;
-                      return (
-                        <span
-                          key={tid}
-                          className="inline-flex items-center gap-1 rounded-full bg-slate-950 px-2.5 py-1 text-xs font-medium text-white dark:bg-white dark:text-slate-900"
-                        >
-                          {tag.name}
-                          <button
-                            type="button"
-                            onClick={() => setSelectedTagIds((c) => c.filter((id) => id !== tid))}
-                            aria-label={`Remove ${tag.name} filter`}
-                            className="ml-0.5 rounded-full opacity-70 hover:opacity-100"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                            </svg>
-                          </button>
-                        </span>
-                      );
-                    })}
+              {(tagFilterFocused || tagFilterSearch.length > 0) && (
+                filteredTagOptions.length > 0 ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {filteredTagOptions.map((tag) => (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        onMouseDown={() => {
+                          setSelectedTagIds((c) => [...c, tag.id]);
+                          setTagFilterSearch('');
+                        }}
+                        className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500"
+                      >
+                        + {tag.name}
+                      </button>
+                    ))}
                   </div>
-                )}
-
-                {/* Search input */}
-                <input
-                  type="text"
-                  value={tagFilterSearch}
-                  onChange={(e) => setTagFilterSearch(e.target.value)}
-                  onFocus={() => setTagFilterFocused(true)}
-                  onBlur={() => setTimeout(() => setTagFilterFocused(false), 150)}
-                  placeholder="Search tags..."
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-                />
-
-                {/* Tag options — shown when focused or typing */}
-                {(tagFilterFocused || tagFilterSearch.length > 0) && (
-                  filteredTagOptions.length > 0 ? (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {filteredTagOptions.map((tag) => (
-                        <button
-                          key={tag.id}
-                          type="button"
-                          onMouseDown={() => {
-                            setSelectedTagIds((c) => [...c, tag.id]);
-                            setTagFilterSearch('');
-                          }}
-                          className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500"
-                        >
-                          + {tag.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                      {tagFilterSearch.length > 0 ? 'No tags match.' : 'All tags selected.'}
-                    </p>
-                  )
-                )}
-              </div>
+                ) : (
+                  <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                    {tagFilterSearch.length > 0 ? 'No tags match.' : 'All tags selected.'}
+                  </p>
+                )
+              )}
             </div>
-          )}
+          </MoreFiltersToggle>
         </div>
       </div>
 
