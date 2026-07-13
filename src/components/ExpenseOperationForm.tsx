@@ -5,6 +5,7 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createExpenseOperation, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase';
 import type { InventorySearchItem } from '@/types';
+import { todayLocalDate } from '@/lib/dateUtils';
 
 export default function ExpenseOperationForm() {
     const router = useRouter();
@@ -74,10 +75,16 @@ export default function ExpenseOperationForm() {
             return;
         }
 
+        const today = todayLocalDate();
+        if (expenseDate && expenseDate > today) {
+            setError('Date cannot be in the future.');
+            return;
+        }
+
         setSaving(true);
 
         const parsedAmount = Number(amount)
-        const expenseDateValue = expenseDate || new Date().toISOString().slice(0, 10)
+        const expenseDateValue = expenseDate || today
 
         const result = await createExpenseOperation({
             expenseDate: expenseDateValue,
@@ -117,6 +124,7 @@ export default function ExpenseOperationForm() {
                         <input
                             type="date"
                             value={expenseDate}
+                            max={todayLocalDate()}
                             onChange={(e) => setExpenseDate(e.target.value)}
                             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                         />

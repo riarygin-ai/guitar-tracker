@@ -39,6 +39,7 @@ import {
   type HistoricalImportInfo,
 } from '@/lib/supabase';
 import { calculateItemProfitMetrics } from '@/lib/profit';
+import { todayLocalDate } from '@/lib/dateUtils';
 
 const SUBTYPE_TO_LEGACY_TYPE: Record<string, ItemType> = {
   'Electric Guitar': 'guitar',
@@ -170,6 +171,7 @@ export default function InventoryForm({
   // Listed / sold dates
   const [listedDate,          setListedDate]          = useState('');
   const [editingListedDate,   setEditingListedDate]   = useState(false);
+  const [acquiredDate,        setAcquiredDate]        = useState<string | null>(null);
   // Edit mode: existing historical import record (read-only display)
   const [existingHistImport, setExistingHistImport] = useState<HistoricalImportInfo | null>(null);
 
@@ -274,6 +276,7 @@ export default function InventoryForm({
       // Metrics
       if (!withValueResult.error && withValueResult.data) {
         setValueIn((withValueResult.data as any).value_in ?? null);
+        setAcquiredDate((withValueResult.data as any).acquired_date ?? null);
       }
       if (!dealItemsResult.error && dealItemsResult.data) {
         const outSum = dealItemsResult.data
@@ -362,6 +365,20 @@ export default function InventoryForm({
       const parsedValueIn = Number(histValueIn);
       if (!histValueIn || isNaN(parsedValueIn) || parsedValueIn <= 0) {
         setError('Value In must be greater than 0 for Historical Import.');
+        return;
+      }
+    }
+
+    // Listed date validation
+    if (listedDate) {
+      const today = todayLocalDate();
+      if (listedDate > today) {
+        setError('Listed date cannot be in the future.');
+        return;
+      }
+      const minListDate = !itemId && historicalImport ? histAcquisitionDate : acquiredDate;
+      if (minListDate && listedDate < minListDate) {
+        setError('Listed date cannot be before acquired date.');
         return;
       }
     }
@@ -456,7 +473,7 @@ export default function InventoryForm({
       purpose_id: purposeId,
       estimated_sold_value: estimatedSoldValue ? Number(estimatedSoldValue) : null,
       notes: notes.trim() || null,
-      date_listed: listedDate || (existingItem?.status === 'listed' ? new Date().toISOString().split('T')[0] : null),
+      date_listed: listedDate || (existingItem?.status === 'listed' ? todayLocalDate() : null),
       sold_date: existingItem?.sold_date ?? null,
       status: listedDate && (existingItem?.status === 'new' || existingItem?.status === 'owned')
         ? 'listed'
@@ -777,6 +794,8 @@ export default function InventoryForm({
             <input
               type="date"
               value={listedDate}
+              min={(!itemId && historicalImport ? histAcquisitionDate : acquiredDate) || undefined}
+              max={todayLocalDate()}
               onChange={(e) => setListedDate(e.target.value)}
               disabled={disabled}
               autoFocus
@@ -794,7 +813,7 @@ export default function InventoryForm({
         ) : (
           <button
             type="button"
-            onClick={() => setListedDate(new Date().toISOString().split('T')[0])}
+            onClick={() => setListedDate(todayLocalDate())}
             disabled={disabled}
             className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
           >

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import InventoryForm from '@/components/InventoryForm'
 import { createTradeOperation, getBrands, getDealChannels, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase'
 import type { Brand, DealChannel, InventoryItem } from '@/types'
+import { todayLocalDate } from '@/lib/dateUtils'
 
 type TradeItem = {
     item: InventoryItem
@@ -243,9 +244,15 @@ export default function TradeOperationForm() {
             return
         }
 
+        const today = todayLocalDate()
+        if (dealDate && dealDate > today) {
+            setError('Date cannot be in the future.')
+            return
+        }
+
         setSaving(true)
 
-        const dealDateValue = dealDate || new Date().toISOString().slice(0, 10)
+        const dealDateValue = dealDate || today
 
         const describeItem = (item: InventoryItem) => {
             const brand = brandMap[item.brand_id]
@@ -774,6 +781,7 @@ export default function TradeOperationForm() {
                             <input
                                 type="date"
                                 value={dealDate}
+                                max={todayLocalDate()}
                                 onChange={(event) => setDealDate(event.target.value)}
                                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                             />

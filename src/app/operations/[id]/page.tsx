@@ -24,6 +24,7 @@ import {
 } from '@/lib/supabase';
 import InventoryForm from '@/components/InventoryForm';
 import type { Brand, Deal, DealChannel, DealItem, InventoryItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
+import { todayLocalDate } from '@/lib/dateUtils';
 
 function ItemCardLink({ href, clickable, children }: { href: string; clickable: boolean; children: React.ReactNode }) {
   const base = 'rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700';
@@ -210,6 +211,24 @@ export default function OperationDetailPage() {
 
   const handleSave = async () => {
     if (!deal || saving) return;
+
+    const today = todayLocalDate();
+    if (editedDeal?.deal_date && editedDeal.deal_date > today) {
+      setError('Date cannot be in the future.');
+      return;
+    }
+    for (const edits of Object.values(editedCashFlows)) {
+      if (edits.transaction_date && edits.transaction_date > today) {
+        setError('Date cannot be in the future.');
+        return;
+      }
+    }
+    for (const edits of Object.values(editedExpenses)) {
+      if (edits.expense_date && edits.expense_date > today) {
+        setError('Date cannot be in the future.');
+        return;
+      }
+    }
 
     setSaving(true);
     setError(null);
@@ -523,6 +542,7 @@ export default function OperationDetailPage() {
                   <input
                     type="date"
                     value={editedDeal?.deal_date ?? deal.deal_date}
+                    max={todayLocalDate()}
                     onChange={(e) => setEditedDeal({ ...editedDeal, deal_date: e.target.value })}
                     className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                   />
@@ -1108,6 +1128,7 @@ export default function OperationDetailPage() {
                             <input
                               type="date"
                               value={editedCashFlows[cf.id]?.transaction_date ?? cf.transaction_date}
+                              max={todayLocalDate()}
                               onChange={(e) =>
                                 setEditedCashFlows({
                                   ...editedCashFlows,
@@ -1219,6 +1240,7 @@ export default function OperationDetailPage() {
                               <input
                                 type="date"
                                 value={editedExpenses[exp.id]?.expense_date ?? exp.expense_date}
+                                max={todayLocalDate()}
                                 onChange={(e) =>
                                   setEditedExpenses({
                                     ...editedExpenses,

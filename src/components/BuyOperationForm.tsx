@@ -12,6 +12,7 @@ import {
   getDisplayPhotosForItems,
 } from '@/lib/supabase';
 import type { Brand, DealChannel, InventoryItem } from '@/types';
+import { todayLocalDate } from '@/lib/dateUtils';
 
 interface LineItem {
   item: InventoryItem;
@@ -151,7 +152,11 @@ export default function BuyOperationForm() {
       }
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayLocalDate();
+    if (dealDate && dealDate > today) {
+      setError('Date cannot be in the future.');
+      return;
+    }
     const dealDateValue = dealDate || today;
     const descParts = items.map((li) =>
       [brandMap[li.item.brand_id], li.item.model].filter(Boolean).join(' ')
@@ -416,6 +421,7 @@ export default function BuyOperationForm() {
               <input
                 type="date"
                 value={dealDate}
+                max={todayLocalDate()}
                 onChange={(e) => setDealDate(e.target.value)}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
               />
