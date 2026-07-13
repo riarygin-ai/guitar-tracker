@@ -108,7 +108,7 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
             </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
+          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
             <span>
               <span className="text-slate-500 dark:text-slate-400">Value In:</span>{' '}
               {item.value_in != null ? `$${item.value_in.toFixed(0)}` : '—'}
@@ -124,9 +124,6 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
                 {item.value_out != null ? `$${item.value_out.toFixed(0)}` : '—'}
               </span>
             )}
-          </div>
-
-          <div className="mt-1 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
             {isOwned ? (
               <>
                 <span>
