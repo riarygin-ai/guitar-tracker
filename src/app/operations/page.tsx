@@ -636,6 +636,10 @@ export default function OperationsPage() {
                 );
                 const cash = getCashForDeal(deal);
                 const profit = getProfitForDeal(deal);
+                const showCash = !(deal.deal_type === 'trade' && cash === 0);
+                const cashLabel = deal.deal_type === 'sale' || (deal.deal_type === 'trade' && cash > 0)
+                  ? 'Cash Received'
+                  : 'Cash Paid';
                 const formattedDate = new Date(deal.deal_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
                 // For trades: show 1 photo per side (most valuable), +N for the rest
@@ -753,7 +757,9 @@ export default function OperationsPage() {
                         <div className="hidden md:block">
                           <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
                             <span><span className="text-slate-500 dark:text-slate-400">Date </span>{formattedDate}</span>
-                            <span><span className="text-slate-500 dark:text-slate-400">{deal.deal_type === 'sale' ? 'Cash Received' : deal.deal_type === 'trade' ? 'Cash Impact' : 'Cash Paid'} </span><span className={getCashColor(cash)}>{fmtCompact(cash)}</span></span>
+                            {showCash && (
+                              <span><span className="text-slate-500 dark:text-slate-400">{cashLabel} </span><span className={getCashColor(cash)}>{fmtCompact(cash)}</span></span>
+                            )}
                           </div>
                           {profit !== null && (
                             <div className="mt-1 text-sm text-slate-700 dark:text-slate-200">
@@ -765,11 +771,15 @@ export default function OperationsPage() {
                         <div className="mt-2 md:hidden">
                           <p className="text-sm text-slate-700 dark:text-slate-200">{formattedDate}</p>
                           <p className="mt-0.5 text-sm text-slate-700 dark:text-slate-200">
-                            <span className="text-slate-500 dark:text-slate-400">{deal.deal_type === 'sale' ? 'Cash Received' : deal.deal_type === 'trade' ? 'Cash Impact' : 'Cash Paid'} </span>
-                            <span className={getCashColor(cash)}>{fmtCompact(cash)}</span>
+                            {showCash && (
+                              <>
+                                <span className="text-slate-500 dark:text-slate-400">{cashLabel} </span>
+                                <span className={getCashColor(cash)}>{fmtCompact(cash)}</span>
+                              </>
+                            )}
                             {profit !== null && (
                               <>
-                                <span className="mx-1.5 text-slate-300 dark:text-slate-600">•</span>
+                                {showCash && <span className="mx-1.5 text-slate-300 dark:text-slate-600">•</span>}
                                 <span className="text-slate-500 dark:text-slate-400">Profit </span>
                                 <span className={getCashColor(profit)}>{fmtCompact(profit)}</span>
                               </>
