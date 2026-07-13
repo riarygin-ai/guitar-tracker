@@ -608,13 +608,13 @@ export async function getAiPrompts() {
     .from('ai_prompts')
     .select('*')
     .order('category', { ascending: true })
-    .order('listing_type', { ascending: true });
+    .order('deal_channel_id', { ascending: true });
 }
 
 export async function upsertAiPrompt(data: UpsertAiPrompt) {
   return supabase
     .from('ai_prompts')
-    .upsert(data, { onConflict: 'user_id,category,listing_type' })
+    .upsert(data, { onConflict: 'user_id,category,deal_channel_id' })
     .select()
     .single<AiPrompt>();
 }
@@ -638,12 +638,19 @@ export async function getItemListings(itemId: number) {
 }
 
 export async function upsertItemListing(data: UpsertItemListing) {
+  const { id, ...rest } = data;
+  const payload = { ...rest, updated_at: new Date().toISOString() };
+  if (id != null) {
+    return supabase
+      .from('item_listings')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single<ItemListing>();
+  }
   return supabase
     .from('item_listings')
-    .upsert(
-      { ...data, updated_at: new Date().toISOString() },
-      { onConflict: 'inventory_item_id,listing_type' },
-    )
+    .insert(payload)
     .select()
     .single<ItemListing>();
 }

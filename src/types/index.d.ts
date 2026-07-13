@@ -157,14 +157,13 @@ export interface InventoryItemPhoto {
   created_at: string;
 }
 
-export type ListingType = 'reverb' | 'marketplace' | 'kijiji';
 export type ListingStatus = 'draft' | 'published' | 'archived';
 
 export interface ItemListing {
   id: number;
   user_id: number;
   inventory_item_id: number;
-  listing_type: ListingType;
+  deal_channel_id: number;
   title: string | null;
   description: string;
   asking_price: number | null;
@@ -179,42 +178,48 @@ export interface ItemListing {
   updated_at: string;
 }
 
-export type UpsertItemListing = Pick<
-  ItemListing,
-  | 'inventory_item_id'
-  | 'listing_type'
-  | 'description'
-  | 'status'
-  | 'is_ai_generated'
-> &
-  Partial<Pick<ItemListing, 'title' | 'asking_price' | 'trade_value' | 'currency' | 'ai_model' | 'ai_prompt_id' | 'prompt_snapshot'>>;
+export type UpsertItemListing = {
+  id?: number;
+  inventory_item_id: number;
+  deal_channel_id: number;
+  description: string;
+  status: ListingStatus;
+  is_ai_generated: boolean;
+  title?: string;
+  asking_price?: number;
+  trade_value?: number;
+  currency?: string;
+  ai_model?: string;
+  ai_prompt_id?: number;
+  prompt_snapshot?: string;
+};
 
 export interface AiPrompt {
-  id:           number;
-  user_id:      number;
-  category:     string;      // 'Guitar' | 'Amp' | 'Pedal' | 'Cabinet' | 'Other'
-  listing_type: string;      // 'reverb' | 'marketplace' | 'kijiji'
-  prompt_key:   string | null; // legacy — nullable after migration
-  name:         string;
-  description:  string | null;
-  prompt_text:  string;
-  model:        string | null;
-  temperature:  number | null;
-  is_active:    boolean;
-  created_at:   string;
-  updated_at:   string;
+  id:              number;
+  user_id:         number;
+  category:        string;      // 'Guitar' | 'Amp' | 'Pedal' | 'Cabinet' | 'Other'
+  deal_channel_id: number;
+  prompt_key:      string | null; // legacy — nullable after migration
+  name:            string;
+  description:     string | null;
+  prompt_text:     string;
+  model:           string | null;
+  temperature:     number | null;
+  is_active:       boolean;
+  created_at:      string;
+  updated_at:      string;
 }
 
 export type UpsertAiPrompt = {
-  user_id:      number;
-  category:     string;
-  listing_type: string;
-  name:         string;
-  description:  string | null;
-  prompt_text:  string;
-  model:        string | null;
-  temperature:  number | null;
-  is_active:    boolean;
+  user_id:         number;
+  category:        string;
+  deal_channel_id: number;
+  name:            string;
+  description:     string | null;
+  prompt_text:     string;
+  model:           string | null;
+  temperature:     number | null;
+  is_active:       boolean;
 };
 
 export type UpdateAiPrompt = Partial<Pick<

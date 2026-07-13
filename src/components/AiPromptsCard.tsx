@@ -1,14 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getAiPrompts, getOrCreateAppUser, upsertAiPrompt } from '@/lib/supabase';
-import type { AiPrompt } from '@/types';
+import { getAiPrompts, getDealChannels, getOrCreateAppUser, upsertAiPrompt } from '@/lib/supabase';
+import type { AiPrompt, DealChannel } from '@/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type CategoryId   = 'Guitar' | 'Amp' | 'Pedal' | 'Cabinet' | 'Other';
-type ListingTabId = 'reverb' | 'marketplace' | 'kijiji';
-type ComboKey     = string; // `${CategoryId}:${ListingTabId}`
+type CategoryId = 'Guitar' | 'Amp' | 'Pedal' | 'Cabinet' | 'Other';
+type ComboKey   = string; // `${CategoryId}:${channelId}`
 
 interface FormValues {
   name:        string;
@@ -39,12 +38,6 @@ const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: 'Other',   label: 'Other'   },
 ];
 
-const LISTING_TABS: { id: ListingTabId; label: string }[] = [
-  { id: 'reverb',      label: 'Reverb'      },
-  { id: 'marketplace', label: 'Marketplace' },
-  { id: 'kijiji',      label: 'Kijiji'      },
-];
-
 const EMPTY_FORM: FormValues = {
   name:        '',
   description: '',
@@ -56,13 +49,6 @@ const EMPTY_FORM: FormValues = {
 
 function makeEmpty(): TabState {
   return { promptId: null, current: { ...EMPTY_FORM }, saved: null, isDirty: false, savedAt: null, saving: false, errorMsg: '' };
-}
-
-function initTabs(): Record<ComboKey, TabState> {
-  const entries = CATEGORIES.flatMap((c) =>
-    LISTING_TABS.map((lt) => [`${c.id}:${lt.id}`, makeEmpty()] as const)
-  );
-  return Object.fromEntries(entries);
 }
 
 function promptToForm(p: AiPrompt): FormValues {
@@ -89,17 +75,18 @@ function formatDate(iso: string): string {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function AiPromptsCard() {
-  const [activeCategory, setActiveCategory] = useState<CategoryId>('Guitar');
-  const [activeTab,      setActiveTab]      = useState<ListingTabId>('reverb');
-  const [loading,        setLoading]        = useState(true);
-  const [loadError,      setLoadError]      = useState<string | null>(null);
-  const [userId,         setUserId]         = useState<number | null>(null);
-  const [tabs,           setTabs]           = useState<Record<ComboKey, TabState>>(initTabs);
+  const [activeCategory,  setActiveCategory]  = useState<CategoryId>('Guitar');
+  const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
+  const [listingChannels, setListingChannels] = useState<DealChannel[]>([]);
+  const [loading,         setLoading]         = useState(true);
+  const [loadError,       setLoadError]       = useState<string | null>(null);
+  const [userId,          setUserId]          = useState<number | null>(null);
+  const [tabs,            setTabs]            = useState<Record<ComboKey, TabState>>({});
 
-  const comboKey: ComboKey = `${activeCategory}:${activeTab}`;
+  const comboKey: ComboKey = `${activeCategory}:${activeChannelId}`;
   const tab = tabs[comboKey];
 
-  // ── Load prompts on mount ──────────────────────────────────────────────────
+  // ── Load channels + prompts on mount ──────────────────────────────────────
 
   useEffect(() => {
     let cancelled = false;
@@ -115,27 +102,47 @@ export default function AiPromptsCard() {
       }
       setUserId(user.id);
 
-      const { data, error } = await getAiPrompts();
+      const [channelRes, promptRes] = await Promise.all([
+        getDealChannels(),
+        getAiPrompts(),
+      ]);
       if (cancelled) return;
 
-      if (error || !data) {
+      if (channelRes.error) {
+        setLoadError('Could not load listing platforms. Please refresh the page.');
+        setLoading(false);
+        return;
+      }
+      if (promptRes.error) {
         setLoadError('Could not load prompts. Please refresh the page.');
         setLoading(false);
         return;
       }
 
-      setTabs((prev) => {
-        const next = { ...prev };
-        for (const row of data as AiPrompt[]) {
-          const key: ComboKey = `${row.category}:${row.listing_type}`;
-          if (key in next) {
-            const form = promptToForm(row);
-            next[key] = { ...next[key], promptId: row.id, current: form, saved: form, isDirty: false, savedAt: row.updated_at };
-          }
-        }
-        return next;
-      });
+      const platforms = ((channelRes.data ?? []) as DealChannel[]).filter(
+        (c) => c.is_listing_platform && c.is_active,
+      );
+      setListingChannels(platforms);
+      if (platforms.length > 0) setActiveChannelId(platforms[0].id);
 
+      // Build tab map for all category × platform combinations
+      const initialTabs: Record<ComboKey, TabState> = {};
+      for (const cat of CATEGORIES) {
+        for (const ch of platforms) {
+          initialTabs[`${cat.id}:${ch.id}`] = makeEmpty();
+        }
+      }
+
+      // Populate from loaded prompts
+      for (const row of (promptRes.data ?? []) as AiPrompt[]) {
+        const key: ComboKey = `${row.category}:${row.deal_channel_id}`;
+        if (key in initialTabs) {
+          const form = promptToForm(row);
+          initialTabs[key] = { ...initialTabs[key], promptId: row.id, current: form, saved: form, isDirty: false, savedAt: row.updated_at };
+        }
+      }
+
+      setTabs(initialTabs);
       setLoading(false);
     }
 
@@ -157,13 +164,13 @@ export default function AiPromptsCard() {
   }
 
   function categoryHasDirty(catId: CategoryId): boolean {
-    return LISTING_TABS.some((lt) => tabs[`${catId}:${lt.id}`]?.isDirty);
+    return listingChannels.some((ch) => tabs[`${catId}:${ch.id}`]?.isDirty);
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
   async function handleSave() {
-    if (!userId) return;
+    if (!userId || activeChannelId === null || !tab) return;
 
     if (!tab.current.promptText.trim()) {
       updateTabMeta(comboKey, { errorMsg: 'Prompt text cannot be empty.' });
@@ -183,15 +190,15 @@ export default function AiPromptsCard() {
     updateTabMeta(comboKey, { saving: true, errorMsg: '' });
 
     const { data, error } = await upsertAiPrompt({
-      user_id:      userId,
-      category:     activeCategory,
-      listing_type: activeTab,
-      name:         tab.current.name.trim(),
-      description:  tab.current.description.trim() || null,
-      prompt_text:  tab.current.promptText,
-      model:        tab.current.model.trim() || null,
-      temperature:  tempNum,
-      is_active:    tab.current.isActive,
+      user_id:         userId,
+      category:        activeCategory,
+      deal_channel_id: activeChannelId,
+      name:            tab.current.name.trim(),
+      description:     tab.current.description.trim() || null,
+      prompt_text:     tab.current.promptText,
+      model:           tab.current.model.trim() || null,
+      temperature:     tempNum,
+      is_active:       tab.current.isActive,
     });
 
     if (error) {
@@ -209,7 +216,7 @@ export default function AiPromptsCard() {
   }
 
   function handleReset() {
-    if (!tab.saved) return;
+    if (!tab?.saved) return;
     updateTabMeta(comboKey, { current: { ...tab.saved }, isDirty: false, errorMsg: '' });
   }
 
@@ -218,6 +225,8 @@ export default function AiPromptsCard() {
   const inputClass =
     'h-9 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700/50 dark:text-slate-100 dark:focus:bg-slate-700 dark:focus:ring-slate-600';
   const labelClass = 'block text-xs font-medium text-slate-600 dark:text-slate-400';
+
+  const activeChannelName = listingChannels.find((c) => c.id === activeChannelId)?.name ?? '';
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -276,32 +285,34 @@ export default function AiPromptsCard() {
         ))}
       </div>
 
-      {/* Listing type tabs */}
-      <div
-        className="mt-2 flex gap-1 rounded-xl bg-slate-50 p-1 dark:bg-slate-700/30"
-        role="tablist"
-        aria-label="Listing platform"
-      >
-        {LISTING_TABS.map((lt) => (
-          <button
-            key={lt.id}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === lt.id}
-            onClick={() => setActiveTab(lt.id)}
-            className={`flex-1 rounded-lg py-1 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
-              activeTab === lt.id
-                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-white'
-                : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
-            }`}
-          >
-            {lt.label}
-            {tabs[`${activeCategory}:${lt.id}`]?.isDirty && activeTab !== lt.id && (
-              <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle dark:bg-amber-500" />
-            )}
-          </button>
-        ))}
-      </div>
+      {/* Listing platform tabs (dynamic) */}
+      {!loading && listingChannels.length > 0 && (
+        <div
+          className="mt-2 flex gap-1 rounded-xl bg-slate-50 p-1 dark:bg-slate-700/30"
+          role="tablist"
+          aria-label="Listing platform"
+        >
+          {listingChannels.map((ch) => (
+            <button
+              key={ch.id}
+              type="button"
+              role="tab"
+              aria-selected={activeChannelId === ch.id}
+              onClick={() => setActiveChannelId(ch.id)}
+              className={`flex-1 rounded-lg py-1 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
+                activeChannelId === ch.id
+                  ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-white'
+                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+              }`}
+            >
+              {ch.name}
+              {tabs[`${activeCategory}:${ch.id}`]?.isDirty && activeChannelId !== ch.id && (
+                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle dark:bg-amber-500" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Body */}
       {loading ? (
@@ -313,7 +324,11 @@ export default function AiPromptsCard() {
         <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-300">
           {loadError}
         </div>
-      ) : (
+      ) : listingChannels.length === 0 ? (
+        <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-300">
+          No active listing platforms configured. Add listing platforms in the Deal Channels section.
+        </div>
+      ) : !tab ? null : (
         <div className="mt-5 space-y-5">
 
           {/* Row 1: Name + Description */}
@@ -326,7 +341,7 @@ export default function AiPromptsCard() {
                 onChange={(e) => updateCurrent(comboKey, { name: e.target.value })}
                 disabled={tab.saving}
                 className={inputClass}
-                placeholder={`e.g. ${activeCategory} – ${LISTING_TABS.find(l => l.id === activeTab)?.label} Listing`}
+                placeholder={`e.g. ${activeCategory} – ${activeChannelName} Listing`}
               />
             </div>
             <div className="space-y-1.5">
@@ -399,12 +414,12 @@ export default function AiPromptsCard() {
               value={tab.current.promptText}
               onChange={(e) => updateCurrent(comboKey, { promptText: e.target.value })}
               disabled={tab.saving}
-              placeholder={`Enter instructions for ${activeCategory} listings on ${LISTING_TABS.find(l => l.id === activeTab)?.label}…`}
+              placeholder={`Enter instructions for ${activeCategory} listings on ${activeChannelName}…`}
               className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 font-mono text-sm leading-relaxed text-slate-900 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700/50 dark:text-slate-100 dark:focus:bg-slate-700 dark:focus:ring-slate-600"
               style={{ minHeight: '280px' }}
             />
             <p className="text-xs text-slate-400 dark:text-slate-500">
-              This replaces the per-type instruction in the AI message. The global system prompt (dealer tone, honesty rules) stays fixed.
+              This replaces the per-platform instruction in the AI message. The global system prompt (dealer tone, honesty rules) stays fixed.
               Lookup order: <span className="font-medium">{activeCategory}</span> → Guitar → Other → built-in fallback.
             </p>
           </div>

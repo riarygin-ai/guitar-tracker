@@ -7,13 +7,10 @@ import {
   MODEL_ID,
   MAX_TOKENS,
   TEMPERATURE,
-  type ListingType,
 } from '@/lib/openai';
 
 const SUPABASE_URL     = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
-
-const VALID_LISTING_TYPES: ListingType[] = ['reverb', 'marketplace', 'kijiji'];
 
 const SUBTYPE_TO_CATEGORY: Record<string, string> = {
   'Electric Guitar':  'Guitar',
@@ -51,23 +48,20 @@ function detectCategory(subtypeName: string | null, itemType: string): string {
 
 export async function POST(req: NextRequest) {
   // ── Parse body ───────────────────────────────────────────────────────────────
-  let body: { inventoryItemId?: unknown; listingType?: unknown; currentDraft?: unknown };
+  let body: { inventoryItemId?: unknown; dealChannelId?: unknown; currentDraft?: unknown };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { inventoryItemId, listingType, currentDraft } = body;
+  const { inventoryItemId, dealChannelId, currentDraft } = body;
 
   if (typeof inventoryItemId !== 'number' || !Number.isInteger(inventoryItemId) || inventoryItemId < 1) {
     return NextResponse.json({ error: 'inventoryItemId must be a positive integer' }, { status: 400 });
   }
-  if (!VALID_LISTING_TYPES.includes(listingType as ListingType)) {
-    return NextResponse.json(
-      { error: `listingType must be one of: ${VALID_LISTING_TYPES.join(', ')}` },
-      { status: 400 },
-    );
+  if (typeof dealChannelId !== 'number' || !Number.isInteger(dealChannelId) || dealChannelId < 1) {
+    return NextResponse.json({ error: 'dealChannelId must be a positive integer' }, { status: 400 });
   }
 
   // ── Authenticate ─────────────────────────────────────────────────────────────
@@ -98,6 +92,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }
 
+  // ── Look up deal channel ─────────────────────────────────────────────────────
+  const { data: channelRow, error: channelError } = await db
+    .from('deal_channels')
+    .select('id, name, is_listing_platform, is_active')
+    .eq('id', dealChannelId)
+    .single();
+
+  if (channelError || !channelRow) {
+    return NextResponse.json({ error: 'Deal channel not found' }, { status: 404 });
+  }
+
+  const channelName = (channelRow as any).name as string;
+
   // ── Fetch inventory item ──────────────────────────────────────────────────────
   const { data: item, error: itemError } = await db
     .from('inventory_items')
@@ -119,7 +126,7 @@ export async function POST(req: NextRequest) {
 
   let aiPromptId:   number | null = null;
   let promptName:   string | null = null;
-  let resolvedInstruction         = LISTING_INSTRUCTIONS[listingType as ListingType];
+  let resolvedInstruction         = LISTING_INSTRUCTIONS[channelName.toLowerCase()] ?? Object.values(LISTING_INSTRUCTIONS)[0];
   let resolvedModel               = MODEL_ID;
   let resolvedTemperature         = TEMPERATURE;
   let resolvedCategory            = category;
@@ -128,9 +135,9 @@ export async function POST(req: NextRequest) {
     const { data: promptRow } = await db
       .from('ai_prompts')
       .select('id, name, prompt_text, model, temperature, is_active')
-      .eq('category',     cat)
-      .eq('listing_type', listingType as string)
-      .eq('is_active',    true)
+      .eq('category',        cat)
+      .eq('deal_channel_id', dealChannelId)
+      .eq('is_active',       true)
       .maybeSingle();
 
     if (promptRow?.prompt_text?.trim()) {
@@ -156,8 +163,7 @@ export async function POST(req: NextRequest) {
       .limit(4);
 
     if (photos?.length) {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-      const storageBase = `${supabaseUrl}/storage/v1/object/public/inventory-photos`;
+      const storageBase = `${SUPABASE_URL}/storage/v1/object/public/inventory-photos`;
       photoUrls = (photos as { storage_path: string }[]).map(
         (p) => `${storageBase}/${p.storage_path}`,
       );
@@ -205,7 +211,7 @@ export async function POST(req: NextRequest) {
       ]
     : textContent;
 
-  const finalUserMessage   = textContent;
+  const finalUserMessage    = textContent;
   const fullMessagesPayload = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user',   content: userContentForDebug },
@@ -215,7 +221,8 @@ export async function POST(req: NextRequest) {
     model:               resolvedModel,
     temperature:         resolvedTemperature,
     maxTokens:           MAX_TOKENS,
-    listingType:         listingType as string,
+    channelName,
+    channelId:           dealChannelId,
     category:            resolvedCategory,
     detectedCategory:    category,
     aiPromptId,

@@ -12,8 +12,6 @@ export const TEMPERATURE = 0.65;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type ListingType = 'reverb' | 'marketplace' | 'kijiji';
-
 // When an active ai_prompts row exists, the API route passes this to override
 // the hardcoded defaults. Null/undefined fields fall back to the hardcoded values.
 export interface PromptOverride {
@@ -140,7 +138,9 @@ Photo Analysis (when photos are provided):
 - Use visual observations to confirm or supplement item data, not to contradict it.
 - Do not claim modifications, damage, or accessories that are not clearly visible.`;
 
-export const LISTING_INSTRUCTIONS: Record<ListingType, string> = {
+// Keys are lowercase channel names (e.g. 'reverb', 'marketplace', 'kijiji').
+// Used as fallback when no custom DB prompt exists for a channel.
+export const LISTING_INSTRUCTIONS: Record<string, string> = {
   reverb: `Write a Reverb.com listing body (no title needed).
 Format: 2–3 focused paragraphs.
 Cover: what the instrument is and its condition, any notable details from the seller notes, what is included for shipping/case.
@@ -163,6 +163,8 @@ End: mention asking price naturally if provided, state "firm" or "or best offer"
 Tone: casual, honest, matter-of-fact — like a knowledgeable seller placing a newspaper ad.
 Keep it under 130 words.`,
 };
+
+const DEFAULT_LISTING_INSTRUCTION = LISTING_INSTRUCTIONS['reverb'];
 
 // ── Item context builder ───────────────────────────────────────────────────────
 
@@ -200,17 +202,19 @@ function getClient(): OpenAI {
 
 export async function generateListing(
   item: ListingItem,
-  listingType: ListingType,
+  channelName: string,
   currentDraft?: string,
   promptOverride?: PromptOverride,
   imageUrls?: string[],
 ): Promise<{ text: string; model: string; promptSnapshot: string; visionNotes: string | null }> {
   const client = getClient();
 
-  // Prefer DB-loaded values; fall back to hardcoded constants.
+  // Prefer DB-loaded values; fall back to built-in defaults keyed by lowercase channel name.
   const resolvedModel       = promptOverride?.model?.trim()             || MODEL_ID;
   const resolvedTemperature = promptOverride?.temperature               ?? TEMPERATURE;
-  const resolvedInstruction = promptOverride?.promptText                ?? LISTING_INSTRUCTIONS[listingType];
+  const resolvedInstruction = promptOverride?.promptText
+    ?? LISTING_INSTRUCTIONS[channelName.toLowerCase()]
+    ?? DEFAULT_LISTING_INSTRUCTION;
 
   const textContent = [
     'Item details:',

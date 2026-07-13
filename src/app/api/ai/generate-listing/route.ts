@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { generateListing, type ListingType, type PromptOverride } from '@/lib/openai';
+import { generateListing, type PromptOverride } from '@/lib/openai';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 
-const VALID_LISTING_TYPES: ListingType[] = ['reverb', 'marketplace', 'kijiji'];
-
 // Maps item subtype names → broad prompt category.
-// Guitar family: Electric Guitar, Acoustic Guitar, Bass, Classical Guitar, etc.
 const SUBTYPE_TO_CATEGORY: Record<string, string> = {
   'Electric Guitar':  'Guitar',
   'Acoustic Guitar':  'Guitar',
@@ -19,21 +16,20 @@ const SUBTYPE_TO_CATEGORY: Record<string, string> = {
   'Amp':              'Amp',
   'Cabinet':          'Cabinet',
   'Pedal':            'Pedal',
-  'Processor':        'Pedal',   // multi-effects units → Pedal category
+  'Processor':        'Pedal',
   'Parts':            'Other',
   'Pickups':          'Other',
 };
 
-// Legacy item_type fallback (used when item_subtype_id is null)
 const ITEM_TYPE_TO_CATEGORY: Record<string, string> = {
-  'guitar':         'Guitar',
-  'bass':           'Guitar',
-  'acoustic guitar':'Guitar',
-  'amp':            'Amp',
-  'cab':            'Cabinet',
-  'processor':      'Pedal',
-  'pedal':          'Pedal',
-  'parts':          'Other',
+  'guitar':          'Guitar',
+  'bass':            'Guitar',
+  'acoustic guitar': 'Guitar',
+  'amp':             'Amp',
+  'cab':             'Cabinet',
+  'processor':       'Pedal',
+  'pedal':           'Pedal',
+  'parts':           'Other',
 };
 
 function detectCategory(subtypeName: string | null, itemType: string): string {
@@ -46,23 +42,20 @@ function detectCategory(subtypeName: string | null, itemType: string): string {
 
 export async function POST(req: NextRequest) {
   // ── Parse request body ───────────────────────────────────────────────────────
-  let body: { inventoryItemId?: unknown; listingType?: unknown; currentDraft?: unknown };
+  let body: { inventoryItemId?: unknown; dealChannelId?: unknown; currentDraft?: unknown };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { inventoryItemId, listingType, currentDraft } = body;
+  const { inventoryItemId, dealChannelId, currentDraft } = body;
 
   if (typeof inventoryItemId !== 'number' || !Number.isInteger(inventoryItemId) || inventoryItemId < 1) {
     return NextResponse.json({ error: 'inventoryItemId must be a positive integer' }, { status: 400 });
   }
-  if (!VALID_LISTING_TYPES.includes(listingType as ListingType)) {
-    return NextResponse.json(
-      { error: `listingType must be one of: ${VALID_LISTING_TYPES.join(', ')}` },
-      { status: 400 },
-    );
+  if (typeof dealChannelId !== 'number' || !Number.isInteger(dealChannelId) || dealChannelId < 1) {
+    return NextResponse.json({ error: 'dealChannelId must be a positive integer' }, { status: 400 });
   }
 
   // ── Authenticate via bearer token ────────────────────────────────────────────
@@ -72,7 +65,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing authorization token' }, { status: 401 });
   }
 
-  // Create a scoped Supabase client that carries the user's JWT so RLS applies
   const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false },
@@ -82,6 +74,25 @@ export async function POST(req: NextRequest) {
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // ── Look up deal channel ─────────────────────────────────────────────────────
+  const { data: channelRow, error: channelError } = await db
+    .from('deal_channels')
+    .select('id, name, is_listing_platform, is_active')
+    .eq('id', dealChannelId)
+    .single();
+
+  if (channelError || !channelRow) {
+    return NextResponse.json({ error: 'Deal channel not found' }, { status: 404 });
+  }
+  if (!(channelRow as any).is_listing_platform) {
+    return NextResponse.json({ error: 'Deal channel is not a listing platform' }, { status: 400 });
+  }
+  if (!(channelRow as any).is_active) {
+    return NextResponse.json({ error: 'Deal channel is not active' }, { status: 400 });
+  }
+
+  const channelName = (channelRow as any).name as string;
 
   // ── Fetch inventory item + brand + subtype ───────────────────────────────────
   const { data: item, error: itemError } = await db
@@ -98,10 +109,9 @@ export async function POST(req: NextRequest) {
   const subtypeName = (item.item_subtypes as any)?.name as string | null ?? null;
   const category    = detectCategory(subtypeName, item.item_type);
 
-  // Fallback order: detected category → Guitar → Other
   const candidateCategories: string[] = [category];
-  if (category !== 'Guitar')  candidateCategories.push('Guitar');
-  if (category !== 'Other')   candidateCategories.push('Other');
+  if (category !== 'Guitar') candidateCategories.push('Guitar');
+  if (category !== 'Other')  candidateCategories.push('Other');
 
   // ── Load active prompt (user-scoped via RLS) ─────────────────────────────────
   let promptOverride: PromptOverride | undefined;
@@ -111,9 +121,9 @@ export async function POST(req: NextRequest) {
     const { data: promptRow } = await db
       .from('ai_prompts')
       .select('id, prompt_text, model, temperature, is_active')
-      .eq('category',     cat)
-      .eq('listing_type', listingType as string)
-      .eq('is_active',    true)
+      .eq('category',        cat)
+      .eq('deal_channel_id', dealChannelId)
+      .eq('is_active',       true)
       .maybeSingle();
 
     if (promptRow?.prompt_text?.trim()) {
@@ -127,7 +137,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Load photos for vision (best-effort; fails silently) ────────────────────
+  // ── Load photos for vision (best-effort) ────────────────────────────────────
   let imageUrls: string[] = [];
   try {
     const { data: photos } = await db
@@ -148,7 +158,7 @@ export async function POST(req: NextRequest) {
     // Continue without photos
   }
 
-  // ── Call OpenAI (server-side only) ───────────────────────────────────────────
+  // ── Call OpenAI ──────────────────────────────────────────────────────────────
   try {
     const { text, model, promptSnapshot, visionNotes } = await generateListing(
       {
@@ -165,7 +175,7 @@ export async function POST(req: NextRequest) {
                               : null,
         notes:              item.notes              ?? null,
       },
-      listingType as ListingType,
+      channelName,
       typeof currentDraft === 'string' ? currentDraft : undefined,
       promptOverride,
       imageUrls,
