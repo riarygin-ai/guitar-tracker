@@ -108,47 +108,57 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
             </div>
           </div>
 
-          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
-            <span>
-              <span className="text-slate-500 dark:text-slate-400">Value In:</span>{' '}
-              {item.value_in != null ? `$${item.value_in.toFixed(0)}` : '—'}
-            </span>
+          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 sm:gap-y-1">
+            <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-1">
+              <span className="text-xs text-slate-500 dark:text-slate-400 sm:text-sm">Value In:</span>
+              <span className="text-sm text-slate-700 dark:text-slate-200">
+                {item.value_in != null ? `$${item.value_in.toFixed(0)}` : '—'}
+              </span>
+            </div>
             {isOwned ? (
-              <span>
-                <span className="text-slate-500 dark:text-slate-400">Est. Sold:</span>{' '}
-                ${item.estimated_sold_value?.toFixed(0) ?? '0'}
-              </span>
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-1">
+                <span className="text-xs text-slate-500 dark:text-slate-400 sm:text-sm">Est. Sold:</span>
+                <span className="text-sm text-slate-700 dark:text-slate-200">
+                  ${item.estimated_sold_value?.toFixed(0) ?? '0'}
+                </span>
+              </div>
             ) : (
-              <span>
-                <span className="text-slate-500 dark:text-slate-400">Value Out:</span>{' '}
-                {item.value_out != null ? `$${item.value_out.toFixed(0)}` : '—'}
-              </span>
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-1">
+                <span className="text-xs text-slate-500 dark:text-slate-400 sm:text-sm">Value Out:</span>
+                <span className="text-sm text-slate-700 dark:text-slate-200">
+                  {item.value_out != null ? `$${item.value_out.toFixed(0)}` : '—'}
+                </span>
+              </div>
             )}
             {isOwned ? (
               <>
-                <span>
-                  <span className="text-slate-500 dark:text-slate-400">Est. Profit:</span>{' '}
-                  {potentialReward != null ? `$${potentialReward.toFixed(0)}` : '—'}
-                </span>
-                <span>
-                  <span className="text-slate-500 dark:text-slate-400">Est. ROI:</span>{' '}
-                  <span className={roiColor(potentialROI)}>
+                <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-1">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 sm:text-sm">Est. Profit:</span>
+                  <span className="text-sm text-slate-700 dark:text-slate-200">
+                    {potentialReward != null ? `$${potentialReward.toFixed(0)}` : '—'}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-1">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 sm:text-sm">Est. ROI:</span>
+                  <span className={`text-sm ${roiColor(potentialROI)}`}>
                     {fmtRoi(potentialROI, potentialReward)}
                   </span>
-                </span>
+                </div>
               </>
             ) : (
               <>
-                <span>
-                  <span className="text-slate-500 dark:text-slate-400">Realized Profit:</span>{' '}
-                  {realizedGain != null ? `$${realizedGain.toFixed(0)}` : '—'}
-                </span>
-                <span>
-                  <span className="text-slate-500 dark:text-slate-400">Realized ROI:</span>{' '}
-                  <span className={roiColor(realizedROI)}>
+                <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-1">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 sm:text-sm">Realized Profit:</span>
+                  <span className="text-sm text-slate-700 dark:text-slate-200">
+                    {realizedGain != null ? `$${realizedGain.toFixed(0)}` : '—'}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-1">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 sm:text-sm">Realized ROI:</span>
+                  <span className={`text-sm ${roiColor(realizedROI)}`}>
                     {fmtRoi(realizedROI, realizedGain)}
                   </span>
-                </span>
+                </div>
               </>
             )}
           </div>
