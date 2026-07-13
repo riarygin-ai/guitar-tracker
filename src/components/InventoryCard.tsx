@@ -130,11 +130,11 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
             {isOwned ? (
               <>
                 <span>
-                  <span className="text-slate-500 dark:text-slate-400">Estimated Profit:</span>{' '}
+                  <span className="text-slate-500 dark:text-slate-400">Est. Profit:</span>{' '}
                   {potentialReward != null ? `$${potentialReward.toFixed(0)}` : '—'}
                 </span>
                 <span>
-                  <span className="text-slate-500 dark:text-slate-400">Estimated ROI:</span>{' '}
+                  <span className="text-slate-500 dark:text-slate-400">Est. ROI:</span>{' '}
                   <span className={roiColor(potentialROI)}>
                     {fmtRoi(potentialROI, potentialReward)}
                   </span>

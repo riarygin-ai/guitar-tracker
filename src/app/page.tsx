@@ -524,7 +524,7 @@ export default function HomePage() {
                     <th className="px-4 py-3">{activeGroupLabel}</th>
                     <th className="px-4 py-3 text-right">Count</th>
                     <th className="px-4 py-3 text-right">Cost Basis</th>
-                    <th className="px-4 py-3 text-right">Estimated Value</th>
+                    <th className="px-4 py-3 text-right">Est. Value</th>
                     <th className="px-4 py-3 text-right">Equity</th>
                   </tr>
                 </thead>

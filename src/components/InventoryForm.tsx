@@ -1072,11 +1072,11 @@ export default function InventoryForm({
                                 </div>
                               )}
                               <div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">Estimated Profit</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Est. Profit</p>
                                 <p className={`mt-0.5 text-lg font-semibold ${metricColor(potentialReward)}`}>{fmt(potentialReward)}</p>
                               </div>
                               <div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">Estimated ROI</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Est. ROI</p>
                                 <p className={`mt-0.5 text-lg font-semibold ${metricColor(potentialRoi)}`}>{fmtPct(potentialRoi, potentialReward)}</p>
                               </div>
                               {existingItem.date_listed && (

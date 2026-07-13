@@ -243,7 +243,7 @@ export default function SellOperationForm() {
                     )}
                     {selectedItem.estimated_sold_value != null && (
                       <div>
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Estimated Value</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Est. Value</p>
                         <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">${selectedItem.estimated_sold_value.toFixed(2)}</p>
                       </div>
                     )}

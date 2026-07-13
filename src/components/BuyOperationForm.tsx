@@ -465,7 +465,7 @@ export default function BuyOperationForm() {
                 </p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Estimated ROI</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Est. ROI</p>
                 <p className={`mt-2 text-sm font-semibold ${metricColor(potentialRoi)}`}>
                   {fmtPct(potentialRoi)}
                 </p>

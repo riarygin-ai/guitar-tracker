@@ -906,7 +906,7 @@ export default function OperationDetailPage() {
                                 <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(estimatedSold)}</p>
                               </div>
                               <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Estimated Profit</p>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Est. Profit</p>
                                 <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
                                   {formatCurrency(potentialReward)}
                                 </p>
