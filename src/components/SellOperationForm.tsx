@@ -422,7 +422,7 @@ export default function SellOperationForm() {
                 <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{valueOutNum > 0 ? fmt(valueOutNum) : '—'}</p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Realized Gain</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Realized Profit</p>
                 <p className={`mt-2 text-sm font-semibold ${metricColor(realizedGain)}`}>{fmt(realizedGain)}</p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">

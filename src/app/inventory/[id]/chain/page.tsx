@@ -147,12 +147,12 @@ function DealCard({
               <div className="flex flex-col items-end gap-0.5">
                 {cashPaid > 0 && (
                   <span className="text-xs font-medium text-rose-600 dark:text-rose-400">
-                    −{fmtMoney(cashPaid)} cash
+                    Cash Paid −{fmtMoney(cashPaid)}
                   </span>
                 )}
                 {cashReceived > 0 && (
                   <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                    +{fmtMoney(cashReceived)} cash
+                    Cash Received +{fmtMoney(cashReceived)}
                   </span>
                 )}
               </div>
@@ -339,7 +339,7 @@ function ChainSummary({ steps, mainItemIds, itemMap, finalRunningProfit, totalCh
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
       <div className="mb-4">
         <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Chain Summary</p>
-        <h2 className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">Investment journey</h2>
+        <h2 className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">Deal Chain Summary</h2>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {metrics.map(({ label, value, accent }) => (

@@ -753,7 +753,7 @@ export default function OperationsPage() {
                         <div className="hidden md:block">
                           <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-700 dark:text-slate-200">
                             <span><span className="text-slate-500 dark:text-slate-400">Date </span>{formattedDate}</span>
-                            <span><span className="text-slate-500 dark:text-slate-400">Cash </span><span className={getCashColor(cash)}>{fmtCompact(cash)}</span></span>
+                            <span><span className="text-slate-500 dark:text-slate-400">{deal.deal_type === 'sale' ? 'Cash Received' : deal.deal_type === 'trade' ? 'Cash Impact' : 'Cash Paid'} </span><span className={getCashColor(cash)}>{fmtCompact(cash)}</span></span>
                           </div>
                           {profit !== null && (
                             <div className="mt-1 text-sm text-slate-700 dark:text-slate-200">
@@ -765,7 +765,7 @@ export default function OperationsPage() {
                         <div className="mt-2 md:hidden">
                           <p className="text-sm text-slate-700 dark:text-slate-200">{formattedDate}</p>
                           <p className="mt-0.5 text-sm text-slate-700 dark:text-slate-200">
-                            <span className="text-slate-500 dark:text-slate-400">Cash </span>
+                            <span className="text-slate-500 dark:text-slate-400">{deal.deal_type === 'sale' ? 'Cash Received' : deal.deal_type === 'trade' ? 'Cash Impact' : 'Cash Paid'} </span>
                             <span className={getCashColor(cash)}>{fmtCompact(cash)}</span>
                             {profit !== null && (
                               <>

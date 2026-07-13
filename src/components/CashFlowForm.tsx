@@ -87,7 +87,7 @@ export default function CashFlowForm({ latestBalance, deals, onSaved }: CashFlow
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium text-slate-700">Cash in</label>
+              <label className="block text-sm font-medium text-slate-700">Cash Received</label>
               <input
                 type="number"
                 min="0"
@@ -99,7 +99,7 @@ export default function CashFlowForm({ latestBalance, deals, onSaved }: CashFlow
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700">Cash out</label>
+              <label className="block text-sm font-medium text-slate-700">Cash Paid</label>
               <input
                 type="number"
                 min="0"

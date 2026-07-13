@@ -695,7 +695,7 @@ export default function OperationDetailPage() {
                                 </div>
                               )}
                               <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Realized Gain</p>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Realized Profit</p>
                                 <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
                                   {formatCurrency(realizedGain)}
                                 </p>
@@ -906,7 +906,7 @@ export default function OperationDetailPage() {
                                 <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(estimatedSold)}</p>
                               </div>
                               <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Potential Reward</p>
+                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Estimated Profit</p>
                                 <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
                                   {formatCurrency(potentialReward)}
                                 </p>
@@ -1129,11 +1129,11 @@ export default function OperationDetailPage() {
                           )}
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Cash in</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Cash Received</p>
                           <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(cf.cash_in)}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Cash out</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Cash Paid</p>
                           <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(cf.cash_out)}</p>
                         </div>
                         <div>

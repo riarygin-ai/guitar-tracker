@@ -459,13 +459,13 @@ export default function BuyOperationForm() {
                 </p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Est. Sold</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Est. Value</p>
                 <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">
                   {fmt(totalEstimated)}
                 </p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Potential ROI</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Estimated ROI</p>
                 <p className={`mt-2 text-sm font-semibold ${metricColor(potentialRoi)}`}>
                   {fmtPct(potentialRoi)}
                 </p>

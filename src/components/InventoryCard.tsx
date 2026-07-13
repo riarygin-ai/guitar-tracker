@@ -100,7 +100,7 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
                 onClick={(e) => e.stopPropagation()}
                 className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
               >
-                View Chain
+                View Deal Chain
                 <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
                 </svg>
@@ -130,11 +130,11 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
             {isOwned ? (
               <>
                 <span>
-                  <span className="text-slate-500 dark:text-slate-400">Potential Reward:</span>{' '}
+                  <span className="text-slate-500 dark:text-slate-400">Estimated Profit:</span>{' '}
                   {potentialReward != null ? `$${potentialReward.toFixed(0)}` : '—'}
                 </span>
                 <span>
-                  <span className="text-slate-500 dark:text-slate-400">Potential ROI:</span>{' '}
+                  <span className="text-slate-500 dark:text-slate-400">Estimated ROI:</span>{' '}
                   <span className={roiColor(potentialROI)}>
                     {fmtRoi(potentialROI, potentialReward)}
                   </span>
@@ -143,7 +143,7 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
             ) : (
               <>
                 <span>
-                  <span className="text-slate-500 dark:text-slate-400">Realized Gain:</span>{' '}
+                  <span className="text-slate-500 dark:text-slate-400">Realized Profit:</span>{' '}
                   {realizedGain != null ? `$${realizedGain.toFixed(0)}` : '—'}
                 </span>
                 <span>

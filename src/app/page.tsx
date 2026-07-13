@@ -782,7 +782,7 @@ export default function HomePage() {
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-3 text-sm text-slate-500 dark:text-slate-400">
-                    <span>Cash in: {formatMoney(row.cashReceived)}</span>
+                    <span>Cash Received: {formatMoney(row.cashReceived)}</span>
                     <span>Deals: {row.dealsCount}</span>
                   </div>
                 </button>
@@ -795,7 +795,7 @@ export default function HomePage() {
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-3 text-sm text-slate-500 dark:text-slate-400">
-                  <span>Cash in: {formatMoney(monthlyTotals.cashReceived)}</span>
+                  <span>Cash Received: {formatMoney(monthlyTotals.cashReceived)}</span>
                   <span>Deals: {monthlyTotals.dealsCount}</span>
                 </div>
               </div>

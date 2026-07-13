@@ -229,12 +229,12 @@ export default function TradeOperationForm() {
         const parsedCashIn = Number(cashIn || 0)
 
         if (Number.isNaN(parsedCashOut) || parsedCashOut < 0) {
-            setError('Cash out must be 0 or greater.')
+            setError('Cash Paid must be 0 or greater.')
             return
         }
 
         if (Number.isNaN(parsedCashIn) || parsedCashIn < 0) {
-            setError('Cash in must be 0 or greater.')
+            setError('Cash Received must be 0 or greater.')
             return
         }
 
@@ -243,7 +243,7 @@ export default function TradeOperationForm() {
 
         if (totalGiven !== totalReceived) {
             setError(
-                'Trade must balance: value out + cash out must equal value in + cash in.'
+                'Trade must balance: value out + cash paid must equal value in + cash received.'
             )
             return
         }
@@ -541,7 +541,7 @@ export default function TradeOperationForm() {
                         )}
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Cash out</label>
+                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Cash Paid</label>
                             <input
                                 type="number"
                                 step="0.01"
@@ -756,7 +756,7 @@ export default function TradeOperationForm() {
                         )}
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Cash in</label>
+                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Cash Received</label>
                             <input
                                 type="number"
                                 step="0.01"
