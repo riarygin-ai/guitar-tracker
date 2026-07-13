@@ -13,17 +13,17 @@ import {
   searchInventoryItems,
   getDisplayPhotosForItems,
 } from '@/lib/supabase';
-import type { Brand, DealChannel, InventoryItem } from '@/types';
+import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types';
 import { todayLocalDate } from '@/lib/dateUtils';
 
 export default function SellOperationForm() {
   const router = useRouter();
   const [brands, setBrands] = useState<Brand[]>([]);
   const [channels, setChannels] = useState<DealChannel[]>([]);
-  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<InventorySearchItem | null>(null);
   const [showItemForm, setShowItemForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<InventoryItem[]>([]);
+  const [searchResults, setSearchResults] = useState<InventorySearchItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [dealDate, setDealDate] = useState('');
@@ -113,7 +113,7 @@ export default function SellOperationForm() {
   const handleItemCreated = async (item: InventoryItem) => {
     const brandResult = await getBrands();
     if (!brandResult.error) setBrands(brandResult.data || []);
-    setSelectedItem(item);
+    setSelectedItem(item as unknown as InventorySearchItem);
     setShowItemForm(false);
     setSuccessMessage('New inventory item created and selected.');
     setError(null);
@@ -351,7 +351,7 @@ export default function SellOperationForm() {
                           {item.condition && (
                             <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.condition}</span>
                           )}
-                          <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.item_type}</span>
+                          <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.item_subtype_name ?? ''}</span>
                           <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.status}</span>
                         </div>
                       </div>

@@ -11,11 +11,11 @@ import {
   searchInventoryItems,
   getDisplayPhotosForItems,
 } from '@/lib/supabase';
-import type { Brand, DealChannel, InventoryItem } from '@/types';
+import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types';
 import { todayLocalDate } from '@/lib/dateUtils';
 
 interface LineItem {
-  item: InventoryItem;
+  item: InventorySearchItem;
   cost: number;
 }
 
@@ -26,7 +26,7 @@ export default function BuyOperationForm() {
   const [items, setItems] = useState<LineItem[]>([]);
   const [showNewItemForm, setShowNewItemForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<InventoryItem[]>([]);
+  const [searchResults, setSearchResults] = useState<InventorySearchItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [dealDate, setDealDate] = useState('');
@@ -94,7 +94,7 @@ export default function BuyOperationForm() {
     }, 300);
   };
 
-  const handleSelectItem = (item: InventoryItem) => {
+  const handleSelectItem = (item: InventorySearchItem) => {
     if (items.some((li) => li.item.id === item.id)) return;
     setItems((prev) => [...prev, { item, cost: 0 }]);
     clearSearch();
@@ -115,7 +115,7 @@ export default function BuyOperationForm() {
   const handleItemCreated = async (item: InventoryItem) => {
     const brandResult = await getBrands();
     if (!brandResult.error) setBrands(brandResult.data || []);
-    handleSelectItem(item);
+    handleSelectItem(item as unknown as InventorySearchItem);
     setShowNewItemForm(false);
     setSuccessMessage('New inventory item created and added.');
     setError(null);
@@ -254,7 +254,7 @@ export default function BuyOperationForm() {
                           </span>
                         )}
                         <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                          {li.item.item_type}
+                          {li.item.item_subtype_name ?? ''}
                         </span>
                       </div>
                       {li.item.estimated_sold_value != null && (
@@ -390,7 +390,7 @@ export default function BuyOperationForm() {
                               </span>
                             )}
                             <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                              {res.item_type}
+                              {res.item_subtype_name ?? ''}
                             </span>
                             {alreadyAdded && (
                               <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">

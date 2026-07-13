@@ -14,29 +14,6 @@ import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 const BATCH_SIZE = 30;
 const SESSION_KEY = 'inventory-list-state';
 
-const LEGACY_TYPE_TO_CATEGORY: Record<string, string> = {
-  guitar: 'Guitars',
-  bass: 'Guitars',
-  'acoustic guitar': 'Guitars',
-  amp: 'Amps',
-  cab: 'Amps',
-  processor: 'Amps',
-  pedal: 'Pedals',
-  parts: 'Parts',
-  pickups: 'Parts',
-};
-
-const LEGACY_TYPE_TO_SUBTYPE_NAME: Record<string, string> = {
-  guitar: 'Electric Guitar',
-  bass: 'Bass',
-  'acoustic guitar': 'Acoustic Guitar',
-  amp: 'Amp',
-  cab: 'Cabinet',
-  processor: 'Processor',
-  pedal: 'Pedal',
-  parts: 'Parts',
-  pickups: 'Pickups',
-};
 
 function savedUrlMatchesCurrent(saved: string, current: string): boolean {
   try {
@@ -358,16 +335,8 @@ export default function InventoryPage() {
       const matchesStatus =
         selectedStatuses.length === 0 || selectedStatuses.includes(item.status);
 
-      let itemCategoryName: string;
-      let itemSubtypeName: string;
-      if (item.item_subtype_id != null) {
-        itemSubtypeName = subtypeNameById[item.item_subtype_id] ?? '';
-        itemCategoryName = categoryNameBySubtypeId[item.item_subtype_id] ?? '';
-      } else {
-        const legacy = item.item_type.toLowerCase();
-        itemCategoryName = LEGACY_TYPE_TO_CATEGORY[legacy] ?? '';
-        itemSubtypeName = LEGACY_TYPE_TO_SUBTYPE_NAME[legacy] ?? item.item_type;
-      }
+      const itemSubtypeName = item.item_subtype_id != null ? (subtypeNameById[item.item_subtype_id] ?? '') : '';
+      const itemCategoryName = item.item_subtype_id != null ? (categoryNameBySubtypeId[item.item_subtype_id] ?? '') : '';
 
       const matchesCategory =
         selectedCategoryNames.length === 0 || selectedCategoryNames.includes(itemCategoryName);

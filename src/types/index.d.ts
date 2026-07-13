@@ -1,4 +1,3 @@
-export type ItemType = 'guitar' | 'amp' | 'pedal' | 'cab' | 'parts' | 'bass' | 'processor' | 'acoustic guitar';
 export type Status = 'new' | 'owned' | 'listed' | 'sold' | 'traded';
 
 export interface ItemCategory {
@@ -57,7 +56,6 @@ export interface InventoryItem {
   id: number;
   user_id: number;
   brand_id: number;
-  item_type: ItemType;
   item_subtype_id: number | null;
   model: string;
   serial_number: string | null;
@@ -80,6 +78,7 @@ export type InventoryItemWithValue = InventoryItem & {
   value_out?: number | null;
   acquired_date?: string | null;
   purpose_name?: string | null;
+  item_subtype_name?: string | null;
 };
 
 export interface Deal {
@@ -245,4 +244,5 @@ export type UpdateDeal = Partial<Omit<Deal, 'id' | 'created_at'>> & {
 
 export interface InventorySearchItem extends InventoryItem {
   brand_name: string;
+  item_subtype_name: string | null;
 }

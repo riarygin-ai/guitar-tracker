@@ -5,11 +5,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import InventoryForm from '@/components/InventoryForm'
 import { createTradeOperation, getBrands, getDealChannels, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase'
-import type { Brand, DealChannel, InventoryItem } from '@/types'
+import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types'
 import { todayLocalDate } from '@/lib/dateUtils'
 
 type TradeItem = {
-    item: InventoryItem
+    item: InventorySearchItem
     value: string
 }
 
@@ -25,14 +25,14 @@ export default function TradeOperationForm() {
     const [showIncomingForm, setShowIncomingForm] = useState(false)
 
     const [incomingSearchQuery, setIncomingSearchQuery] = useState('')
-    const [incomingSearchResults, setIncomingSearchResults] = useState<InventoryItem[]>([])
+    const [incomingSearchResults, setIncomingSearchResults] = useState<InventorySearchItem[]>([])
     const [incomingSearching, setIncomingSearching] = useState(false)
     const [incomingHasSearched, setIncomingHasSearched] = useState(false)
 
     const incomingSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const [searchQuery, setSearchQuery] = useState('')
-    const [searchResults, setSearchResults] = useState<InventoryItem[]>([])
+    const [searchResults, setSearchResults] = useState<InventorySearchItem[]>([])
     const [searching, setSearching] = useState(false)
     const [hasSearched, setHasSearched] = useState(false)
 
@@ -130,7 +130,7 @@ export default function TradeOperationForm() {
 
         setOutgoingItems((current) => [
             ...current,
-            { item, value: '' },
+            { item: item as unknown as InventorySearchItem, value: '' },
         ])
         setShowOutgoingForm(false)
         setSuccessMessage('Outgoing item created and selected.')
@@ -147,7 +147,7 @@ export default function TradeOperationForm() {
         setIncomingItems((current) => [
             ...current,
             {
-                item,
+                item: item as unknown as InventorySearchItem,
                 value:
                     item.estimated_sold_value != null
                         ? String(item.estimated_sold_value)
@@ -383,7 +383,7 @@ export default function TradeOperationForm() {
                                                     )}
 
                                                     <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                        {item.item_type}
+                                                        {item.item_subtype_name ?? ''}
                                                     </span>
 
                                                     <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
@@ -647,7 +647,7 @@ export default function TradeOperationForm() {
                                                         </span>
                                                     )}
                                                     <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                        {item.item_type}
+                                                        {item.item_subtype_name ?? ''}
                                                     </span>
                                                     <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
                                                         {item.status}

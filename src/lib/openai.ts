@@ -23,7 +23,6 @@ export interface PromptOverride {
 export interface ListingItem {
   brandName: string;
   model: string;
-  itemType: string;
   subtypeName: string | null;
   year: number | null;
   color: string | null;
@@ -172,7 +171,7 @@ export function buildItemContext(item: ListingItem): string {
   const rows: string[] = [
     `Brand: ${item.brandName}`,
     `Model: ${item.model}`,
-    `Type: ${item.subtypeName || item.itemType}`,
+    `Type: ${item.subtypeName ?? ''}`,
     `Year: ${item.year != null ? item.year : 'Unknown'}`,
     `Color/Finish: ${item.color || 'Not specified'}`,
     `Condition: ${item.condition || 'Not specified'}`,

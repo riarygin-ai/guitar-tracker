@@ -27,23 +27,8 @@ const SUBTYPE_TO_CATEGORY: Record<string, string> = {
   'Pickups':          'Other',
 };
 
-const ITEM_TYPE_TO_CATEGORY: Record<string, string> = {
-  'guitar':          'Guitar',
-  'bass':            'Guitar',
-  'acoustic guitar': 'Guitar',
-  'amp':             'Amp',
-  'cab':             'Cabinet',
-  'processor':       'Pedal',
-  'pedal':           'Pedal',
-  'parts':           'Other',
-};
-
-function detectCategory(subtypeName: string | null, itemType: string): string {
-  if (subtypeName) {
-    const mapped = SUBTYPE_TO_CATEGORY[subtypeName];
-    if (mapped) return mapped;
-  }
-  return ITEM_TYPE_TO_CATEGORY[itemType?.toLowerCase()] ?? 'Other';
+function detectCategory(subtypeName: string | null): string {
+  return (subtypeName && SUBTYPE_TO_CATEGORY[subtypeName]) || 'Other';
 }
 
 export async function POST(req: NextRequest) {
@@ -118,7 +103,7 @@ export async function POST(req: NextRequest) {
 
   // ── Category detection + prompt lookup ───────────────────────────────────────
   const subtypeName = (item.item_subtypes as any)?.name as string | null ?? null;
-  const category    = detectCategory(subtypeName, item.item_type);
+  const category    = detectCategory(subtypeName);
 
   const candidateCategories: string[] = [category];
   if (category !== 'Guitar') candidateCategories.push('Guitar');
@@ -176,7 +161,6 @@ export async function POST(req: NextRequest) {
   const listingItem = {
     brandName:          (item.brands as any)?.name ?? 'Unknown brand',
     model:              item.model,
-    itemType:           item.item_type,
     subtypeName,
     year:               item.year               ?? null,
     color:              item.color              ?? null,

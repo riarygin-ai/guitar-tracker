@@ -285,7 +285,6 @@ export async function getHistoricalImportByItemId(
 
 export interface CreateItemWithHistoricalImportParams {
   brandId:             number;
-  itemType:            string;
   itemSubtypeId:       number | null;
   model:               string;
   serialNumber:        string | null;
@@ -309,7 +308,6 @@ export async function createItemWithHistoricalImport(
 
   const { data, error } = await supabase.rpc('create_item_with_historical_import', {
     p_brand_id:             params.brandId,
-    p_item_type:            params.itemType,
     p_item_subtype_id:      params.itemSubtypeId,
     p_model:                params.model,
     p_serial_number:        params.serialNumber,

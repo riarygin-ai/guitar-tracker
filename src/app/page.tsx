@@ -207,13 +207,6 @@ export default function HomePage() {
     router.push(`/inventory?${params.toString()}`)
   }
 
-  const legacyTypeToCategory: Record<string, string> = {
-    guitar: 'Guitars', bass: 'Guitars', 'acoustic guitar': 'Guitars',
-    amp: 'Amps', cab: 'Amps', processor: 'Amps',
-    pedal: 'Pedals',
-    parts: 'Parts', pickups: 'Parts',
-  }
-
   const categoryNameBySubtypeId = useMemo(() => {
     const catById: Record<number, string> = Object.fromEntries(
       itemCategoriesData.map((c: any) => [c.id, c.name])
@@ -228,22 +221,12 @@ export default function HomePage() {
     [itemSubtypes],
   )
 
-  const legacyTypeToSubtypeName: Record<string, string> = {
-    guitar: 'Electric Guitar', bass: 'Bass', 'acoustic guitar': 'Acoustic Guitar',
-    amp: 'Amp', cab: 'Cabinet', processor: 'Processor',
-    pedal: 'Pedal', parts: 'Parts', pickups: 'Pickups',
-  }
-
   const getItemSubtypeName = (item: any): string => {
-    if (item.item_subtype_id != null) return subtypeNameById[item.item_subtype_id] ?? 'Unknown Type'
-    return legacyTypeToSubtypeName[item.item_type?.toLowerCase()] ?? 'Unknown Type'
+    return subtypeNameById[item.item_subtype_id] ?? 'Unknown Type'
   }
 
   const getItemCategoryName = (item: any): string => {
-    if (item.item_subtype_id != null) {
-      return categoryNameBySubtypeId[item.item_subtype_id] ?? legacyTypeToCategory[item.item_type?.toLowerCase()] ?? 'Other'
-    }
-    return legacyTypeToCategory[item.item_type?.toLowerCase()] ?? 'Other'
+    return categoryNameBySubtypeId[item.item_subtype_id] ?? 'Other'
   }
 
   const inventoryCountByType = useMemo(() => {

@@ -1214,7 +1214,7 @@ export default function OperationDetailPage() {
                             )}
                             <div className="min-w-0">
                               <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                                {linkedItem.item_type}
+                                {linkedItem.item_subtype_name ?? '—'}
                               </p>
                               <p className="mt-0.5 truncate text-sm font-semibold text-slate-900 dark:text-white">
                                 {[linkedItem.year, linkedBrand, linkedItem.model].filter(Boolean).join(' ')}

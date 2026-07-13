@@ -81,7 +81,7 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                {subtypeName ?? item.item_type}
+                {subtypeName ?? '—'}
               </p>
               <h3 className="mt-1 truncate text-base font-semibold text-slate-900 dark:text-white">
                 {subtitle}

@@ -213,7 +213,7 @@ export default function ExpenseOperationForm() {
                                                     )}
 
                                                     <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
-                                                        {item.item_type}
+                                                        {item.item_subtype_name ?? ''}
                                                     </span>
 
                                                     <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
@@ -257,7 +257,7 @@ export default function ExpenseOperationForm() {
                                         )}
 
                                         <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                                            {selectedItem.item_type}
+                                            {selectedItem.item_subtype_name ?? ''}
                                         </span>
 
                                         <span className="rounded-lg bg-white px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-200">

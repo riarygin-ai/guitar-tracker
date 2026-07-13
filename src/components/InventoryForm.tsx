@@ -13,7 +13,6 @@ import type {
   InventoryTag,
   ItemPurpose,
   ItemSubtype,
-  ItemType,
   InventoryItem,
   NewBrand,
   NewInventoryItem,
@@ -41,28 +40,6 @@ import {
 import { calculateItemProfitMetrics } from '@/lib/profit';
 import { todayLocalDate } from '@/lib/dateUtils';
 
-const SUBTYPE_TO_LEGACY_TYPE: Record<string, ItemType> = {
-  'Electric Guitar': 'guitar',
-  'Bass': 'bass',
-  'Acoustic Guitar': 'acoustic guitar',
-  'Amp': 'amp',
-  'Cabinet': 'cab',
-  'Processor': 'processor',
-  'Pedal': 'pedal',
-  'Parts': 'parts',
-  'Pickups': 'parts',
-};
-
-const LEGACY_TYPE_TO_SUBTYPE: Record<string, string> = {
-  guitar: 'Electric Guitar',
-  bass: 'Bass',
-  'acoustic guitar': 'Acoustic Guitar',
-  amp: 'Amp',
-  cab: 'Cabinet',
-  processor: 'Processor',
-  pedal: 'Pedal',
-  parts: 'Parts',
-};
 
 const conditionOptions: Array<{ label: string; value: Condition }> = [
   { label: 'Mint', value: 'Mint' },
@@ -246,13 +223,6 @@ export default function InventoryForm({
       if (item.item_subtype_id) {
         const sub = allSubtypes.find((s) => s.id === item.item_subtype_id);
         if (sub) setSelectedSubtypeId(sub.id);
-      } else {
-        // Legacy fallback: map item_type → subtype name → id
-        const subtypeName = LEGACY_TYPE_TO_SUBTYPE[item.item_type.toLowerCase()];
-        if (subtypeName) {
-          const sub = allSubtypes.find((s) => s.name === subtypeName);
-          if (sub) setSelectedSubtypeId(sub.id);
-        }
       }
 
       setModel(item.model);
@@ -406,14 +376,10 @@ export default function InventoryForm({
       setBrands((prev) => [...prev, brandResult.data]);
     }
 
-    const derivedItemType: ItemType =
-      (selectedSubtype && SUBTYPE_TO_LEGACY_TYPE[selectedSubtype.name]) ?? 'guitar';
-
     // ── Create mode + Historical Import: use atomic RPC ───────────────────────
     if (!itemId && historicalImport) {
       const rpcResult = await createItemWithHistoricalImport({
         brandId:            brandId!,
-        itemType:           derivedItemType,
         itemSubtypeId:      selectedSubtypeId,
         model:              model.trim(),
         serialNumber:       serialNumber.trim() || null,
@@ -462,7 +428,6 @@ export default function InventoryForm({
     // ── Normal create / update path ───────────────────────────────────────────
     const payload: NewInventoryItem = {
       brand_id: brandId!,
-      item_type: derivedItemType,
       item_subtype_id: selectedSubtypeId,
       model: model.trim(),
       serial_number: serialNumber.trim() || null,
@@ -1054,7 +1019,7 @@ export default function InventoryForm({
                 {existingItem && (
                   <div className="p-4">
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                      {selectedSubtype?.name ?? existingItem.item_type}
+                      {selectedSubtype?.name ?? '—'}
                     </p>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusClasses[existingItem.status] ?? 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200'}`}>
