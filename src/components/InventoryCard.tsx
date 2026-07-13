@@ -98,7 +98,7 @@ export default function InventoryCard({ item, brandName, backQuery, mainPhotoUrl
               <Link
                 href={`/inventory/${item.id}/chain`}
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
+                className="hidden sm:inline-flex items-center gap-1 text-xs font-medium text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
               >
                 View Deal Chain
                 <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
