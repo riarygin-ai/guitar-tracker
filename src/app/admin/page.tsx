@@ -6,17 +6,21 @@ import AiPromptsCard from '@/components/AiPromptsCard';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import {
   createBrand,
+  createDealChannel,
   createItemCategory,
   createItemPurpose,
   createItemSubtype,
   createTag,
   deleteBrand,
+  deleteDealChannel,
   deleteItemCategory,
   deleteItemPurpose,
   deleteItemSubtype,
   deleteTag,
   getBrandUsageCount,
   getBrands,
+  getDealChannelUsageCount,
+  getDealChannels,
   getItemCategories,
   getItemPurposes,
   getItemSubtypes,
@@ -26,12 +30,13 @@ import {
   getTagUsageCount,
   getTags,
   updateBrand,
+  updateDealChannel,
   updateItemCategory,
   updateItemPurpose,
   updateItemSubtype,
   updateTag,
 } from '@/lib/supabase';
-import type { AppUser, Brand, InventoryTag, ItemCategory, ItemPurpose, ItemSubtype } from '@/types';
+import type { AppUser, Brand, DealChannel, InventoryTag, ItemCategory, ItemPurpose, ItemSubtype } from '@/types';
 
 const BRAND_PAGE_SIZE = 5;
 
@@ -142,6 +147,27 @@ export default function AdminPage() {
   const [tagDelPhase, setTagDelPhase] = useState<Record<number, TagDelPhase>>({});
   const [tagDelMsg,   setTagDelMsg]   = useState<Record<number, string>>({});
 
+  // ── Deal Channels ─────────────────────────────────────────────────────────
+  const [dealChannels,        setDealChannels]        = useState<DealChannel[]>([]);
+  const [dealChannelsLoading, setDealChannelsLoading] = useState(false);
+  // create
+  const [dcCreateName,       setDcCreateName]       = useState('');
+  const [dcCreateIsPlatform, setDcCreateIsPlatform] = useState(false);
+  const [dcCreating,         setDcCreating]         = useState(false);
+  const [dcCreateError,      setDcCreateError]      = useState<string | null>(null);
+  // edit
+  type DcEditState = { id: number; name: string; is_listing_platform: boolean };
+  const [dcEditing,    setDcEditing]    = useState<DcEditState | null>(null);
+  const [dcEditSaving, setDcEditSaving] = useState(false);
+  const [dcEditError,  setDcEditError]  = useState<string | null>(null);
+  const dcEditInputRef = useRef<HTMLInputElement>(null);
+  // toggle active
+  const [dcToggling, setDcToggling] = useState<Set<number>>(new Set());
+  // delete
+  type DcDelPhase = 'checking' | 'confirm' | 'deleting';
+  const [dcDelPhase, setDcDelPhase] = useState<Record<number, DcDelPhase>>({});
+  const [dcDelMsg,   setDcDelMsg]   = useState<Record<number, string>>({});
+
   // ── Auth ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -159,6 +185,7 @@ export default function AdminPage() {
     loadSubtypes();
     loadPurposes();
     loadTags();
+    loadDealChannels();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Brands CRUD ───────────────────────────────────────────────────────────
@@ -603,6 +630,95 @@ export default function AdminPage() {
     }
     setTags((prev) => prev.filter((t) => t.id !== id));
     setTagDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
+  // ── Deal Channels CRUD ────────────────────────────────────────────────────
+
+  async function loadDealChannels() {
+    setDealChannelsLoading(true);
+    const { data, error } = await getDealChannels();
+    setDealChannelsLoading(false);
+    if (!error) setDealChannels((data as DealChannel[]) ?? []);
+  }
+
+  useEffect(() => {
+    if (dcEditing) dcEditInputRef.current?.focus();
+  }, [dcEditing?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleCreateDealChannel() {
+    const trimmed = dcCreateName.trim();
+    if (!trimmed) { setDcCreateError('Name is required.'); return; }
+    const dup = dealChannels.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
+    if (dup) { setDcCreateError('A channel with this name already exists.'); return; }
+    setDcCreating(true);
+    setDcCreateError(null);
+    const nextOrder = dealChannels.length > 0
+      ? Math.max(...dealChannels.map((c) => c.sort_order)) + 10
+      : 10;
+    const { data, error } = await createDealChannel({ name: trimmed, is_listing_platform: dcCreateIsPlatform, sort_order: nextOrder });
+    setDcCreating(false);
+    if (error) { setDcCreateError((error as { message?: string })?.message || 'Could not create channel.'); return; }
+    setDealChannels((prev) => [...prev, data as DealChannel]);
+    setDcCreateName('');
+    setDcCreateIsPlatform(false);
+  }
+
+  function startDcEdit(ch: DealChannel) { setDcEditing({ id: ch.id, name: ch.name, is_listing_platform: ch.is_listing_platform }); setDcEditError(null); }
+  function cancelDcEdit() { setDcEditing(null); setDcEditError(null); }
+
+  async function saveDcEdit() {
+    if (!dcEditing) return;
+    const trimmed = dcEditing.name.trim();
+    if (!trimmed) { setDcEditError('Name is required.'); return; }
+    const dup = dealChannels.find((c) => c.name.toLowerCase() === trimmed.toLowerCase() && c.id !== dcEditing.id);
+    if (dup) { setDcEditError('A channel with this name already exists.'); return; }
+    setDcEditSaving(true);
+    setDcEditError(null);
+    const { error } = await updateDealChannel(dcEditing.id, { name: trimmed, is_listing_platform: dcEditing.is_listing_platform });
+    setDcEditSaving(false);
+    if (error) { setDcEditError((error as { message?: string })?.message || 'Could not update channel.'); return; }
+    setDealChannels((prev) => prev.map((c) => c.id === dcEditing.id ? { ...c, name: trimmed, is_listing_platform: dcEditing.is_listing_platform } : c));
+    setDcEditing(null);
+  }
+
+  async function toggleDcActive(ch: DealChannel) {
+    setDcToggling((s) => new Set(s).add(ch.id));
+    const { error } = await updateDealChannel(ch.id, { is_active: !ch.is_active });
+    setDcToggling((s) => { const n = new Set(s); n.delete(ch.id); return n; });
+    if (!error) setDealChannels((prev) => prev.map((c) => c.id === ch.id ? { ...c, is_active: !ch.is_active } : c));
+  }
+
+  async function startDcDelete(ch: DealChannel) {
+    setDcDelPhase((prev) => ({ ...prev, [ch.id]: 'checking' }));
+    const { count, error } = await getDealChannelUsageCount(ch.id);
+    if (error) {
+      setDcDelMsg((prev) => ({ ...prev, [ch.id]: 'Could not check usage.' }));
+      setDcDelPhase((prev) => { const n = { ...prev }; delete n[ch.id]; return n; });
+      return;
+    }
+    if ((count ?? 0) > 0) {
+      setDcDelMsg((prev) => ({ ...prev, [ch.id]: `"${ch.name}" is used by ${count} deal${count !== 1 ? 's' : ''} and cannot be deleted. Deactivate it instead.` }));
+      setDcDelPhase((prev) => { const n = { ...prev }; delete n[ch.id]; return n; });
+      return;
+    }
+    setDcDelPhase((prev) => ({ ...prev, [ch.id]: 'confirm' }));
+  }
+
+  function cancelDcDelete(id: number) {
+    setDcDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setDcDelMsg((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
+  async function confirmDcDelete(id: number) {
+    setDcDelPhase((prev) => ({ ...prev, [id]: 'deleting' }));
+    const { error } = await deleteDealChannel(id);
+    if (error) {
+      setDcDelMsg((prev) => ({ ...prev, [id]: 'Could not delete channel.' }));
+      setDcDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
+      return;
+    }
+    setDealChannels((prev) => prev.filter((c) => c.id !== id));
+    setDcDelPhase((prev) => { const n = { ...prev }; delete n[id]; return n; });
   }
 
   async function moveSubtype(sub: ItemSubtype, newCatId: number) {
@@ -1309,6 +1425,137 @@ export default function AdminPage() {
                     <div className="mt-1 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-300">
                       <span className="flex-1">{delMsg}</span>
                       <button type="button" onClick={() => cancelTagDelete(tag.id)} aria-label="Dismiss" className="shrink-0 text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-200">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {/* ── Deal Channels ─────────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Deal Channels</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {dealChannels.length} channel{dealChannels.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+
+        {/* Create channel */}
+        <div className="mb-4 space-y-2">
+          <div className="flex gap-2">
+            <input
+              value={dcCreateName}
+              onChange={(e) => setDcCreateName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateDealChannel(); }}
+              placeholder="New channel name…"
+              disabled={dcCreating}
+              className={inputClass}
+            />
+            <button type="button" onClick={handleCreateDealChannel} disabled={dcCreating || !dcCreateName.trim()} className={btnPrimary}>
+              {dcCreating ? 'Creating…' : 'Add'}
+            </button>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={dcCreateIsPlatform}
+              onChange={(e) => setDcCreateIsPlatform(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300"
+            />
+            Listing platform (Kijiji, Reverb, etc.)
+          </label>
+          {dcCreateError && <p className="text-xs text-rose-600 dark:text-rose-400">{dcCreateError}</p>}
+        </div>
+
+        {/* Channel list */}
+        {dealChannelsLoading ? (
+          <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">Loading…</p>
+        ) : dealChannels.length === 0 ? (
+          <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">No channels yet.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+            {dealChannels.map((ch) => {
+              const delPhase    = dcDelPhase[ch.id];
+              const delMsg      = dcDelMsg[ch.id];
+              const isEditingCh = dcEditing?.id === ch.id;
+
+              return (
+                <li key={ch.id} className="py-2">
+                  {isEditingCh ? (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <input
+                          ref={dcEditInputRef}
+                          value={dcEditing.name}
+                          onChange={(e) => setDcEditing({ ...dcEditing, name: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveDcEdit(); if (e.key === 'Escape') cancelDcEdit(); }}
+                          disabled={dcEditSaving}
+                          className={inputClass}
+                        />
+                        <button type="button" onClick={saveDcEdit} disabled={dcEditSaving || !dcEditing.name.trim()} className={btnPrimary}>
+                          {dcEditSaving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button type="button" onClick={cancelDcEdit} disabled={dcEditSaving} className={btnSecondary}>Cancel</button>
+                      </div>
+                      <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={dcEditing.is_listing_platform}
+                          onChange={(e) => setDcEditing({ ...dcEditing, is_listing_platform: e.target.checked })}
+                          className="h-3.5 w-3.5 rounded border-slate-300"
+                        />
+                        Listing platform
+                      </label>
+                      {dcEditError && <p className="text-xs text-rose-600 dark:text-rose-400">{dcEditError}</p>}
+                    </div>
+                  ) : delPhase === 'checking' ? (
+                    <span className="text-xs text-slate-400 dark:text-slate-500">Checking…</span>
+                  ) : delPhase === 'confirm' || delPhase === 'deleting' ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1 text-xs text-slate-700 dark:text-slate-200">
+                        Delete <span className="font-semibold">{ch.name}</span>?
+                      </span>
+                      <button type="button" onClick={() => confirmDcDelete(ch.id)} disabled={delPhase === 'deleting'} className={btnDangerSolid}>
+                        {delPhase === 'deleting' ? 'Deleting…' : 'Delete'}
+                      </button>
+                      <button type="button" onClick={() => cancelDcDelete(ch.id)} disabled={delPhase === 'deleting'} className={btnSecondary}>Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={`min-w-0 flex-1 truncate text-sm ${ch.is_active ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 line-through dark:text-slate-500'}`}>
+                        {ch.name}
+                      </span>
+                      {ch.is_listing_platform && (
+                        <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">platform</span>
+                      )}
+                      {!ch.is_active && (
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-700 dark:text-slate-400">inactive</span>
+                      )}
+                      <button type="button" onClick={() => startDcEdit(ch)} className={btnAction}>Edit</button>
+                      <button
+                        type="button"
+                        onClick={() => toggleDcActive(ch)}
+                        disabled={dcToggling.has(ch.id)}
+                        className={`${btnAction} disabled:opacity-50`}
+                      >
+                        {dcToggling.has(ch.id) ? '…' : ch.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button type="button" onClick={() => startDcDelete(ch)} className={btnDanger}>Delete</button>
+                    </div>
+                  )}
+
+                  {delMsg && !delPhase && (
+                    <div className="mt-1 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-300">
+                      <span className="flex-1">{delMsg}</span>
+                      <button type="button" onClick={() => cancelDcDelete(ch.id)} aria-label="Dismiss" className="shrink-0 text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-200">
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                         </svg>

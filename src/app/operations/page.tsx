@@ -8,8 +8,8 @@ import DateRangeFilter from '@/components/DateRangeFilter';
 import MoreFiltersToggle from '@/components/MoreFiltersToggle';
 import TagsFilter from '@/components/TagsFilter';
 import { type DatePreset, DATE_PRESETS, presetToDateRange, DEFAULT_PRESET } from '@/lib/dateRange';
-import { getDeals, getBrands, getInventoryItemsWithValue, getDealItems, getDisplayPhotosForItems, getInventoryExpenses, getTags, getTagsForItems } from '@/lib/supabase';
-import type { InventoryExpense, InventoryTag } from '@/types';
+import { getDeals, getDealChannels, getBrands, getInventoryItemsWithValue, getDealItems, getDisplayPhotosForItems, getInventoryExpenses, getTags, getTagsForItems } from '@/lib/supabase';
+import type { DealChannel, InventoryExpense, InventoryTag } from '@/types';
 import { splitSearchTerms } from '@/lib/search';
 import type { Brand, Deal, DealItem, InventoryItemWithValue } from '@/types';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
@@ -121,6 +121,7 @@ export default function OperationsPage() {
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemWithValue[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [channels, setChannels] = useState<DealChannel[]>([]);
   const [expenses, setExpenses] = useState<InventoryExpense[]>([]);
   const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
@@ -166,13 +167,14 @@ export default function OperationsPage() {
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const [dealsResult, dealItemsResult, itemsResult, brandsResult, expensesResult, tagsResult] = await Promise.all([
+      const [dealsResult, dealItemsResult, itemsResult, brandsResult, expensesResult, tagsResult, channelsResult] = await Promise.all([
         getDeals(),
         getDealItems(),
         getInventoryItemsWithValue(),
         getBrands(),
         getInventoryExpenses(),
         getTags(),
+        getDealChannels(),
       ]);
       setLoading(false);
 
@@ -185,6 +187,7 @@ export default function OperationsPage() {
       setDealItems(dealItemsResult.data || []);
       setInventoryItems(itemsResult.data || []);
       setBrands(brandsResult.data || []);
+      setChannels((channelsResult.data as DealChannel[] | null) ?? []);
       setExpenses(expensesResult.data || []);
 
       const tagsData = (!tagsResult.error ? (tagsResult.data ?? []) : []) as InventoryTag[];
@@ -256,6 +259,11 @@ export default function OperationsPage() {
   const brandMap = useMemo(
     () => Object.fromEntries(brands.map((b) => [b.id, b.name])),
     [brands]
+  );
+
+  const channelMap = useMemo(
+    () => Object.fromEntries(channels.map((c) => [c.id, c.name])),
+    [channels]
   );
 
   const itemMap = useMemo(
@@ -434,7 +442,7 @@ export default function OperationsPage() {
       .filter((deal) => {
         if (searchTerms.length === 0) return true;
         const items = dealItemsByDealId[deal.id] || [];
-        const dealFields = [deal.deal_type, deal.channel || '', deal.deal_date || '', String(deal.cash_received ?? ''), String(deal.cash_paid ?? ''), deal.notes || ''].map((f) => f.toLowerCase());
+        const dealFields = [deal.deal_type, deal.deal_channel_id != null ? (channelMap[deal.deal_channel_id] ?? '') : '', deal.deal_date || '', String(deal.cash_received ?? ''), String(deal.cash_paid ?? ''), deal.notes || ''].map((f) => f.toLowerCase());
         const itemFields: string[] = [];
         items.forEach((di) => {
           const item = itemMap[di.item_id];

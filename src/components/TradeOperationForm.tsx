@@ -4,24 +4,18 @@ import Image from 'next/image'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import InventoryForm from '@/components/InventoryForm'
-import { createTradeOperation, getBrands, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase'
-import type { Brand, InventoryItem } from '@/types'
+import { createTradeOperation, getBrands, getDealChannels, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase'
+import type { Brand, DealChannel, InventoryItem } from '@/types'
 
 type TradeItem = {
     item: InventoryItem
     value: string
 }
 
-const channelOptions = [
-    'Kijiji',
-    'Marketplace',
-    'Reverb',
-    'Regular Buyer / Seller',
-]
-
 export default function TradeOperationForm() {
     const router = useRouter()
     const [brands, setBrands] = useState<Brand[]>([])
+    const [channels, setChannels] = useState<DealChannel[]>([])
 
     const [outgoingItems, setOutgoingItems] = useState<TradeItem[]>([])
     const [showOutgoingForm, setShowOutgoingForm] = useState(false)
@@ -42,7 +36,7 @@ export default function TradeOperationForm() {
     const [hasSearched, setHasSearched] = useState(false)
 
     const [dealDate, setDealDate] = useState('')
-    const [channel, setChannel] = useState('')
+    const [channelId, setChannelId] = useState<number | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [successMessage, setSuccessMessage] = useState<string | null>(null)
     const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({})
@@ -83,7 +77,7 @@ export default function TradeOperationForm() {
 
     useEffect(() => {
         async function loadData() {
-            const brandResult = await getBrands()
+            const [brandResult, channelResult] = await Promise.all([getBrands(), getDealChannels()])
 
             if (brandResult.error) {
                 setError('Could not load brands. Please try again.')
@@ -91,6 +85,7 @@ export default function TradeOperationForm() {
             }
 
             setBrands(brandResult.data || [])
+            setChannels((channelResult.data as DealChannel[] | null) ?? [])
         }
 
         loadData()
@@ -211,7 +206,7 @@ export default function TradeOperationForm() {
             return
         }
 
-        if (!channel) {
+        if (!channelId) {
             setError('Select a channel.')
             return
         }
@@ -268,7 +263,7 @@ export default function TradeOperationForm() {
 
         const result = await createTradeOperation({
             dealDate: dealDateValue,
-            channel: channel || null,
+            channelId: channelId,
             cashPaid: parsedCashOut,
             cashReceived: parsedCashIn,
             outgoingItems: outgoingItems.map((ti) => ({
@@ -788,15 +783,13 @@ export default function TradeOperationForm() {
                         <div className="space-y-3">
                             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Channel</label>
                             <select
-                                value={channel}
-                                onChange={(event) => setChannel(event.target.value)}
+                                value={channelId ?? ''}
+                                onChange={(event) => setChannelId(event.target.value ? Number(event.target.value) : null)}
                                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                             >
                                 <option value="">Select channel</option>
-                                {channelOptions.map((option) => (
-                                    <option key={option} value={option}>
-                                        {option}
-                                    </option>
+                                {channels.filter((c) => c.is_active).map((c) => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
                                 ))}
                             </select>
                         </div>
@@ -859,7 +852,7 @@ export default function TradeOperationForm() {
                             setSearchResults([])
                             setHasSearched(false)
                             setDealDate('')
-                            setChannel('')
+                            setChannelId(null)
                             setError(null)
                             setSuccessMessage(null)
                             setCashOut('')

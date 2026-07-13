@@ -18,6 +18,15 @@ export interface ItemSubtype {
   created_at: string;
 }
 export type DealType = 'purchase' | 'sale' | 'trade' | 'expense';
+
+export interface DealChannel {
+  id: number;
+  name: string;
+  is_listing_platform: boolean;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+}
 export type Direction = 'in' | 'out';
 export type CollectionType = 'Personal' | 'Business' | 'Hybrid';
 export type Condition = 'Mint' | 'Excellent' | 'Very Good' | 'Good' | 'Fair';
@@ -78,7 +87,7 @@ export interface Deal {
   user_id: number;
   deal_date: string;
   deal_type: DealType;
-  channel: string | null;
+  deal_channel_id: number | null;
   cash_received: number | null;
   cash_paid: number | null;
   fees: number | null;

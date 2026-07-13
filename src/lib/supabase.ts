@@ -6,6 +6,7 @@ import type {
   Brand,
   CashFlow,
   Deal,
+  DealChannel,
   DealItem,
   InventoryExpense,
   InventoryItem,
@@ -349,6 +350,26 @@ export async function getDeals() {
   return supabase.from('deals').select('*');
 }
 
+export async function getDealChannels() {
+  return supabase.from('deal_channels').select('*').order('sort_order', { ascending: true });
+}
+
+export async function createDealChannel(data: { name: string; is_listing_platform: boolean; sort_order: number }) {
+  return supabase.from('deal_channels').insert(data).select().single<DealChannel>();
+}
+
+export async function updateDealChannel(id: number, updates: { name?: string; is_listing_platform?: boolean; sort_order?: number; is_active?: boolean }) {
+  return supabase.from('deal_channels').update(updates).eq('id', id).select().single<DealChannel>();
+}
+
+export async function deleteDealChannel(id: number) {
+  return supabase.from('deal_channels').delete().eq('id', id);
+}
+
+export async function getDealChannelUsageCount(channelId: number) {
+  return supabase.from('deals').select('id', { count: 'exact', head: true }).eq('deal_channel_id', channelId);
+}
+
 export async function createDeal(deal: NewDeal) {
   return supabase.from('deals').insert(deal).select().single();
 }
@@ -480,14 +501,14 @@ export async function createExpenseOperation(params: {
 
 export async function createBuyOperation(params: {
   dealDate: string;
-  channel: string;
+  channelId: number;
   incomingItems: { item_id: number; total_value: number }[];
   notes?: string | null;
   cfDescription: string;
 }) {
   return supabase.rpc('create_buy_operation', {
     p_deal_date:      params.dealDate,
-    p_channel:        params.channel,
+    p_channel_id:     params.channelId,
     p_incoming_items: params.incomingItems,
     p_notes:          params.notes ?? null,
     p_cf_description: params.cfDescription,
@@ -497,7 +518,7 @@ export async function createBuyOperation(params: {
 export async function createSellOperation(params: {
   dealDate: string;
   cashReceived: number;
-  channel: string;
+  channelId: number;
   itemId: number;
   notes?: string | null;
   cfDescription: string;
@@ -505,7 +526,7 @@ export async function createSellOperation(params: {
   return supabase.rpc('create_sell_operation', {
     p_deal_date:      params.dealDate,
     p_cash_received:  params.cashReceived,
-    p_channel:        params.channel,
+    p_channel_id:     params.channelId,
     p_item_id:        params.itemId,
     p_notes:          params.notes ?? null,
     p_cf_description: params.cfDescription,
@@ -514,7 +535,7 @@ export async function createSellOperation(params: {
 
 export async function createTradeOperation(params: {
   dealDate: string;
-  channel?: string | null;
+  channelId?: number | null;
   notes?: string | null;
   cashPaid?: number;
   cashReceived?: number;
@@ -525,7 +546,7 @@ export async function createTradeOperation(params: {
 }) {
   return supabase.rpc('create_trade_operation', {
     p_deal_date:           params.dealDate,
-    p_channel:             params.channel ?? null,
+    p_channel_id:          params.channelId ?? null,
     p_notes:               params.notes ?? null,
     p_cash_paid:           params.cashPaid ?? 0,
     p_cash_received:       params.cashReceived ?? 0,
@@ -539,7 +560,7 @@ export async function createTradeOperation(params: {
 export async function editTradeOperation(params: {
   dealId: number;
   dealDate: string;
-  channel: string | null;
+  channelId: number | null;
   notes: string | null;
   cashPaid: number;
   cashReceived: number;
@@ -551,7 +572,7 @@ export async function editTradeOperation(params: {
   return supabase.rpc('edit_trade_operation', {
     p_deal_id:             params.dealId,
     p_deal_date:           params.dealDate,
-    p_channel:             params.channel,
+    p_channel_id:          params.channelId,
     p_notes:               params.notes,
     p_cash_paid:           params.cashPaid,
     p_cash_received:       params.cashReceived,
@@ -565,7 +586,7 @@ export async function editTradeOperation(params: {
 export async function editBuyOperation(params: {
   dealId: number;
   dealDate: string;
-  channel: string | null;
+  channelId: number | null;
   notes: string | null;
   incomingItems: { item_id: number; total_value: number }[];
   cfDescription?: string | null;
@@ -573,7 +594,7 @@ export async function editBuyOperation(params: {
   return supabase.rpc('edit_buy_operation', {
     p_deal_id:        params.dealId,
     p_deal_date:      params.dealDate,
-    p_channel:        params.channel,
+    p_channel_id:     params.channelId,
     p_notes:          params.notes,
     p_incoming_items: params.incomingItems,
     p_cf_description: params.cfDescription ?? null,

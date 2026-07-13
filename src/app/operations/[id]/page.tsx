@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   getDealById,
+  getDealChannels,
   getBrands,
   getInventoryItemsWithValue,
   getDealItemsForDeal,
@@ -22,7 +23,7 @@ import {
   searchInventoryItems,
 } from '@/lib/supabase';
 import InventoryForm from '@/components/InventoryForm';
-import type { Brand, Deal, DealItem, InventoryItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
+import type { Brand, Deal, DealChannel, DealItem, InventoryItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
 
 function ItemCardLink({ href, clickable, children }: { href: string; clickable: boolean; children: React.ReactNode }) {
   const base = 'rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-700';
@@ -43,6 +44,7 @@ export default function OperationDetailPage() {
 
   const [deal, setDeal] = useState<Deal | null>(null);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [channels, setChannels] = useState<DealChannel[]>([]);
   const [items, setItems] = useState<InventoryItemWithValue[]>([]);
   const [dealItems, setDealItems] = useState<DealItem[]>([]);
   const [cashFlows, setCashFlows] = useState<CashFlow[]>([]);
@@ -79,13 +81,14 @@ export default function OperationDetailPage() {
     setLoading(true);
     setError(null);
 
-    const [dealResult, brandsResult, itemsResult, dealItemsResult, cashFlowsResult, expensesResult] = await Promise.all([
+    const [dealResult, brandsResult, itemsResult, dealItemsResult, cashFlowsResult, expensesResult, channelsResult] = await Promise.all([
       getDealById(dealId),
       getBrands(),
       getInventoryItemsWithValue(),
       getDealItemsForDeal(dealId),
       getCashFlowsForDeal(dealId),
       getInventoryExpensesForDeal(dealId),
+      getDealChannels(),
     ]);
 
     setLoading(false);
@@ -97,6 +100,7 @@ export default function OperationDetailPage() {
 
     setDeal(dealResult.data);
     setBrands(brandsResult.data || []);
+    setChannels((channelsResult.data as DealChannel[] | null) ?? []);
     setItems(itemsResult.data || []);
     setDealItems(dealItemsResult.data || []);
     setCashFlows(cashFlowsResult.data || []);
@@ -135,6 +139,7 @@ export default function OperationDetailPage() {
 
   const brandMap = Object.fromEntries(brands.map((b) => [b.id, b.name]));
   const itemMap = Object.fromEntries(items.map((i) => [i.id, i]));
+  const channelMap = Object.fromEntries(channels.map((c) => [c.id, c.name]));
 
   const handleAddSearch = (query: string, direction: 'out' | 'in') => {
     if (direction === 'out') setAddOutgoingQuery(query);
@@ -234,7 +239,7 @@ export default function OperationDetailPage() {
         const result = await editTradeOperation({
           dealId: deal.id,
           dealDate: editedDeal?.deal_date ?? deal.deal_date,
-          channel: editedDeal?.channel ?? deal.channel ?? null,
+          channelId: editedDeal?.deal_channel_id ?? deal.deal_channel_id ?? null,
           notes: editedDeal?.notes ?? deal.notes ?? null,
           cashPaid,
           cashReceived,
@@ -272,7 +277,7 @@ export default function OperationDetailPage() {
         const result = await editBuyOperation({
           dealId: deal.id,
           dealDate: editedDeal?.deal_date ?? deal.deal_date,
-          channel: editedDeal?.channel ?? deal.channel ?? null,
+          channelId: editedDeal?.deal_channel_id ?? deal.deal_channel_id ?? null,
           notes: editedDeal?.notes ?? deal.notes ?? null,
           incomingItems: [
             ...kept.map((di) => ({
@@ -295,10 +300,10 @@ export default function OperationDetailPage() {
         // Sale / expense: individual field updates
         const cashFlowsWithDateChange: { id: number; oldDate: string; newDate: string }[] = [];
 
-        if (editedDeal && (editedDeal.deal_date !== deal.deal_date || editedDeal.channel !== deal.channel || editedDeal.notes !== deal.notes)) {
+        if (editedDeal && (editedDeal.deal_date !== deal.deal_date || editedDeal.deal_channel_id !== deal.deal_channel_id || editedDeal.notes !== deal.notes)) {
           const dealUpdates: Partial<Deal> = {};
           if (editedDeal.deal_date !== deal.deal_date) dealUpdates.deal_date = editedDeal.deal_date;
-          if (editedDeal.channel !== deal.channel) dealUpdates.channel = editedDeal.channel;
+          if (editedDeal.deal_channel_id !== deal.deal_channel_id) dealUpdates.deal_channel_id = editedDeal.deal_channel_id;
           if (editedDeal.notes !== deal.notes) dealUpdates.notes = editedDeal.notes;
 
           const dealResult = await updateDeal(deal.id, dealUpdates);
@@ -529,14 +534,20 @@ export default function OperationDetailPage() {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Channel</p>
                 {editMode ? (
-                  <input
-                    type="text"
-                    value={editedDeal?.channel ?? deal.channel ?? ''}
-                    onChange={(e) => setEditedDeal({ ...editedDeal, channel: e.target.value })}
+                  <select
+                    value={editedDeal?.deal_channel_id ?? deal.deal_channel_id ?? ''}
+                    onChange={(e) => setEditedDeal({ ...editedDeal, deal_channel_id: e.target.value ? Number(e.target.value) : null })}
                     className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-                  />
+                  >
+                    <option value="">— None —</option>
+                    {channels.filter((c) => c.is_active || c.id === (deal.deal_channel_id ?? undefined)).map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}{!c.is_active ? ' (inactive)' : ''}</option>
+                    ))}
+                  </select>
                 ) : (
-                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{deal.channel || '—'}</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">
+                    {deal.deal_channel_id != null ? (channelMap[deal.deal_channel_id] ?? '—') : '—'}
+                  </p>
                 )}
               </div>
 

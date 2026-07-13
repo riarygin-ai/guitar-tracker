@@ -7,23 +7,18 @@ import InventoryForm from '@/components/InventoryForm';
 import {
   createSellOperation,
   getBrands,
+  getDealChannels,
   getInventoryItemWithValueById,
   getInventoryExpensesByItemIds,
   searchInventoryItems,
   getDisplayPhotosForItems,
 } from '@/lib/supabase';
-import type { Brand, InventoryItem } from '@/types';
-
-const channelOptions = [
-  'Kijiji',
-  'Marketplace',
-  'Reverb',
-  'Regular Buyer / Seller',
-];
+import type { Brand, DealChannel, InventoryItem } from '@/types';
 
 export default function SellOperationForm() {
   const router = useRouter();
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [channels, setChannels] = useState<DealChannel[]>([]);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showItemForm, setShowItemForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -32,7 +27,7 @@ export default function SellOperationForm() {
   const [hasSearched, setHasSearched] = useState(false);
   const [dealDate, setDealDate] = useState('');
   const [cashReceived, setCashReceived] = useState('');
-  const [channel, setChannel] = useState('');
+  const [channelId, setChannelId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +57,7 @@ export default function SellOperationForm() {
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const brandResult = await getBrands();
+      const [brandResult, channelResult] = await Promise.all([getBrands(), getDealChannels()]);
       setLoading(false);
 
       if (brandResult.error) {
@@ -71,6 +66,7 @@ export default function SellOperationForm() {
       }
 
       setBrands(brandResult.data || []);
+      setChannels((channelResult.data as DealChannel[] | null) ?? []);
     }
 
     loadData();
@@ -136,7 +132,7 @@ export default function SellOperationForm() {
       return;
     }
 
-    if (!channel) {
+    if (!channelId) {
       setError('Channel is required.');
       return;
     }
@@ -155,7 +151,7 @@ export default function SellOperationForm() {
     const result = await createSellOperation({
       dealDate: dealDateValue,
       cashReceived: parsedCashReceived,
-      channel,
+      channelId: channelId!,
       itemId: selectedItem.id,
       cfDescription,
     });
@@ -396,15 +392,13 @@ export default function SellOperationForm() {
             <div className="space-y-3">
               <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Channel</label>
               <select
-                value={channel}
-                onChange={(event) => setChannel(event.target.value)}
+                value={channelId ?? ''}
+                onChange={(event) => setChannelId(event.target.value ? Number(event.target.value) : null)}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
               >
                 <option value="">Select channel</option>
-                {channelOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
+                {channels.filter((c) => c.is_active).map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
             </div>
@@ -451,7 +445,7 @@ export default function SellOperationForm() {
             onClick={() => {
               setDealDate('');
               setCashReceived('');
-              setChannel('');
+              setChannelId(null);
               setSelectedItem(null);
               setShowItemForm(false);
               setSearchQuery('');

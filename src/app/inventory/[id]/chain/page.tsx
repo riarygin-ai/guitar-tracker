@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { getItemLineage, getInventoryExpensesByItemIds, type ItemTimelineData } from '@/lib/supabase';
-import type { Deal, DealItem, InventoryItemWithValue } from '@/types';
+import { getItemLineage, getDealChannels, getInventoryExpensesByItemIds, type ItemTimelineData } from '@/lib/supabase';
+import type { Deal, DealChannel, DealItem, InventoryItemWithValue } from '@/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -63,6 +63,7 @@ interface DealCardProps {
   mainItemIds:      Set<number>;
   itemMap:          Record<number, InventoryItemWithValue>;
   brandMap:         Record<number, string>;
+  channelMap:       Record<number, string>;
   photoByItemId:    Record<number, string>;
   expensesByItemId: Record<number, number>;
   runningProfit:    number;
@@ -70,7 +71,7 @@ interface DealCardProps {
 
 function DealCard({
   deal, primaryIn, outgoing, bundleItems, mainItemIds,
-  itemMap, brandMap, photoByItemId, expensesByItemId, runningProfit,
+  itemMap, brandMap, channelMap, photoByItemId, expensesByItemId, runningProfit,
 }: DealCardProps) {
   const isValueDeal  = deal.deal_type === 'sale' || deal.deal_type === 'trade';
   const cashPaid     = Number(deal.cash_paid ?? 0);
@@ -123,8 +124,8 @@ function DealCard({
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             {formatDate(deal.deal_date)}
           </p>
-          {deal.channel && (
-            <p className="text-xs text-slate-400 dark:text-slate-500">{deal.channel}</p>
+          {deal.deal_channel_id != null && channelMap[deal.deal_channel_id] && (
+            <p className="text-xs text-slate-400 dark:text-slate-500">{channelMap[deal.deal_channel_id]}</p>
           )}
         </div>
 
@@ -213,6 +214,7 @@ interface ChainTimelineProps {
   steps:            ChainStep[];
   itemMap:          Record<number, InventoryItemWithValue>;
   brandMap:         Record<number, string>;
+  channelMap:       Record<number, string>;
   photoByItemId:    Record<number, string>;
   mainItemIds:      Set<number>;
   runningProfits:   number[];
@@ -220,7 +222,7 @@ interface ChainTimelineProps {
 }
 
 function ChainTimeline({
-  steps, itemMap, brandMap, photoByItemId, mainItemIds, runningProfits, expensesByItemId,
+  steps, itemMap, brandMap, channelMap, photoByItemId, mainItemIds, runningProfits, expensesByItemId,
 }: ChainTimelineProps) {
   return (
     <div className="relative">
@@ -256,6 +258,7 @@ function ChainTimeline({
                 mainItemIds={mainItemIds}
                 itemMap={itemMap}
                 brandMap={brandMap}
+                channelMap={channelMap}
                 photoByItemId={photoByItemId}
                 expensesByItemId={expensesByItemId}
                 runningProfit={runningProfits[index]}
@@ -365,9 +368,13 @@ export default function TradeChainPage() {
   const [loading,          setLoading]          = useState(true);
   const [error,            setError]            = useState<string | null>(null);
   const [expensesByItemId, setExpensesByItemId] = useState<Record<number, number>>({});
+  const [channels,         setChannels]         = useState<DealChannel[]>([]);
 
   useEffect(() => {
     let cancelled = false;
+    getDealChannels().then((result) => {
+      if (!cancelled && !result.error) setChannels((result.data as DealChannel[] | null) ?? []);
+    });
     getItemLineage(itemId).then(({ data, error }) => {
       if (!cancelled) { setData(data); setError(error); setLoading(false); }
 
@@ -393,6 +400,10 @@ export default function TradeChainPage() {
   const brandMap = useMemo(
     () => Object.fromEntries((data?.brands ?? []).map((b) => [b.id, b.name])),
     [data],
+  );
+  const channelMap = useMemo(
+    () => Object.fromEntries(channels.map((c) => [c.id, c.name])),
+    [channels],
   );
   const dealItemsByDealId = useMemo(() => {
     const map: Record<number, DealItem[]> = {};
@@ -552,6 +563,7 @@ export default function TradeChainPage() {
             steps={steps}
             itemMap={itemMap}
             brandMap={brandMap}
+            channelMap={channelMap}
             photoByItemId={data?.photoByItemId ?? {}}
             mainItemIds={mainItemIds}
             runningProfits={runningProfits}
