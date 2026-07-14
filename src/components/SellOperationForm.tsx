@@ -29,6 +29,7 @@ export default function SellOperationForm() {
   const [dealDate, setDealDate] = useState('');
   const [cashReceived, setCashReceived] = useState('');
   const [channelId, setChannelId] = useState<number | null>(null);
+  const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -159,6 +160,7 @@ export default function SellOperationForm() {
       cashReceived: parsedCashReceived,
       channelId: channelId!,
       itemId: selectedItem.id,
+      notes: notes.trim() || null,
       cfDescription,
     });
 
@@ -409,6 +411,17 @@ export default function SellOperationForm() {
                 ))}
               </select>
             </div>
+
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Notes</label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+                placeholder="Optional deal notes, condition details, buyer/seller context, trade reasoning..."
+              />
+            </div>
           </div>
 
           <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
@@ -453,6 +466,7 @@ export default function SellOperationForm() {
               setDealDate('');
               setCashReceived('');
               setChannelId(null);
+              setNotes('');
               setSelectedItem(null);
               setShowItemForm(false);
               setSearchQuery('');
