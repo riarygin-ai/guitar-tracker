@@ -605,14 +605,14 @@ export async function getAiPrompts() {
   return supabase
     .from('ai_prompts')
     .select('*')
-    .order('category', { ascending: true })
+    .order('category_id', { ascending: true })
     .order('deal_channel_id', { ascending: true });
 }
 
 export async function upsertAiPrompt(data: UpsertAiPrompt) {
   return supabase
     .from('ai_prompts')
-    .upsert(data, { onConflict: 'user_id,category,deal_channel_id' })
+    .upsert(data, { onConflict: 'user_id,category_id,deal_channel_id' })
     .select()
     .single<AiPrompt>();
 }

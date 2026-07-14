@@ -12,24 +12,6 @@ import {
 const SUPABASE_URL     = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 
-const SUBTYPE_TO_CATEGORY: Record<string, string> = {
-  'Electric Guitar':  'Guitar',
-  'Acoustic Guitar':  'Guitar',
-  'Classical Guitar': 'Guitar',
-  'Resonator Guitar': 'Guitar',
-  'Bass':             'Guitar',
-  'Bass Guitar':      'Guitar',
-  'Amp':              'Amp',
-  'Cabinet':          'Cabinet',
-  'Pedal':            'Pedal',
-  'Processor':        'Pedal',
-  'Parts':            'Other',
-  'Pickups':          'Other',
-};
-
-function detectCategory(subtypeName: string | null): string {
-  return (subtypeName && SUBTYPE_TO_CATEGORY[subtypeName]) || 'Other';
-}
 
 export async function POST(req: NextRequest) {
   // ── Parse body ───────────────────────────────────────────────────────────────
@@ -90,10 +72,10 @@ export async function POST(req: NextRequest) {
 
   const channelName = (channelRow as any).name as string;
 
-  // ── Fetch inventory item ──────────────────────────────────────────────────────
+  // ── Fetch inventory item (with category_id from subtype) ─────────────────────
   const { data: item, error: itemError } = await db
     .from('inventory_items')
-    .select('*, brands(name), item_subtypes(name)')
+    .select('*, brands(name), item_subtypes(name, category_id)')
     .eq('id', inventoryItemId)
     .single();
 
@@ -103,24 +85,19 @@ export async function POST(req: NextRequest) {
 
   // ── Category detection + prompt lookup ───────────────────────────────────────
   const subtypeName = (item.item_subtypes as any)?.name as string | null ?? null;
-  const category    = detectCategory(subtypeName);
-
-  const candidateCategories: string[] = [category];
-  if (category !== 'Guitar') candidateCategories.push('Guitar');
-  if (category !== 'Other')  candidateCategories.push('Other');
+  const categoryId  = (item.item_subtypes as any)?.category_id as number | null ?? null;
 
   let aiPromptId:   number | null = null;
   let promptName:   string | null = null;
   let resolvedInstruction         = LISTING_INSTRUCTIONS[channelName.toLowerCase()] ?? Object.values(LISTING_INSTRUCTIONS)[0];
   let resolvedModel               = MODEL_ID;
   let resolvedTemperature         = TEMPERATURE;
-  let resolvedCategory            = category;
 
-  for (const cat of candidateCategories) {
+  if (categoryId !== null) {
     const { data: promptRow } = await db
       .from('ai_prompts')
       .select('id, name, prompt_text, model, temperature, is_active')
-      .eq('category',        cat)
+      .eq('category_id',     categoryId)
       .eq('deal_channel_id', dealChannelId)
       .eq('is_active',       true)
       .maybeSingle();
@@ -131,8 +108,6 @@ export async function POST(req: NextRequest) {
       resolvedInstruction = promptRow.prompt_text;
       resolvedModel       = (promptRow.model as string | null)?.trim() || MODEL_ID;
       resolvedTemperature = promptRow.temperature != null ? Number(promptRow.temperature) : TEMPERATURE;
-      resolvedCategory    = cat;
-      break;
     }
   }
 
@@ -207,8 +182,7 @@ export async function POST(req: NextRequest) {
     maxTokens:           MAX_TOKENS,
     channelName,
     channelId:           dealChannelId,
-    category:            resolvedCategory,
-    detectedCategory:    category,
+    category_id:         categoryId,
     aiPromptId,
     promptName,
     systemMessage:       SYSTEM_PROMPT,

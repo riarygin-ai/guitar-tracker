@@ -1,13 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getAiPrompts, getDealChannels, getOrCreateAppUser, upsertAiPrompt } from '@/lib/supabase';
-import type { AiPrompt, DealChannel } from '@/types';
+import { getAiPrompts, getDealChannels, getItemCategories, getOrCreateAppUser, upsertAiPrompt } from '@/lib/supabase';
+import type { AiPrompt, DealChannel, ItemCategory } from '@/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type CategoryId = 'Guitar' | 'Amp' | 'Pedal' | 'Cabinet' | 'Other';
-type ComboKey   = string; // `${CategoryId}:${channelId}`
+type ComboKey = string; // `${categoryId}:${channelId}`
 
 interface FormValues {
   name:        string;
@@ -29,14 +28,6 @@ interface TabState {
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-
-const CATEGORIES: { id: CategoryId; label: string }[] = [
-  { id: 'Guitar',  label: 'Guitar'  },
-  { id: 'Amp',     label: 'Amp'     },
-  { id: 'Pedal',   label: 'Pedal'   },
-  { id: 'Cabinet', label: 'Cabinet' },
-  { id: 'Other',   label: 'Other'   },
-];
 
 const EMPTY_FORM: FormValues = {
   name:        '',
@@ -75,7 +66,8 @@ function formatDate(iso: string): string {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function AiPromptsCard() {
-  const [activeCategory,  setActiveCategory]  = useState<CategoryId>('Guitar');
+  const [categories,      setCategories]      = useState<ItemCategory[]>([]);
+  const [activeCategory,  setActiveCategory]  = useState<number | null>(null);
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
   const [listingChannels, setListingChannels] = useState<DealChannel[]>([]);
   const [loading,         setLoading]         = useState(true);
@@ -83,10 +75,14 @@ export default function AiPromptsCard() {
   const [userId,          setUserId]          = useState<number | null>(null);
   const [tabs,            setTabs]            = useState<Record<ComboKey, TabState>>({});
 
-  const comboKey: ComboKey = `${activeCategory}:${activeChannelId}`;
-  const tab = tabs[comboKey];
+  const comboKey: ComboKey = activeCategory !== null && activeChannelId !== null
+    ? `${activeCategory}:${activeChannelId}`
+    : '';
+  const tab = comboKey ? tabs[comboKey] : undefined;
 
-  // ── Load channels + prompts on mount ──────────────────────────────────────
+  const activeCategoryName = categories.find((c) => c.id === activeCategory)?.name ?? '';
+
+  // ── Load categories + channels + prompts on mount ─────────────────────────
 
   useEffect(() => {
     let cancelled = false;
@@ -102,12 +98,18 @@ export default function AiPromptsCard() {
       }
       setUserId(user.id);
 
-      const [channelRes, promptRes] = await Promise.all([
+      const [categoryRes, channelRes, promptRes] = await Promise.all([
+        getItemCategories(),
         getDealChannels(),
         getAiPrompts(),
       ]);
       if (cancelled) return;
 
+      if (categoryRes.error) {
+        setLoadError('Could not load categories. Please refresh the page.');
+        setLoading(false);
+        return;
+      }
       if (channelRes.error) {
         setLoadError('Could not load listing platforms. Please refresh the page.');
         setLoading(false);
@@ -119,6 +121,10 @@ export default function AiPromptsCard() {
         return;
       }
 
+      const cats = ((categoryRes.data ?? []) as ItemCategory[]).filter((c) => c.is_active);
+      setCategories(cats);
+      if (cats.length > 0) setActiveCategory(cats[0].id);
+
       const platforms = ((channelRes.data ?? []) as DealChannel[]).filter(
         (c) => c.is_listing_platform && c.is_active,
       );
@@ -127,7 +133,7 @@ export default function AiPromptsCard() {
 
       // Build tab map for all category × platform combinations
       const initialTabs: Record<ComboKey, TabState> = {};
-      for (const cat of CATEGORIES) {
+      for (const cat of cats) {
         for (const ch of platforms) {
           initialTabs[`${cat.id}:${ch.id}`] = makeEmpty();
         }
@@ -135,7 +141,8 @@ export default function AiPromptsCard() {
 
       // Populate from loaded prompts
       for (const row of (promptRes.data ?? []) as AiPrompt[]) {
-        const key: ComboKey = `${row.category}:${row.deal_channel_id}`;
+        if (row.category_id === null) continue;
+        const key: ComboKey = `${row.category_id}:${row.deal_channel_id}`;
         if (key in initialTabs) {
           const form = promptToForm(row);
           initialTabs[key] = { ...initialTabs[key], promptId: row.id, current: form, saved: form, isDirty: false, savedAt: row.updated_at };
@@ -163,14 +170,14 @@ export default function AiPromptsCard() {
     setTabs((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   }
 
-  function categoryHasDirty(catId: CategoryId): boolean {
+  function categoryHasDirty(catId: number): boolean {
     return listingChannels.some((ch) => tabs[`${catId}:${ch.id}`]?.isDirty);
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
   async function handleSave() {
-    if (!userId || activeChannelId === null || !tab) return;
+    if (!userId || activeCategory === null || activeChannelId === null || !tab) return;
 
     if (!tab.current.promptText.trim()) {
       updateTabMeta(comboKey, { errorMsg: 'Prompt text cannot be empty.' });
@@ -191,7 +198,7 @@ export default function AiPromptsCard() {
 
     const { data, error } = await upsertAiPrompt({
       user_id:         userId,
-      category:        activeCategory,
+      category_id:     activeCategory,
       deal_channel_id: activeChannelId,
       name:            tab.current.name.trim(),
       description:     tab.current.description.trim() || null,
@@ -259,31 +266,33 @@ export default function AiPromptsCard() {
       </div>
 
       {/* Category selector */}
-      <div
-        className="mt-5 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-700/60"
-        role="tablist"
-        aria-label="Gear category"
-      >
-        {CATEGORIES.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            role="tab"
-            aria-selected={activeCategory === c.id}
-            onClick={() => setActiveCategory(c.id)}
-            className={`flex-1 rounded-lg py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
-              activeCategory === c.id
-                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-white'
-                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
-            }`}
-          >
-            {c.label}
-            {categoryHasDirty(c.id) && activeCategory !== c.id && (
-              <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle dark:bg-amber-500" />
-            )}
-          </button>
-        ))}
-      </div>
+      {!loading && categories.length > 0 && (
+        <div
+          className="mt-5 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-700/60"
+          role="tablist"
+          aria-label="Gear category"
+        >
+          {categories.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              role="tab"
+              aria-selected={activeCategory === c.id}
+              onClick={() => setActiveCategory(c.id)}
+              className={`flex-1 rounded-lg py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
+                activeCategory === c.id
+                  ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-white'
+                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+              }`}
+            >
+              {c.name}
+              {categoryHasDirty(c.id) && activeCategory !== c.id && (
+                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle dark:bg-amber-500" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Listing platform tabs (dynamic) */}
       {!loading && listingChannels.length > 0 && (
@@ -341,7 +350,7 @@ export default function AiPromptsCard() {
                 onChange={(e) => updateCurrent(comboKey, { name: e.target.value })}
                 disabled={tab.saving}
                 className={inputClass}
-                placeholder={`e.g. ${activeCategory} – ${activeChannelName} Listing`}
+                placeholder={`e.g. ${activeCategoryName} – ${activeChannelName} Listing`}
               />
             </div>
             <div className="space-y-1.5">
@@ -414,13 +423,13 @@ export default function AiPromptsCard() {
               value={tab.current.promptText}
               onChange={(e) => updateCurrent(comboKey, { promptText: e.target.value })}
               disabled={tab.saving}
-              placeholder={`Enter instructions for ${activeCategory} listings on ${activeChannelName}…`}
+              placeholder={`Enter instructions for ${activeCategoryName} listings on ${activeChannelName}…`}
               className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 font-mono text-sm leading-relaxed text-slate-900 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700/50 dark:text-slate-100 dark:focus:bg-slate-700 dark:focus:ring-slate-600"
               style={{ minHeight: '280px' }}
             />
             <p className="text-xs text-slate-400 dark:text-slate-500">
               This replaces the per-platform instruction in the AI message. The global system prompt (dealer tone, honesty rules) stays fixed.
-              Lookup order: <span className="font-medium">{activeCategory}</span> → Guitar → Other → built-in fallback.
+              If no prompt is saved for this combination, a built-in platform fallback is used.
             </p>
           </div>
 

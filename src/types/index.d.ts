@@ -196,9 +196,9 @@ export type UpsertItemListing = {
 export interface AiPrompt {
   id:              number;
   user_id:         number;
-  category:        string;      // 'Guitar' | 'Amp' | 'Pedal' | 'Cabinet' | 'Other'
+  category_id:     number | null;
   deal_channel_id: number;
-  prompt_key:      string | null; // legacy — nullable after migration
+  prompt_key:      string | null;
   name:            string;
   description:     string | null;
   prompt_text:     string;
@@ -211,7 +211,7 @@ export interface AiPrompt {
 
 export type UpsertAiPrompt = {
   user_id:         number;
-  category:        string;
+  category_id:     number;
   deal_channel_id: number;
   name:            string;
   description:     string | null;

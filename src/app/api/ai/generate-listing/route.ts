@@ -5,25 +5,6 @@ import { generateListing, type PromptOverride } from '@/lib/openai';
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 
-// Maps item subtype names → broad prompt category.
-const SUBTYPE_TO_CATEGORY: Record<string, string> = {
-  'Electric Guitar':  'Guitar',
-  'Acoustic Guitar':  'Guitar',
-  'Classical Guitar': 'Guitar',
-  'Resonator Guitar': 'Guitar',
-  'Bass':             'Guitar',
-  'Bass Guitar':      'Guitar',
-  'Amp':              'Amp',
-  'Cabinet':          'Cabinet',
-  'Pedal':            'Pedal',
-  'Processor':        'Pedal',
-  'Parts':            'Other',
-  'Pickups':          'Other',
-};
-
-function detectCategory(subtypeName: string | null): string {
-  return (subtypeName && SUBTYPE_TO_CATEGORY[subtypeName]) || 'Other';
-}
 
 export async function POST(req: NextRequest) {
   // ── Parse request body ───────────────────────────────────────────────────────
@@ -79,10 +60,10 @@ export async function POST(req: NextRequest) {
 
   const channelName = (channelRow as any).name as string;
 
-  // ── Fetch inventory item + brand + subtype ───────────────────────────────────
+  // ── Fetch inventory item + brand + subtype (with category_id) ───────────────
   const { data: item, error: itemError } = await db
     .from('inventory_items')
-    .select('*, brands(name), item_subtypes(name)')
+    .select('*, brands(name), item_subtypes(name, category_id)')
     .eq('id', inventoryItemId)
     .single();
 
@@ -90,23 +71,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Item not found or access denied' }, { status: 404 });
   }
 
-  // ── Detect broad category for prompt lookup ──────────────────────────────────
   const subtypeName = (item.item_subtypes as any)?.name as string | null ?? null;
-  const category    = detectCategory(subtypeName);
+  const categoryId  = (item.item_subtypes as any)?.category_id as number | null ?? null;
 
-  const candidateCategories: string[] = [category];
-  if (category !== 'Guitar') candidateCategories.push('Guitar');
-  if (category !== 'Other')  candidateCategories.push('Other');
-
-  // ── Load active prompt (user-scoped via RLS) ─────────────────────────────────
+  // ── Load active prompt by category_id + channel (user-scoped via RLS) ───────
   let promptOverride: PromptOverride | undefined;
   let aiPromptId: number | null = null;
 
-  for (const cat of candidateCategories) {
+  if (categoryId !== null) {
     const { data: promptRow } = await db
       .from('ai_prompts')
       .select('id, prompt_text, model, temperature, is_active')
-      .eq('category',        cat)
+      .eq('category_id',     categoryId)
       .eq('deal_channel_id', dealChannelId)
       .eq('is_active',       true)
       .maybeSingle();
@@ -118,7 +94,6 @@ export async function POST(req: NextRequest) {
         model:       promptRow.model       ?? null,
         temperature: promptRow.temperature != null ? Number(promptRow.temperature) : null,
       };
-      break;
     }
   }
 
