@@ -156,23 +156,18 @@ export interface InventoryItemPhoto {
   created_at: string;
 }
 
-export type ListingStatus = 'draft' | 'published' | 'archived';
-
 export interface ItemListing {
   id: number;
   user_id: number;
   inventory_item_id: number;
   deal_channel_id: number;
   title: string | null;
-  description: string;
+  description: string | null;
   asking_price: number | null;
   trade_value: number | null;
-  currency: string;
-  status: ListingStatus;
   is_ai_generated: boolean;
-  ai_model: string | null;
   ai_prompt_id: number | null;
-  prompt_snapshot: string | null;
+  listed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -181,16 +176,13 @@ export type UpsertItemListing = {
   id?: number;
   inventory_item_id: number;
   deal_channel_id: number;
-  description: string;
-  status: ListingStatus;
-  is_ai_generated: boolean;
-  title?: string;
+  is_ai_generated?: boolean;
+  title?: string | null;
+  description?: string | null;
   asking_price?: number;
   trade_value?: number;
-  currency?: string;
-  ai_model?: string;
   ai_prompt_id?: number;
-  prompt_snapshot?: string;
+  listed_at?: string | null;
 };
 
 export interface AiPrompt {

@@ -646,9 +646,11 @@ export async function upsertItemListing(data: UpsertItemListing) {
       .select()
       .single<ItemListing>();
   }
+  // No id yet — upsert on the platform-uniqueness key so a second save for
+  // the same item+channel updates the existing row instead of duplicating it.
   return supabase
     .from('item_listings')
-    .insert(payload)
+    .upsert(payload, { onConflict: 'inventory_item_id,deal_channel_id' })
     .select()
     .single<ItemListing>();
 }

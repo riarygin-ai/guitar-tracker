@@ -8,29 +8,27 @@ import type { DealChannel } from '@/types';
 // ── State ──────────────────────────────────────────────────────────────────────
 
 interface TabState {
-  listingId:      number | null;
-  content:        string;
-  isAiGenerated:  boolean;
-  aiModel:        string | null;
-  aiPromptId:     number | null;
-  promptSnapshot: string | null;
-  savedAt:        string | null;
-  isDirty:        boolean;
-  lastSavedVia:   'ai' | 'manual' | null;
-  errorMsg:       string;
+  listingId:     number | null;
+  content:       string;
+  isAiGenerated: boolean;
+  aiPromptId:    number | null;
+  listedAt:      string | null;
+  savedAt:       string | null;
+  isDirty:       boolean;
+  lastSavedVia:  'ai' | 'manual' | null;
+  errorMsg:      string;
 }
 
 const EMPTY_TAB: TabState = {
-  listingId:      null,
-  content:        '',
-  isAiGenerated:  false,
-  aiModel:        null,
-  aiPromptId:     null,
-  promptSnapshot: null,
-  savedAt:        null,
-  isDirty:        false,
-  lastSavedVia:   null,
-  errorMsg:       '',
+  listingId:     null,
+  content:       '',
+  isAiGenerated: false,
+  aiPromptId:    null,
+  listedAt:      null,
+  savedAt:       null,
+  isDirty:       false,
+  lastSavedVia:  null,
+  errorMsg:      '',
 };
 
 // ── Debug payload type ─────────────────────────────────────────────────────────
@@ -75,6 +73,18 @@ function formatSavedAt(iso: string): string {
   }
 }
 
+function formatListedDate(dateStr: string): string {
+  try {
+    // Date-only string ('YYYY-MM-DD') — parse as local, not UTC midnight.
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-CA', {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
 function getStatusDisplay(tab: TabState): { label: string; color: string } {
   if (tab.isDirty) {
     return {
@@ -105,6 +115,7 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
   const [loadingDrafts,   setLoadingDrafts]   = useState(true);
   const [generating,      setGenerating]      = useState(false);
   const [saving,          setSaving]          = useState(false);
+  const [savingDateFor,   setSavingDateFor]   = useState<number | null>(null);
   const [copied,          setCopied]          = useState(false);
   const [isAdmin,         setIsAdmin]         = useState(false);
   const [debugging,       setDebugging]       = useState(false);
@@ -150,16 +161,16 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
           const chId = row.deal_channel_id;
           if (chId in initialTabs) {
             initialTabs[chId] = {
-              listingId:      row.id,
-              content:        row.description,
-              isAiGenerated:  row.is_ai_generated,
-              aiModel:        row.ai_model        ?? null,
-              aiPromptId:     row.ai_prompt_id    ?? null,
-              promptSnapshot: row.prompt_snapshot ?? null,
-              savedAt:        row.updated_at,
-              isDirty:        false,
-              lastSavedVia:   row.is_ai_generated ? 'ai' : 'manual',
-              errorMsg:       '',
+              listingId:     row.id,
+              content:       row.description ?? '',
+              isAiGenerated: row.is_ai_generated,
+              aiPromptId:    row.ai_prompt_id ?? null,
+              listedAt:      row.listed_at    ?? null,
+              // A row can exist with only a listed_at date and no saved text.
+              savedAt:       row.description ? row.updated_at : null,
+              isDirty:       false,
+              lastSavedVia:  row.description ? (row.is_ai_generated ? 'ai' : 'manual') : null,
+              errorMsg:      '',
             };
           }
         }
@@ -182,28 +193,49 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
   // ── Upsert helper (shared by generate auto-save and manual Save Draft) ─────
 
   async function saveToDb(
-    channelId:      number,
-    listingId:      number | null,
-    content:        string,
-    isAi:           boolean,
-    aiModel:        string | null,
-    aiPromptId:     number | null,
-    promptSnapshot: string | null,
+    channelId:  number,
+    listingId:  number | null,
+    content:    string,
+    isAi:       boolean,
+    aiPromptId: number | null,
   ): Promise<{ savedAt: string | null; listingId: number | null; error: string | null }> {
     const { data, error } = await upsertItemListing({
       id:                listingId ?? undefined,
       inventory_item_id: itemId,
       deal_channel_id:   channelId,
       description:       content,
-      status:            'draft',
       is_ai_generated:   isAi,
-      ai_model:          aiModel        ?? undefined,
-      ai_prompt_id:      aiPromptId     ?? undefined,
-      prompt_snapshot:   promptSnapshot ?? undefined,
+      ai_prompt_id:      aiPromptId ?? undefined,
     });
 
     if (error) return { savedAt: null, listingId: null, error: error.message };
     return { savedAt: data?.updated_at ?? new Date().toISOString(), listingId: data?.id ?? null, error: null };
+  }
+
+  // ── Listing date (per platform, independent of the text draft flow) ────────
+
+  async function handleListedAtChange(channelId: number, value: string | null) {
+    const tab = tabs[channelId];
+
+    setSavingDateFor(channelId);
+    const { data, error } = await upsertItemListing({
+      id:                tab?.listingId ?? undefined,
+      inventory_item_id: itemId,
+      deal_channel_id:   channelId,
+      listed_at:         value,
+    });
+    setSavingDateFor(null);
+
+    if (error) {
+      updateTab(channelId, { errorMsg: `Could not update listing date: ${error.message}` });
+      return;
+    }
+
+    updateTab(channelId, {
+      listingId: data?.id ?? tab?.listingId ?? null,
+      listedAt:  data?.listed_at ?? value,
+      errorMsg:  '',
+    });
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
@@ -238,39 +270,33 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
       const payload = await res.json();
       if (!res.ok) throw new Error(payload.error ?? `Server error ${res.status}`);
 
-      const text           = payload.text as string;
-      const aiModel        = (payload.ai_model     as string | null | undefined) ?? null;
-      const aiPromptId     = (payload.ai_prompt_id as number | null | undefined) ?? null;
-      const promptSnapshot = (payload.prompt_snapshot as string | null | undefined) ?? null;
+      const text       = payload.text as string;
+      const aiPromptId = (payload.ai_prompt_id as number | null | undefined) ?? null;
 
       const existingListingId = tabs[channelId]?.listingId ?? null;
       const { savedAt, listingId: newListingId, error: saveError } = await saveToDb(
-        channelId, existingListingId, text, true, aiModel, aiPromptId, promptSnapshot,
+        channelId, existingListingId, text, true, aiPromptId,
       );
 
       if (saveError) {
         updateTab(channelId, {
-          content:        text,
-          isAiGenerated:  true,
-          aiModel,
+          content:       text,
+          isAiGenerated: true,
           aiPromptId,
-          promptSnapshot,
-          isDirty:        true,
-          lastSavedVia:   null,
-          errorMsg:       `Generated, but auto-save failed: ${saveError}`,
+          isDirty:       true,
+          lastSavedVia:  null,
+          errorMsg:      `Generated, but auto-save failed: ${saveError}`,
         });
       } else {
         updateTab(channelId, {
-          listingId:      newListingId,
-          content:        text,
-          isAiGenerated:  true,
-          aiModel,
+          listingId:     newListingId,
+          content:       text,
+          isAiGenerated: true,
           aiPromptId,
-          promptSnapshot,
-          savedAt:        savedAt!,
-          isDirty:        false,
-          lastSavedVia:   'ai',
-          errorMsg:       '',
+          savedAt:       savedAt!,
+          isDirty:       false,
+          lastSavedVia:  'ai',
+          errorMsg:      '',
         });
       }
     } catch (err) {
@@ -297,9 +323,7 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
       current.listingId,
       current.content.trim(),
       current.isAiGenerated,
-      current.aiModel,
       current.aiPromptId,
-      current.promptSnapshot,
     );
 
     setSaving(false);
@@ -334,7 +358,6 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
     updateTab(activeChannelId, {
       content:       '',
       isAiGenerated: false,
-      aiModel:       null,
       isDirty:       current.savedAt !== null,
       errorMsg:      '',
     });
@@ -464,6 +487,57 @@ export default function AiAssistantCard({ itemId, itemLabel }: AiAssistantCardPr
               )}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* ── Per-platform listing status ──────────────────────────────────── */}
+      {channels.length > 0 && (
+        <div className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-700 dark:border-slate-700">
+          {channels.map((ch) => {
+            const tab      = tabs[ch.id];
+            const listedAt = tab?.listedAt ?? null;
+            return (
+              <div key={ch.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="text-sm font-medium text-slate-900 dark:text-white">{ch.name}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    tab?.content
+                      ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300'
+                      : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+                  }`}>
+                    {tab?.content ? 'Text saved' : 'No text'}
+                  </span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    listedAt
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                  }`}>
+                    {listedAt ? `Listed ${formatListedDate(listedAt)}` : 'Not listed'}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <input
+                    type="date"
+                    value={listedAt ?? ''}
+                    onChange={(e) => handleListedAtChange(ch.id, e.target.value || null)}
+                    disabled={savingDateFor === ch.id || loadingDrafts}
+                    aria-label={`${ch.name} listing date`}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600"
+                  />
+                  {listedAt && (
+                    <button
+                      type="button"
+                      onClick={() => handleListedAtChange(ch.id, null)}
+                      disabled={savingDateFor === ch.id || loadingDrafts}
+                      className="text-xs font-medium text-slate-400 transition hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-500 dark:hover:text-slate-300"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
