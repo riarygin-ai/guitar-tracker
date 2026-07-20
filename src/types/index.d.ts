@@ -80,6 +80,101 @@ export type InventoryItemWithValue = InventoryItem & {
   item_subtype_name?: string | null;
 };
 
+// analytics_item_lifecycle — one row per inventory item; see
+// supabase/migrations/20260723000000_analytics_item_lifecycle.sql for the
+// full formula documentation (grain, RLS/security_invoker behavior, roi as
+// a percentage, tag-array semantics, Historical Import placeholder limits).
+export interface AnalyticsItemLifecycle {
+  item_id: number;
+  user_id: number;
+
+  item_display_name: string;
+  model: string;
+  year: number | null;
+  color: string | null;
+
+  brand_id: number;
+  brand_name: string | null;
+
+  category_id: number | null;
+  category_name: string | null;
+
+  type_id: number | null;
+  type_name: string | null;
+
+  condition_name: string | null;
+
+  purpose_id: number | null;
+  purpose_name: string | null;
+
+  current_status: Status;
+  estimated_sold_value: number | null;
+
+  tag_ids: number[];
+  tag_names: string[];
+  tag_count: number;
+
+  acquisition_deal_id: number | null;
+  acquisition_date: string | null;
+  acquisition_deal_type: string | null;
+  acquisition_channel_id: number | null;
+  acquisition_channel_name: string | null;
+  acquisition_method: 'cash' | 'trade' | 'unknown' | null;
+  acquisition_value: number | null;
+  is_historical_import: boolean;
+  acquisition_date_is_placeholder: boolean;
+
+  marketplace_listed_at: string | null;
+  kijiji_listed_at: string | null;
+  reverb_listed_at: string | null;
+
+  first_listed_at: string | null;
+  last_listed_at: string | null;
+  first_listing_platform: 'Marketplace' | 'Kijiji' | 'Reverb' | 'Multiple' | null;
+
+  listing_platform_count: number;
+  is_cross_listed: boolean;
+
+  days_acquisition_to_first_listing: number | null;
+  days_first_to_last_listing: number | null;
+  global_days_on_market: number | null;
+
+  marketplace_listing_delay_days: number | null;
+  marketplace_listing_age_days: number | null;
+  marketplace_days_to_exit: number | null;
+
+  kijiji_listing_delay_days: number | null;
+  kijiji_listing_age_days: number | null;
+  kijiji_days_to_exit: number | null;
+
+  reverb_listing_delay_days: number | null;
+  reverb_listing_age_days: number | null;
+  reverb_days_to_exit: number | null;
+
+  exit_deal_id: number | null;
+  exit_date: string | null;
+  exit_type: string | null;
+  exit_channel_id: number | null;
+  exit_channel_name: string | null;
+  exit_value: number | null;
+  is_realized: boolean;
+
+  item_expense_count: number;
+  item_expenses_total: number;
+
+  // roi is a PERCENTAGE (e.g. 25.5 = 25.5%), matching src/app/page.tsx's
+  // existing brand-performance ROI convention — not a 0-1 ratio.
+  gross_profit: number | null;
+  net_profit: number | null;
+  roi: number | null;
+
+  holding_days: number | null;
+
+  has_listing_before_acquisition: boolean;
+  has_listing_after_exit: boolean;
+  has_lifecycle_date_issue: boolean;
+}
+
 export interface Deal {
   id: number;
   user_id: number;
