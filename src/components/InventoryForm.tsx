@@ -5,7 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ItemPhotos, { type ItemPhotosHandle } from '@/components/ItemPhotos';
-import AiAssistantCard from '@/components/AiAssistantCard';
+import AiAssistantCard, { type AiAssistantCardHandle } from '@/components/AiAssistantCard';
 import TagsSelector from '@/components/TagsSelector';
 import type {
   Brand,
@@ -76,6 +76,7 @@ export default function InventoryForm({
 }: InventoryFormProps) {
   const router = useRouter();
   const photosRef          = useRef<ItemPhotosHandle>(null);
+  const aiAssistantRef     = useRef<AiAssistantCardHandle>(null);
   const formCardRef        = useRef<HTMLDivElement>(null);
   const photosWrapperRef   = useRef<HTMLDivElement>(null);
   const wasPhotosShownRef  = useRef(false);
@@ -422,8 +423,11 @@ export default function InventoryForm({
       ? await updateInventoryItem(Number(itemId), { id: Number(itemId), ...payload })
       : await createInventoryItem(payload);
 
-    setSaving(false);
-    if (result.error || !result.data) { setError('Could not save inventory item.'); return; }
+    if (result.error || !result.data) {
+      setSaving(false);
+      setError('Could not save inventory item.');
+      return;
+    }
 
     // Save tags
     const savedItemId = (result.data as { id: number }).id;
@@ -433,11 +437,31 @@ export default function InventoryForm({
     if (itemId && photosRef.current?.hasPending()) {
       const { error: photoError } = await photosRef.current.uploadPending();
       if (photoError) {
+        setSaving(false);
         setError(`Item saved but photo upload failed: ${photoError}`);
         return;
       }
       setShowPhotos(false);
     }
+
+    // Save all pending platform listing changes (edit mode only — the Listings
+    // section only renders once the item exists). One coordinated save: the
+    // item update is not reported as successful if listings fail to save.
+    if (itemId) {
+      const { error: listingsError } = (await aiAssistantRef.current?.savePending()) ?? { error: null };
+      if (listingsError) {
+        setSaving(false);
+        setError(`Item saved but listings failed to save: ${listingsError}`);
+        return;
+      }
+
+      // Listing changes may have flipped owned<->listed via the DB sync
+      // trigger — refetch so the status badge reflects the latest platform dates.
+      const refreshed = await getInventoryItemById(Number(itemId));
+      if (!refreshed.error && refreshed.data) setExistingItem(refreshed.data);
+    }
+
+    setSaving(false);
 
     // Standalone form: navigate back to the list with filters intact
     if (!hideHeader) {
@@ -1065,6 +1089,7 @@ export default function InventoryForm({
 
               {existingItem && (
                 <AiAssistantCard
+                  ref={aiAssistantRef}
                   itemId={Number(itemId)}
                   itemLabel={`${brandInput} ${model}`.trim()}
                 />
