@@ -635,6 +635,14 @@ export async function getItemListings(itemId: number) {
     .eq('inventory_item_id', itemId);
 }
 
+// Bulk listing dates for dashboard/analytics — one row per platform, RLS-scoped.
+export async function getAllListedDates() {
+  return supabase
+    .from('item_listings')
+    .select('inventory_item_id, listed_at')
+    .not('listed_at', 'is', null);
+}
+
 export async function upsertItemListing(data: UpsertItemListing) {
   const { id, ...rest } = data;
   const payload = { ...rest, updated_at: new Date().toISOString() };

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase, getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes } from '@/lib/supabase'
+import { supabase, getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getAllListedDates } from '@/lib/supabase'
 
 export default function HomePage() {
   const router = useRouter()
@@ -11,6 +11,8 @@ export default function HomePage() {
   const [deals, setDeals] = useState<any[]>([])
   const [dealItems, setDealItems] = useState<any[]>([])
   const [inventoryExpenses, setInventoryExpenses] = useState<any[]>([])
+  // Earliest platform listing date per item, across all deal_channels — id -> 'YYYY-MM-DD'
+  const [earliestListedById, setEarliestListedById] = useState<Record<number, string>>({})
   const [brands, setBrands] = useState<any[]>([])
   const [itemSubtypes, setItemSubtypes] = useState<any[]>([])
   const [itemCategoriesData, setItemCategoriesData] = useState<any[]>([])
@@ -35,7 +37,7 @@ export default function HomePage() {
       console.groupEnd()
       // ────────────────────────────────────────────────────────────────────────
 
-      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, brandsResult, catsResult, subsResult, purposesResult] = await Promise.all([
+      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, brandsResult, catsResult, subsResult, purposesResult, listedDatesResult] = await Promise.all([
         getCashFlows(),
         getInventoryItemsWithValue(),
         getDeals(),
@@ -45,6 +47,7 @@ export default function HomePage() {
         getItemCategories(),
         getItemSubtypes(),
         getItemPurposes(),
+        getAllListedDates(),
       ])
 
       // ── DIAGNOSTICS (temporary) ──────────────────────────────────────────────
@@ -76,6 +79,15 @@ export default function HomePage() {
       setItemCategoriesData(catsResult.data || [])
       setItemSubtypes(subsResult.data || [])
       if (!purposesResult.error) setItemPurposes(purposesResult.data || [])
+      if (!listedDatesResult.error) {
+        const earliest: Record<number, string> = {}
+        for (const row of listedDatesResult.data || []) {
+          const itemId = row.inventory_item_id as number
+          const listedAt = row.listed_at as string
+          if (!earliest[itemId] || listedAt < earliest[itemId]) earliest[itemId] = listedAt
+        }
+        setEarliestListedById(earliest)
+      }
       setLoading(false)
     }
 
@@ -360,10 +372,11 @@ export default function HomePage() {
 
       if (!item.sold_date) return
 
-      // days on market = sold_date - listed_date; null when listed_date is absent
-      const daysOnMarket = item.date_listed
+      // days on market = sold_date - earliest platform listed_at; null when no platform date exists
+      const listedAt = earliestListedById[item.id]
+      const daysOnMarket = listedAt
         ? Math.round(
-            (new Date(item.sold_date).getTime() - new Date(item.date_listed).getTime()) /
+            (new Date(item.sold_date).getTime() - new Date(listedAt).getTime()) /
             (1000 * 60 * 60 * 24)
           )
         : null
@@ -395,7 +408,7 @@ export default function HomePage() {
       })
       .sort((a, b) => b.avgRoi - a.avgRoi)
       .slice(0, 15)
-  }, [inventoryItems, dealItems, deals, brands, inventoryExpenses])
+  }, [inventoryItems, dealItems, deals, brands, inventoryExpenses, earliestListedById])
 
   return (
     <div className="space-y-6">

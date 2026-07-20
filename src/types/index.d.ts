@@ -59,7 +59,6 @@ export interface InventoryItem {
   item_subtype_id: number | null;
   model: string;
   serial_number: string | null;
-  date_listed: string | null;
   sold_date: string | null;
   estimated_sold_value: number | null;
   collection_type: CollectionType | null;

@@ -38,7 +38,6 @@ import {
   type HistoricalImportInfo,
 } from '@/lib/supabase';
 import { calculateItemProfitMetrics } from '@/lib/profit';
-import { todayLocalDate } from '@/lib/dateUtils';
 
 
 const conditionOptions: Array<{ label: string; value: Condition }> = [
@@ -145,10 +144,6 @@ export default function InventoryForm({
   const [histAcquisitionDate, setHistAcquisitionDate] = useState('');
   const [histValueIn,         setHistValueIn]         = useState('');
 
-  // Listed / sold dates
-  const [listedDate,          setListedDate]          = useState('');
-  const [editingListedDate,   setEditingListedDate]   = useState(false);
-  const [acquiredDate,        setAcquiredDate]        = useState<string | null>(null);
   // Edit mode: existing historical import record (read-only display)
   const [existingHistImport, setExistingHistImport] = useState<HistoricalImportInfo | null>(null);
 
@@ -233,7 +228,6 @@ export default function InventoryForm({
       setPurposeId(item.purpose_id ?? null);
       setEstimatedSoldValue(item.estimated_sold_value?.toString() ?? '');
       setNotes(item.notes ?? '');
-      setListedDate(item.date_listed ?? '');
       setSelectedBrandId(item.brand_id);
       const brand = brands.find((b) => b.id === item.brand_id);
       setBrandInput(brand?.name ?? '');
@@ -246,7 +240,6 @@ export default function InventoryForm({
       // Metrics
       if (!withValueResult.error && withValueResult.data) {
         setValueIn((withValueResult.data as any).value_in ?? null);
-        setAcquiredDate((withValueResult.data as any).acquired_date ?? null);
       }
       if (!dealItemsResult.error && dealItemsResult.data) {
         const outSum = dealItemsResult.data
@@ -339,20 +332,6 @@ export default function InventoryForm({
       }
     }
 
-    // Listed date validation
-    if (listedDate) {
-      const today = todayLocalDate();
-      if (listedDate > today) {
-        setError('Listed date cannot be in the future.');
-        return;
-      }
-      const minListDate = !itemId && historicalImport ? histAcquisitionDate : acquiredDate;
-      if (minListDate && listedDate < minListDate) {
-        setError('Listed date cannot be before acquired date.');
-        return;
-      }
-    }
-
     // Per-field required validation (applies to create and update)
     const conditionErr  = !condition       ? 'Please select a Condition.'              : null;
     const purposeErr    = purposeId == null ? 'Please select a Purpose.'               : null;
@@ -397,9 +376,6 @@ export default function InventoryForm({
         setError(rpcResult.error ?? 'Could not create item with historical import.');
         return;
       }
-      if (listedDate) {
-        await updateInventoryItem(rpcResult.data.item_id, { id: rpcResult.data.item_id, date_listed: listedDate });
-      }
       if (selectedTagIds.length > 0) {
         await setItemTags(rpcResult.data.item_id, selectedTagIds);
       }
@@ -417,7 +393,7 @@ export default function InventoryForm({
       setBrandInput(''); setSelectedBrandId(null);
       setSelectedSubtypeId(null);
       setModel(''); setSerialNumber(''); setYear(''); setColor('');
-      setCondition(''); setPurposeId(null); setEstimatedSoldValue(''); setNotes(''); setListedDate(''); setEditingListedDate(false);
+      setCondition(''); setPurposeId(null); setEstimatedSoldValue(''); setNotes('');
       setConditionError(null); setPurposeError(null); setEstimatedSoldValueError(null);
       setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
       setSelectedTagIds([]);
@@ -438,11 +414,8 @@ export default function InventoryForm({
       purpose_id: purposeId,
       estimated_sold_value: estimatedSoldValue ? Number(estimatedSoldValue) : null,
       notes: notes.trim() || null,
-      date_listed: listedDate || (existingItem?.status === 'listed' ? todayLocalDate() : null),
       sold_date: existingItem?.sold_date ?? null,
-      status: listedDate && (existingItem?.status === 'new' || existingItem?.status === 'owned')
-        ? 'listed'
-        : existingItem?.status ?? 'new',
+      status: existingItem?.status ?? 'new',
     };
 
     const result = itemId
@@ -485,8 +458,6 @@ export default function InventoryForm({
     setPurposeId(null);
     setEstimatedSoldValue('');
     setNotes('');
-    setListedDate('');
-    setEditingListedDate(false);
     setConditionError(null);
     setPurposeError(null);
     setEstimatedSoldValueError(null);
@@ -727,64 +698,6 @@ export default function InventoryForm({
         {estimatedSoldValueError
           ? <p className="text-xs text-rose-600 dark:text-rose-400">{estimatedSoldValueError}</p>
           : <p className="text-xs text-slate-500 dark:text-slate-400">Estimated values help track potential returns.</p>}
-      </div>
-
-      {/* Listed date */}
-      <div className="space-y-1.5">
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Listed date</label>
-        {listedDate && !editingListedDate ? (
-          <div className="flex h-10 items-center gap-3">
-            <span className="text-sm text-slate-900 dark:text-slate-100">
-              {new Date(listedDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-            </span>
-            <button
-              type="button"
-              onClick={() => setEditingListedDate(true)}
-              disabled={disabled}
-              className="text-xs text-slate-500 underline underline-offset-2 hover:text-slate-800 disabled:cursor-not-allowed dark:text-slate-400 dark:hover:text-slate-200"
-            >
-              Change
-            </button>
-            <button
-              type="button"
-              onClick={() => setListedDate('')}
-              disabled={disabled}
-              className="text-xs text-slate-500 underline underline-offset-2 hover:text-rose-600 disabled:cursor-not-allowed dark:text-slate-400 dark:hover:text-rose-400"
-            >
-              Clear
-            </button>
-          </div>
-        ) : editingListedDate ? (
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={listedDate}
-              min={(!itemId && historicalImport ? histAcquisitionDate : acquiredDate) || undefined}
-              max={todayLocalDate()}
-              onChange={(e) => setListedDate(e.target.value)}
-              disabled={disabled}
-              autoFocus
-              className={inputClass}
-            />
-            <button
-              type="button"
-              onClick={() => setEditingListedDate(false)}
-              disabled={disabled}
-              className="shrink-0 text-xs text-slate-500 underline underline-offset-2 hover:text-slate-800 disabled:cursor-not-allowed dark:text-slate-400 dark:hover:text-slate-200"
-            >
-              Done
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setListedDate(todayLocalDate())}
-            disabled={disabled}
-            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-          >
-            List item
-          </button>
-        )}
       </div>
 
       {/* Notes */}
@@ -1063,14 +976,6 @@ export default function InventoryForm({
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Est. ROI</p>
                                 <p className={`mt-0.5 text-lg font-semibold ${metricColor(potentialRoi)}`}>{fmtPct(potentialRoi, potentialReward)}</p>
                               </div>
-                              {existingItem.date_listed && (
-                                <div>
-                                  <p className="text-xs text-slate-500 dark:text-slate-400">Listed</p>
-                                  <p className="mt-0.5 text-sm font-medium text-slate-900 dark:text-slate-100">
-                                    {new Date(existingItem.date_listed + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                  </p>
-                                </div>
-                              )}
                             </>
                           )}
                           {isSoldOrTraded && (
@@ -1093,27 +998,11 @@ export default function InventoryForm({
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Realized ROI</p>
                                 <p className={`mt-0.5 text-lg font-semibold ${metricColor(realizedRoi)}`}>{fmtPct(realizedRoi, realizedGain)}</p>
                               </div>
-                              {existingItem.date_listed && (
-                                <div>
-                                  <p className="text-xs text-slate-500 dark:text-slate-400">Listed</p>
-                                  <p className="mt-0.5 text-sm font-medium text-slate-900 dark:text-slate-100">
-                                    {new Date(existingItem.date_listed + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                  </p>
-                                </div>
-                              )}
                               {existingItem.sold_date && (
                                 <div>
                                   <p className="text-xs text-slate-500 dark:text-slate-400">Sold</p>
                                   <p className="mt-0.5 text-sm font-medium text-slate-900 dark:text-slate-100">
                                     {new Date(existingItem.sold_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                  </p>
-                                </div>
-                              )}
-                              {existingItem.date_listed && existingItem.sold_date && (
-                                <div>
-                                  <p className="text-xs text-slate-500 dark:text-slate-400">Days to sell</p>
-                                  <p className="mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                                    {Math.max(0, Math.round((new Date(existingItem.sold_date).getTime() - new Date(existingItem.date_listed).getTime()) / 86400000))}
                                   </p>
                                 </div>
                               )}
