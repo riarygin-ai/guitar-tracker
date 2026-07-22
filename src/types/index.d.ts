@@ -16,7 +16,24 @@ export interface ItemSubtype {
   is_active: boolean;
   created_at: string;
 }
-export type DealType = 'purchase' | 'sale' | 'trade' | 'expense';
+export type DealType = 'purchase' | 'sale' | 'trade' | 'expense' | HistoricalDealType;
+
+// Legacy pre-app acquisitions. 'Historical Import' is used when the original
+// method is unknown; 'Historical Purchase' / 'Historical Trade' are corrected
+// labels once the real method is known (see
+// supabase/data-fixes/correct_historical_import_operations.sql). All three
+// are deliberately distinct from 'purchase'/'trade' — never routed into the
+// normal Buy/Trade edit workflows (the UI may still say "Buy" as a label;
+// the stored value is always 'purchase'), and never expected to balance like
+// a real trade (a Historical Trade has no outgoing side on record).
+export type HistoricalDealType = 'Historical Import' | 'Historical Purchase' | 'Historical Trade';
+
+// UI-facing / RPC-parameter value for the Historical Import form's "Deal
+// type" selector — mapped SERVER-SIDE (create_item_with_historical_import)
+// to a HistoricalDealType: 'purchase' -> 'Historical Purchase',
+// 'trade' -> 'Historical Trade', 'unknown' -> 'Historical Import'. Never
+// send a HistoricalDealType string directly as this parameter.
+export type HistoricalAcquisitionMethod = 'purchase' | 'trade' | 'unknown';
 
 export interface DealChannel {
   id: number;
@@ -119,7 +136,7 @@ export interface AnalyticsItemLifecycle {
   acquisition_deal_type: string | null;
   acquisition_channel_id: number | null;
   acquisition_channel_name: string | null;
-  acquisition_method: 'cash' | 'trade' | 'unknown' | null;
+  acquisition_method: 'purchase' | 'trade' | 'unknown' | null;
   acquisition_value: number | null;
   is_historical_import: boolean;
   acquisition_date_is_placeholder: boolean;

@@ -10,6 +10,7 @@ import TagsSelector from '@/components/TagsSelector';
 import type {
   Brand,
   Condition,
+  HistoricalAcquisitionMethod,
   InventoryTag,
   ItemPurpose,
   ItemSubtype,
@@ -141,9 +142,10 @@ export default function InventoryForm({
   const [totalItemExpenses, setTotalItemExpenses] = useState(0);
 
   // Historical import state
-  const [historicalImport,    setHistoricalImport]    = useState(false);
-  const [histAcquisitionDate, setHistAcquisitionDate] = useState('');
-  const [histValueIn,         setHistValueIn]         = useState('');
+  const [historicalImport,          setHistoricalImport]          = useState(false);
+  const [histAcquisitionMethod,     setHistAcquisitionMethod]     = useState<HistoricalAcquisitionMethod>('unknown');
+  const [histAcquisitionDate,       setHistAcquisitionDate]       = useState('');
+  const [histValueIn,               setHistValueIn]               = useState('');
 
   // Edit mode: existing historical import record (read-only display)
   const [existingHistImport, setExistingHistImport] = useState<HistoricalImportInfo | null>(null);
@@ -371,6 +373,7 @@ export default function InventoryForm({
         notes:              notes.trim() || null,
         acquisitionDate:    histAcquisitionDate,
         valueIn:            Number(histValueIn),
+        historicalAcquisitionMethod: histAcquisitionMethod,
       });
       setSaving(false);
       if (rpcResult.error || !rpcResult.data) {
@@ -396,7 +399,7 @@ export default function InventoryForm({
       setModel(''); setSerialNumber(''); setYear(''); setColor('');
       setCondition(''); setPurposeId(null); setEstimatedSoldValue(''); setNotes('');
       setConditionError(null); setPurposeError(null); setEstimatedSoldValueError(null);
-      setHistoricalImport(false); setHistAcquisitionDate(''); setHistValueIn('');
+      setHistoricalImport(false); setHistAcquisitionMethod('unknown'); setHistAcquisitionDate(''); setHistValueIn('');
       setSelectedTagIds([]);
       setSuccessMessage('Item saved.'); setError(null);
       return;
@@ -486,6 +489,7 @@ export default function InventoryForm({
     setPurposeError(null);
     setEstimatedSoldValueError(null);
     setHistoricalImport(false);
+    setHistAcquisitionMethod('unknown');
     setHistAcquisitionDate('');
     setHistValueIn('');
     setSelectedTagIds([]);
@@ -760,7 +764,10 @@ export default function InventoryForm({
                 type="checkbox"
                 id="historicalImport"
                 checked={historicalImport}
-                onChange={(e) => setHistoricalImport(e.target.checked)}
+                onChange={(e) => {
+                  setHistoricalImport(e.target.checked);
+                  if (e.target.checked) setHistAcquisitionMethod('unknown');
+                }}
                 disabled={disabled}
                 className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-slate-800 dark:border-slate-600"
               />
@@ -773,38 +780,61 @@ export default function InventoryForm({
             </p>
 
             {historicalImport && (
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                {/* Acquisition date */}
+              <div className="mt-4 space-y-4">
+                {/* Deal type — maps to deal_type server-side (see
+                    create_item_with_historical_import): Purchase ->
+                    'Historical Purchase', Trade -> 'Historical Trade',
+                    Unknown -> 'Historical Import'. Never sent as the raw
+                    stored string. */}
                 <div className="space-y-1.5">
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Acquisition date <span className="text-rose-500">*</span>
+                    Deal type <span className="text-rose-500">*</span>
                   </label>
-                  <input
-                    type="date"
-                    value={histAcquisitionDate}
-                    onChange={(e) => setHistAcquisitionDate(e.target.value)}
+                  <select
+                    value={histAcquisitionMethod}
+                    onChange={(e) => setHistAcquisitionMethod(e.target.value as HistoricalAcquisitionMethod)}
                     disabled={disabled}
                     className={inputClass}
-                  />
+                  >
+                    <option value="unknown">Unknown</option>
+                    <option value="purchase">Purchase</option>
+                    <option value="trade">Trade</option>
+                  </select>
                 </div>
 
-                {/* Value in */}
-                <div className="space-y-1.5">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Value in <span className="text-rose-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">$</span>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {/* Acquisition date */}
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Acquisition date <span className="text-rose-500">*</span>
+                    </label>
                     <input
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={histValueIn}
-                      onChange={(e) => setHistValueIn(e.target.value)}
+                      type="date"
+                      value={histAcquisitionDate}
+                      onChange={(e) => setHistAcquisitionDate(e.target.value)}
                       disabled={disabled}
-                      placeholder="0.00"
-                      className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+                      className={inputClass}
                     />
+                  </div>
+
+                  {/* Value in */}
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Value in <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">$</span>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={histValueIn}
+                        onChange={(e) => setHistValueIn(e.target.value)}
+                        disabled={disabled}
+                        placeholder="0.00"
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -813,12 +843,16 @@ export default function InventoryForm({
         </div>
       )}
 
-      {/* Edit mode: show existing historical import as read-only */}
+      {/* Edit mode: show existing historical acquisition as read-only —
+          Historical Import (method unknown) or a corrected Historical
+          Purchase / Historical Trade (see
+          correct_historical_import_operations.sql). Never routes into the
+          normal Buy/Trade edit workflow — this box is purely informational. */}
       {itemId && existingHistImport && (
         <div className="sm:col-span-2">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
             <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
-              Historical import
+              {existingHistImport.dealType}
             </p>
             <div className="mt-2 flex flex-wrap gap-6 text-sm">
               <div>

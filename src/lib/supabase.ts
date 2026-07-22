@@ -8,6 +8,8 @@ import type {
   Deal,
   DealChannel,
   DealItem,
+  HistoricalAcquisitionMethod,
+  HistoricalDealType,
   InventoryExpense,
   InventoryItem,
   InventoryItemPhoto,
@@ -247,14 +249,26 @@ export async function getDealItemsByItemId(itemId: number) {
 
 // ─── Historical import helpers ────────────────────────────────────────────────
 
+// 'Historical Import' (method unknown), 'Historical Purchase' / 'Historical
+// Trade' (method corrected — see
+// supabase/data-fixes/correct_historical_import_operations.sql). All three
+// are legacy pre-app acquisitions, distinct from 'purchase'/'trade'.
+const HISTORICAL_DEAL_TYPES: readonly HistoricalDealType[] = [
+  'Historical Import',
+  'Historical Purchase',
+  'Historical Trade',
+];
+
 export interface HistoricalImportInfo {
   dealItemId:  number;
   dealId:      number;
+  dealType:    HistoricalDealType;
   total_value: number;
   deal_date:   string;
 }
 
-/** Returns the Historical Import deal_item for an item, or null if none exists. */
+/** Returns the historical acquisition deal_item for an item (Historical
+ * Import/Purchase/Trade), or null if none exists. */
 export async function getHistoricalImportByItemId(
   itemId: number,
 ): Promise<{ data: HistoricalImportInfo | null; error: string | null }> {
@@ -266,8 +280,8 @@ export async function getHistoricalImportByItemId(
 
   if (error) return { data: null, error: error.message };
 
-  const hit = (data as any[] | null)?.find(
-    (di) => (di.deals as any)?.deal_type === 'Historical Import',
+  const hit = (data as any[] | null)?.find((di) =>
+    HISTORICAL_DEAL_TYPES.includes((di.deals as any)?.deal_type),
   );
 
   if (!hit) return { data: null, error: null };
@@ -276,6 +290,7 @@ export async function getHistoricalImportByItemId(
     data: {
       dealItemId:  hit.id,
       dealId:      hit.deal_id,
+      dealType:    (hit.deals as any)?.deal_type as HistoricalDealType,
       total_value: Number(hit.total_value ?? 0),
       deal_date:   (hit.deals as any)?.deal_date ?? '',
     },
@@ -284,18 +299,19 @@ export async function getHistoricalImportByItemId(
 }
 
 export interface CreateItemWithHistoricalImportParams {
-  brandId:             number;
-  itemSubtypeId:       number | null;
-  model:               string;
-  serialNumber:        string | null;
-  year:                number | null;
-  color:               string | null;
-  condition:           string | null;
-  purposeId:           number | null;
-  estimatedSoldValue:  number | null;
-  notes:               string | null;
-  acquisitionDate:     string;
-  valueIn:             number;
+  brandId:                     number;
+  itemSubtypeId:               number | null;
+  model:                       string;
+  serialNumber:                string | null;
+  year:                        number | null;
+  color:                       string | null;
+  condition:                   string | null;
+  purposeId:                   number | null;
+  estimatedSoldValue:          number | null;
+  notes:                       string | null;
+  acquisitionDate:             string;
+  valueIn:                     number;
+  historicalAcquisitionMethod: HistoricalAcquisitionMethod;
 }
 
 /** Calls the create_item_with_historical_import RPC (atomic transaction). */
@@ -320,6 +336,7 @@ export async function createItemWithHistoricalImport(
     p_acquisition_date:     params.acquisitionDate,
     p_value_in:             params.valueIn,
     p_purpose_id:           params.purposeId,
+    p_historical_acquisition_method: params.historicalAcquisitionMethod,
   });
 
   if (error) return { data: null, error: error.message };
