@@ -167,7 +167,7 @@ export default function SellOperationForm() {
     setSaving(false);
 
     if (result.error) {
-      setError('Could not save sale.');
+      setError(result.error.message || 'Could not save sale.');
       return;
     }
 

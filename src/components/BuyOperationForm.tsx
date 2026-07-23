@@ -175,7 +175,7 @@ export default function BuyOperationForm() {
     setSaving(false);
 
     if (result.error) {
-      setError('Could not save purchase.');
+      setError(result.error.message || 'Could not save purchase.');
       return;
     }
 

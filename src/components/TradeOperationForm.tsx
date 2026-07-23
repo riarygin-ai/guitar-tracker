@@ -289,7 +289,7 @@ export default function TradeOperationForm() {
         setSaving(false)
 
         if (result.error) {
-            setError('Could not save trade.')
+            setError(result.error.message || 'Could not save trade.')
             return
         }
 
