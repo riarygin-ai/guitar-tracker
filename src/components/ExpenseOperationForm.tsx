@@ -97,7 +97,7 @@ export default function ExpenseOperationForm() {
         setSaving(false);
 
         if (result.error) {
-            setError('Could not save expense.');
+            setError(result.error.message || 'Could not save expense.');
             return;
         }
 
