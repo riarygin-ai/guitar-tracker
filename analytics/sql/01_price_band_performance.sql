@@ -1098,8 +1098,8 @@ ORDER BY acquisition_method, price_band_order;
 -- = 0 is a common, unremarkable value in that band, not an extreme one).
 --
 -- Fixed approach — deterministic row-count trimming:
---   1. sample_size = realized item count, computed PER price band.
---   2. trim_count = floor(sample_size * 0.05), PER price band.
+--   1. original_sample_size = realized item count, computed PER price band.
+--   2. trim_count = floor(original_sample_size * 0.05), PER price band.
 --   3. Rows are ranked within each band by net_profit ascending, with
 --      item_id as a deterministic tie-breaker (so re-running this query
 --      never trims a different row when several items share a net_profit).
@@ -1107,11 +1107,29 @@ ORDER BY acquisition_method, price_band_order;
 --      trim_count from the top — trimming is based on net_profit only.
 --   5. Every metric below (including DOM/holding timing) is then computed
 --      from that SAME trimmed population, not re-derived from the full set.
---   6. For sample_size < 20, trim_count = 0 (floor(19 * 0.05) = 0) — the
---      "Profit outliers excluded" row is OMITTED entirely for those bands
---      rather than shown with removed_low_count = removed_high_count = 0,
---      so a band is never labeled "outliers excluded" when nothing was
+--   6. For original_sample_size < 20, trim_count = 0 (floor(19 * 0.05) = 0)
+--      — the "Profit outliers excluded" row is OMITTED entirely for those
+--      bands rather than shown with removed_low_count = removed_high_count
+--      = 0, so a band is never labeled "outliers excluded" when nothing was
 --      removed.
+--
+-- original_sample_size vs. analysis_sample_size: an earlier version of this
+-- query only exposed one "sample_size" column, which stayed at the ORIGINAL
+-- band population even on the "Profit outliers excluded" row — ambiguous,
+-- since the metrics on that row are computed from a SMALLER population.
+-- Now both are shown explicitly:
+--   original_sample_size = realized items in the band BEFORE trimming
+--                           (same for both population rows in a band).
+--   analysis_sample_size = rows actually used to compute the metrics on
+--                           THIS row — equals original_sample_size for
+--                           "All realized items", and
+--                           original_sample_size - removed_low_count -
+--                           removed_high_count for "Profit outliers
+--                           excluded" (falls out directly from GROUP BY:
+--                           analysis_sample_size is a plain COUNT(*) over
+--                           the same trimmed rows removed_low_count/
+--                           removed_high_count describe — verified in this
+--                           file's validation run, not just asserted here).
 --
 -- Days on market (DOM) is the PRIMARY timing metric in the output; holding
 -- time remains secondary context — see TIMING SEMANTICS at the top of this
@@ -1165,7 +1183,7 @@ full_population AS (
     'All realized items' AS population_label,
     price_band_order, price_band_label,
     net_profit, roi, holding_days, global_days_on_market,
-    band_sample_size AS sample_size,
+    band_sample_size AS original_sample_size,
     0 AS removed_low_count,
     0 AS removed_high_count
   FROM trimmed
@@ -1177,7 +1195,7 @@ trimmed_population AS (
     'Profit outliers excluded (5% trim each side, by price band)' AS population_label,
     price_band_order, price_band_label,
     net_profit, roi, holding_days, global_days_on_market,
-    band_sample_size AS sample_size,
+    band_sample_size AS original_sample_size,
     trim_count AS removed_low_count,
     trim_count AS removed_high_count
   FROM trimmed
@@ -1194,7 +1212,14 @@ SELECT
   population_label,
   price_band_order,
   price_band_label,
-  sample_size,
+  original_sample_size,
+  -- Rows actually used to compute the metrics below for THIS row. A plain
+  -- COUNT(*) over the GROUP BY: for "All realized items" every original row
+  -- survived (no filter applied upstream), so this equals original_sample_size;
+  -- for "Profit outliers excluded", trimmed_population already dropped
+  -- exactly removed_low_count + removed_high_count rows, so this equals
+  -- original_sample_size - removed_low_count - removed_high_count.
+  COUNT(*) AS analysis_sample_size,
   removed_low_count,
   removed_high_count,
 
@@ -1207,7 +1232,7 @@ SELECT
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY net_profit)::numeric, 2) AS median_net_profit,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY roi) FILTER (WHERE roi IS NOT NULL)::numeric, 2) AS median_roi
 FROM combined
-GROUP BY population_label, price_band_order, price_band_label, sample_size, removed_low_count, removed_high_count
+GROUP BY population_label, price_band_order, price_band_label, original_sample_size, removed_low_count, removed_high_count
 ORDER BY price_band_order, population_label;
 
 
@@ -1224,6 +1249,40 @@ ORDER BY price_band_order, population_label;
 -- read as evidence of poor liquidity (a long delay just means the item sat
 -- owned before it was ever listed) — see TIMING SEMANTICS at the top of
 -- this file.
+--
+-- ── LIFECYCLE TIMING INTEGRITY FLAGS ────────────────────────────────────────
+-- Three booleans added below. All three default to FALSE (never NULL) when
+-- data is missing — missing DOM/listing information is a coverage gap, not
+-- an integrity error, so it must never be conflated with an actual flagged
+-- inconsistency. See Query G5A for a one-row summary of these same flags.
+--
+-- - acquisition_to_listing_is_negative: TRUE only when
+--   days_acquisition_to_first_listing < 0 (the item's first_listed_at is
+--   BEFORE its acquisition_date — the view's own has_listing_before_
+--   acquisition flag describes the same fact). FALSE when NULL (never
+--   listed, or no acquisition date).
+--
+-- - dom_exceeds_holding_days: TRUE only when global_days_on_market AND
+--   holding_days are both non-null AND global_days_on_market >
+--   holding_days. Both are measured from first_listed_at/acquisition_date
+--   respectively to the same endpoint (exit_date if realized, else
+--   CURRENT_DATE), and an item can't have been on the market longer than
+--   it's been owned — so this should never be true for healthy data. FALSE
+--   whenever either value is missing.
+--
+-- - realized_dom_date_mismatch: for REALIZED items with first_listed_at,
+--   exit_date, AND global_days_on_market all present, TRUE only when
+--   (exit_date - first_listed_at) <> global_days_on_market. This uses the
+--   EXACT same date subtraction analytics_item_lifecycle itself uses for
+--   global_days_on_market (see
+--   20260724000000_historical_deal_type_labels.sql: "WHEN exit_date IS NOT
+--   NULL THEN (exit_date - first_listed_at)") — no +1/-1 adjustment — so
+--   under correct data this is definitionally always FALSE; it exists as a
+--   structural self-consistency check, not a metric expected to ever fire.
+--   FALSE for open items (no exit_date to compare) and for any row missing
+--   first_listed_at/exit_date/global_days_on_market — chosen deliberately
+--   over NULL so this flag (and G5A's count of it) never need special
+--   NULL-handling and never gets conflated with a coverage gap.
 -- ============================================================================
 WITH price_band AS (
   SELECT
@@ -1250,6 +1309,26 @@ WITH price_band AS (
 ),
 eligible AS (
   SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+),
+flagged AS (
+  SELECT
+    *,
+    COALESCE(days_acquisition_to_first_listing < 0, false) AS acquisition_to_listing_is_negative,
+    COALESCE(
+      global_days_on_market IS NOT NULL
+      AND holding_days IS NOT NULL
+      AND global_days_on_market > holding_days,
+      false
+    ) AS dom_exceeds_holding_days,
+    COALESCE(
+      is_realized
+      AND first_listed_at IS NOT NULL
+      AND exit_date IS NOT NULL
+      AND global_days_on_market IS NOT NULL
+      AND (exit_date - first_listed_at) <> global_days_on_market,
+      false
+    ) AS realized_dom_date_mismatch
+  FROM eligible
 )
 SELECT
   item_id,
@@ -1284,7 +1363,85 @@ SELECT
   global_days_on_market,
   holding_days,
 
+  acquisition_to_listing_is_negative,
+  dom_exceeds_holding_days,
+  realized_dom_date_mismatch,
+
   estimated_sold_value,
   has_lifecycle_date_issue
-FROM eligible
+FROM flagged
 ORDER BY price_band_order, is_realized DESC, acquisition_value, item_id;
+
+
+-- ============================================================================
+-- QUERY G5A — Lifecycle timing integrity summary
+-- One-row rollup of G5's three integrity flags, plus DOM coverage context,
+-- over the same population (Business, acquisition_value > 0). Read this
+-- FIRST — it tells you whether G5's per-item flags are worth drilling into
+-- at all before you go looking row by row.
+--
+-- Expected healthy values: negative_acquisition_to_listing_count = 0,
+-- dom_exceeds_holding_count = 0, realized_dom_date_mismatch_count = 0. Any
+-- of these being non-zero points at a real data or view-logic problem — see
+-- G5 to find which items.
+--
+-- realized_items_missing_dom_count / open_listed_items_missing_dom_count
+-- are COVERAGE information, not integrity errors — a realized or listed
+-- item can legitimately have no global_days_on_market if it was never
+-- listed through a tracked platform before it exited (see Query A1, which
+-- reports the same two counts for the full non-price-filtered population).
+-- ============================================================================
+WITH price_band AS (
+  SELECT
+    *,
+    CASE
+      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value < 1000 THEN 1
+      WHEN acquisition_value < 2000 THEN 2
+      WHEN acquisition_value < 3000 THEN 3
+      WHEN acquisition_value < 4000 THEN 4
+      WHEN acquisition_value < 5000 THEN 5
+      ELSE 6
+    END AS price_band_order,
+    CASE
+      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value < 1000 THEN '$1-999'
+      WHEN acquisition_value < 2000 THEN '$1,000-1,999'
+      WHEN acquisition_value < 3000 THEN '$2,000-2,999'
+      WHEN acquisition_value < 4000 THEN '$3,000-3,999'
+      WHEN acquisition_value < 5000 THEN '$4,000-4,999'
+      ELSE '$5,000+'
+    END AS price_band_label
+  FROM analytics_item_lifecycle
+),
+eligible AS (
+  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+),
+flagged AS (
+  SELECT
+    *,
+    COALESCE(days_acquisition_to_first_listing < 0, false) AS acquisition_to_listing_is_negative,
+    COALESCE(
+      global_days_on_market IS NOT NULL
+      AND holding_days IS NOT NULL
+      AND global_days_on_market > holding_days,
+      false
+    ) AS dom_exceeds_holding_days,
+    COALESCE(
+      is_realized
+      AND first_listed_at IS NOT NULL
+      AND exit_date IS NOT NULL
+      AND global_days_on_market IS NOT NULL
+      AND (exit_date - first_listed_at) <> global_days_on_market,
+      false
+    ) AS realized_dom_date_mismatch
+  FROM eligible
+)
+SELECT
+  COUNT(*)                                                                                  AS item_count,
+  COUNT(*) FILTER (WHERE acquisition_to_listing_is_negative)                                 AS negative_acquisition_to_listing_count,
+  COUNT(*) FILTER (WHERE dom_exceeds_holding_days)                                            AS dom_exceeds_holding_count,
+  COUNT(*) FILTER (WHERE realized_dom_date_mismatch)                                          AS realized_dom_date_mismatch_count,
+  COUNT(*) FILTER (WHERE is_realized AND global_days_on_market IS NULL)                       AS realized_items_missing_dom_count,
+  COUNT(*) FILTER (WHERE NOT is_realized AND current_status = 'listed' AND global_days_on_market IS NULL) AS open_listed_items_missing_dom_count
+FROM flagged;
