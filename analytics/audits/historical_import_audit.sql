@@ -1,5 +1,5 @@
 -- ============================================================================
--- 02_historical_import_audit.sql
+-- historical_import_audit.sql
 --
 -- Read-only audit of every "Historical Import" acquisition deal, ahead of a
 -- planned data correction that relabels deal_type to 'Historical Purchase' or

@@ -21,7 +21,7 @@
 -- lose historical-import identification. Applying the view migration first
 -- is still recommended so nothing is ever misread in between.
 --
--- Review analytics/sql/02_historical_import_audit.sql for every item you're
+-- Review analytics/audits/historical_import_audit.sql for every item you're
 -- about to list below — only rows where safe_to_correct is TRUE are handled
 -- by this script; anything else needs manual review first.
 --
@@ -153,7 +153,7 @@ BEGIN
   WHERE  deal_id IS NULL;
 
   IF v_bad IS NOT NULL THEN
-    RAISE EXCEPTION 'Item(s) have no Historical Import acquisition deal to correct — re-check analytics/sql/02_historical_import_audit.sql (may already be corrected, or was never Historical Import): %', v_bad;
+    RAISE EXCEPTION 'Item(s) have no Historical Import acquisition deal to correct — re-check analytics/audits/historical_import_audit.sql (may already be corrected, or was never Historical Import): %', v_bad;
   END IF;
 END $$;
 
@@ -195,7 +195,7 @@ END $$;
 -- 3e. the resolved deal has more than one deal_items row at all (even if
 --     every mapped item agrees on the method) — this script only ever
 --     handles the standard one-item-per-deal Historical Import shape (see
---     analytics/sql/02_historical_import_audit.sql's safe_to_correct); a
+--     analytics/audits/historical_import_audit.sql's safe_to_correct); a
 --     shared deal is not that shape and needs manual review, not a blind
 --     bulk relabel. Applies equally to 'purchase' and 'trade' requests —
 --     unlike an earlier version of this script, 'trade' requests are NOT separately
@@ -325,10 +325,11 @@ ORDER BY r.item_id;
 
 -- 6d. Scoped re-run of Query G1's shape (historical-import sensitivity) and
 --     Query G3's shape (acquisition-method comparison), restricted to the
---     corrected items' price bands, as a quick sanity check. Re-run the
---     FULL queries from analytics/sql/01_price_band_performance.sql
---     separately for the complete picture.
-WITH price_band AS (
+--     corrected items' acquisition value bands, as a quick sanity check.
+--     Re-run the FULL queries from
+--     analytics/sql/01_acquisition_value_band_performance.sql separately
+--     for the complete picture.
+WITH acquisition_value_band AS (
   SELECT *,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
@@ -338,22 +339,22 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order
+    END AS acquisition_value_band_order
   FROM analytics_item_lifecycle
   WHERE purpose_name = 'Business' AND acquisition_value > 0
 )
 SELECT
-  price_band_order,
+  acquisition_value_band_order,
   acquisition_method,
   is_historical_import,
   COUNT(*) AS sample_size
-FROM price_band
+FROM acquisition_value_band
 WHERE item_id IN (SELECT item_id FROM _corrections)
-   OR price_band_order IN (
-        SELECT price_band_order FROM price_band WHERE item_id IN (SELECT item_id FROM _corrections)
+   OR acquisition_value_band_order IN (
+        SELECT acquisition_value_band_order FROM acquisition_value_band WHERE item_id IN (SELECT item_id FROM _corrections)
       )
-GROUP BY price_band_order, acquisition_method, is_historical_import
-ORDER BY price_band_order, acquisition_method;
+GROUP BY acquisition_value_band_order, acquisition_method, is_historical_import
+ORDER BY acquisition_value_band_order, acquisition_method;
 
 
 -- ── 7. Outcome — defaults to ROLLBACK ──────────────────────────────────────

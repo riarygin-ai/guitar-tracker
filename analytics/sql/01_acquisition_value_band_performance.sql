@@ -1,7 +1,7 @@
 -- ============================================================================
--- 01_price_band_performance.sql
+-- 01_acquisition_value_band_performance.sql
 --
--- Business question: which acquisition-price range gives the best balance of
+-- Business question: which acquisition-value range gives the best balance of
 -- absolute profit, ROI, turnover speed, capital efficiency, and open-
 -- inventory risk?
 --
@@ -9,13 +9,26 @@
 -- view `analytics_item_lifecycle`. Nothing in this file creates a database
 -- object (no views/tables/functions/migrations). See analytics/README.md.
 --
+-- ── TERMINOLOGY ──────────────────────────────────────────────────────────
+-- This file groups items by ACQUISITION VALUE BAND — acquisition_value,
+-- which may be either a cash purchase value or an assigned incoming trade
+-- value. It is never called "Purchase Price Band" here: every query in this
+-- file includes both purchase- and trade-acquired items (see Query G3's
+-- acquisition-method breakdown), so "purchase price" would misdescribe the
+-- population. Do not describe acquisition_value as "purchase price" unless
+-- a query is explicitly filtered to acquisition_method = 'purchase' — no
+-- query in this file does that filtering today. See
+-- analytics/SEMANTIC_CONTRACT.md for the full Acquisition Value Band /
+-- Purchase Price Band / Exit Value Band / Sale Price Band definitions.
+--
 -- ── HOW TO READ THIS FILE ───────────────────────────────────────────────────
 -- Each query is a fully self-contained statement (its own WITH clause,
--- including its own copy of the `price_band` CTE) so any single query can be
--- copy-pasted and run alone. The `price_band` CTE text is intentionally
--- IDENTICAL byte-for-byte in every query that needs fixed price bands — if
--- you ever edit the band boundaries, edit every occurrence together, or the
--- queries will silently stop agreeing with each other.
+-- including its own copy of the `acquisition_value_band` CTE) so any single
+-- query can be copy-pasted and run alone. The `acquisition_value_band` CTE
+-- text is intentionally IDENTICAL byte-for-byte in every query that needs
+-- fixed acquisition value bands — if you ever edit the band boundaries, edit
+-- every occurrence together, or the queries will silently stop agreeing
+-- with each other.
 --
 -- Open inventory (Query E) is two queries, E1 (listed) and E2 (owned / not
 -- listed), not one — they don't share a meaningful timing metric, so
@@ -23,26 +36,37 @@
 -- were never listed, or hide it for items that were. See E1/E2 below.
 --
 -- ── METHODOLOGY / LIMITATIONS (read before interpreting any result) ────────
--- 1. ASSOCIATION, NOT CAUSATION. A price band showing a higher median ROI
---    did not necessarily cause that ROI. Price is entangled with brand,
---    category, condition, liquidity, acquisition method, and seller
---    behavior — any of which could be the actual driver.
+-- 1. ASSOCIATION, NOT CAUSATION. An acquisition value band showing a higher
+--    median ROI did not necessarily cause that ROI. Acquisition value is
+--    entangled with brand, category, condition, liquidity, acquisition
+--    method, and seller behavior — any of which could be the actual driver.
 -- 2. CONFOUNDING. A $4,000+ guitar and a $200 pedal are not interchangeable
---    "acquisition price" data points; see Query F for a category-adjusted
+--    "acquisition value" data points; see Query F for a category-adjusted
 --    view before drawing conclusions from the unadjusted bands in Query B.
--- 3. HISTORICAL IMPORT DATES MAY BE UNRELIABLE. Historical Import /
---    Historical Purchase / Historical Trade acquisition dates are real
---    user-entered dates (there is no placeholder convention in this app as
---    of this writing — acquisition_date_is_placeholder is currently always
---    false), but they were entered after the fact and may not be as
---    reliable as dates captured by an actual Buy/Trade operation at the
---    time. This affects metrics measured FROM acquisition_date specifically
---    (holding_days, and anything normalized by it) — see Query D1/D2's
---    time-adjusted profit and E1/E2's holding-time metrics, which exclude
---    these three deal types for that reason. It does NOT affect DOM
---    (global_days_on_market), which is measured from first_listed_at, not
---    acquisition_date — E1 deliberately keeps historical acquisitions IN
---    its DOM metrics; see E1's header comment.
+-- 3. ONLY ACQUISITION_DATE IS APPROXIMATE FOR HISTORICAL IMPORTS. Historical
+--    Import / Historical Purchase / Historical Trade records were
+--    transferred from Excel; their listing dates and days-on-market were
+--    tracked accurately. The ONE field this file treats as approximate for
+--    those three deal types is acquisition_date (there is no placeholder
+--    convention in this app as of this writing —
+--    acquisition_date_is_placeholder is currently always false; it was
+--    entered after the fact, not captured live by a Buy/Trade operation).
+--    Historical imports are NOT "unreliable data" in general — they remain
+--    fully included in sample_size, realized_items, profit, ROI,
+--    realization rate, exit mix, acquisition method, and DOM everywhere in
+--    this file. The acquisition_date approximation affects ONLY metrics
+--    measured FROM acquisition_date (holding_days, ownership age,
+--    acquisition-to-listing delay, and anything normalized by holding_days)
+--    — every query in this file that aggregates holding_days excludes the
+--    three historical deal types from THAT aggregate specifically (Query
+--    B/C/F1/G1-G4's holding_sample_size/median_holding_days, D1/D2's
+--    time-adjusted profit, E1/E2's holding-time metrics), while leaving
+--    every other column for those same rows untouched. It does NOT affect
+--    DOM (global_days_on_market), which is measured from first_listed_at,
+--    not acquisition_date — every query in this file keeps historical
+--    acquisitions IN its DOM metrics; see E1's header comment. See Query
+--    G1 for the imported-historical-vs-app-tracked cohort comparison, and
+--    analytics/SEMANTIC_CONTRACT.md for the full rule.
 -- 4. OPEN INVENTORY HAS NOT PRODUCED A FINAL RESULT YET. Open items'
 --    holding_days/global_days_on_market are still growing and their
 --    net_profit/roi are NULL by definition (not zero, not bad — just not yet
@@ -91,20 +115,35 @@
 --   sample_size, realized_items, dom_sample_size, median_days_on_market,
 --   holding_sample_size, median_holding_days — where dom_sample_size /
 --   median_days_on_market count and summarize ONLY realized rows with
---   non-null global_days_on_market, and holding_sample_size /
---   median_holding_days count and summarize ONLY realized rows with
---   non-null holding_days. Open items never contribute to a realized
---   timing median anywhere in this file except Query E1/E2, which are
---   explicitly about open inventory and say so.
+--   non-null global_days_on_market (historical imports included), and
+--   holding_sample_size / median_holding_days count and summarize ONLY
+--   realized, non-historical-import rows with non-null holding_days. Open
+--   items never contribute to a realized timing median anywhere in this file
+--   except Query E1/E2, which are explicitly about open inventory and say
+--   so.
+--
+-- ── QUERY CLASSIFICATION INDEX (evidence vs. recommendation vs. developer-only;
+-- see analytics/SEMANTIC_CONTRACT.md for the full definitions) ─────────────
+-- Every query below is SHARED AGGREGATE EVIDENCE — pooled across every user
+-- accessible to the querying role, returning only counts/medians/labels, with
+-- ONE exception:
+--   Query G5 — DEVELOPER-ONLY item-level verification drilldown (returns
+--     item_id, user_id, item_display_name for every eligible item across
+--     every user). Not part of a future shared aggregate snapshot or
+--     user-facing recommendation output — see G5's own header.
+-- No query in this file is a current-user recommendation candidate: nothing
+-- here filters to a single target user's own items, which is what that
+-- population requires (see analytics/SEMANTIC_CONTRACT.md).
 -- ============================================================================
 
 
 -- ============================================================================
 -- QUERY A1 — Data coverage: summary counts
+-- CLASSIFICATION: shared aggregate evidence.
 -- Purpose: establish whether every group has enough usable data before
 -- interpreting any query below. Run this first.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -115,7 +154,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -124,16 +163,16 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 business AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business'
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business'
 )
 SELECT
-  (SELECT COUNT(*) FROM price_band)                                                          AS total_lifecycle_rows,
+  (SELECT COUNT(*) FROM acquisition_value_band)                                                          AS total_lifecycle_rows,
   (SELECT COUNT(*) FROM business)                                                             AS business_items,
-  (SELECT COUNT(*) FROM price_band WHERE purpose_name IS DISTINCT FROM 'Business')             AS non_business_items,
+  (SELECT COUNT(*) FROM acquisition_value_band WHERE purpose_name IS DISTINCT FROM 'Business')             AS non_business_items,
   (SELECT COUNT(*) FROM business WHERE is_realized)                                            AS realized_business_items,
   (SELECT COUNT(*) FROM business WHERE NOT is_realized)                                        AS open_business_items,
   (SELECT COUNT(*) FROM business WHERE exit_type = 'sale')                                      AS sale_exits,
@@ -167,10 +206,11 @@ SELECT
 
 
 -- ============================================================================
--- QUERY A2 — Data coverage: item count in each fixed price band
+-- QUERY A2 — Data coverage: item count in each fixed acquisition value band
+-- CLASSIFICATION: shared aggregate evidence.
 -- (Business items only, all acquisition values including Zero / unknown.)
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -181,7 +221,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -190,23 +230,24 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 business AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business'
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business'
 )
 SELECT
-  price_band_order,
-  price_band_label,
+  acquisition_value_band_order,
+  acquisition_value_band_label,
   COUNT(*) AS item_count
 FROM business
-GROUP BY price_band_order, price_band_label
-ORDER BY price_band_order;
+GROUP BY acquisition_value_band_order, acquisition_value_band_label
+ORDER BY acquisition_value_band_order;
 
 
 -- ============================================================================
--- QUERY B — Main fixed price-band performance
+-- QUERY B — Main fixed acquisition value band performance
+-- CLASSIFICATION: shared aggregate evidence.
 -- Business items, positive acquisition value only. This is the main
 -- descriptive result the rest of this file's robustness checks (Query C, F,
 -- G1-G4) test the stability of.
@@ -219,7 +260,7 @@ ORDER BY price_band_order;
 -- completed duration — mixing it in would distort both metrics. Open-item
 -- age lives in Query E1/E2.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -230,7 +271,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -239,15 +280,15 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 )
 SELECT
-  price_band_order,
-  price_band_label,
+  acquisition_value_band_order,
+  acquisition_value_band_label,
 
   COUNT(*)                                    AS sample_size,
   COUNT(*) FILTER (WHERE is_realized)         AS realized_items,
@@ -267,24 +308,31 @@ SELECT
   COUNT(*) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL) AS dom_sample_size,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL)::numeric, 2) AS median_days_on_market,
 
-  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity metric.
-  COUNT(*) FILTER (WHERE is_realized AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity
+  -- metric. Excludes Historical Import/Purchase/Trade — holding_days is
+  -- measured from acquisition_date, the one field this file treats as
+  -- approximate for those three deal types (see METHODOLOGY item 3). This
+  -- does NOT remove historical rows from sample_size, realized_items,
+  -- median_net_profit, median_roi, or the DOM metrics above — only from this
+  -- one holding-based pair of columns.
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
 
 FROM eligible
-GROUP BY price_band_order, price_band_label
-ORDER BY price_band_order;
+GROUP BY acquisition_value_band_order, acquisition_value_band_label
+ORDER BY acquisition_value_band_order;
 
 
 -- ============================================================================
 -- QUERY C — Equal-size acquisition-value quartiles
+-- CLASSIFICATION: shared aggregate evidence.
 -- Same population as Query B (Business, acquisition_value > 0), grouped into
 -- ~equal-sized quartiles instead of fixed $ bands, to check whether the
 -- pattern in Query B survives when sample sizes are balanced.
 --
 -- NOTE: NTILE(4) boundaries are a function of the CURRENT data distribution.
 -- As more items are acquired, the acquisition-value cut points between Q1/Q2/
--- Q3/Q4 will shift — unlike the fixed $ bands in price_band, these quartile
+-- Q3/Q4 will shift — unlike the fixed $ bands in acquisition_value_band, these quartile
 -- boundaries are not a stable reporting definition and will differ each time
 -- this query is re-run against a larger dataset.
 --
@@ -293,7 +341,7 @@ ORDER BY price_band_order;
 -- context — quartile holding time is ownership duration, not market
 -- velocity (see TIMING SEMANTICS at the top of this file).
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -304,7 +352,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -313,11 +361,11 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 ),
 quartiled AS (
   SELECT *, NTILE(4) OVER (ORDER BY acquisition_value) AS quartile
@@ -341,15 +389,19 @@ SELECT
   COUNT(*) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL) AS dom_sample_size,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL)::numeric, 2) AS median_days_on_market,
 
-  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity metric.
-  COUNT(*) FILTER (WHERE is_realized AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity
+  -- metric. Excludes Historical Import/Purchase/Trade — same holding-only
+  -- exclusion rationale as Query B; sample_size/realized_items/profit/ROI/DOM
+  -- above are unaffected.
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
 FROM quartiled
 GROUP BY quartile
 ORDER BY quartile;
 
 
 -- ============================================================================
+-- CLASSIFICATION: shared aggregate evidence.
 -- QUERY D1 — Capital efficiency (PRIMARY: Historical Import/Purchase/Trade
 -- excluded from the time-adjusted metrics — their acquisition dates are less
 -- trustworthy)
@@ -365,7 +417,7 @@ ORDER BY quartile;
 -- short (a same-week sale), and dividing profit by a small denominator
 -- produces unstable, misleading per-day figures.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -376,7 +428,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -385,22 +437,22 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 ),
 capital AS (
   SELECT
-    price_band_order,
-    price_band_label,
+    acquisition_value_band_order,
+    acquisition_value_band_label,
     COUNT(*) FILTER (WHERE is_realized)               AS realized_item_count,
     SUM(acquisition_value) FILTER (WHERE is_realized) AS total_acquisition_capital,
     SUM(net_profit)        FILTER (WHERE is_realized) AS total_net_profit,
     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY roi) FILTER (WHERE is_realized AND roi IS NOT NULL) AS median_roi
   FROM eligible
-  GROUP BY price_band_order, price_band_label
+  GROUP BY acquisition_value_band_order, acquisition_value_band_label
 ),
 -- Time-adjusted population: realized, positive acquisition value (guaranteed
 -- by `eligible`), holding_days > 0 (excludes same-day exits — a same-day
@@ -411,7 +463,7 @@ capital AS (
 -- holding_days > 0 twice.
 timing_eligible AS (
   SELECT
-    price_band_order,
+    acquisition_value_band_order,
     holding_days,
     global_days_on_market,
     (net_profit / holding_days * 30) AS profit_per_30_holding_days
@@ -423,7 +475,7 @@ timing_eligible AS (
 ),
 timing AS (
   SELECT
-    price_band_order,
+    acquisition_value_band_order,
     COUNT(*)                                                                     AS holding_sample_size,
     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY profit_per_30_holding_days)      AS median_profit_per_30_holding_days,
     AVG(profit_per_30_holding_days)                                              AS average_profit_per_30_holding_days,
@@ -431,11 +483,11 @@ timing AS (
     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market)
       FILTER (WHERE global_days_on_market IS NOT NULL)                          AS median_days_on_market
   FROM timing_eligible
-  GROUP BY price_band_order
+  GROUP BY acquisition_value_band_order
 )
 SELECT
-  capital.price_band_order,
-  capital.price_band_label,
+  capital.acquisition_value_band_order,
+  capital.acquisition_value_band_label,
   capital.realized_item_count,
   capital.total_acquisition_capital,
   capital.total_net_profit,
@@ -447,12 +499,13 @@ SELECT
   COALESCE(timing.dom_sample_size, 0)                                                       AS dom_sample_size,
   ROUND(timing.median_days_on_market::numeric, 2)                                           AS median_days_on_market
 FROM capital
-LEFT JOIN timing ON timing.price_band_order = capital.price_band_order
-ORDER BY capital.price_band_order;
+LEFT JOIN timing ON timing.acquisition_value_band_order = capital.acquisition_value_band_order
+ORDER BY capital.acquisition_value_band_order;
 
 
 -- ============================================================================
 -- QUERY D2 — Capital efficiency: time-adjusted SENSITIVITY
+-- CLASSIFICATION: shared aggregate evidence.
 -- (Historical Import/Purchase/Trade INCLUDED — compare against Query D1's
 -- primary result. If the pattern changes a lot once they're added back in,
 -- that's a sign the primary result is sensitive to their less-reliable
@@ -467,7 +520,7 @@ ORDER BY capital.price_band_order;
 -- consistency with the rest of the file, and to make the DOM/holding
 -- distinction visible at a glance.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -478,7 +531,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -487,15 +540,15 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 ),
 timing_primary AS (
   SELECT 'Primary (Historical Import/Purchase/Trade excluded)' AS population_label,
-    price_band_order, price_band_label,
+    acquisition_value_band_order, acquisition_value_band_label,
     (net_profit / holding_days * 30) AS profit_per_30_holding_days,
     holding_days,
     global_days_on_market
@@ -504,7 +557,7 @@ timing_primary AS (
 ),
 timing_with_historical AS (
   SELECT 'Sensitivity (Historical Import/Purchase/Trade included)' AS population_label,
-    price_band_order, price_band_label,
+    acquisition_value_band_order, acquisition_value_band_label,
     (net_profit / holding_days * 30) AS profit_per_30_holding_days,
     holding_days,
     global_days_on_market
@@ -518,8 +571,8 @@ combined AS (
 )
 SELECT
   population_label,
-  price_band_order,
-  price_band_label,
+  acquisition_value_band_order,
+  acquisition_value_band_label,
   COUNT(*)                                                                          AS qualifying_item_count,
   COUNT(*) FILTER (WHERE global_days_on_market IS NOT NULL)                         AS dom_sample_size,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market)
@@ -530,12 +583,13 @@ SELECT
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY profit_per_30_holding_days)::numeric, 2)  AS median_profit_per_30_holding_days,
   ROUND(AVG(profit_per_30_holding_days), 2)                                          AS average_profit_per_30_holding_days
 FROM combined
-GROUP BY population_label, price_band_order, price_band_label
-ORDER BY price_band_order, population_label;
+GROUP BY population_label, acquisition_value_band_order, acquisition_value_band_label
+ORDER BY acquisition_value_band_order, population_label;
 
 
 -- ============================================================================
 -- QUERY E1 — Open inventory: LISTED items (currently on the market)
+-- CLASSIFICATION: shared aggregate evidence.
 -- "Open" = NOT is_realized (the view's own lifecycle fact — current_status
 -- currently new/owned/listed, never sold/traded). Business items, ALL
 -- acquisition values (including Zero / unknown) since this is about risk
@@ -568,7 +622,7 @@ ORDER BY price_band_order, population_label;
 --   makes this exclusion's size visible instead of silently shrinking the
 --   sample.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -579,7 +633,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -588,26 +642,26 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 business AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business'
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business'
 ),
 listed_items AS (
   SELECT * FROM business WHERE NOT is_realized AND current_status = 'listed'
 ),
 listed_full AS (
   SELECT
-    price_band_order,
-    price_band_label,
+    acquisition_value_band_order,
+    acquisition_value_band_label,
     COUNT(*)                                                    AS listed_item_count,
     SUM(acquisition_value) FILTER (WHERE acquisition_value > 0) AS listed_acquisition_capital,
     SUM(estimated_sold_value)                                   AS listed_estimated_value,
     SUM(acquisition_value) FILTER (WHERE acquisition_value > 0) AS acquisition_for_upside,
     SUM(item_expenses_total)                                    AS item_expenses_for_upside
   FROM listed_items
-  GROUP BY price_band_order, price_band_label
+  GROUP BY acquisition_value_band_order, acquisition_value_band_label
 ),
 -- DOM-eligible population: excludes only rows already flagged with a
 -- lifecycle date issue. Historical acquisition status does NOT exclude an
@@ -618,13 +672,13 @@ listed_dom_eligible AS (
 ),
 listed_dom_summary AS (
   SELECT
-    price_band_order,
+    acquisition_value_band_order,
     COUNT(*) FILTER (WHERE global_days_on_market IS NOT NULL) AS dom_sample_size,
     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market)
       FILTER (WHERE global_days_on_market IS NOT NULL)        AS median_current_days_on_market,
     MAX(global_days_on_market)                                 AS max_current_days_on_market
   FROM listed_dom_eligible
-  GROUP BY price_band_order
+  GROUP BY acquisition_value_band_order
 ),
 -- Holding-eligible population: additionally excludes Historical
 -- Import/Purchase/Trade (is_historical_import) — holding_days is measured
@@ -637,26 +691,26 @@ listed_holding_eligible AS (
 ),
 listed_holding_summary AS (
   SELECT
-    price_band_order,
+    acquisition_value_band_order,
     COUNT(*) FILTER (WHERE holding_days IS NOT NULL) AS holding_sample_size,
     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days)
       FILTER (WHERE holding_days IS NOT NULL)        AS median_holding_days
   FROM listed_holding_eligible
-  GROUP BY price_band_order
+  GROUP BY acquisition_value_band_order
 ),
 -- Coverage: how many otherwise holding-eligible listed items (usable
 -- holding_days, no lifecycle date issue) were excluded from the holding
 -- sample purely for being a historical acquisition.
 listed_holding_excluded AS (
   SELECT
-    price_band_order,
+    acquisition_value_band_order,
     COUNT(*) FILTER (WHERE is_historical_import AND holding_days IS NOT NULL) AS holding_excluded_historical_count
   FROM listed_dom_eligible
-  GROUP BY price_band_order
+  GROUP BY acquisition_value_band_order
 )
 SELECT
-  listed_full.price_band_order,
-  listed_full.price_band_label,
+  listed_full.acquisition_value_band_order,
+  listed_full.acquisition_value_band_label,
   listed_full.listed_item_count,
   listed_full.listed_acquisition_capital,
   listed_full.listed_estimated_value,
@@ -677,14 +731,15 @@ SELECT
   COALESCE(listed_holding_excluded.holding_excluded_historical_count, 0) AS holding_excluded_historical_count
 
 FROM listed_full
-LEFT JOIN listed_dom_summary     ON listed_dom_summary.price_band_order     = listed_full.price_band_order
-LEFT JOIN listed_holding_summary ON listed_holding_summary.price_band_order = listed_full.price_band_order
-LEFT JOIN listed_holding_excluded ON listed_holding_excluded.price_band_order = listed_full.price_band_order
-ORDER BY listed_full.price_band_order;
+LEFT JOIN listed_dom_summary     ON listed_dom_summary.acquisition_value_band_order     = listed_full.acquisition_value_band_order
+LEFT JOIN listed_holding_summary ON listed_holding_summary.acquisition_value_band_order = listed_full.acquisition_value_band_order
+LEFT JOIN listed_holding_excluded ON listed_holding_excluded.acquisition_value_band_order = listed_full.acquisition_value_band_order
+ORDER BY listed_full.acquisition_value_band_order;
 
 
 -- ============================================================================
 -- QUERY E2 — Open inventory: OWNED / NOT-LISTED items (never listed yet)
+-- CLASSIFICATION: shared aggregate evidence.
 -- Companion to E1. These items have no market exposure to report — this
 -- query never calculates or implies a DOM/market-age figure for them (see
 -- TIMING SEMANTICS at the top of this file). median_ownership_age_days /
@@ -694,7 +749,7 @@ ORDER BY listed_full.price_band_order;
 -- unlisted_estimated_net_upside subtracts item expenses — see E1's header
 -- comment on the estimated_gross_upside → estimated_net_upside naming fix.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -705,7 +760,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -714,26 +769,26 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 business AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business'
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business'
 ),
 unlisted_items AS (
   SELECT * FROM business WHERE NOT is_realized AND current_status <> 'listed'
 ),
 unlisted_full AS (
   SELECT
-    price_band_order,
-    price_band_label,
+    acquisition_value_band_order,
+    acquisition_value_band_label,
     COUNT(*)                                                    AS unlisted_item_count,
     SUM(acquisition_value) FILTER (WHERE acquisition_value > 0) AS unlisted_acquisition_capital,
     SUM(estimated_sold_value)                                   AS unlisted_estimated_value,
     SUM(acquisition_value) FILTER (WHERE acquisition_value > 0) AS acquisition_for_upside,
     SUM(item_expenses_total)                                    AS item_expenses_for_upside
   FROM unlisted_items
-  GROUP BY price_band_order, price_band_label
+  GROUP BY acquisition_value_band_order, acquisition_value_band_label
 ),
 -- Reliable age population — same reliability rationale as E1/D1/D2.
 unlisted_reliable AS (
@@ -742,17 +797,17 @@ unlisted_reliable AS (
 ),
 unlisted_reliable_summary AS (
   SELECT
-    price_band_order,
+    acquisition_value_band_order,
     COUNT(*) FILTER (WHERE holding_days IS NOT NULL)         AS holding_sample_size,
     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days)
       FILTER (WHERE holding_days IS NOT NULL)                AS median_ownership_age_days,
     MAX(holding_days)                                         AS max_ownership_age_days
   FROM unlisted_reliable
-  GROUP BY price_band_order
+  GROUP BY acquisition_value_band_order
 )
 SELECT
-  unlisted_full.price_band_order,
-  unlisted_full.price_band_label,
+  unlisted_full.acquisition_value_band_order,
+  unlisted_full.acquisition_value_band_label,
   unlisted_full.unlisted_item_count,
   unlisted_full.unlisted_acquisition_capital,
   unlisted_full.unlisted_estimated_value,
@@ -769,20 +824,21 @@ SELECT
   unlisted_reliable_summary.max_ownership_age_days
 
 FROM unlisted_full
-LEFT JOIN unlisted_reliable_summary ON unlisted_reliable_summary.price_band_order = unlisted_full.price_band_order
-ORDER BY unlisted_full.price_band_order;
+LEFT JOIN unlisted_reliable_summary ON unlisted_reliable_summary.acquisition_value_band_order = unlisted_full.acquisition_value_band_order
+ORDER BY unlisted_full.acquisition_value_band_order;
 
 
 -- ============================================================================
--- QUERY F1 — Category-adjusted price performance
+-- QUERY F1 — Category-adjusted acquisition value band performance
+-- CLASSIFICATION: shared aggregate evidence.
 -- Same population as Query B (Business, acquisition_value > 0), broken down
--- by category as well as price band, so a $500 pedal and a $5,000 guitar are
--- never silently pooled into the same comparison.
+-- by category as well as acquisition value band, so a $500 pedal and a
+-- $5,000 guitar are never silently pooled into the same comparison.
 --
 -- Same DOM-first timing structure as Query B — median_days_on_market is
 -- primary, median_holding_days is secondary capital-cycle context.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -793,7 +849,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -802,17 +858,17 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 )
 SELECT
   category_id,
   category_name,
-  price_band_order,
-  price_band_label,
+  acquisition_value_band_order,
+  acquisition_value_band_label,
   COUNT(*)                                    AS sample_size,
   COUNT(*) FILTER (WHERE is_realized)         AS realized_items,
   COUNT(*) FILTER (WHERE exit_type = 'sale')  AS sale_count,
@@ -826,13 +882,16 @@ SELECT
   COUNT(*) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL) AS dom_sample_size,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL)::numeric, 2) AS median_days_on_market,
 
-  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity metric.
-  COUNT(*) FILTER (WHERE is_realized AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity
+  -- metric. Excludes Historical Import/Purchase/Trade — same holding-only
+  -- exclusion rationale as Query B; sample_size/realized_items/profit/ROI/DOM
+  -- above are unaffected.
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
 FROM eligible
-GROUP BY category_id, category_name, price_band_order, price_band_label
-ORDER BY category_id, price_band_order;
--- NOTE: every category x price-band group is returned, including groups with
+GROUP BY category_id, category_name, acquisition_value_band_order, acquisition_value_band_label
+ORDER BY category_id, acquisition_value_band_order;
+-- NOTE: every category x acquisition-value-band group is returned, including groups with
 -- very few items — nothing is filtered out here. Treat any group with
 -- sample_size below a configurable minimum (suggested starting point: 5) as
 -- not yet reliable when INTERPRETING this result; do not apply that
@@ -841,11 +900,12 @@ ORDER BY category_id, price_band_order;
 
 -- ============================================================================
 -- QUERY F2 — Category-level acquisition-value distribution (summary)
--- Companion to F1: shows whether certain price bands only exist for
+-- CLASSIFICATION: shared aggregate evidence.
+-- Companion to F1: shows whether certain acquisition value bands only exist for
 -- particular categories (e.g. a category that never has a $5,000+ item).
 -- No timing metrics in this query — item counts only.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -856,7 +916,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -865,36 +925,56 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 )
 SELECT
   category_id,
   category_name,
-  price_band_order,
-  price_band_label,
+  acquisition_value_band_order,
+  acquisition_value_band_label,
   COUNT(*) AS item_count
 FROM eligible
-GROUP BY category_id, category_name, price_band_order, price_band_label
-ORDER BY category_id, price_band_order;
+GROUP BY category_id, category_name, acquisition_value_band_order, acquisition_value_band_label
+ORDER BY category_id, acquisition_value_band_order;
 
 
 -- ============================================================================
--- QUERY G1 — Robustness check: Historical Import/Purchase/Trade sensitivity
--- Same primary fixed-band metrics, run once on all valid Business items and
--- again with all THREE historical deal types removed (Historical Import,
--- Historical Purchase, Historical Trade — is_historical_import is true for
--- all three; see analytics_item_lifecycle's derivation). Large swings
--- between the two rows for the same price band mean that band's result is
--- being driven by historical-acquisition data quality, not by the price
--- band itself.
+-- QUERY G1 — Cohort comparison: imported historical vs. app-tracked
+-- CLASSIFICATION: shared aggregate evidence.
+-- Same primary fixed-band metrics, computed for three population rows per
+-- acquisition value band: all eligible items, the imported-historical cohort alone
+-- (Historical Import, Historical Purchase, Historical Trade —
+-- is_historical_import is true for all three; see analytics_item_lifecycle's
+-- derivation), and the app-tracked cohort alone (is_historical_import
+-- false).
 --
--- DOM-first timing structure, same as Query B.
+-- This is a COHORT COMPARISON, not a data-reliability test. The imported
+-- historical cohort and the app-tracked cohort are different populations of
+-- real deals, tracked at different times, entered by different means — a
+-- difference between them may reflect changes in deal quality, inventory
+-- mix, or business behavior over time. It is NOT evidence that the
+-- historical cohort's profit, ROI, or DOM figures are wrong. Only
+-- acquisition_date is treated as approximate for the historical cohort (see
+-- METHODOLOGY item 3) — nothing else about those records is "unreliable
+-- data".
+--
+-- sample_size, realized_items, median_net_profit, median_roi, dom_sample_size,
+-- and median_days_on_market are computed identically for all three rows —
+-- historical rows are never dropped from these columns just for being
+-- historical. holding_sample_size/median_holding_days are the one exception,
+-- and are excluded from EVERY row (including "All eligible") for any item
+-- whose acquisition_date is approximate, per METHODOLOGY item 3 — so the
+-- "Imported historical" row's holding columns are always 0/NULL by
+-- construction: presenting a holding-time figure for a cohort whose
+-- acquisition dates are the one field known to be approximate would imply a
+-- reliability that column doesn't have. DOM-first timing structure, same as
+-- Query B.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -905,7 +985,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -914,52 +994,65 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 ),
 combined AS (
-  SELECT 'All valid Business items' AS population_label,
-    price_band_order, price_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market
+  SELECT 'All eligible Business items' AS population_label,
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
   FROM eligible
   UNION ALL
-  SELECT 'Non-Historical (excludes Import/Purchase/Trade) Business items only',
-    price_band_order, price_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market
+  SELECT 'Imported historical Business items' AS population_label,
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
+  FROM eligible
+  WHERE is_historical_import
+  UNION ALL
+  SELECT 'App-tracked Business items' AS population_label,
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
   FROM eligible
   WHERE NOT is_historical_import
 )
 SELECT
   population_label,
-  price_band_order,
-  price_band_label,
+  acquisition_value_band_order,
+  acquisition_value_band_label,
   COUNT(*)                            AS sample_size,
   COUNT(*) FILTER (WHERE is_realized) AS realized_items,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY net_profit) FILTER (WHERE is_realized)::numeric, 2) AS median_net_profit,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY roi) FILTER (WHERE is_realized AND roi IS NOT NULL)::numeric, 2) AS median_roi,
 
-  -- PRIMARY timing metric: market exposure / liquidity.
+  -- PRIMARY timing metric: market exposure / liquidity. Never excludes the
+  -- imported historical cohort.
   COUNT(*) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL) AS dom_sample_size,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL)::numeric, 2) AS median_days_on_market,
 
-  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity metric.
-  COUNT(*) FILTER (WHERE is_realized AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity
+  -- metric. Excludes the imported historical cohort from EVERY row (see
+  -- header) — this is why "Imported historical Business items" always shows
+  -- holding_sample_size = 0 / median_holding_days = NULL, by design, not a
+  -- coverage gap.
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
 FROM combined
-GROUP BY population_label, price_band_order, price_band_label
-ORDER BY price_band_order, population_label;
+GROUP BY population_label, acquisition_value_band_order, acquisition_value_band_label
+ORDER BY acquisition_value_band_order, population_label;
 
 
 -- ============================================================================
 -- QUERY G2 — Robustness check: user-level comparison
+-- CLASSIFICATION: shared aggregate evidence — grouped BY user_id as a
+-- dimension for robustness-checking, but every row is still an aggregate
+-- (median/count) over multiple items, never a single item's own data.
 -- Same population, split by user_id, plus a combined "All accessible users"
 -- row per band — reveals whether the combined pattern in Query B is actually
 -- just one user's behavior, and whether user-level timing differences come
 -- from actual market speed (DOM) or ownership/pre-listing duration
 -- (holding_days) — see TIMING SEMANTICS at the top of this file.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -970,7 +1063,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -979,22 +1072,22 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 ),
 per_user AS (
   SELECT
     user_id::text AS user_group,
-    price_band_order, price_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
   FROM eligible
 ),
 combined_all AS (
   SELECT
     'All accessible users' AS user_group,
-    price_band_order, price_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
   FROM eligible
 ),
 unioned AS (
@@ -1004,8 +1097,8 @@ unioned AS (
 )
 SELECT
   user_group,
-  price_band_order,
-  price_band_label,
+  acquisition_value_band_order,
+  acquisition_value_band_label,
   COUNT(*)                            AS sample_size,
   COUNT(*) FILTER (WHERE is_realized) AS realized_items,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY net_profit) FILTER (WHERE is_realized)::numeric, 2) AS median_net_profit,
@@ -1015,19 +1108,24 @@ SELECT
   COUNT(*) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL) AS dom_sample_size,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL)::numeric, 2) AS median_days_on_market,
 
-  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity metric.
-  COUNT(*) FILTER (WHERE is_realized AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity
+  -- metric. Excludes Historical Import/Purchase/Trade — same holding-only
+  -- exclusion rationale as Query B; sample_size/realized_items/profit/ROI/DOM
+  -- above are unaffected.
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
 FROM unioned
-GROUP BY user_group, price_band_order, price_band_label
-ORDER BY price_band_order, user_group;
+GROUP BY user_group, acquisition_value_band_order, acquisition_value_band_label
+ORDER BY acquisition_value_band_order, user_group;
 
 
 -- ============================================================================
 -- QUERY G3 — Robustness check: acquisition method comparison
--- Purchases vs. trades vs. unknown, per price band — helps identify whether
--- a price band's apparent performance is really an acquisition-method
--- effect, and lets DOM-based market liquidity, holding-based ownership/
+-- CLASSIFICATION: shared aggregate evidence.
+-- Purchases vs. trades vs. unknown, per acquisition value band — helps
+-- identify whether an acquisition value band's apparent performance is
+-- really an acquisition-method effect, and lets DOM-based market liquidity,
+-- holding-based ownership/
 -- pre-listing duration, and capital-cycle duration all be read separately
 -- (see TIMING SEMANTICS at the top of this file).
 --
@@ -1036,7 +1134,7 @@ ORDER BY price_band_order, user_group;
 -- 'unknown' (deal_type 'Historical Import' — original method not yet known).
 -- 'cash' is never used as a stored or grouped value here.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -1047,7 +1145,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -1056,16 +1154,16 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 )
 SELECT
   acquisition_method,
-  price_band_order,
-  price_band_label,
+  acquisition_value_band_order,
+  acquisition_value_band_label,
   COUNT(*)                                    AS sample_size,
   COUNT(*) FILTER (WHERE is_realized)         AS realized_items,
   COUNT(*) FILTER (WHERE exit_type = 'sale')  AS sale_count,
@@ -1077,18 +1175,25 @@ SELECT
   COUNT(*) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL) AS dom_sample_size,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market) FILTER (WHERE is_realized AND global_days_on_market IS NOT NULL)::numeric, 2) AS median_days_on_market,
 
-  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity metric.
-  COUNT(*) FILTER (WHERE is_realized AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  -- SECONDARY context: ownership / capital-cycle duration. Not a liquidity
+  -- metric. Excludes Historical Import/Purchase/Trade — same holding-only
+  -- exclusion rationale as Query B; sample_size/realized_items/profit/ROI/DOM
+  -- above are unaffected. Note this means the 'unknown' acquisition_method
+  -- row (Historical Import) will always show holding_sample_size = 0 here —
+  -- expected, not a bug: every row grouped under 'unknown' is historical by
+  -- definition (see analytics_item_lifecycle's acquisition_method CASE).
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
 FROM eligible
-GROUP BY acquisition_method, price_band_order, price_band_label
-ORDER BY acquisition_method, price_band_order;
+GROUP BY acquisition_method, acquisition_value_band_order, acquisition_value_band_label
+ORDER BY acquisition_method, acquisition_value_band_order;
 
 
 -- ============================================================================
 -- QUERY G4 — Robustness check: outlier sensitivity
+-- CLASSIFICATION: shared aggregate evidence.
 -- Realized Business items with positive acquisition value, compared with and
--- without the top/bottom 5% of net_profit excluded — PER PRICE BAND.
+-- without the top/bottom 5% of net_profit excluded — PER ACQUISITION VALUE BAND.
 --
 -- FIXED: the previous version used PERCENT_RANK() and kept rows with
 -- profit_percent_rank BETWEEN 0.05 AND 0.95, which excludes every row whose
@@ -1098,8 +1203,8 @@ ORDER BY acquisition_method, price_band_order;
 -- = 0 is a common, unremarkable value in that band, not an extreme one).
 --
 -- Fixed approach — deterministic row-count trimming:
---   1. original_sample_size = realized item count, computed PER price band.
---   2. trim_count = floor(original_sample_size * 0.05), PER price band.
+--   1. original_sample_size = realized item count, computed PER acquisition value band.
+--   2. trim_count = floor(original_sample_size * 0.05), PER acquisition value band.
 --   3. Rows are ranked within each band by net_profit ascending, with
 --      item_id as a deterministic tie-breaker (so re-running this query
 --      never trims a different row when several items share a net_profit).
@@ -1135,7 +1240,7 @@ ORDER BY acquisition_method, price_band_order;
 -- time remains secondary context — see TIMING SEMANTICS at the top of this
 -- file.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -1146,7 +1251,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -1155,11 +1260,11 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 ),
 realized AS (
   SELECT * FROM eligible WHERE is_realized
@@ -1167,9 +1272,9 @@ realized AS (
 banded AS (
   SELECT
     *,
-    COUNT(*) OVER (PARTITION BY price_band_order)                                          AS band_sample_size,
-    ROW_NUMBER() OVER (PARTITION BY price_band_order ORDER BY net_profit ASC,  item_id ASC)  AS rank_from_bottom,
-    ROW_NUMBER() OVER (PARTITION BY price_band_order ORDER BY net_profit DESC, item_id DESC) AS rank_from_top
+    COUNT(*) OVER (PARTITION BY acquisition_value_band_order)                                          AS band_sample_size,
+    ROW_NUMBER() OVER (PARTITION BY acquisition_value_band_order ORDER BY net_profit ASC,  item_id ASC)  AS rank_from_bottom,
+    ROW_NUMBER() OVER (PARTITION BY acquisition_value_band_order ORDER BY net_profit DESC, item_id DESC) AS rank_from_top
   FROM realized
 ),
 trimmed AS (
@@ -1181,8 +1286,8 @@ trimmed AS (
 full_population AS (
   SELECT
     'All realized items' AS population_label,
-    price_band_order, price_band_label,
-    net_profit, roi, holding_days, global_days_on_market,
+    acquisition_value_band_order, acquisition_value_band_label,
+    net_profit, roi, holding_days, global_days_on_market, is_historical_import,
     band_sample_size AS original_sample_size,
     0 AS removed_low_count,
     0 AS removed_high_count
@@ -1192,9 +1297,9 @@ trimmed_population AS (
   -- Omitted entirely for bands where trim_count = 0, so a band is never
   -- labeled "outliers excluded" when nothing was actually removed.
   SELECT
-    'Profit outliers excluded (5% trim each side, by price band)' AS population_label,
-    price_band_order, price_band_label,
-    net_profit, roi, holding_days, global_days_on_market,
+    'Profit outliers excluded (5% trim each side, by acquisition value band)' AS population_label,
+    acquisition_value_band_order, acquisition_value_band_label,
+    net_profit, roi, holding_days, global_days_on_market, is_historical_import,
     band_sample_size AS original_sample_size,
     trim_count AS removed_low_count,
     trim_count AS removed_high_count
@@ -1210,8 +1315,8 @@ combined AS (
 )
 SELECT
   population_label,
-  price_band_order,
-  price_band_label,
+  acquisition_value_band_order,
+  acquisition_value_band_label,
   original_sample_size,
   -- Rows actually used to compute the metrics below for THIS row. A plain
   -- COUNT(*) over the GROUP BY: for "All realized items" every original row
@@ -1226,18 +1331,29 @@ SELECT
   COUNT(*) FILTER (WHERE global_days_on_market IS NOT NULL) AS dom_sample_size,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market) FILTER (WHERE global_days_on_market IS NOT NULL)::numeric, 2) AS median_days_on_market,
 
-  COUNT(*) FILTER (WHERE holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE holding_days IS NOT NULL)::numeric, 2) AS median_holding_days,
+  -- Excludes Historical Import/Purchase/Trade — same holding-only exclusion
+  -- rationale as Query B. This trims the holding-time pair only; it does not
+  -- remove historical rows from analysis_sample_size or the profit/ROI/DOM
+  -- metrics in this same row.
+  COUNT(*) FILTER (WHERE NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days,
 
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY net_profit)::numeric, 2) AS median_net_profit,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY roi) FILTER (WHERE roi IS NOT NULL)::numeric, 2) AS median_roi
 FROM combined
-GROUP BY population_label, price_band_order, price_band_label, original_sample_size, removed_low_count, removed_high_count
-ORDER BY price_band_order, population_label;
+GROUP BY population_label, acquisition_value_band_order, acquisition_value_band_label, original_sample_size, removed_low_count, removed_high_count
+ORDER BY acquisition_value_band_order, population_label;
 
 
 -- ============================================================================
 -- QUERY G5 — Item-level drill-down
+-- CLASSIFICATION: DEVELOPER-ONLY item-level verification drilldown. Not
+-- part of a future shared aggregate snapshot or user-facing recommendation
+-- output. Returns item_id, user_id, and item_display_name across every
+-- user accessible to the querying role, with no target-user filtering —
+-- see analytics/SEMANTIC_CONTRACT.md's developer verification population
+-- definition. Never send this query's rows to an AI recommendation
+-- process or a current user's UI as-is.
 -- Source rows for the same population used by Query B/C/D/E/F/G1-G4, for
 -- manually verifying which specific items produced any aggregate above.
 --
@@ -1284,7 +1400,7 @@ ORDER BY price_band_order, population_label;
 --   over NULL so this flag (and G5A's count of it) never need special
 --   NULL-handling and never gets conflated with a coverage gap.
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -1295,7 +1411,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -1304,11 +1420,11 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 ),
 flagged AS (
   SELECT
@@ -1342,7 +1458,7 @@ SELECT
   acquisition_date,
   acquisition_method,
   acquisition_value,
-  price_band_label,
+  acquisition_value_band_label,
 
   is_historical_import,
   acquisition_date_is_placeholder,
@@ -1370,11 +1486,13 @@ SELECT
   estimated_sold_value,
   has_lifecycle_date_issue
 FROM flagged
-ORDER BY price_band_order, is_realized DESC, acquisition_value, item_id;
+ORDER BY acquisition_value_band_order, is_realized DESC, acquisition_value, item_id;
 
 
 -- ============================================================================
 -- QUERY G5A — Lifecycle timing integrity summary
+-- CLASSIFICATION: shared aggregate evidence (one-row rollup of counts, no
+-- item-level detail).
 -- One-row rollup of G5's three integrity flags, plus DOM coverage context,
 -- over the same population (Business, acquisition_value > 0). Read this
 -- FIRST — it tells you whether G5's per-item flags are worth drilling into
@@ -1391,7 +1509,7 @@ ORDER BY price_band_order, is_realized DESC, acquisition_value, item_id;
 -- listed through a tracked platform before it exited (see Query A1, which
 -- reports the same two counts for the full non-price-filtered population).
 -- ============================================================================
-WITH price_band AS (
+WITH acquisition_value_band AS (
   SELECT
     *,
     CASE
@@ -1402,7 +1520,7 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN 4
       WHEN acquisition_value < 5000 THEN 5
       ELSE 6
-    END AS price_band_order,
+    END AS acquisition_value_band_order,
     CASE
       WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
       WHEN acquisition_value < 1000 THEN '$1-999'
@@ -1411,11 +1529,11 @@ WITH price_band AS (
       WHEN acquisition_value < 4000 THEN '$3,000-3,999'
       WHEN acquisition_value < 5000 THEN '$4,000-4,999'
       ELSE '$5,000+'
-    END AS price_band_label
+    END AS acquisition_value_band_label
   FROM analytics_item_lifecycle
 ),
 eligible AS (
-  SELECT * FROM price_band WHERE purpose_name = 'Business' AND acquisition_value > 0
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business' AND acquisition_value > 0
 ),
 flagged AS (
   SELECT
