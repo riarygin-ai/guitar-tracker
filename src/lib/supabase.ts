@@ -1058,3 +1058,32 @@ export async function getPurposeUsageCount(purposeId: number) {
     .eq('purpose_id', purposeId);
 }
 
+// ─── Analytics runs (Phase 2 Step 4) ───────────────────────────────────────────
+// Read-only. analytics_runs has no authenticated write grant or write policy
+// (supabase/migrations/20260729000000_analytics_runs_grant_hardening.sql) —
+// all writes happen server-side via POST /api/analytics/runs. RLS restricts
+// every SELECT here to rows where recommendation_target_user_id equals the
+// current app user, so these functions never need to filter by user
+// themselves.
+
+const ANALYTICS_RUN_META_COLUMNS =
+  'id, status, created_at, started_at, completed_at, duration_ms, analytics_version, evidence_scope, error_message';
+
+// Metadata only — deliberately omits `snapshot` so the history list never
+// pulls every historical snapshot into memory at once.
+export async function getRecentAnalyticsRuns(limit: number = 10) {
+  return supabase
+    .from('analytics_runs')
+    .select(ANALYTICS_RUN_META_COLUMNS)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+}
+
+export async function getAnalyticsRunSnapshot(runId: number) {
+  return supabase
+    .from('analytics_runs')
+    .select('id, snapshot')
+    .eq('id', runId)
+    .single();
+}
+

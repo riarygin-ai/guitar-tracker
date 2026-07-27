@@ -349,3 +349,48 @@ export interface InventorySearchItem extends InventoryItem {
   brand_name: string;
   item_subtype_name: string | null;
 }
+
+// ─── Analytics (Phase 2 Step 4) ────────────────────────────────────────────────
+// Mirrors public.analytics_runs columns (supabase/migrations/20260727000000_
+// analytics_runs.sql) and the build_analytics_snapshot_v1 top-level contract
+// (20260728000000_build_analytics_snapshot_v1.sql). Nested module contents
+// under evidence_aggregates/recommendation_candidates are intentionally left
+// as Record<string, unknown> — the full ~2,000-line SQL schema is not
+// duplicated into TypeScript at this step; see analytics/SEMANTIC_CONTRACT.md
+// for the authoritative field-level definitions.
+
+export type AnalyticsRunStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+// Metadata-only shape — matches the columns selected by getRecentAnalyticsRuns
+// (everything except `snapshot`, which is loaded separately per run).
+export interface AnalyticsRunMeta {
+  id:                 number;
+  status:             AnalyticsRunStatus;
+  created_at:         string;
+  started_at:         string | null;
+  completed_at:       string | null;
+  duration_ms:        number | null;
+  analytics_version:  string;
+  evidence_scope:     string;
+  error_message:      string | null;
+}
+
+export interface AnalyticsRun extends AnalyticsRunMeta {
+  snapshot: AnalyticsSnapshot | null;
+}
+
+export interface AnalyticsSnapshot {
+  snapshot_schema_version:        string;
+  analytics_definition_version:   string;
+  generated_at:                   string;
+  evidence_scope:                 string;
+  recommendation_target_user_id:  number;
+  evidence_aggregates: {
+    acquisition_value_band: Record<string, unknown>;
+    acquisition_to_exit:    Record<string, unknown>;
+    brand:                  Record<string, unknown>;
+  };
+  recommendation_candidates: {
+    open_business_items: Record<string, unknown>[];
+  };
+}

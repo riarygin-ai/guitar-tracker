@@ -89,16 +89,29 @@ user's item-level details. See `analytics/SEMANTIC_CONTRACT.md` sections
 9-12 for the full evidence/recommendation/developer-verification boundary
 this table is built to respect.
 
-RLS: an authenticated user may `SELECT` a run only where
-`recommendation_target_user_id` equals their own `app_users.id` —
-`requested_by_user_id` does NOT independently grant access, since a
-requester running analytics on someone else's behalf must not be able to
-read that other user's item-level data back out of the snapshot. For this
-initial autorunner implementation, normal user-created runs always set
-`requested_by_user_id = recommendation_target_user_id`; cross-user
-admin-initiated runs are not implemented or made visible in this step. No
-`authenticated` INSERT/UPDATE/DELETE policy exists, so direct client
-writes are denied.
+Access is enforced by two independent layers, both least-privilege:
+
+- **Table grants**: `authenticated` holds `SELECT` privilege only on
+  `public.analytics_runs` — no `INSERT`/`UPDATE`/`DELETE` table privilege
+  exists for `authenticated` or `anon` (see
+  `20260729000000_analytics_runs_grant_hardening.sql`, which revokes this
+  project's ambient default table/sequence privileges down to that
+  baseline; the identity sequence likewise grants nothing to `anon`/
+  `authenticated`). `anon` has no privileges on this table at all.
+- **RLS**: an authenticated user may `SELECT` a run only where
+  `recommendation_target_user_id` equals their own `app_users.id` —
+  `requested_by_user_id` does NOT independently grant access, since a
+  requester running analytics on someone else's behalf must not be able to
+  read that other user's item-level data back out of the snapshot. No
+  `INSERT`/`UPDATE`/`DELETE` policy exists for `authenticated` either.
+
+For this initial autorunner implementation, normal user-created runs
+always set `requested_by_user_id = recommendation_target_user_id`;
+cross-user admin-initiated runs are not implemented or made visible in
+this step. Every write — insert pending, transition to running, persist
+completed/failed — is performed exclusively by the service-role runner
+(`src/lib/analytics/runAnalytics.ts`); direct client writes are denied by
+both the table grant and RLS layers independently, not by RLS alone.
 
 ## Snapshot builder: build_analytics_snapshot_v1 (Phase 2 Step 2)
 
@@ -159,6 +172,117 @@ conceptual principles for future Business Coach insights (fact vs.
 interpretation vs. recommendation vs. confidence vs. scope vs. evidence vs.
 limitations) — documentation only. The actual prompt text and
 structured-output response schema are not implemented yet.
+
+## Server-side runner: POST /api/analytics/runs (Phase 2 Step 3)
+
+`src/lib/analytics/runAnalytics.ts` and `src/app/api/analytics/runs/route.ts`
+are the first code that actually executes an analytics run and persists it
+into `analytics_runs`. **There was still no frontend trigger as of this
+step** (added in Phase 2 Step 4, below) **and there is still no scheduled/
+cron execution or AI/Business Coach analysis** — this step is server-side
+execution and persistence only.
+
+Request/response contract:
+
+- `POST /api/analytics/runs`, authenticated (bearer token, same convention
+  as the other `/api/ai/*` routes). **No request body is required or read.**
+  There is no field anywhere in this flow — body, query string, header — that
+  lets a caller choose whose analytics get run or whose data becomes the
+  recommendation target. The runner always uses the caller's own resolved
+  `app_users.id` for both `requested_by_user_id` and
+  `recommendation_target_user_id`.
+- Responses: `401` if unauthenticated, `403` if no `app_users` row exists for
+  the caller, `500` for a server misconfiguration or an execution/persistence
+  failure. On success, `200` with `{ run: { id, status, created_at,
+  started_at, completed_at, duration_ms, analytics_version, evidence_scope,
+  snapshot } }`. Error responses never include a service-role detail, a raw
+  Postgres/Supabase error object, a stack trace, or another user's data.
+
+Execution flow (`runAnalyticsForCurrentUser`, in `runAnalytics.ts`):
+
+1. The route authenticates the caller with the normal anon-key client (same
+   `createClient` + bearer-token pattern used elsewhere) and resolves
+   `app_users.id` under that user's own RLS — exactly like the existing
+   `/api/ai/debug-prompt` admin-check pattern, just without the admin
+   requirement.
+2. Only after that identity is established does the route construct a
+   **service-role** Supabase client (`SUPABASE_SERVICE_ROLE_KEY`, never a
+   `NEXT_PUBLIC_` variable) and hand it to the runner. The service-role
+   client is used for exactly three things: inserting/updating the
+   `analytics_runs` row, calling `build_analytics_snapshot_v1`, and reading
+   back the completed row — nothing else. `analytics_runs`' RLS and
+   `build_analytics_snapshot_v1`'s `service_role`-only grants are unchanged.
+3. The runner inserts a `pending` row, then updates it to `running` with
+   `started_at` set, then calls `build_analytics_snapshot_v1` for the same
+   app user, timing the call with `performance.now()`.
+4. The returned snapshot's top-level metadata is checked with a type guard
+   (`isValidAnalyticsSnapshot`) before anything is persisted:
+   `snapshot_schema_version`/`analytics_definition_version` must equal the
+   current `'1.0'`/`'1.0'`, `evidence_scope` must equal
+   `'shared_business_population'`, `recommendation_target_user_id` must
+   equal the caller's own `app_users.id`, and `evidence_aggregates`/
+   `recommendation_candidates` must both be present. A mismatch is treated
+   as a failure, not persisted as a completed snapshot.
+5. On success the row is updated to `completed` with `duration_ms`,
+   `snapshot`, and `error_message = NULL`. On any failure (builder error or
+   failed metadata validation) the row is updated to `failed` with
+   `duration_ms` (when available) and a sanitized `error_message` — stripped
+   to its first line, with anything JWT- or connection-string-shaped
+   redacted, capped at ~500 characters. The runner never leaves a row stuck
+   in `running` because of an ordinary handled exception; if persisting the
+   `failed` status itself fails, both failures are logged server-side
+   separately and a generic error is returned to the caller.
+
+Current limitations (deliberate, for this step):
+
+- **No concurrency control.** Multiple manually triggered runs for the same
+  user may run and complete independently — there is no lock, uniqueness
+  constraint, queue, or cancellation, and an existing in-flight run is never
+  silently reused. This is acceptable for now because nothing triggers runs
+  automatically yet; revisit once a frontend trigger or scheduler exists.
+- **No frontend trigger as of Phase 2 Step 3.** The route had to be called
+  directly (e.g. via `curl`/Postman with a real user's access token). Phase
+  2 Step 4, below, adds the first UI trigger.
+
+**Duplicated-logic maintenance rule.** Until analytics logic is
+consolidated into a single implementation, the same analytical definitions
+exist in two places that must be kept in sync by hand: the developer-readable
+manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...`) and the
+versioned snapshot builder functions
+(`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql`). A
+change to an analytical definition (a band boundary, an eligibility rule, a
+new metric) must be applied to both, or the manual files and the snapshot
+will silently disagree. This duplication is not redesigned in this step.
+
+## Frontend: /analytics page (Phase 2 Step 4)
+
+`/analytics` (`src/app/analytics/page.tsx`) is the **first frontend trigger**
+for the analytics autorunner. An authenticated user can now:
+
+- click **Run Analytics** to call `POST /api/analytics/runs` (bearer token
+  from the current Supabase session, no request body — the button cannot
+  supply any target other than the caller's own account);
+- see whether the run completed or failed, with a disabled/"Running
+  analytics…" button state while the request is in flight;
+- browse their own recent runs (latest 10, `created_at DESC`), loaded with
+  the normal authenticated browser client under the existing RLS policy —
+  a user only ever sees rows where `recommendation_target_user_id` is their
+  own `app_users.id`;
+- select any run and load its stored snapshot separately, by run id, again
+  under RLS.
+
+Results are shown as **structured/raw snapshot sections** — collapsible,
+formatted-JSON blocks for Acquisition Value Band, Acquisition to Exit,
+Brand, My Open Business Items, and the complete raw snapshot — not a
+polished dashboard. This is a development-stage results viewer. **No
+Business Coach or AI interpretation exists yet, and no scheduled execution
+exists yet**; every run is still manually triggered from this page (or
+directly against the API), one request at a time.
+
+The page issues no lifecycle-table queries of its own — it only ever reads
+`analytics_runs` metadata and the persisted `snapshot` JSONB column, so it
+cannot show more than what `build_analytics_snapshot_v1` already decided to
+put in the snapshot (no other user's items, no developer-only drilldowns).
 
 ## Conventions
 
