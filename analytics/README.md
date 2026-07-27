@@ -77,19 +77,28 @@ version, e.g. `'1.0'` — not this app's release version), so a future reader
 can tell which snapshot shape it's looking at. `snapshot`'s JSON structure
 is not enforced by the database yet — that's a later phase.
 
-Every run has both a `requested_by_user_id` (who triggered it) and a
-`recommendation_target_user_id` (whose open Business items may appear as
-recommendation candidates in the snapshot) — usually the same person today,
-but the schema doesn't force that. Item-level recommendation data in a
-future snapshot is always scoped to `recommendation_target_user_id` only;
-evidence aggregates may be computed over the full shared Business
-population. See `analytics/SEMANTIC_CONTRACT.md` sections 9-12 for the full
-evidence/recommendation/developer-verification boundary this table is built
-to respect.
+Every run has both a `requested_by_user_id` (audit/history metadata only —
+who triggered the run) and a `recommendation_target_user_id` (whose open
+Business items may appear as recommendation candidates in the snapshot,
+and the ONLY column that controls read access — see RLS below) — usually
+the same person today, but the schema doesn't force that. Item-level
+recommendation data in a future snapshot is always scoped to
+`recommendation_target_user_id` only; evidence aggregates may be computed
+over the full shared Business population but must never expose another
+user's item-level details. See `analytics/SEMANTIC_CONTRACT.md` sections
+9-12 for the full evidence/recommendation/developer-verification boundary
+this table is built to respect.
 
-RLS: an authenticated user may `SELECT` a run where they are the requester
-or the target; no `authenticated` INSERT/UPDATE/DELETE policy exists, so
-direct client writes are denied.
+RLS: an authenticated user may `SELECT` a run only where
+`recommendation_target_user_id` equals their own `app_users.id` —
+`requested_by_user_id` does NOT independently grant access, since a
+requester running analytics on someone else's behalf must not be able to
+read that other user's item-level data back out of the snapshot. For this
+initial autorunner implementation, normal user-created runs always set
+`requested_by_user_id = recommendation_target_user_id`; cross-user
+admin-initiated runs are not implemented or made visible in this step. No
+`authenticated` INSERT/UPDATE/DELETE policy exists, so direct client
+writes are denied.
 
 ## Conventions
 

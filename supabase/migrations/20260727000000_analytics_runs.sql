@@ -22,6 +22,18 @@
 -- recommendation_target_user_id before the row is ever written. Developer-
 -- only multi-user drilldowns (see analytics/sql/*.sql's Query
 -- Classification Index) must never be persisted into snapshot.
+--
+-- READ ACCESS IS TARGET-ONLY. Because snapshot may contain item-level
+-- recommendation_candidates belonging to recommendation_target_user_id,
+-- ONLY that column grants read access to a run (see RLS below).
+-- requested_by_user_id is audit/history metadata — who triggered the run —
+-- and must never independently grant access: if it did, a requester could
+-- read another user's item-level data whenever the two columns differ. For
+-- this initial autorunner implementation, normal user-created runs always
+-- set requested_by_user_id = recommendation_target_user_id; cross-user
+-- admin-initiated runs (where they'd legitimately differ) are explicitly
+-- NOT implemented or made visible in this step — that needs its own
+-- controlled metadata/admin design later.
 
 -- ─── 1. analytics_runs table ───────────────────────────────────────────────
 
@@ -100,8 +112,11 @@ CREATE TABLE public.analytics_runs (
 );
 
 -- ─── 2. Indexes ─────────────────────────────────────────────────────────────
--- Newest-run lookups for the two roles a run can be read by (see RLS below).
--- No status-lookup index yet — no future-runner query pattern justifies one
+-- Newest-run lookups for both user-facing columns: recommendation_target_user_id
+-- (the one RLS actually reads runs by — see below) and requested_by_user_id
+-- (audit/history lookups — e.g. "what has this user triggered" — even
+-- though that column no longer grants read access on its own). No
+-- status-lookup index yet — no future-runner query pattern justifies one
 -- today; add it when that design exists, not speculatively. No GIN index on
 -- snapshot yet — its structure isn't defined until the next phase.
 
@@ -112,21 +127,26 @@ CREATE INDEX idx_analytics_runs_target_created_at
   ON public.analytics_runs (recommendation_target_user_id, created_at DESC);
 
 -- ─── 3. Row-level security ──────────────────────────────────────────────────
--- SELECT only, for both roles a run concerns. No INSERT/UPDATE/DELETE policy
--- is created for `authenticated` at all — with RLS enabled and no permissive
--- policy for those commands, they are denied outright. The future runner
--- (server-side / service_role) creates and updates rows; service_role
--- bypasses RLS entirely by Supabase convention, so no service_role-specific
--- policy is added here (matches every other table in this schema).
+-- SELECT only, gated by recommendation_target_user_id ALONE. snapshot may
+-- contain item-level recommendation_candidates belonging to the target
+-- user — requested_by_user_id must NOT independently grant read access, or
+-- a requester running analytics on someone else's behalf could read that
+-- other user's item-level data back out of the snapshot. requested_by_user_id
+-- remains a real, required column (audit/history: who triggered the run)
+-- but is deliberately excluded from this USING clause.
+--
+-- No INSERT/UPDATE/DELETE policy is created for `authenticated` at all —
+-- with RLS enabled and no permissive policy for those commands, they are
+-- denied outright. The future runner (server-side / service_role) creates
+-- and updates rows; service_role bypasses RLS entirely by Supabase
+-- convention, so no service_role-specific policy is added here (matches
+-- every other table in this schema).
 
 ALTER TABLE public.analytics_runs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "analytics_runs: select own or target"
+CREATE POLICY "analytics_runs: select target only"
   ON public.analytics_runs FOR SELECT TO authenticated
-  USING (
-    requested_by_user_id = public.get_app_user_id()
-    OR recommendation_target_user_id = public.get_app_user_id()
-  );
+  USING (recommendation_target_user_id = public.get_app_user_id());
 
 -- ─── 4. Grants ──────────────────────────────────────────────────────────────
 -- authenticated gets SELECT only — deliberately narrower than this schema's
@@ -144,23 +164,36 @@ COMMENT ON TABLE public.analytics_runs IS
   'One row per analytics execution (Phase 2 Step 1 of the autorunner plan — '
   'no orchestrator/API/UI/scheduler reads or writes this table yet). '
   'Evidence aggregates inside snapshot may be computed over the controlled '
-  'shared Business population (evidence_scope); the persisted snapshot must '
-  'NOT include another user''s item IDs, item names, or item-level financial '
+  'shared Business population (evidence_scope) and must never expose '
+  'another user''s item-level details; the persisted snapshot must NOT '
+  'include another user''s item IDs, item names, or item-level financial '
   'details. recommendation_candidates inside snapshot must be restricted to '
-  'recommendation_target_user_id before this row is written. Developer-only '
+  'recommendation_target_user_id before this row is written. Read access '
+  '(RLS) is gated on recommendation_target_user_id ALONE, because that is '
+  'whose item-level data the snapshot may contain — requested_by_user_id '
+  'is audit metadata only and grants no read access. Developer-only '
   'multi-user drilldowns (see analytics/sql/*.sql Query Classification '
   'Index) must never be persisted here. snapshot JSON structure is not '
   'enforced at the database level yet — see analytics/SEMANTIC_CONTRACT.md.';
 
 COMMENT ON COLUMN public.analytics_runs.requested_by_user_id IS
-  'app_users.id of the user who initiated this run.';
+  'app_users.id of the user who initiated this run. Audit/history metadata '
+  'ONLY — does not grant read access to this row (see RLS: read access is '
+  'gated on recommendation_target_user_id alone, since snapshot may '
+  'contain that user''s item-level data). For this initial autorunner '
+  'implementation, normal user-created runs always set this equal to '
+  'recommendation_target_user_id; a future controlled admin/server '
+  'workflow may run analytics for a different target than the requester, '
+  'but that is not implemented or made visible in this step.';
 
 COMMENT ON COLUMN public.analytics_runs.recommendation_target_user_id IS
   'app_users.id of the user whose open Business items may appear as '
-  'recommendation candidates in this run''s snapshot. Normally equal to '
-  'requested_by_user_id today, but not constrained to be — a future '
-  'controlled admin/server workflow may run analytics for a different '
-  'target user than the one who requested it.';
+  'recommendation candidates in this run''s snapshot. Controls read access '
+  'to this row via RLS — a user may SELECT a run only when this column '
+  'equals their own app_users.id, regardless of who requested the run. '
+  'Normally equal to requested_by_user_id today; not enforced to be, but '
+  'no cross-user admin execution exists yet to make them differ in '
+  'practice.';
 
 COMMENT ON COLUMN public.analytics_runs.evidence_scope IS
   'Free-text label for which population evidence_aggregates were computed '
