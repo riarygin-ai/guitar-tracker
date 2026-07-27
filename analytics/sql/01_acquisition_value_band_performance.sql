@@ -126,7 +126,11 @@
 -- see analytics/SEMANTIC_CONTRACT.md for the full definitions) ─────────────
 -- Every query below is SHARED AGGREGATE EVIDENCE — pooled across every user
 -- accessible to the querying role, returning only counts/medians/labels, with
--- ONE exception:
+-- TWO exceptions:
+--   Query G2 — DEVELOPER-ONLY diagnostic (per-user grouped comparison; final
+--     scope decision — never appears in the user-facing snapshot even though
+--     it contains no single item's own data, because a per-user breakdown is
+--     itself information about another user's activity).
 --   Query G5 — DEVELOPER-ONLY item-level verification drilldown (returns
 --     item_id, user_id, item_display_name for every eligible item across
 --     every user). Not part of a future shared aggregate snapshot or
@@ -1043,9 +1047,13 @@ ORDER BY acquisition_value_band_order, population_label;
 
 -- ============================================================================
 -- QUERY G2 — Robustness check: user-level comparison
--- CLASSIFICATION: shared aggregate evidence — grouped BY user_id as a
--- dimension for robustness-checking, but every row is still an aggregate
--- (median/count) over multiple items, never a single item's own data.
+-- CLASSIFICATION: developer-only diagnostic (final scope decision — per-user
+-- grouped comparisons are developer-only robustness diagnostics and must
+-- NOT appear in the user-facing snapshot; see
+-- analytics/SEMANTIC_CONTRACT.md). Grouped BY user_id as a dimension for
+-- robustness-checking during development; no row here is a single item's
+-- own data, but breaking results down per user is itself information about
+-- another user's activity that a shared snapshot must not expose.
 -- Same population, split by user_id, plus a combined "All accessible users"
 -- row per band — reveals whether the combined pattern in Query B is actually
 -- just one user's behavior, and whether user-level timing differences come

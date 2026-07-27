@@ -2,8 +2,9 @@
 
 Source of truth for (1) how historical-import records are treated, (2)
 acquisition/exit value-band terminology, (3) acquisition-to-exit value
-analysis semantics, and (4) the separation between shared statistical
-evidence and current-user item-level recommendation targets, across the
+analysis semantics, (4) the separation between shared statistical evidence
+and current-user item-level recommendation targets, and (5) the required
+conceptual structure of future Business Coach insights, across the
 analytics layer (`analytics/sql/*.sql`, `analytics_item_lifecycle`, and any
 future AI analysis / Business Coach feature built on top of them). If a
 query, comment, label, or AI prompt disagrees with this document, THIS
@@ -347,10 +348,20 @@ Developer drilldowns are not removed merely because they contain multiple
 users — they remain useful during development. The restriction is on where
 their OUTPUT may flow, not on whether they may exist.
 
-## 10. Future snapshot boundary (documentation only — no snapshot built yet)
+## 10. Snapshot boundary
 
-A future autorunner (not built in this step — see Non-goals) must
-conceptually produce two separate sections, never merged into one:
+**Update (Phase 2 Step 2):** the boundary this section describes is now
+concretely implemented by
+`public.build_analytics_snapshot_v1(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql`) —
+see `analytics/README.md` for its exact contract and the manual-query-to-
+JSON-key mapping. That function computes the snapshot but does not persist
+it; persisting it into `analytics_runs.snapshot` is Phase 2 Step 3, still
+not built. The rules below governed the implementation and continue to
+govern any future change to it.
+
+The autorunner produces two separate top-level sections, never merged into
+one:
 
 - **`evidence_aggregates`** — may use all eligible shared Business items
   (section 9.1). Must contain aggregate results only — counts, medians,
@@ -463,7 +474,183 @@ functions, migrations, or RPCs are created by this document — everything
 in sections 9-12 is documentation of a future design, enforced today only
 by the existing RLS policies already in place.
 
-## 13. Non-goals of this document
+## 13. Future Business Coach Insight Contract (documentation only — no Business Coach, AI calls, prompts, schemas, or runtime code exist yet)
+
+Governs the required CONCEPTUAL structure of any future AI-generated
+analytics insight, so the distinction between calculated fact and AI
+judgment is never lost when the autorunner and Business Coach are
+eventually built. This section defines principles only — no prompt text,
+structured-output JSON schema, or AI integration is introduced here; that
+is a later, separate implementation step. Every rule below applies
+regardless of how that future implementation is built.
+
+A future insight conceptually follows this shape, always in this order:
+
+```
+Fact → Evidence → Interpretation → Recommendation → Confidence → Scope → Limitations
+```
+
+### 13.1 Fact
+
+A statement directly supported by the analytics snapshot (section 10) —
+e.g. "Gibson purchases have a median net profit of $1,000," "the evidence
+population contains 8 Gibson purchases, of which 7 are realized," "three of
+the target user's Fender items are currently open."
+
+- Facts must come directly from snapshot values — never invented, never
+  extrapolated beyond what the snapshot actually contains.
+- Facts must not contain invented explanations — an explanation belongs in
+  Interpretation (13.2), not Fact.
+- Facts must identify important denominators and sample sizes (a median
+  without its sample size is not a complete fact — see the analytics
+  convention already established throughout `analytics/sql/*.sql`).
+- Acquisition Value must not be called Purchase Price unless the population
+  is explicitly restricted to `acquisition_method = 'purchase'`. Exit Value
+  must not be called Sale Price unless the population is explicitly
+  restricted to a cash-sale exit. See section 7 for the full definitions —
+  not restated here.
+
+### 13.2 Interpretation
+
+An explanation of what one or more facts may mean — e.g. "the stronger
+Gibson result appears to come primarily from favorable cash acquisitions
+rather than from trade-acquired Gibson items."
+
+- Must be clearly distinguished from Fact — a reader must never be able to
+  mistake an interpretation for a directly-observed snapshot value.
+- Describes reasonable implications, not proven causation. Correlation
+  shown in the evidence is never asserted as causation.
+- Must be traceable to the supporting evidence cited alongside it (13.6).
+- Must mention important alternative explanations where applicable: brand
+  or model mix, Acquisition Value Band mix, acquisition method, exit
+  method, historical-vs-app-tracked cohort differences (section 5 — this is
+  a cohort comparison, never a data-reliability claim), or small samples.
+
+### 13.3 Recommendation
+
+A suggested action for `recommendation_target_user_id` — e.g. "consider
+prioritizing under-market Gibson purchase opportunities," "review the
+target user's Fender listing that has been on the market for more than 60
+days."
+
+- Recommendations are judgments, not statistical facts, and must never be
+  presented as one.
+- A recommendation must explain why it follows from the evidence.
+- Item-level recommendations may reference only items belonging to
+  `recommendation_target_user_id` (section 9.2 / section 11). Another
+  user's item may contribute to aggregate evidence (section 9.1) but must
+  NEVER appear as a recommendation target or a supporting item-level
+  example — this is the same boundary section 9 already establishes for
+  the snapshot itself, applied here to AI-generated text.
+- The AI must not recommend action when evidence is insufficient without
+  explicitly stating that uncertainty.
+- The AI must not automatically interpret high ownership age, low
+  estimated upside, or long DOM as requiring a sale — it must explain the
+  tradeoff and keep fact separate from judgment (e.g. "this item has been
+  listed 90 days, well above the brand's median of 35 — that alone does
+  not mean it should be sold; consider whether repricing, relisting on
+  another channel, or holding for a better buyer fits your goals").
+
+### 13.4 Confidence
+
+The strength of evidence supporting an interpretation or recommendation,
+using the established analytics levels: **insufficient, low, moderate,
+stronger** (the same 4-tier convention already used throughout
+`analytics/sql/*.sql` and the snapshot's `confidence` fields — see section
+7's methodology references; not a new scale).
+
+- Confidence must be grounded in the snapshot's own sample size and
+  confidence fields — never asserted independently of them.
+- The AI must not silently upgrade confidence (e.g. treating an
+  "insufficient" aggregate as if it were "moderate" because the
+  interpretation sounds plausible).
+- Confidence may be LOWER than the source aggregate's own confidence when a
+  recommendation depends on a further subdivision the snapshot's
+  confidence field doesn't already account for — one brand, one
+  Acquisition Value Band, one acquisition method, one exit method, or one
+  specific item. Narrowing the population narrows the evidence; the stated
+  confidence must reflect the narrower slice actually being used, not the
+  broader aggregate it was drawn from.
+- Small samples must remain visible rather than hidden — matching the
+  standing analytics-folder convention (`analytics/README.md`).
+
+### 13.5 Scope
+
+The population a statement applies to. At minimum, every future insight
+must make clear whether it describes:
+
+- the shared evidence population (section 9.1);
+- the target user's inventory (section 9.2 / section 11);
+- a particular brand;
+- an Acquisition Value Band;
+- a purchase-only population (Purchase Price Band, section 7);
+- a sale-only population (Sale Price Band, section 7);
+- an imported historical cohort;
+- an app-tracked cohort (section 5).
+
+Three scopes govern what may appear at all:
+
+- **Evidence scope** — all eligible shared Business items used for
+  aggregate statistical evidence (section 9.1).
+- **Recommendation scope** — only open eligible Business items belonging
+  to `recommendation_target_user_id` (section 9.2, eligibility in section
+  11).
+- **Developer scope** — developer-only drilldowns and per-user diagnostics
+  (section 9.3); these must never appear in user-facing AI output, exactly
+  as they must never appear in the user-facing snapshot.
+
+### 13.6 Evidence
+
+A future insight should cite its most important supporting values
+concisely, drawn directly from the fixed analytics snapshot under
+discussion — not recomputed or re-derived by the AI. At minimum, where
+relevant to the statement being made: sample size, realized/open count,
+median net profit, median ROI, median DOM, realization rate,
+acquisition/exit method counts, transition counts, and confidence level.
+
+### 13.7 Limitations
+
+A future insight should explicitly identify material limitations where
+they apply, including: insufficient or low sample size; missing DOM;
+estimated values (e.g. `estimated_sold_value`, `estimated_net_upside`)
+rather than actual realized cash values; mixed cash-and-trade populations
+(section 7); historical acquisition dates being unreliable for
+holding-based metrics only (section 1, section 2); brand/model/category
+mix; results that depend heavily on one or two items; and that the
+evidence is aggregate and does not prove how any one specific item will
+perform.
+
+### 13.8 Historical-data rule (restated from section 6 — not a new rule)
+
+Historical imports remain valid for profit, ROI, realization, exit mix,
+listing dates, days on market, Acquisition Value Band, Acquisition-to-Exit
+transitions, and brand evidence. They are excluded ONLY from
+acquisition-date-dependent metrics: holding days, ownership age,
+acquisition-to-listing delay, and acquisition-to-exit duration measured in
+time. The future AI must not describe historical profit, ROI, or DOM as
+unreliable merely because the item was imported — see section 6 for the
+full rule this restates.
+
+### 13.9 Prohibited future AI behavior
+
+The Business Coach must not:
+
+- present an interpretation or recommendation as a fact;
+- invent causes not present in the analytics;
+- confuse acquisition value with purchase price, or exit value with sale
+  price (section 7);
+- exclude historical profit, ROI, or DOM without a valid reason (13.8);
+- use historical acquisition dates for holding-based conclusions;
+- expose another user's item-level information;
+- recommend actions for another user's items;
+- infer another user's individual performance from developer-only
+  per-user diagnostics (section 9.3);
+- make a strong business rule from insufficient or low evidence (13.4);
+- imply that correlation proves causation (13.2);
+- claim that waiting, selling, listing, repricing, or trading is
+  objectively correct without explaining assumptions and tradeoffs (13.3).
+
+## 14. Non-goals of this document
 
 This contract governs semantics only. It does not:
 
@@ -479,12 +666,22 @@ This contract governs semantics only. It does not:
   `docs/database-schema.md`'s "Historical Import" sections) — that is an
   unrelated subsystem (backdated cash-flow ledger entries), not
   `analytics_item_lifecycle`'s `is_historical_import`.
-- Build `analytics_runs`, an autorunner, API routes, UI, scheduled jobs, AI
-  recommendations, or a Business Coach — sections 9-12 document the
-  boundary these future pieces must respect; none of them are implemented
-  here.
+- Build a full autorunner, API routes, UI, scheduled jobs, AI
+  recommendations, or a Business Coach. `analytics_runs`
+  (`20260727000000`) and the snapshot builder function,
+  `build_analytics_snapshot_v1` (`20260728000000`), now exist — see
+  section 10 — but nothing calls the builder and stores its result yet
+  (Phase 2 Step 3), and none of the remaining pieces in this list are
+  implemented.
+- Implement the Business Coach itself, make any AI API call, store any AI
+  prompt in the database, define a structured-output JSON schema, add
+  TypeScript types, or build UI components. Section 13 documents required
+  CONCEPTUAL principles only (fact/interpretation/recommendation/
+  confidence/scope/evidence/limitations) for whenever that implementation
+  happens — it is not that implementation.
 - Create a workspace, organization, or household membership model. Section
   12 documents the ownership model AS FOUND, not a proposed replacement.
-- Create security-definer functions or any new database table, view,
-  function, migration, or RPC. Sections 9-12 are documentation only.
+- Create security-definer functions. `build_analytics_snapshot_v1` and its
+  four private helpers are all `SECURITY INVOKER` — see section 10 and
+  `20260728000000_build_analytics_snapshot_v1.sql`.
 - Weaken, modify, or replace any existing RLS policy.

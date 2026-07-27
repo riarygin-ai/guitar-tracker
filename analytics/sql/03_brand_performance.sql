@@ -132,16 +132,18 @@
 -- see analytics/SEMANTIC_CONTRACT.md for the full definitions) ─────────────
 -- Every query below is SHARED AGGREGATE EVIDENCE — pooled across every user
 -- accessible to the querying role, returning only counts/medians/labels,
--- with ONE exception:
+-- with TWO exceptions:
+--   Query G — DEVELOPER-ONLY diagnostic (per-user grouped comparison; final
+--     scope decision — never appears in the user-facing snapshot even
+--     though it contains no single item's own data, because a per-user
+--     breakdown is itself information about another user's activity).
 --   Query H — DEVELOPER-ONLY item-level verification drilldown (returns
 --     item_id, user_id, item_display_name for every eligible item across
 --     every user). Not part of a future shared aggregate snapshot or
 --     user-facing recommendation output — see H's own header. H2 (its
 --     integrity rollup) is a one-row aggregate and stays shared evidence.
 -- No query in this file is a current-user recommendation candidate: nothing
--- here filters to a single target user's own items. Query G groups results
--- BY user_id for robustness-checking, but every row is still an aggregate
--- over multiple items, never a single item's own data.
+-- here filters to a single target user's own items.
 -- ============================================================================
 
 
@@ -1573,9 +1575,13 @@ ORDER BY brand_label, population_label;
 
 -- ============================================================================
 -- QUERY G — Results by user
--- CLASSIFICATION: shared aggregate evidence — grouped BY user_id as a
--- dimension for robustness-checking, but every row is still an aggregate
--- (median/count) over multiple items, never a single item's own data.
+-- CLASSIFICATION: developer-only diagnostic (final scope decision — per-user
+-- grouped comparisons are developer-only robustness diagnostics and must
+-- NOT appear in the user-facing snapshot; see
+-- analytics/SEMANTIC_CONTRACT.md). Grouped BY user_id as a dimension for
+-- robustness-checking during development; no row here is a single item's
+-- own data, but a per-user breakdown is itself information about another
+-- user's activity that a shared snapshot must not expose.
 -- Reveals whether a brand's apparent overall performance is really just one
 -- user's behavior. Includes a combined "All accessible users" row per
 -- brand for comparison. Do not read a difference between two users' rows

@@ -100,6 +100,66 @@ admin-initiated runs are not implemented or made visible in this step. No
 `authenticated` INSERT/UPDATE/DELETE policy exists, so direct client
 writes are denied.
 
+## Snapshot builder: build_analytics_snapshot_v1 (Phase 2 Step 2)
+
+`public.build_analytics_snapshot_v1(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql`)
+computes the three reusable analytics modules above, in one database call,
+and returns a single stable JSONB snapshot. **This function persists
+nothing** — it does not create or update an `analytics_runs` row; Phase 2
+Step 3 will call it and store the result. There is still no orchestrator,
+API route, frontend UI, scheduled job, or AI interpretation.
+
+Execution: **service_role only.** `EXECUTE` is explicitly revoked from
+`PUBLIC`, `anon`, and `authenticated` on this function and its four private
+helpers (`_build_acquisition_value_band_snapshot_v1`,
+`_build_acquisition_to_exit_snapshot_v1`, `_build_brand_snapshot_v1`,
+`_build_recommendation_candidates_snapshot_v1`) — none of these are meant to
+be called by an ordinary app session, only by the future controlled
+server-side runner. Every function is `SECURITY INVOKER` and never calls
+`auth.uid()`/`get_app_user_id()`; the recommendation target is always an
+explicit `int` argument, validated against `app_users` (NULL or unknown IDs
+raise an exception).
+
+Current version: `snapshot_schema_version` / `analytics_definition_version`
+both `"1.0"`. Top-level shape:
+
+```
+{
+  "snapshot_schema_version": "1.0",
+  "analytics_definition_version": "1.0",
+  "generated_at": "...",                 -- one value, shared by the whole snapshot
+  "evidence_scope": "shared_business_population",
+  "recommendation_target_user_id": <int>,
+  "evidence_aggregates": {
+    "acquisition_value_band": { 14 keys — see the function's own header },
+    "acquisition_to_exit":    { 9 keys  — see the function's own header },
+    "brand":                  { 14 keys — see the function's own header }
+  },
+  "recommendation_candidates": {
+    "open_business_items": [ ... ]
+  }
+}
+```
+
+`evidence_aggregates` is computed over the full shared Business population
+visible to the executing role — never filtered to the recommendation
+target — and contains no `item_id`, `user_id`, or item display name
+anywhere. `recommendation_candidates.open_business_items` contains only the
+target user's own open (not realized) Business items. Every developer-only
+drilldown (01's Query G5, 02's Query H, 03's Query H) and every per-user
+comparative diagnostic (01's Query G2, 03's Query G — both reclassified
+developer-only in this same change) is excluded from the snapshot; see each
+manual file's own Query Classification Index. `requested_by_user_id`, run
+status, and `error_message` are NOT part of this contract — those belong to
+`analytics_runs` (above), not the analytical snapshot itself.
+
+`analytics/SEMANTIC_CONTRACT.md` section 13 now defines the required
+conceptual principles for future Business Coach insights (fact vs.
+interpretation vs. recommendation vs. confidence vs. scope vs. evidence vs.
+limitations) — documentation only. The actual prompt text and
+structured-output response schema are not implemented yet.
+
 ## Conventions
 
 - One file per analysis, numbered (`01_`, `02_`, ...) in the order they were
