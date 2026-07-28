@@ -65,7 +65,6 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
                 <a href="/inventory" className="hover:text-slate-900 dark:hover:text-white">Inventory</a>
                 <a href="/operations" className="hover:text-slate-900 dark:hover:text-white">Operations</a>
                 <a href="/cash-flow" className="hover:text-slate-900 dark:hover:text-white">Cash Flow</a>
-                <a href="/analytics" className="hover:text-slate-900 dark:hover:text-white">Analytics</a>
               </nav>
 
               {/* Mobile spacer — pushes actions to the right */}
@@ -86,7 +85,6 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
               <a href="/inventory" className="hover:text-slate-900 dark:hover:text-white">Inventory</a>
               <a href="/operations" className="hover:text-slate-900 dark:hover:text-white">Operations</a>
               <a href="/cash-flow" className="hover:text-slate-900 dark:hover:text-white">Cash Flow</a>
-              <a href="/analytics" className="hover:text-slate-900 dark:hover:text-white">Analytics</a>
             </nav>
 
           </div>

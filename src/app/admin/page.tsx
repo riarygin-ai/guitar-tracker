@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AiPromptsCard from '@/components/AiPromptsCard';
 import CompactPageHeader from '@/components/CompactPageHeader';
@@ -778,6 +779,21 @@ export default function AdminPage() {
           </p>
         }
       />
+
+      {/* ── Analytics ─────────────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Analytics</h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Run the complete business analytics snapshot and review stored results.
+            </p>
+          </div>
+          <Link href="/analytics" className={btnPrimary}>
+            Open Analytics
+          </Link>
+        </div>
+      </div>
 
       {/* ── Brands ────────────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
