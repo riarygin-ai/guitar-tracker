@@ -435,6 +435,15 @@ export default function AnalyticsPage() {
                     </p>
                   )}
                 </CollapsibleSection>
+                <CollapsibleSection title="Deal Out Channel">
+                  {selectedSnapshot.evidence_aggregates.deal_out_channel ? (
+                    <JsonBlock value={selectedSnapshot.evidence_aggregates.deal_out_channel} />
+                  ) : (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      Not available in this run — Deal Out Channel was added in Snapshot v1.3. Run analytics again to generate it.
+                    </p>
+                  )}
+                </CollapsibleSection>
                 <CollapsibleSection title="My Open Business Items">
                   <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
                 </CollapsibleSection>

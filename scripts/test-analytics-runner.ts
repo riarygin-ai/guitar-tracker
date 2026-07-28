@@ -67,7 +67,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_2
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_3
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -76,7 +76,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_2') {
+          if (name === 'build_analytics_snapshot_v1_3') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -96,7 +96,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_2') {
+          if (name === 'build_analytics_snapshot_v1_3') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -151,8 +151,8 @@ async function main() {
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '1.2',
-    analytics_definition_version: '1.2',
+    snapshot_schema_version: '1.3',
+    analytics_definition_version: '1.3',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     recommendation_target_user_id: userAId,
@@ -200,7 +200,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -515,12 +515,111 @@ async function main() {
   const { error: dicHelperAuthedError } = await clientA.rpc('_build_deal_in_channel_snapshot_v1');
   check('authenticated client cannot call _build_deal_in_channel_snapshot_v1 directly', !!dicHelperAuthedError, dicHelperAuthedError);
 
-  console.log('\n[v1.2 — new runner call persists analytics_version 1.2]');
-  const v12Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new run analytics_version is 1.2', v12Run.analytics_version === '1.2', v12Run.analytics_version);
-  check('new run status is completed', v12Run.status === 'completed');
-  check('new run snapshot has 1.2 metadata', (v12Run.snapshot as any)?.snapshot_schema_version === '1.2');
-  check('new run snapshot includes deal_in_channel', !!(v12Run.snapshot as any)?.evidence_aggregates?.deal_in_channel);
+  console.log('\n[v1.2 — builder still callable directly (unaffected by v1.3)]');
+  const { error: v12StillCallableError } = await serviceClient.rpc('build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_2 still callable by service_role', !v12StillCallableError, v12StillCallableError);
+
+  // ── Channel Analytics module 2: Deal Out Channel (Snapshot v1.3) ─────────
+  console.log('\n[v1.3 — builder callable, top-level metadata]');
+  const { data: v13SnapshotA, error: v13ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_3 callable by service_role', !v13ErrorA, v13ErrorA);
+  check('v1.3 snapshot_schema_version is 1.3', v13SnapshotA?.snapshot_schema_version === '1.3', v13SnapshotA?.snapshot_schema_version);
+  check('v1.3 analytics_definition_version is 1.3', v13SnapshotA?.analytics_definition_version === '1.3', v13SnapshotA?.analytics_definition_version);
+  check('v1.3 recommendation_target_user_id === userAId', v13SnapshotA?.recommendation_target_user_id === userAId);
+  check('v1.3 still carries deal_in_channel (v1.2 reused wholesale)', Array.isArray(v13SnapshotA?.evidence_aggregates?.deal_in_channel?.population_summary));
+  check('v1.3 still carries acquisition_value_band (v1.2 reused wholesale)', Array.isArray(v13SnapshotA?.evidence_aggregates?.acquisition_value_band?.population_summary));
+  check('v1.3 still carries brand (v1.2 reused wholesale)', Array.isArray(v13SnapshotA?.evidence_aggregates?.brand?.population_summary));
+
+  console.log('\n[v1.3 — Deal Out Channel population_summary]');
+  const doc = v13SnapshotA?.evidence_aggregates?.deal_out_channel;
+  const docPop = doc?.population_summary?.[0];
+  check(
+    'deal_out_channel section exists with all 6 subsections',
+    !!doc && Array.isArray(doc.population_summary) && Array.isArray(doc.overall_performance)
+      && Array.isArray(doc.cash_sales_by_channel) && Array.isArray(doc.trade_exits_by_channel)
+      && Array.isArray(doc.by_exit_value_band) && Array.isArray(doc.by_acquisition_value_band),
+    doc ? Object.keys(doc) : doc,
+  );
+  check(
+    'realized_business_item_count = deal_out_channel_known_item_count + deal_out_channel_missing_item_count',
+    docPop?.realized_business_item_count === (docPop?.deal_out_channel_known_item_count ?? 0) + (docPop?.deal_out_channel_missing_item_count ?? 0),
+    docPop,
+  );
+  check(
+    'realized_business_item_count = sale_exit_item_count + trade_exit_item_count + unknown_exit_method_item_count',
+    docPop?.realized_business_item_count === (docPop?.sale_exit_item_count ?? 0) + (docPop?.trade_exit_item_count ?? 0) + (docPop?.unknown_exit_method_item_count ?? 0),
+    docPop,
+  );
+  check('deal_out_channel_missing_item_count >= 1 (fixture item 20, channel-less historical trade-out)', (docPop?.deal_out_channel_missing_item_count ?? 0) >= 1, docPop?.deal_out_channel_missing_item_count);
+
+  console.log('\n[v1.3 — sale exit and outgoing trade item map their own deal channel]');
+  const cashSalesRows: any[] = doc?.cash_sales_by_channel ?? [];
+  const tradeExitRows: any[] = doc?.trade_exits_by_channel ?? [];
+  const marketplaceCashSaleRow = cashSalesRows.find((r) => r.deal_out_channel_name === 'Marketplace');
+  check('a cash sale maps to its own deal channel (Marketplace, fixture items 1/6/8/9/10/21)', !!marketplaceCashSaleRow && marketplaceCashSaleRow.sale_item_count >= 1, cashSalesRows);
+  const reverbTradeExitRow = tradeExitRows.find((r) => r.deal_out_channel_name === 'Reverb');
+  check('an outgoing trade item maps to its own trade deal channel (Reverb, fixture item 17)', !!reverbTradeExitRow && reverbTradeExitRow.trade_exit_item_count >= 1, tradeExitRows);
+
+  console.log('\n[v1.3 — open items have no Deal Out Channel]');
+  const { data: openItemRows, error: openItemsError } = await serviceClient
+    .from('analytics_item_lifecycle')
+    .select('item_id, deal_out_channel_id')
+    .eq('purpose_name', 'Business')
+    .eq('is_realized', false);
+  check('open Business items query succeeds', !openItemsError, openItemsError);
+  check(
+    'every open Business item has deal_out_channel_id === null',
+    (openItemRows ?? []).length > 0 && (openItemRows ?? []).every((r: any) => r.deal_out_channel_id === null),
+    openItemRows,
+  );
+
+  console.log('\n[v1.3 — overall_performance: multi-item single-deal aggregation]');
+  const docOverallRows: any[] = doc?.overall_performance ?? [];
+  check('overall_performance has at least one row', docOverallRows.length > 0);
+  const docMultiItemDealRow = docOverallRows.find((r) => r.deal_out_item_count > r.deal_out_distinct_deal_count);
+  check(
+    'at least one channel has deal_out_item_count > deal_out_distinct_deal_count (fixture deal 25: 2 items, 1 deal)',
+    !!docMultiItemDealRow,
+    docOverallRows.map((r) => ({ channel: r.deal_out_channel_name, items: r.deal_out_item_count, deals: r.deal_out_distinct_deal_count })),
+  );
+
+  console.log('\n[v1.3 — missing + historical Deal Out Channel remains in coverage]');
+  const docMissingChannelRow = docOverallRows.find((r) => r.deal_out_channel_id === null);
+  check('missing-channel row exists in overall_performance (not dropped, fixture item 20)', !!docMissingChannelRow, docOverallRows.map((r) => r.deal_out_channel_id));
+  check('missing-channel row includes the historical item (historical_item_count >= 1)', (docMissingChannelRow?.historical_item_count ?? 0) >= 1, docMissingChannelRow);
+
+  console.log('\n[v1.3 — historical rows excluded from holding samples]');
+  const anyHoldingExcludesHistoricalOut = docOverallRows.some((r) => (r.historical_item_count ?? 0) > 0 && (r.holding_sample_size ?? 0) < (r.deal_out_item_count ?? 0));
+  check('at least one channel shows holding_sample_size < deal_out_item_count where historical items are present (fixture item 9)', anyHoldingExcludesHistoricalOut, docOverallRows);
+
+  console.log('\n[v1.3 — cash-sale vs. trade-exit terminology never conflated]');
+  const sampleCashSaleRow = cashSalesRows[0];
+  const sampleTradeExitRow = tradeExitRows[0];
+  check('cash_sales_by_channel rows use median_sale_price (never median_assigned_trade_exit_value)', !!sampleCashSaleRow && 'median_sale_price' in sampleCashSaleRow && !('median_assigned_trade_exit_value' in sampleCashSaleRow), sampleCashSaleRow);
+  check('trade_exits_by_channel rows use median_assigned_trade_exit_value (never median_sale_price)', !!sampleTradeExitRow && 'median_assigned_trade_exit_value' in sampleTradeExitRow && !('median_sale_price' in sampleTradeExitRow), sampleTradeExitRow);
+
+  console.log('\n[v1.3 — privacy and pooling across both fixture users]');
+  const { data: v13SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userBId });
+  const candidatesA13 = v13SnapshotA?.recommendation_candidates?.open_business_items ?? [];
+  const candidatesB13 = v13SnapshotB?.recommendation_candidates?.open_business_items ?? [];
+  const idsA13 = new Set(candidatesA13.map((c: any) => c.item_id));
+  const idsB13 = new Set(candidatesB13.map((c: any) => c.item_id));
+  check("v1.3 user A's and user B's candidates don't overlap", Array.from(idsA13).every((id) => !idsB13.has(id)));
+  check('deal_out_channel evidence pools both users (fixture item 21, User B, is realized)', (docPop?.realized_business_item_count ?? 0) > candidatesA13.length);
+  check('no deal_out_channel row exposes a user_id field', docOverallRows.every((r) => !('user_id' in r)), docOverallRows[0]);
+
+  console.log('\n[v1.3 — permissions on new functions]');
+  const { error: docAuthedError } = await clientA.rpc('build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v1_3 directly', !!docAuthedError, docAuthedError);
+  const { error: docHelperAuthedError } = await clientA.rpc('_build_deal_out_channel_snapshot_v1');
+  check('authenticated client cannot call _build_deal_out_channel_snapshot_v1 directly', !!docHelperAuthedError, docHelperAuthedError);
+
+  console.log('\n[v1.3 — new runner call persists analytics_version 1.3]');
+  const v13Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new run analytics_version is 1.3', v13Run.analytics_version === '1.3', v13Run.analytics_version);
+  check('new run status is completed', v13Run.status === 'completed');
+  check('new run snapshot has 1.3 metadata', (v13Run.snapshot as any)?.snapshot_schema_version === '1.3');
+  check('new run snapshot includes deal_out_channel', !!(v13Run.snapshot as any)?.evidence_aggregates?.deal_out_channel);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

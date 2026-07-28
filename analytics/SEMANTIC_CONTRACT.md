@@ -824,14 +824,17 @@ This contract governs semantics only. It does not:
   (Acquisition Value Band, Acquisition-to-Exit, Brand) — it does not add a
   fourth module. `build_analytics_snapshot_v1` (v1.0) remains unchanged and
   callable; v1.1 is additive, not a replacement.
-- Add Deal Out Channel, Listing Channel, a Deal In → Deal Out journey
-  matrix, listing-conversion/same-channel-exit-rate analysis, channel x
-  brand, channel x category/type, or monthly channel trends. Analytics
-  Snapshot v1.2 (`20260801000000_build_analytics_snapshot_v1_2.sql`,
-  section 15) adds EXACTLY ONE Channel Analytics module — Deal In Channel
-  Performance — and nothing else. `build_analytics_snapshot_v1` (v1.0) and
-  `build_analytics_snapshot_v1_1` (v1.1) remain unchanged and callable;
-  v1.2 is additive, not a replacement.
+- Add Listing Channel, a Deal In → Deal Out journey matrix, listing-
+  conversion/same-channel-exit-rate analysis, channel x brand, channel x
+  category/type, or monthly channel trends. Analytics Snapshot v1.2
+  (`20260801000000_build_analytics_snapshot_v1_2.sql`, section 15) adds
+  EXACTLY ONE Channel Analytics module — Deal In Channel Performance — and
+  Snapshot v1.3 (`20260803000000_build_analytics_snapshot_v1_3.sql`,
+  section 16) adds EXACTLY ONE further module — Deal Out Channel
+  Performance — and nothing else. `build_analytics_snapshot_v1` (v1.0),
+  `build_analytics_snapshot_v1_1` (v1.1), and `build_analytics_snapshot_v1_2`
+  (v1.2) remain unchanged and callable; v1.3 is additive, not a
+  replacement.
 
 ## 15. Deal In Channel (Channel Analytics module 1)
 
@@ -884,3 +887,73 @@ G2/G, no per-user analog exists in file 04 at all). `deal_in_distinct_deal_count
 counts DISTINCT `acquisition_deal_id`, not items — a single multi-item
 purchase/trade deal contributes many items but one deal.
 
+
+## 16. Deal Out Channel (Channel Analytics module 2)
+
+Governs `analytics/sql/05_deal_out_channel_performance.sql` and
+`public._build_deal_out_channel_snapshot_v1()`
+(`supabase/migrations/20260803000000_build_analytics_snapshot_v1_3.sql`).
+This is the SECOND Channel Analytics module — see the Non-goals bullet in
+section 14 for exactly which future modules remain out of scope.
+
+**Definition.** Deal Out Channel is the contact-source channel of the
+operation through which an item LEFT inventory: Marketplace, Kijiji,
+Reverb, or Regular Buyer / Seller. It is NOT a payment method, NOT a
+shipping method, and NOT "the technical place where the deal was
+completed." Example: a buyer contacted us through Reverb but payment
+happened outside Reverb — Deal Out Channel = Reverb regardless.
+
+- For a cash sale, this is the sale deal's `deal_channel_id`.
+- For a trade, the existing `deal_channel_id` on that ONE trade deal is the
+  single counterparty/contact-source channel for the whole deal — incoming
+  and outgoing items on the same trade deal are NEVER assigned separate
+  channels.
+- Open (not-yet-realized) items ALWAYS have `deal_out_channel_id = NULL` —
+  there is no exit deal yet to read a channel from.
+- A realized cash sale always has a channel (`create_sell_operation`
+  requires `p_channel_id`); a realized trade MAY have no channel recorded
+  (`create_trade_operation`'s `p_channel_id` is optional) — a real, visible
+  "missing channel" state, reported explicitly via
+  `population_summary.deal_out_channel_missing_item_count`, never hidden or
+  defaulted to a fake channel.
+
+**Columns** (`analytics_item_lifecycle`, added
+`20260802000000_analytics_item_lifecycle_deal_out_channel.sql`):
+`deal_out_channel_id`, `deal_out_channel_name`,
+`deal_out_channel_requires_listing` (the channel's own
+`deal_channels.is_listing_platform`, NULL when the channel itself is
+unknown or the item is still open). These are sourced from exactly the
+same exit-deal-channel join the pre-existing `exit_channel_id`/
+`exit_channel_name` columns already use — this is a naming addition for
+Channel Analytics, not a new join or a new fact about the data. The older
+`exit_channel_id`/`exit_channel_name` names are unchanged and not removed.
+
+**Naming rule.** Never use the ambiguous names `channel_id`,
+`channel_name`, `exit_channel`, or `source_channel` in any Channel
+Analytics output. Always use the explicit `deal_out_channel_*` /
+`deal_out_item_count` / `deal_out_distinct_deal_count` forms.
+
+**Cash sale vs. trade exit — never conflate the two.** `exit_value` stores
+either a cash sale value or an assigned outgoing trade value in the same
+column (section 7). `05_deal_out_channel_performance.sql` follows
+`02_acquisition_to_exit_analysis.sql` Query G's own convention: `exit_value`
+may be called a "sale price" ONLY in the cash-sales-only section
+(`cash_sales_by_channel`), and an "assigned trade exit value" ONLY in the
+trade-exits-only section (`trade_exits_by_channel`). The overall and banded
+sections (`overall_performance`, `by_exit_value_band`,
+`by_acquisition_value_band`), which mix both exit methods together, use
+the neutral term "exit value" and never either narrower term.
+
+**Scope.** Deal Out Channel evidence is restricted to REALIZED shared
+eligible Business items (`purpose_name = 'Business' AND is_realized`) —
+unlike Deal In Channel (section 15), which reports on every Business item
+whether open or realized, because acquisition always happens but exit does
+not. Same evidence/recommendation boundary as every other module (section
+9-11) — no per-user channel breakdown exists or is added here.
+`deal_out_distinct_deal_count` counts DISTINCT `exit_deal_id`, not items —
+a single multi-item trade deal contributes many items but one deal.
+`historical_item_count`/`app_tracked_item_count` in `overall_performance`
+are cohort splits based on the item's ACQUISITION history
+(`is_historical_import`), never about the exit itself — no "Historical
+Sale"/"Historical Trade exit" `deal_type` exists in this schema; every
+realized exit's `deal_type` is exactly `'sale'` or `'trade'`.

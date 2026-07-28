@@ -40,8 +40,15 @@ Reusable numbered analysis sequence, under `analytics/sql/`:
   which contact-source channel (Marketplace/Kijiji/Reverb/Regular Buyer /
   Seller) a Business item entered inventory through, and how items sourced
   through each channel perform. See `analytics/SEMANTIC_CONTRACT.md`
-  section 15 for the full Deal In Channel definition. Deal Out Channel,
-  Listing Channel, and every other Channel Analytics module are explicitly
+  section 15 for the full Deal In Channel definition. Listing Channel and
+  every other Channel Analytics module besides Deal Out Channel (below) are
+  explicitly out of scope for this file.
+- `sql/05_deal_out_channel_performance.sql` — Channel Analytics module 2:
+  which contact-source channel a Business item LEFT inventory through
+  (cash sale or trade), and how cash-sale and trade exits perform per
+  channel. See `analytics/SEMANTIC_CONTRACT.md` section 16 for the full
+  Deal Out Channel definition. Listing Channel, the Deal In → Deal Out
+  journey matrix, and every other Channel Analytics module are explicitly
   out of scope for this file.
 
 One-off scripts (not part of the reusable numbered sequence), under
@@ -254,12 +261,14 @@ Current limitations (deliberate, for this step):
 **Duplicated-logic maintenance rule.** Until analytics logic is
 consolidated into a single implementation, the same analytical definitions
 exist in two places that must be kept in sync by hand: the developer-readable
-manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...` — these reflect
-the CURRENT/v1.1 semantics, edited in place) and the versioned snapshot
-builder functions, one migration per version
+manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...`, `04_...`,
+`05_...` — these reflect the CURRENT semantics, edited in place) and the
+versioned snapshot builder functions, one migration per version
 (`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql` for
 v1.0, `supabase/migrations/20260730000000_build_analytics_snapshot_v1_1.sql`
-for v1.1). A change to an analytical definition (a band boundary, an
+for v1.1, `supabase/migrations/20260801000000_build_analytics_snapshot_v1_2.sql`
+for v1.2, `supabase/migrations/20260803000000_build_analytics_snapshot_v1_3.sql`
+for v1.3). A change to an analytical definition (a band boundary, an
 eligibility rule, a new metric) must be applied to both the manual files
 and the CURRENT builder version, or they will silently disagree. Already-
 shipped versioned builder migrations (like v1.0's) are never edited after
@@ -403,6 +412,52 @@ selecting an older v1.0/v1.1 run instead of assuming the field exists.
   not re-implement or duplicate them.
 
 Deal Out Channel, Listing Channel, the Deal In → Deal Out journey matrix,
+listing-conversion/same-channel-exit-rate, channel × brand, channel ×
+category/type, monthly channel trends, AI interpretation, and
+recommendations/rankings are all explicitly out of scope for this step.
+
+## Analytics Snapshot v1.3 (Channel Analytics module 2: Deal Out Channel)
+
+`public.build_analytics_snapshot_v1_3(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260803000000_build_analytics_snapshot_v1_3.sql`) is
+a **lightweight, additive** version. `build_analytics_snapshot_v1` (v1.0),
+`build_analytics_snapshot_v1_1` (v1.1), and `build_analytics_snapshot_v1_2`
+(v1.2) are unchanged and remain callable; no previously stored v1.0/v1.1/
+v1.2 `analytics_runs.snapshot` row is altered. `src/lib/analytics/
+runAnalytics.ts` now calls v1.3 for new runs (`ANALYTICS_VERSION = '1.3'`);
+the Analytics page's new "Deal Out Channel" collapsible section shows a
+plain "not available in this run" message when selecting an older run
+instead of assuming the field exists.
+
+**What's new:**
+
+- `analytics_item_lifecycle` gains three columns
+  (`20260802000000_analytics_item_lifecycle_deal_out_channel.sql`):
+  `deal_out_channel_id`, `deal_out_channel_name`,
+  `deal_out_channel_requires_listing` — the explicit Channel-Analytics
+  names for the same exit-deal-channel join already exposed (under older,
+  more ambiguous names) as `exit_channel_id`/`exit_channel_name`. Open
+  items always have `deal_out_channel_id = NULL`. Every existing column and
+  calculation on the view is unchanged.
+- **`evidence_aggregates.deal_out_channel`** (new): `population_summary`,
+  `overall_performance`, `cash_sales_by_channel`, `trade_exits_by_channel`,
+  `by_exit_value_band`, `by_acquisition_value_band` — see
+  `analytics/sql/05_deal_out_channel_performance.sql` and
+  `analytics/SEMANTIC_CONTRACT.md` section 16 for the full field-by-field
+  contract. Missing-channel exits (a realized trade with no channel
+  recorded) are reported explicitly, never hidden. Cash sales and trade
+  exits are kept in explicitly separate sections — `exit_value` is only
+  ever called a "sale price" in `cash_sales_by_channel` and an "assigned
+  trade exit value" in `trade_exits_by_channel`.
+- **Lightweight wrapper, one level up**: unlike v1.2 (which had to call
+  four separate v1.1 helpers directly, because v1.1 was not itself a single
+  callable entry point for everything), v1.3's top-level function calls
+  `build_analytics_snapshot_v1_2(int)` WHOLESALE and merges in one extra
+  `evidence_aggregates.deal_out_channel` key — v1.2's own
+  acquisition_value_band/acquisition_to_exit/brand/deal_in_channel/
+  recommendation_candidates assembly is reused as-is, not duplicated.
+
+Listing Channel, the Deal In → Deal Out journey matrix,
 listing-conversion/same-channel-exit-rate, channel × brand, channel ×
 category/type, monthly channel trends, AI interpretation, and
 recommendations/rankings are all explicitly out of scope for this step.
