@@ -67,7 +67,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_3
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_4
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -76,7 +76,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_3') {
+          if (name === 'build_analytics_snapshot_v1_4') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -96,7 +96,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_3') {
+          if (name === 'build_analytics_snapshot_v1_4') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -151,8 +151,8 @@ async function main() {
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '1.3',
-    analytics_definition_version: '1.3',
+    snapshot_schema_version: '1.4',
+    analytics_definition_version: '1.4',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     recommendation_target_user_id: userAId,
@@ -200,7 +200,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -614,12 +614,107 @@ async function main() {
   const { error: docHelperAuthedError } = await clientA.rpc('_build_deal_out_channel_snapshot_v1');
   check('authenticated client cannot call _build_deal_out_channel_snapshot_v1 directly', !!docHelperAuthedError, docHelperAuthedError);
 
-  console.log('\n[v1.3 — new runner call persists analytics_version 1.3]');
-  const v13Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new run analytics_version is 1.3', v13Run.analytics_version === '1.3', v13Run.analytics_version);
-  check('new run status is completed', v13Run.status === 'completed');
-  check('new run snapshot has 1.3 metadata', (v13Run.snapshot as any)?.snapshot_schema_version === '1.3');
-  check('new run snapshot includes deal_out_channel', !!(v13Run.snapshot as any)?.evidence_aggregates?.deal_out_channel);
+  console.log('\n[v1.3 — builder still callable directly (unaffected by v1.4)]');
+  const { error: v13StillCallableError } = await serviceClient.rpc('build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_3 still callable by service_role', !v13StillCallableError, v13StillCallableError);
+
+  // ── Channel Analytics module 3A: Channel Journey (Snapshot v1.4) ─────────
+  console.log('\n[v1.4 — builder callable, top-level metadata]');
+  const { data: v14SnapshotA, error: v14ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_4 callable by service_role', !v14ErrorA, v14ErrorA);
+  check('v1.4 snapshot_schema_version is 1.4', v14SnapshotA?.snapshot_schema_version === '1.4', v14SnapshotA?.snapshot_schema_version);
+  check('v1.4 analytics_definition_version is 1.4', v14SnapshotA?.analytics_definition_version === '1.4', v14SnapshotA?.analytics_definition_version);
+  check('v1.4 recommendation_target_user_id === userAId', v14SnapshotA?.recommendation_target_user_id === userAId);
+  check('v1.4 still carries deal_in_channel (v1.3 reused wholesale)', Array.isArray(v14SnapshotA?.evidence_aggregates?.deal_in_channel?.population_summary));
+  check('v1.4 still carries deal_out_channel (v1.3 reused wholesale)', Array.isArray(v14SnapshotA?.evidence_aggregates?.deal_out_channel?.population_summary));
+
+  console.log('\n[v1.4 — Channel Journey population_summary]');
+  const cj = v14SnapshotA?.evidence_aggregates?.channel_journey;
+  const cjPop = cj?.population_summary?.[0];
+  check(
+    'channel_journey section exists with all 5 subsections',
+    !!cj && Array.isArray(cj.population_summary) && Array.isArray(cj.deal_in_to_deal_out_matrix)
+      && Array.isArray(cj.same_channel_summary) && Array.isArray(cj.same_channel_by_deal_in_channel)
+      && Array.isArray(cj.paths_by_method),
+    cj ? Object.keys(cj) : cj,
+  );
+
+  console.log('\n[v1.4 — open items excluded from realized population]');
+  check('realized_business_item_count is less than total tracked items (open items exist and are excluded)', (cjPop?.realized_business_item_count ?? 0) > 0 && (cjPop?.realized_business_item_count ?? 0) < 24, cjPop?.realized_business_item_count);
+
+  console.log('\n[v1.4 — journey eligibility reconciliation]');
+  check(
+    'realized_business_item_count = journey_eligible + missing_deal_in + missing_deal_out - missing_both',
+    cjPop?.realized_business_item_count ===
+      (cjPop?.journey_eligible_item_count ?? 0)
+      + (cjPop?.missing_deal_in_channel_item_count ?? 0)
+      + (cjPop?.missing_deal_out_channel_item_count ?? 0)
+      - (cjPop?.missing_both_channels_item_count ?? 0),
+    cjPop,
+  );
+  check(
+    'journey_eligible_item_count = journey_sale_exit_item_count + journey_trade_exit_item_count',
+    cjPop?.journey_eligible_item_count === (cjPop?.journey_sale_exit_item_count ?? 0) + (cjPop?.journey_trade_exit_item_count ?? 0),
+    cjPop,
+  );
+  check('missing_deal_in_channel_item_count >= 1 (fixture item 22, historical import with no channel)', (cjPop?.missing_deal_in_channel_item_count ?? 0) >= 1, cjPop?.missing_deal_in_channel_item_count);
+
+  console.log('\n[v1.4 — matrix rows: correct pairing, same-channel, different-channel]');
+  const matrixRows: any[] = cj?.deal_in_to_deal_out_matrix ?? [];
+  check('matrix has at least one row', matrixRows.length > 0);
+  check('no matrix row has a null deal_in or deal_out channel (missing channels excluded from matrix)', matrixRows.every((r) => r.deal_in_channel_id !== null && r.deal_out_channel_id !== null), matrixRows.map((r) => [r.deal_in_channel_id, r.deal_out_channel_id]));
+  const item1Row = matrixRows.find((r) => r.deal_in_channel_name === 'Regular Buyer / Seller' && r.deal_out_channel_name === 'Marketplace');
+  check('a realized item with both channels appears in the correct matrix row (fixture item 1: Regular Buyer/Seller -> Marketplace)', !!item1Row && item1Row.journey_item_count >= 1, item1Row);
+  const sameChannelRow = matrixRows.find((r) => r.deal_in_channel_id === r.deal_out_channel_id);
+  check('a same-channel path is classified correctly (fixture items 5, 7: Kijiji -> Kijiji)', !!sameChannelRow && sameChannelRow.journey_item_count >= 2, sameChannelRow);
+  const differentChannelRow = matrixRows.find((r) => r.deal_in_channel_id !== r.deal_out_channel_id);
+  check('a different-channel path is classified correctly', !!differentChannelRow, differentChannelRow);
+
+  console.log('\n[v1.4 — multi-item acquisition and exit deals produce correct counts]');
+  const reverbToMarketplaceRow = matrixRows.find((r) => r.deal_in_channel_name === 'Reverb' && r.deal_out_channel_name === 'Marketplace');
+  check(
+    'shared acquisition deal, separate exits (fixture items 23, 24): journey_item_count=2, distinct_acquisition_deal_count=1, distinct_exit_deal_count=2',
+    !!reverbToMarketplaceRow && reverbToMarketplaceRow.journey_item_count === 2 && reverbToMarketplaceRow.distinct_acquisition_deal_count === 1 && reverbToMarketplaceRow.distinct_exit_deal_count === 2,
+    reverbToMarketplaceRow,
+  );
+  const regularToKijijiRow = matrixRows.find((r) => r.deal_in_channel_name === 'Regular Buyer / Seller' && r.deal_out_channel_name === 'Kijiji');
+  check(
+    'separate acquisitions, shared exit deal (fixture items 18, 19): journey_item_count=2, distinct_acquisition_deal_count=2, distinct_exit_deal_count=1',
+    !!regularToKijijiRow && regularToKijijiRow.journey_item_count === 2 && regularToKijijiRow.distinct_acquisition_deal_count === 2 && regularToKijijiRow.distinct_exit_deal_count === 1,
+    regularToKijijiRow,
+  );
+
+  console.log('\n[v1.4 — historical rows excluded from holding samples]');
+  const regularToMarketplaceRow = matrixRows.find((r) => r.deal_in_channel_name === 'Regular Buyer / Seller' && r.deal_out_channel_name === 'Marketplace');
+  check(
+    'Regular Buyer/Seller -> Marketplace row includes historical item 9 but holding_sample_size < journey_item_count',
+    !!regularToMarketplaceRow && (regularToMarketplaceRow.historical_item_count ?? 0) >= 1 && (regularToMarketplaceRow.holding_sample_size ?? 0) < regularToMarketplaceRow.journey_item_count,
+    regularToMarketplaceRow,
+  );
+
+  console.log('\n[v1.4 — shared evidence has no user-level fields]');
+  check('no matrix row exposes user_id or item_id', matrixRows.every((r) => !('user_id' in r) && !('item_id' in r)), matrixRows[0]);
+
+  console.log('\n[v1.4 — privacy across both fixture users]');
+  const { data: v14SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userBId });
+  const candidatesA14 = v14SnapshotA?.recommendation_candidates?.open_business_items ?? [];
+  const candidatesB14 = v14SnapshotB?.recommendation_candidates?.open_business_items ?? [];
+  const idsA14 = new Set(candidatesA14.map((c: any) => c.item_id));
+  const idsB14 = new Set(candidatesB14.map((c: any) => c.item_id));
+  check("v1.4 user A's and user B's candidates don't overlap", Array.from(idsA14).every((id) => !idsB14.has(id)));
+
+  console.log('\n[v1.4 — permissions on new functions]');
+  const { error: cjAuthedError } = await clientA.rpc('build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v1_4 directly', !!cjAuthedError, cjAuthedError);
+  const { error: cjHelperAuthedError } = await clientA.rpc('_build_channel_journey_snapshot_v1');
+  check('authenticated client cannot call _build_channel_journey_snapshot_v1 directly', !!cjHelperAuthedError, cjHelperAuthedError);
+
+  console.log('\n[v1.4 — new runner call persists analytics_version 1.4]');
+  const v14Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new run analytics_version is 1.4', v14Run.analytics_version === '1.4', v14Run.analytics_version);
+  check('new run status is completed', v14Run.status === 'completed');
+  check('new run snapshot has 1.4 metadata', (v14Run.snapshot as any)?.snapshot_schema_version === '1.4');
+  check('new run snapshot includes channel_journey', !!(v14Run.snapshot as any)?.evidence_aggregates?.channel_journey);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

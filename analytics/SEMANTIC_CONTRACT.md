@@ -824,17 +824,20 @@ This contract governs semantics only. It does not:
   (Acquisition Value Band, Acquisition-to-Exit, Brand) — it does not add a
   fourth module. `build_analytics_snapshot_v1` (v1.0) remains unchanged and
   callable; v1.1 is additive, not a replacement.
-- Add Listing Channel, a Deal In → Deal Out journey matrix, listing-
-  conversion/same-channel-exit-rate analysis, channel x brand, channel x
-  category/type, or monthly channel trends. Analytics Snapshot v1.2
+- Add Listing Channel Exposure, listing conversion, current listing
+  recommendations, channel x brand, channel x category/type, or monthly
+  channel trends. Analytics Snapshot v1.2
   (`20260801000000_build_analytics_snapshot_v1_2.sql`, section 15) adds
-  EXACTLY ONE Channel Analytics module — Deal In Channel Performance — and
+  EXACTLY ONE Channel Analytics module — Deal In Channel Performance;
   Snapshot v1.3 (`20260803000000_build_analytics_snapshot_v1_3.sql`,
   section 16) adds EXACTLY ONE further module — Deal Out Channel
-  Performance — and nothing else. `build_analytics_snapshot_v1` (v1.0),
-  `build_analytics_snapshot_v1_1` (v1.1), and `build_analytics_snapshot_v1_2`
-  (v1.2) remain unchanged and callable; v1.3 is additive, not a
-  replacement.
+  Performance; Snapshot v1.4
+  (`20260804000000_build_analytics_snapshot_v1_4.sql`, section 17) adds
+  EXACTLY ONE further module — Channel Journey — and nothing else.
+  `build_analytics_snapshot_v1` (v1.0), `build_analytics_snapshot_v1_1`
+  (v1.1), `build_analytics_snapshot_v1_2` (v1.2), and
+  `build_analytics_snapshot_v1_3` (v1.3) remain unchanged and callable;
+  v1.4 is additive, not a replacement.
 
 ## 15. Deal In Channel (Channel Analytics module 1)
 
@@ -957,3 +960,75 @@ are cohort splits based on the item's ACQUISITION history
 (`is_historical_import`), never about the exit itself — no "Historical
 Sale"/"Historical Trade exit" `deal_type` exists in this schema; every
 realized exit's `deal_type` is exactly `'sale'` or `'trade'`.
+
+## 17. Channel Journey (Channel Analytics module 3A)
+
+Governs `analytics/sql/06_channel_journey.sql` and
+`public._build_channel_journey_snapshot_v1()`
+(`supabase/migrations/20260804000000_build_analytics_snapshot_v1_4.sql`).
+This is the THIRD Channel Analytics module — specifically "module 3A"
+because Listing Channel Exposure (a related but separate module) remains
+explicitly out of scope — see the Non-goals bullet in section 14.
+
+**Definition.** Channel Journey answers how Business items move from their
+Deal In contact-source channel (section 15) to their Deal Out
+contact-source channel (section 16), using ONLY the explicit
+`deal_in_channel_id`/`deal_in_channel_name`/`deal_out_channel_id`/
+`deal_out_channel_name` fields — never the legacy
+`acquisition_channel_*`/`exit_channel_*` names, which remain on the view
+unchanged for their own older readers.
+
+**Eligibility.** The journey matrix (`deal_in_to_deal_out_matrix` and every
+section after it) includes ONLY realized Business items where BOTH
+`deal_in_channel_id` AND `deal_out_channel_id` are known (`NOT NULL`).
+Missing Deal In Channels are NEVER invented or backfilled. A historical
+realized item with a missing Deal In Channel is EXCLUDED from the journey
+matrix but explicitly counted in `population_summary`'s
+`missing_deal_in_channel_item_count` / `missing_deal_out_channel_item_count`
+/ `missing_both_channels_item_count` — a missing-channel record is reported,
+never silently dropped.
+
+**Reconciliation** (`population_summary`):
+
+```
+realized_business_item_count
+  = journey_eligible_item_count
+  + missing_deal_in_channel_item_count
+  + missing_deal_out_channel_item_count
+  - missing_both_channels_item_count
+```
+
+The subtraction avoids double-counting items missing BOTH channels, which
+would otherwise be counted once in each of the two "missing one channel"
+fields.
+
+**Same channel — descriptive, not causal.** "Same channel"
+(`same_channel_summary`, `same_channel_by_deal_in_channel`) means
+`deal_in_channel_id = deal_out_channel_id` — the item entered and left
+inventory through contact with the SAME channel. `same_channel_exit_percent`
+is DESCRIPTIVE PATH EVIDENCE ONLY:
+
+- It is NEVER called a "conversion rate."
+- It never implies the channel CAUSED the exit.
+- It must never be compared against Deal In Channel's own item counts
+  (section 15, file 04 — population is ALL Business items, open or
+  realized, channel known or not) or Deal Out Channel's own item counts
+  (section 16, file 05 — population is ALL realized items, channel known or
+  not) as though they shared a denominator. Channel Journey's population is
+  the narrower intersection: realized AND both channels known.
+- Every path percentage must be reported alongside its sample size
+  (`journey_eligible_item_count` / `eligible_realized_item_count`) and
+  `confidence` — never a bare percentage.
+
+**Scope.** Channel Journey evidence uses the shared eligible Business
+population, same evidence/recommendation boundary as every other module
+(section 9-11) — no per-user channel breakdown, `user_id`, `item_id`, item
+name, or model appears anywhere in this module's output.
+`distinct_acquisition_deal_count` / `distinct_exit_deal_count` count
+DISTINCT `acquisition_deal_id` / `exit_deal_id` independently — a single
+matrix row's acquisition-side and exit-side deal-sharing can differ (e.g.
+two items acquired together but sold separately, or vice versa), so both
+counts are always present and never conflated into one. Historical items
+may contribute to the matrix when both channels are known, but remain
+excluded from `holding_sample_size`/`median_holding_days`, same as every
+other module.

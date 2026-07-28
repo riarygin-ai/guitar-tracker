@@ -444,6 +444,15 @@ export default function AnalyticsPage() {
                     </p>
                   )}
                 </CollapsibleSection>
+                <CollapsibleSection title="Channel Journey">
+                  {selectedSnapshot.evidence_aggregates.channel_journey ? (
+                    <JsonBlock value={selectedSnapshot.evidence_aggregates.channel_journey} />
+                  ) : (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      Not available in this run — Channel Journey was added in Snapshot v1.4. Run analytics again to generate it.
+                    </p>
+                  )}
+                </CollapsibleSection>
                 <CollapsibleSection title="My Open Business Items">
                   <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
                 </CollapsibleSection>

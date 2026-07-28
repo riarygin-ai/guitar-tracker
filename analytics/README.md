@@ -40,16 +40,27 @@ Reusable numbered analysis sequence, under `analytics/sql/`:
   which contact-source channel (Marketplace/Kijiji/Reverb/Regular Buyer /
   Seller) a Business item entered inventory through, and how items sourced
   through each channel perform. See `analytics/SEMANTIC_CONTRACT.md`
-  section 15 for the full Deal In Channel definition. Listing Channel and
-  every other Channel Analytics module besides Deal Out Channel (below) are
-  explicitly out of scope for this file.
+  section 15 for the full Deal In Channel definition. Listing Channel
+  Exposure and every other Channel Analytics module besides Deal Out
+  Channel and Channel Journey (below) are explicitly out of scope for this
+  file.
 - `sql/05_deal_out_channel_performance.sql` — Channel Analytics module 2:
   which contact-source channel a Business item LEFT inventory through
   (cash sale or trade), and how cash-sale and trade exits perform per
   channel. See `analytics/SEMANTIC_CONTRACT.md` section 16 for the full
-  Deal Out Channel definition. Listing Channel, the Deal In → Deal Out
-  journey matrix, and every other Channel Analytics module are explicitly
+  Deal Out Channel definition. Listing Channel Exposure and every other
+  Channel Analytics module besides Channel Journey (below) are explicitly
   out of scope for this file.
+- `sql/06_channel_journey.sql` — Channel Analytics module 3A: how Business
+  items move from their Deal In contact-source channel to their Deal Out
+  contact-source channel — the deal-in → deal-out matrix, same-channel vs.
+  different-channel path evidence, and paths by acquisition/exit method.
+  See `analytics/SEMANTIC_CONTRACT.md` section 17 for the full Channel
+  Journey definition, including why same-channel-exit percentages are
+  descriptive path evidence, never a conversion rate. Listing Channel
+  Exposure, listing conversion, current listing recommendations, and every
+  other Channel Analytics module are explicitly out of scope for this
+  file.
 
 One-off scripts (not part of the reusable numbered sequence), under
 `analytics/audits/`:
@@ -262,13 +273,14 @@ Current limitations (deliberate, for this step):
 consolidated into a single implementation, the same analytical definitions
 exist in two places that must be kept in sync by hand: the developer-readable
 manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...`, `04_...`,
-`05_...` — these reflect the CURRENT semantics, edited in place) and the
-versioned snapshot builder functions, one migration per version
+`05_...`, `06_...` — these reflect the CURRENT semantics, edited in place)
+and the versioned snapshot builder functions, one migration per version
 (`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql` for
 v1.0, `supabase/migrations/20260730000000_build_analytics_snapshot_v1_1.sql`
 for v1.1, `supabase/migrations/20260801000000_build_analytics_snapshot_v1_2.sql`
 for v1.2, `supabase/migrations/20260803000000_build_analytics_snapshot_v1_3.sql`
-for v1.3). A change to an analytical definition (a band boundary, an
+for v1.3, `supabase/migrations/20260804000000_build_analytics_snapshot_v1_4.sql`
+for v1.4). A change to an analytical definition (a band boundary, an
 eligibility rule, a new metric) must be applied to both the manual files
 and the CURRENT builder version, or they will silently disagree. Already-
 shipped versioned builder migrations (like v1.0's) are never edited after
@@ -457,10 +469,55 @@ instead of assuming the field exists.
   acquisition_value_band/acquisition_to_exit/brand/deal_in_channel/
   recommendation_candidates assembly is reused as-is, not duplicated.
 
-Listing Channel, the Deal In → Deal Out journey matrix,
-listing-conversion/same-channel-exit-rate, channel × brand, channel ×
-category/type, monthly channel trends, AI interpretation, and
-recommendations/rankings are all explicitly out of scope for this step.
+Listing Channel Exposure, listing conversion, current listing
+recommendations, channel × brand, channel × category/type, monthly channel
+trends, AI interpretation, and recommendations/rankings are all explicitly
+out of scope for this step.
+
+## Analytics Snapshot v1.4 (Channel Analytics module 3A: Channel Journey)
+
+`public.build_analytics_snapshot_v1_4(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260804000000_build_analytics_snapshot_v1_4.sql`) is
+a **lightweight, additive** version. `build_analytics_snapshot_v1` (v1.0),
+`build_analytics_snapshot_v1_1` (v1.1), `build_analytics_snapshot_v1_2`
+(v1.2), and `build_analytics_snapshot_v1_3` (v1.3) are unchanged and remain
+callable; no previously stored v1.0/v1.1/v1.2/v1.3 `analytics_runs.snapshot`
+row is altered. `src/lib/analytics/runAnalytics.ts` now calls v1.4 for new
+runs (`ANALYTICS_VERSION = '1.4'`); the Analytics page's new "Channel
+Journey" collapsible section shows a plain "not available in this run"
+message when selecting an older run instead of assuming the field exists.
+
+**What's new:**
+
+- **No lifecycle view changes.** Channel Journey uses ONLY the
+  `deal_in_channel_*`/`deal_out_channel_*` fields already added by modules 1
+  and 2 (`20260731000000`/`20260802000000`) — no new migration to
+  `analytics_item_lifecycle` was needed for this module.
+- **`evidence_aggregates.channel_journey`** (new): `population_summary`,
+  `deal_in_to_deal_out_matrix`, `same_channel_summary`,
+  `same_channel_by_deal_in_channel`, `paths_by_method` — see
+  `analytics/sql/06_channel_journey.sql` and
+  `analytics/SEMANTIC_CONTRACT.md` section 17 for the full field-by-field
+  contract. Items with a missing Deal In and/or Deal Out Channel are
+  reported explicitly in `population_summary`'s coverage fields, never
+  hidden, but excluded from the matrix and every downstream section (a
+  missing channel is never invented or backfilled).
+- **Same-channel path evidence, explicitly not a conversion rate**:
+  `same_channel_exit_percent` describes how often an item's Deal In and
+  Deal Out channel were the same channel — it is never labeled a
+  "conversion rate," never implies causation, and is never compared against
+  Deal In Channel's (module 1) or Deal Out Channel's (module 2) own item
+  counts, which use different, wider populations.
+- **Lightweight wrapper, one level up**: v1.4's top-level function calls
+  `build_analytics_snapshot_v1_3(int)` WHOLESALE and merges in one extra
+  `evidence_aggregates.channel_journey` key — v1.3's own
+  acquisition_value_band/acquisition_to_exit/brand/deal_in_channel/
+  deal_out_channel/recommendation_candidates assembly is reused as-is, not
+  duplicated.
+
+Listing Channel Exposure, listing conversion, current listing
+recommendations, AI interpretation, and recommendations/rankings are all
+explicitly out of scope for this step.
 
 ## Conventions
 
