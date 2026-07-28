@@ -824,9 +824,9 @@ This contract governs semantics only. It does not:
   (Acquisition Value Band, Acquisition-to-Exit, Brand) — it does not add a
   fourth module. `build_analytics_snapshot_v1` (v1.0) remains unchanged and
   callable; v1.1 is additive, not a replacement.
-- Add Category/Type Performance, Open Inventory Decision Support, listing
-  conversion, current listing recommendations, channel x brand, channel x
-  category/type, or monthly channel trends. Analytics Snapshot v1.2
+- Add Open Inventory Decision Support, listing conversion, current listing
+  recommendations, channel x brand, channel x category/type, or monthly
+  channel trends. Analytics Snapshot v1.2
   (`20260801000000_build_analytics_snapshot_v1_2.sql`, section 15) adds
   EXACTLY ONE Channel Analytics module — Deal In Channel Performance;
   Snapshot v1.3 (`20260803000000_build_analytics_snapshot_v1_3.sql`,
@@ -840,6 +840,13 @@ This contract governs semantics only. It does not:
   (v1.1), `build_analytics_snapshot_v1_2` (v1.2),
   `build_analytics_snapshot_v1_3` (v1.3), and `build_analytics_snapshot_v1_4`
   (v1.4) remain unchanged and callable; v1.5 is additive, not a
+  replacement.
+- Add Capital & Liquidity, Open Inventory Decision Support, AI
+  recommendations, Business Coach, or a UI redesign. Analytics Snapshot v1.6
+  (`20260806000000_build_analytics_snapshot_v1_6.sql`, section 19) adds
+  EXACTLY ONE module — Category & Type Performance — and nothing else.
+  `build_analytics_snapshot_v1` (v1.0) through `build_analytics_snapshot_v1_5`
+  (v1.5) remain unchanged and callable; v1.6 is additive, not a
   replacement.
 
 ## 15. Deal In Channel (Channel Analytics module 1)
@@ -1117,3 +1124,68 @@ anywhere in this module's output, and no per-user listing breakdown
 exists. `recommendation_candidates` are unchanged and remain restricted to
 `recommendation_target_user_id`; this module adds no target-user listing
 recommendations.
+
+## 19. Category & Type Performance
+
+Governs `analytics/sql/08_category_type_performance.sql` and
+`public._build_category_type_snapshot_v1()`
+(`supabase/migrations/20260806000000_build_analytics_snapshot_v1_6.sql`).
+This is NOT a Channel Analytics module — it groups by `category_id`/
+`category_name`/`type_id`/`type_name` (already exposed by
+`analytics_item_lifecycle`, sourced from `item_subtypes`/`item_categories`)
+instead of any Deal In/Deal Out/Listing channel. No lifecycle view
+migration was needed.
+
+**Population.** Business items only (`purpose_name = 'Business'`).
+`category_performance` and `type_performance` (Query B/C) report on the
+FULL population (open + realized) — Category/Type is a property an item
+has from creation, unlike an exit-side fact. `category_by_acquisition_value_
+band`/`type_by_acquisition_value_band` (Query D/E) narrow to
+`acquisition_value_status = 'positive'`, matching every other band query in
+this analytics layer (sections 7.1, 15, 16). `open_inventory_by_category_
+type` (Query F) narrows to open (`NOT is_realized`) items only.
+
+**Historical imports** follow the exact rule in sections 1-4: included in
+item counts, realization rate, profit, ROI, DOM, acquisition/exit values,
+and sale/trade mix; excluded ONLY from `holding_days`/ownership-age
+metrics, because `acquisition_date` is the one approximate field for a
+historical import.
+
+**Missing Category/Type is never excluded.** A row with `category_id IS
+NULL` or `type_id IS NULL` (no `item_subtype_id` recorded) is never dropped
+from any query — GROUP BY keeps the NULL group visible, same as the
+missing-channel rows in sections 15/16. `population_summary` reports this
+coverage explicitly (`category_known_item_count`/
+`category_missing_item_count`, and separately for type). Missing Type is a
+DATA-QUALITY GROUP, never a real Type — never plot, rank, or recommend
+against it as a genuine inventory category.
+
+**Same Type name, different Category — never merged.** Every Type-level
+query groups by `(category_id, type_id)` together, never by `type_id`/
+`type_name` alone — two Types sharing a name under different Categories
+(this project's seed data includes a "Pedal" subtype under both "Amps" and
+"Pedals") are always reported as independent rows.
+
+**Confidence — based on the realized sample, not the whole group.** Unlike
+the Channel Analytics modules (sections 15-18), which tier `confidence`
+from a row's TOTAL item count, every grouped section here tiers
+`confidence` from that row's own REALIZED item count. Same 4-tier
+thresholds as everywhere else (1-2 insufficient, 3-5 low, 6-9 moderate,
+10+ stronger) — this module simply chooses a different sample to tier on,
+because its conclusions (profit/ROI/DOM) are about realized outcomes and an
+open-item-heavy row should not read as falsely well-evidenced.
+
+**Interpretation safeguards** (documented in the SQL file header, not new
+fields):
+- Category and Type results are DESCRIPTIVE, not causal.
+- A Type with a tiny sample must never outweigh a Category-level row with
+  a stronger sample — always report `confidence` alongside any number.
+- Acquisition Value Band results here can still be affected by acquisition
+  method and brand mix within a Category/Type — not isolated by this file.
+- "Missing Type" is a data-quality group, not a real Type (see above).
+
+**Scope.** Shared Business aggregates only, same evidence/recommendation
+boundary as every other module (section 9-11) — no `user_id`, `item_id`,
+item name, or model appears anywhere in this module's output, and no
+per-user Category/Type breakdown exists. `recommendation_candidates` are
+unchanged and remain restricted to `recommendation_target_user_id`.

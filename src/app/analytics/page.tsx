@@ -462,6 +462,15 @@ export default function AnalyticsPage() {
                     </p>
                   )}
                 </CollapsibleSection>
+                <CollapsibleSection title="Category & Type Performance">
+                  {selectedSnapshot.evidence_aggregates.category_type_performance ? (
+                    <JsonBlock value={selectedSnapshot.evidence_aggregates.category_type_performance} />
+                  ) : (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      Not available in this run — Category & Type Performance was added in Snapshot v1.6. Run analytics again to generate it.
+                    </p>
+                  )}
+                </CollapsibleSection>
                 <CollapsibleSection title="My Open Business Items">
                   <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
                 </CollapsibleSection>

@@ -67,7 +67,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_5
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_6
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -76,7 +76,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_5') {
+          if (name === 'build_analytics_snapshot_v1_6') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -96,7 +96,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_5') {
+          if (name === 'build_analytics_snapshot_v1_6') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -151,8 +151,8 @@ async function main() {
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '1.5',
-    analytics_definition_version: '1.5',
+    snapshot_schema_version: '1.6',
+    analytics_definition_version: '1.6',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     recommendation_target_user_id: userAId,
@@ -200,7 +200,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -827,12 +827,141 @@ async function main() {
   const { error: lceHelperAuthedError } = await clientA.rpc('_build_listing_channel_exposure_snapshot_v1');
   check('authenticated client cannot call _build_listing_channel_exposure_snapshot_v1 directly', !!lceHelperAuthedError, lceHelperAuthedError);
 
-  console.log('\n[v1.5 — new runner call persists analytics_version 1.5]');
-  const v15Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new run analytics_version is 1.5', v15Run.analytics_version === '1.5', v15Run.analytics_version);
-  check('new run status is completed', v15Run.status === 'completed');
-  check('new run snapshot has 1.5 metadata', (v15Run.snapshot as any)?.snapshot_schema_version === '1.5');
-  check('new run snapshot includes listing_channel_exposure', !!(v15Run.snapshot as any)?.evidence_aggregates?.listing_channel_exposure);
+  console.log('\n[v1.5 — builder still callable directly (unaffected by v1.6)]');
+  const { error: v15StillCallableError } = await serviceClient.rpc('build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_5 still callable by service_role', !v15StillCallableError, v15StillCallableError);
+
+  // ── Category & Type Performance (Snapshot v1.6) ──────────────────────────
+  console.log('\n[v1.6 — builder callable, top-level metadata]');
+  const { data: v16SnapshotA, error: v16ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_6 callable by service_role', !v16ErrorA, v16ErrorA);
+  check('v1.6 snapshot_schema_version is 1.6', v16SnapshotA?.snapshot_schema_version === '1.6', v16SnapshotA?.snapshot_schema_version);
+  check('v1.6 analytics_definition_version is 1.6', v16SnapshotA?.analytics_definition_version === '1.6', v16SnapshotA?.analytics_definition_version);
+  check('v1.6 recommendation_target_user_id === userAId', v16SnapshotA?.recommendation_target_user_id === userAId);
+  check('v1.6 still carries listing_channel_exposure (v1.5 reused wholesale)', Array.isArray(v16SnapshotA?.evidence_aggregates?.listing_channel_exposure?.population_summary));
+
+  console.log('\n[v1.6 — Category & Type Performance population_summary]');
+  const ctp = v16SnapshotA?.evidence_aggregates?.category_type_performance;
+  const ctpPop = ctp?.population_summary?.[0];
+  check(
+    'category_type_performance section exists with all 6 subsections',
+    !!ctp && Array.isArray(ctp.population_summary) && Array.isArray(ctp.category_performance)
+      && Array.isArray(ctp.type_performance) && Array.isArray(ctp.category_by_acquisition_value_band)
+      && Array.isArray(ctp.type_by_acquisition_value_band) && Array.isArray(ctp.open_inventory_by_category_type),
+    ctp ? Object.keys(ctp) : ctp,
+  );
+  check('population_summary reports only Business items (business_item_count > 0)', (ctpPop?.business_item_count ?? 0) > 0, ctpPop?.business_item_count);
+
+  console.log('\n[v1.6 — Category/Type coverage reconciliation]');
+  check(
+    'business_item_count = category_known_item_count + category_missing_item_count',
+    ctpPop?.business_item_count === (ctpPop?.category_known_item_count ?? 0) + (ctpPop?.category_missing_item_count ?? 0),
+    ctpPop,
+  );
+  check(
+    'business_item_count = type_known_item_count + type_missing_item_count',
+    ctpPop?.business_item_count === (ctpPop?.type_known_item_count ?? 0) + (ctpPop?.type_missing_item_count ?? 0),
+    ctpPop,
+  );
+  check('category_missing_item_count >= 1 (fixture item 34, no item_subtype_id)', (ctpPop?.category_missing_item_count ?? 0) >= 1, ctpPop?.category_missing_item_count);
+
+  console.log('\n[v1.6 — same Type name under different Categories stays separate]');
+  const typeRows: any[] = ctp?.type_performance ?? [];
+  const ampsPedalRow = typeRows.find((r) => r.category_name === 'Amps' && r.type_name === 'Pedal');
+  const pedalsPedalRow = typeRows.find((r) => r.category_name === 'Pedals' && r.type_name === 'Pedal');
+  check('Amps/Pedal and Pedals/Pedal are two distinct rows (same Type name, different Category)', !!ampsPedalRow && !!pedalsPedalRow && ampsPedalRow.category_id !== pedalsPedalRow.category_id, { ampsPedalRow, pedalsPedalRow });
+
+  console.log('\n[v1.6 — missing Type remains visible]');
+  const missingTypeRow = typeRows.find((r) => r.type_id === null);
+  check('a type_performance row with type_id === null exists (fixture item 34)', !!missingTypeRow && missingTypeRow.item_count >= 1, missingTypeRow);
+
+  console.log('\n[v1.6 — open + realized reconcile within rows]');
+  const categoryRows: any[] = ctp?.category_performance ?? [];
+  check('category_performance has at least one row', categoryRows.length > 0);
+  check('every category_performance row reconciles item_count = realized + open', categoryRows.every((r) => r.item_count === (r.realized_item_count ?? 0) + (r.open_item_count ?? 0)), categoryRows);
+  check('every type_performance row reconciles item_count = realized + open', typeRows.every((r) => r.item_count === (r.realized_item_count ?? 0) + (r.open_item_count ?? 0)), typeRows);
+
+  console.log('\n[v1.6 — sale + trade exits reconcile to realized rows]');
+  const guitarsRow = categoryRows.find((r) => r.category_name === 'Guitars');
+  check(
+    'Guitars category row: sale_exit_item_count + trade_exit_item_count === realized_item_count',
+    !!guitarsRow && (guitarsRow.sale_exit_item_count ?? 0) + (guitarsRow.trade_exit_item_count ?? 0) === guitarsRow.realized_item_count,
+    guitarsRow,
+  );
+
+  console.log('\n[v1.6 — positive bands exclude zero/unknown acquisition values]');
+  const categoryBandRows: any[] = ctp?.category_by_acquisition_value_band ?? [];
+  const typeBandRows: any[] = ctp?.type_by_acquisition_value_band ?? [];
+  check(
+    'category_by_acquisition_value_band never includes a zero/unknown/negative band label',
+    categoryBandRows.every((r) => !['Zero assigned value', 'Unknown acquisition value', 'Negative (invalid)'].includes(r.acquisition_value_band_label)),
+    categoryBandRows,
+  );
+  check(
+    'category-band item_counts sum to positive_acquisition_item_count',
+    categoryBandRows.reduce((sum, r) => sum + (r.item_count ?? 0), 0) === ctpPop?.positive_acquisition_item_count,
+    { sum: categoryBandRows.reduce((sum, r) => sum + (r.item_count ?? 0), 0), positive: ctpPop?.positive_acquisition_item_count },
+  );
+
+  console.log('\n[v1.6 — Type-band rows use the correct Category + Type pair]');
+  const ampsPedalBandRow = typeBandRows.find((r) => r.category_name === 'Amps' && r.type_name === 'Pedal' && r.acquisition_value_band_label === '$1-999');
+  const pedalsPedalBandRow = typeBandRows.find((r) => r.category_name === 'Pedals' && r.type_name === 'Pedal' && r.acquisition_value_band_label === '$1-999');
+  check('Amps/Pedal $1-999 band row exists (fixture item 32, $100)', !!ampsPedalBandRow && ampsPedalBandRow.item_count >= 1, ampsPedalBandRow);
+  check('Pedals/Pedal $1-999 band row exists (fixture item 33, $80) and is a different row', !!pedalsPedalBandRow && pedalsPedalBandRow.item_count >= 1 && pedalsPedalBandRow.category_id !== ampsPedalBandRow?.category_id, pedalsPedalBandRow);
+
+  console.log('\n[v1.6 — historical rows contribute to profit/ROI/DOM but excluded from holding]');
+  check(
+    'Guitars category row: holding_sample_size < realized_item_count (fixture item 9, historical)',
+    !!guitarsRow && (guitarsRow.holding_sample_size ?? 0) < guitarsRow.realized_item_count,
+    guitarsRow,
+  );
+  check('Guitars category row: total_realized_net_profit is a number (historical items included)', typeof guitarsRow?.total_realized_net_profit === 'number', guitarsRow?.total_realized_net_profit);
+
+  console.log('\n[v1.6 — historical items excluded from open-inventory ownership age]');
+  // item_subtypes seeding is inserted via a SELECT+JOIN (no ORDER BY), so
+  // IDs don't necessarily match the VALUES literal order — verified live:
+  // id 3 is actually "Electric Guitar" (the subtype every pre-v1.6 fixture
+  // item, including historical item 14, was hardcoded to).
+  const openByCategoryTypeRows: any[] = ctp?.open_inventory_by_category_type ?? [];
+  const guitarsElectricOpenRow = openByCategoryTypeRows.find((r) => r.category_name === 'Guitars' && r.type_name === 'Electric Guitar');
+  check('Guitars/Electric Guitar open row: historical_excluded_from_age_count >= 1 (fixture item 14)', (guitarsElectricOpenRow?.historical_excluded_from_age_count ?? 0) >= 1, guitarsElectricOpenRow);
+
+  console.log('\n[v1.6 — multi-item deals preserve item and distinct-deal counts]');
+  // Fixture items 29/30 use item_subtype_id 1, which is actually "Acoustic
+  // Guitar" (see the ID-mapping note above) — a different Type from the
+  // pre-existing fixture's "Electric Guitar" cohort, so this row is not
+  // polluted by any other fixture item.
+  const acousticGuitarRow = typeRows.find((r) => r.category_name === 'Guitars' && r.type_name === 'Acoustic Guitar');
+  check(
+    'Guitars/Acoustic Guitar row (fixture items 29, 30): item_count=2, distinct_acquisition_deal_count=1 (shared), distinct_exit_deal_count=2 (separate)',
+    !!acousticGuitarRow && acousticGuitarRow.item_count === 2 && acousticGuitarRow.distinct_acquisition_deal_count === 1 && acousticGuitarRow.distinct_exit_deal_count === 2,
+    acousticGuitarRow,
+  );
+
+  console.log('\n[v1.6 — shared evidence has no user-level or item-level fields]');
+  check('no category_performance row exposes user_id or item_id', categoryRows.every((r) => !('user_id' in r) && !('item_id' in r)), categoryRows[0]);
+  check('no type_performance row exposes user_id or item_id', typeRows.every((r) => !('user_id' in r) && !('item_id' in r)), typeRows[0]);
+
+  console.log('\n[v1.6 — privacy across both fixture users]');
+  const { data: v16SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userBId });
+  const candidatesA16 = v16SnapshotA?.recommendation_candidates?.open_business_items ?? [];
+  const candidatesB16 = v16SnapshotB?.recommendation_candidates?.open_business_items ?? [];
+  const idsA16 = new Set(candidatesA16.map((c: any) => c.item_id));
+  const idsB16 = new Set(candidatesB16.map((c: any) => c.item_id));
+  check("v1.6 user A's and user B's candidates don't overlap", Array.from(idsA16).every((id) => !idsB16.has(id)));
+
+  console.log('\n[v1.6 — permissions on new functions]');
+  const { error: ctpAuthedError } = await clientA.rpc('build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v1_6 directly', !!ctpAuthedError, ctpAuthedError);
+  const { error: ctpHelperAuthedError } = await clientA.rpc('_build_category_type_snapshot_v1');
+  check('authenticated client cannot call _build_category_type_snapshot_v1 directly', !!ctpHelperAuthedError, ctpHelperAuthedError);
+
+  console.log('\n[v1.6 — new runner call persists analytics_version 1.6]');
+  const v16Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new run analytics_version is 1.6', v16Run.analytics_version === '1.6', v16Run.analytics_version);
+  check('new run status is completed', v16Run.status === 'completed');
+  check('new run snapshot has 1.6 metadata', (v16Run.snapshot as any)?.snapshot_schema_version === '1.6');
+  check('new run snapshot includes category_type_performance', !!(v16Run.snapshot as any)?.evidence_aggregates?.category_type_performance);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

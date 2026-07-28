@@ -68,10 +68,22 @@ Reusable numbered analysis sequence, under `analytics/sql/`:
   cross-listed, or not listed. See `analytics/SEMANTIC_CONTRACT.md`
   section 18 for the full Listing Channel Exposure definition, including
   the `item_listings` active-state schema findings and the canonical
-  item/channel exposure dedup logic. Category/Type Performance, Open
-  Inventory Decision Support, listing conversion, current listing
-  recommendations, AI interpretation, and recommendations/rankings are
-  explicitly out of scope for this file.
+  item/channel exposure dedup logic. Category/Type Performance (below) is
+  the only other module in scope alongside this file; every other module —
+  Open Inventory Decision Support, listing conversion, current listing
+  recommendations, AI interpretation, recommendations/rankings — is
+  explicitly out of scope.
+- `sql/08_category_type_performance.sql` — which item Categories and Types
+  (within their Category) perform best, how results vary by Acquisition
+  Value Band, and where open inventory capital is concentrated by
+  Category/Type. NOT a Channel Analytics module — groups by
+  `category_id`/`type_id` instead of any Deal In/Deal Out/Listing channel.
+  See `analytics/SEMANTIC_CONTRACT.md` section 19 for the full definition,
+  including why `confidence` here is tiered from the REALIZED sample
+  (unlike the Channel Analytics modules, which tier from the whole group).
+  Capital & Liquidity, Open Inventory Decision Support, AI interpretation,
+  recommendations/rankings, and Business Coach are explicitly out of scope
+  for this file.
 
 One-off scripts (not part of the reusable numbered sequence), under
 `analytics/audits/`:
@@ -284,15 +296,17 @@ Current limitations (deliberate, for this step):
 consolidated into a single implementation, the same analytical definitions
 exist in two places that must be kept in sync by hand: the developer-readable
 manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...`, `04_...`,
-`05_...`, `06_...`, `07_...` — these reflect the CURRENT semantics, edited
-in place) and the versioned snapshot builder functions, one migration per
-version (`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql`
+`05_...`, `06_...`, `07_...`, `08_...` — these reflect the CURRENT
+semantics, edited in place) and the versioned snapshot builder functions,
+one migration per version
+(`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql`
 for v1.0, `supabase/migrations/20260730000000_build_analytics_snapshot_v1_1.sql`
 for v1.1, `supabase/migrations/20260801000000_build_analytics_snapshot_v1_2.sql`
 for v1.2, `supabase/migrations/20260803000000_build_analytics_snapshot_v1_3.sql`
 for v1.3, `supabase/migrations/20260804000000_build_analytics_snapshot_v1_4.sql`
 for v1.4, `supabase/migrations/20260805000000_build_analytics_snapshot_v1_5.sql`
-for v1.5). A change to an analytical definition (a band boundary, an
+for v1.5, `supabase/migrations/20260806000000_build_analytics_snapshot_v1_6.sql`
+for v1.6). A change to an analytical definition (a band boundary, an
 eligibility rule, a new metric) must be applied to both the manual files
 and the CURRENT builder version, or they will silently disagree. Already-
 shipped versioned builder migrations (like v1.0's) are never edited after
@@ -580,6 +594,44 @@ message when selecting an older run instead of assuming the field exists.
 Category/Type Performance, Open Inventory Decision Support, listing
 conversion, current listing recommendations, AI interpretation, and
 recommendations/rankings are all explicitly out of scope for this step.
+
+## Analytics Snapshot v1.6 (Category & Type Performance)
+
+`public.build_analytics_snapshot_v1_6(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260806000000_build_analytics_snapshot_v1_6.sql`) is
+a **lightweight, additive** version. `build_analytics_snapshot_v1` (v1.0)
+through `build_analytics_snapshot_v1_5` (v1.5) are unchanged and remain
+callable; no previously stored v1.0-v1.5 `analytics_runs.snapshot` row is
+altered. `src/lib/analytics/runAnalytics.ts` now calls v1.6 for new runs
+(`ANALYTICS_VERSION = '1.6'`); the Analytics page's new "Category & Type
+Performance" collapsible section shows a plain "not available in this run"
+message when selecting an older run instead of assuming the field exists.
+
+**What's new:**
+
+- **No lifecycle view changes.** `category_id`/`category_name`/`type_id`/
+  `type_name` already existed on `analytics_item_lifecycle` — no new
+  migration was needed.
+- **`evidence_aggregates.category_type_performance`** (new):
+  `population_summary`, `category_performance`, `type_performance`,
+  `category_by_acquisition_value_band`, `type_by_acquisition_value_band`,
+  `open_inventory_by_category_type` — see
+  `analytics/sql/08_category_type_performance.sql` and
+  `analytics/SEMANTIC_CONTRACT.md` section 19 for the full field-by-field
+  contract. Missing Category/Type is reported explicitly (never dropped);
+  Types sharing a name across different Categories are always kept
+  separate (grouped by `(category_id, type_id)`, never `type_id` alone).
+- **Confidence tiered from the realized sample**: unlike the Channel
+  Analytics modules (v1.2-v1.5), which tier `confidence` from a row's total
+  item count, every grouped section here tiers `confidence` from that
+  row's own REALIZED item count — see section 19's rationale.
+- **Lightweight wrapper, one level up**: v1.6's top-level function calls
+  `build_analytics_snapshot_v1_5(int)` WHOLESALE and merges in one extra
+  `evidence_aggregates.category_type_performance` key.
+
+Capital & Liquidity, Open Inventory Decision Support, AI interpretation,
+recommendations/rankings, and Business Coach are all explicitly out of
+scope for this step.
 
 ## Conventions
 
