@@ -841,13 +841,23 @@ This contract governs semantics only. It does not:
   `build_analytics_snapshot_v1_3` (v1.3), and `build_analytics_snapshot_v1_4`
   (v1.4) remain unchanged and callable; v1.5 is additive, not a
   replacement.
-- Add Capital & Liquidity, Open Inventory Decision Support, AI
-  recommendations, Business Coach, or a UI redesign. Analytics Snapshot v1.6
+- Add Open Inventory Decision Support, AI recommendations, Business Coach,
+  or a UI redesign. Analytics Snapshot v1.6
   (`20260806000000_build_analytics_snapshot_v1_6.sql`, section 19) adds
   EXACTLY ONE module — Category & Type Performance — and nothing else.
   `build_analytics_snapshot_v1` (v1.0) through `build_analytics_snapshot_v1_5`
   (v1.5) remain unchanged and callable; v1.6 is additive, not a
   replacement.
+- Add Open Inventory Decision Support, item-level recommendations, recent
+  trends, AI recommendations, Business Coach, or cash-balance analysis.
+  Analytics Snapshot v1.7
+  (`20260807000000_build_analytics_snapshot_v1_7.sql`, section 20) adds
+  EXACTLY ONE module — Capital & Liquidity — and nothing else. It reports
+  acquisition CAPITAL (value assigned to inventory), never a user's
+  `cash_flow` ledger/cash-balance, which is a wholly separate subsystem
+  not read anywhere in that module. `build_analytics_snapshot_v1` (v1.0)
+  through `build_analytics_snapshot_v1_6` (v1.6) remain unchanged and
+  callable; v1.7 is additive, not a replacement.
 
 ## 15. Deal In Channel (Channel Analytics module 1)
 
@@ -1188,4 +1198,79 @@ fields):
 boundary as every other module (section 9-11) — no `user_id`, `item_id`,
 item name, or model appears anywhere in this module's output, and no
 per-user Category/Type breakdown exists. `recommendation_candidates` are
+unchanged and remain restricted to `recommendation_target_user_id`.
+
+## 20. Capital & Liquidity
+
+Governs `analytics/sql/09_capital_liquidity.sql` and
+`public._build_capital_liquidity_snapshot_v1()`
+(`supabase/migrations/20260807000000_build_analytics_snapshot_v1_7.sql`).
+This module reports acquisition CAPITAL — value assigned to inventory via
+`acquisition_value` — never a user's `cash_flow` ledger/cash-balance, which
+is a wholly separate subsystem and is not read anywhere in this module.
+
+**Population.** Business items only (`purpose_name = 'Business'`).
+`capital_position_summary` (Query A) reports on the FULL population (open +
+realized). `open_capital_age_buckets`/`open_capital_by_acquisition_value_
+band`/`open_capital_by_acquisition_method` (Query B/C/D) narrow to OPEN
+(`NOT is_realized`) items — capital currently tied up, not yet returned.
+`realized_capital_efficiency_by_acquisition_value_band`/`_by_acquisition_
+method` (Query E/F) narrow to REALIZED items with `acquisition_value_status
+= 'positive'` — capital efficiency is undefined for a zero/unknown
+acquisition value.
+
+**Acquisition-value rules** (v1.1 semantics, reused unchanged): positive
+values contribute to every acquisition-capital SUM; zero-assigned values
+remain visible in every coverage count but contribute exactly $0 (never
+excluded, never NULL-ing the whole SUM); unknown values remain visible in
+coverage but are excluded from capital SUMs by ordinary NULL propagation —
+never treated as $0 (that would understate real capital exposure).
+
+**Historical imports — value-based yes, time-based no.** Included in
+acquisition capital, realized profit, ROI, values, listing state, and
+estimated upside. EXCLUDED from every acquisition-date-dependent metric:
+ownership age, holding days, profit-per-30-holding-days, and any other
+time-normalized capital-efficiency figure — same rule as sections 1-4,
+applied here to capital instead of profit/DOM.
+
+**Open capital age buckets are mutually exclusive.** Every open Business
+item lands in EXACTLY ONE of: `0-29 days` / `30-59 days` / `60-119 days` /
+`120+ days` (using `holding_days`, only when NOT a historical import,
+`holding_days IS NOT NULL`, and `NOT has_lifecycle_date_issue`), OR
+`unreliable/unknown age` — the explicit "cannot trust or do not have this
+item's age" group, not a 5th calendar bucket. Historical imports always
+land here, never in a calendar bucket.
+
+**Capital percentage denominator.** Every `*_capital_percent` field in
+Query B/C/D divides by the SAME denominator — total open acquisition
+capital across ALL open Business items (`capital_position_summary`'s
+`open_acquisition_capital`) — effectively positive open capital, since a
+zero-assigned item contributes $0 to the sum either way.
+
+**`profit_to_acquisition_capital_percent` vs. `median_roi` — never the
+same number.** The former is an AGGREGATE descriptive ratio
+(`SUM(net_profit) / SUM(acquisition_value) * 100` across the whole group);
+the latter is the MEDIAN of each item's own ROI. They answer different
+questions and must never be substituted for one another — see the SQL
+file header for the full rationale.
+
+**`median_net_profit_per_30_holding_days` — item-level first.** Computed
+by deriving, PER ITEM, `net_profit / holding_days * 30` (realized,
+non-historical, `holding_days > 0`, no lifecycle date issue — never
+divides by zero), and ONLY THEN taking the median across the group. Never
+computed as a group-level ratio of medians.
+`time_efficiency_sample_size` is always reported alongside it.
+
+**Interpretation safeguards** (documented in the SQL file header, not new
+fields): open acquisition capital is capital assigned to inventory, NOT
+current market value; estimated upside is a manual guess, not guaranteed
+profit; old inventory is not automatically bad inventory; acquisition
+method and value-band capital results can be confounded by Category,
+Brand, and item mix; a zero-assigned acquisition value never produces an
+infinite or undefined ratio (every division uses `NULLIF(..., 0)`).
+
+**Scope.** Shared Business aggregates only, same evidence/recommendation
+boundary as every other module (section 9-11) — no `user_id`, `item_id`,
+item name, or model appears anywhere in this module's output, and no
+per-user capital breakdown exists. `recommendation_candidates` are
 unchanged and remain restricted to `recommendation_target_user_id`.

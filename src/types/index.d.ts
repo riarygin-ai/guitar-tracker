@@ -404,6 +404,9 @@ export interface AnalyticsSnapshot {
     // Added in Snapshot v1.6 (Category & Type Performance) — absent on
     // older v1.0-v1.5 stored snapshots, so optional here.
     category_type_performance?: Record<string, unknown>;
+    // Added in Snapshot v1.7 (Capital & Liquidity) — absent on older
+    // v1.0-v1.6 stored snapshots, so optional here.
+    capital_liquidity?: Record<string, unknown>;
   };
   recommendation_candidates: {
     open_business_items: Record<string, unknown>[];

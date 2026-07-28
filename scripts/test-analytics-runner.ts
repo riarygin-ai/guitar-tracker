@@ -67,7 +67,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_6
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_7
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -76,7 +76,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_6') {
+          if (name === 'build_analytics_snapshot_v1_7') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -96,7 +96,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_6') {
+          if (name === 'build_analytics_snapshot_v1_7') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -151,8 +151,8 @@ async function main() {
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '1.6',
-    analytics_definition_version: '1.6',
+    snapshot_schema_version: '1.7',
+    analytics_definition_version: '1.7',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     recommendation_target_user_id: userAId,
@@ -200,7 +200,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -956,12 +956,151 @@ async function main() {
   const { error: ctpHelperAuthedError } = await clientA.rpc('_build_category_type_snapshot_v1');
   check('authenticated client cannot call _build_category_type_snapshot_v1 directly', !!ctpHelperAuthedError, ctpHelperAuthedError);
 
-  console.log('\n[v1.6 — new runner call persists analytics_version 1.6]');
-  const v16Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new run analytics_version is 1.6', v16Run.analytics_version === '1.6', v16Run.analytics_version);
-  check('new run status is completed', v16Run.status === 'completed');
-  check('new run snapshot has 1.6 metadata', (v16Run.snapshot as any)?.snapshot_schema_version === '1.6');
-  check('new run snapshot includes category_type_performance', !!(v16Run.snapshot as any)?.evidence_aggregates?.category_type_performance);
+  console.log('\n[v1.6 — builder still callable directly (unaffected by v1.7)]');
+  const { error: v16StillCallableError } = await serviceClient.rpc('build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_6 still callable by service_role', !v16StillCallableError, v16StillCallableError);
+
+  // ── Capital & Liquidity (Snapshot v1.7) ──────────────────────────────────
+  console.log('\n[v1.7 — builder callable, top-level metadata]');
+  const { data: v17SnapshotA, error: v17ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_7 callable by service_role', !v17ErrorA, v17ErrorA);
+  check('v1.7 snapshot_schema_version is 1.7', v17SnapshotA?.snapshot_schema_version === '1.7', v17SnapshotA?.snapshot_schema_version);
+  check('v1.7 analytics_definition_version is 1.7', v17SnapshotA?.analytics_definition_version === '1.7', v17SnapshotA?.analytics_definition_version);
+  check('v1.7 recommendation_target_user_id === userAId', v17SnapshotA?.recommendation_target_user_id === userAId);
+  check('v1.7 still carries category_type_performance (v1.6 reused wholesale)', Array.isArray(v17SnapshotA?.evidence_aggregates?.category_type_performance?.population_summary));
+
+  console.log('\n[v1.7 — Capital & Liquidity capital_position_summary]');
+  const cl = v17SnapshotA?.evidence_aggregates?.capital_liquidity;
+  const clPop = cl?.capital_position_summary?.[0];
+  check(
+    'capital_liquidity section exists with all 6 subsections',
+    !!cl && Array.isArray(cl.capital_position_summary) && Array.isArray(cl.open_capital_age_buckets)
+      && Array.isArray(cl.open_capital_by_acquisition_value_band) && Array.isArray(cl.open_capital_by_acquisition_method)
+      && Array.isArray(cl.realized_capital_efficiency_by_acquisition_value_band) && Array.isArray(cl.realized_capital_efficiency_by_acquisition_method),
+    cl ? Object.keys(cl) : cl,
+  );
+  check('population_summary reports only Business items (business_item_count > 0)', (clPop?.business_item_count ?? 0) > 0, clPop?.business_item_count);
+
+  console.log('\n[v1.7 — population and coverage reconciliation]');
+  check(
+    'business_item_count = realized_business_item_count + open_business_item_count',
+    clPop?.business_item_count === (clPop?.realized_business_item_count ?? 0) + (clPop?.open_business_item_count ?? 0),
+    clPop,
+  );
+  check(
+    'business_item_count >= positive + zero_assigned + unknown acquisition item counts',
+    clPop?.business_item_count >= (clPop?.positive_acquisition_item_count ?? 0) + (clPop?.zero_assigned_acquisition_item_count ?? 0) + (clPop?.unknown_acquisition_item_count ?? 0),
+    clPop,
+  );
+
+  console.log('\n[v1.7 — capital reconciliation]');
+  check(
+    'total_business_acquisition_capital = realized_acquisition_capital + open_acquisition_capital',
+    Number(clPop?.total_business_acquisition_capital) === Number(clPop?.realized_acquisition_capital ?? 0) + Number(clPop?.open_acquisition_capital ?? 0),
+    clPop,
+  );
+  check(
+    'open_business_item_count = listed_open_item_count + unlisted_open_item_count',
+    clPop?.open_business_item_count === (clPop?.listed_open_item_count ?? 0) + (clPop?.unlisted_open_item_count ?? 0),
+    clPop,
+  );
+  check(
+    'open_acquisition_capital = listed_open_acquisition_capital + unlisted_open_acquisition_capital',
+    Number(clPop?.open_acquisition_capital) === Number(clPop?.listed_open_acquisition_capital ?? 0) + Number(clPop?.unlisted_open_acquisition_capital ?? 0),
+    clPop,
+  );
+
+  console.log('\n[v1.7 — open capital age buckets: mutually exclusive, capital reconciles]');
+  const ageBuckets: any[] = cl?.open_capital_age_buckets ?? [];
+  check('open_capital_age_buckets has at least one row', ageBuckets.length > 0);
+  const ageBucketItemSum = ageBuckets.reduce((sum, b) => sum + (b.open_item_count ?? 0), 0);
+  check('every open item appears in exactly one age bucket (sum of item counts = open_business_item_count)', ageBucketItemSum === clPop?.open_business_item_count, { ageBucketItemSum, openBusinessItemCount: clPop?.open_business_item_count });
+  const bucketCapitalSum = ageBuckets.reduce((sum, b) => sum + Number(b.open_acquisition_capital ?? 0), 0);
+  check('age-bucket capital reconciles to total open acquisition capital', bucketCapitalSum === Number(clPop?.open_acquisition_capital ?? 0), { bucketCapitalSum, openAcquisitionCapital: clPop?.open_acquisition_capital });
+  const unreliableBucket = ageBuckets.find((b) => b.age_bucket_label === 'unreliable/unknown age');
+  check('Historical Imports land in the unreliable/unknown age bucket (fixture item 14), not a calendar bucket', !!unreliableBucket && unreliableBucket.open_item_count >= 1, unreliableBucket);
+
+  console.log('\n[v1.7 — open capital by Acquisition Value Band]');
+  const openBandRows: any[] = cl?.open_capital_by_acquisition_value_band ?? [];
+  check(
+    'open_capital_by_acquisition_value_band never includes a zero/unknown/negative band label',
+    openBandRows.every((r) => !['Zero assigned value', 'Unknown acquisition value', 'Negative (invalid)'].includes(r.acquisition_value_band_label)),
+    openBandRows,
+  );
+  const openBandCapitalSum = openBandRows.reduce((sum, r) => sum + Number(r.open_acquisition_capital ?? 0), 0);
+  check('open value-band capital reconciles to total open acquisition capital (positive-only, matches Query A denominator)', openBandCapitalSum === Number(clPop?.open_acquisition_capital ?? 0), { openBandCapitalSum, openAcquisitionCapital: clPop?.open_acquisition_capital });
+
+  console.log('\n[v1.7 — acquisition methods use only purchase/trade/unknown]');
+  const openByMethodRows: any[] = cl?.open_capital_by_acquisition_method ?? [];
+  const realizedByMethodRows: any[] = cl?.realized_capital_efficiency_by_acquisition_method ?? [];
+  check('open_capital_by_acquisition_method uses only purchase/trade/unknown', openByMethodRows.every((r) => ['purchase', 'trade', 'unknown'].includes(r.acquisition_method)), openByMethodRows.map((r) => r.acquisition_method));
+  check('realized_capital_efficiency_by_acquisition_method uses only purchase/trade/unknown', realizedByMethodRows.every((r) => ['purchase', 'trade', 'unknown'].includes(r.acquisition_method)), realizedByMethodRows.map((r) => r.acquisition_method));
+
+  console.log('\n[v1.7 — historical items contribute to value-based efficiency, excluded from holding/time]');
+  // Fixture item 9 is a Historical Import acquisition (deal_type =
+  // 'Historical Import'), which the view's own acquisition_method CASE
+  // maps to 'unknown' (only 'Historical Purchase' maps to 'purchase') —
+  // so the historical-exclusion signal shows up in the 'unknown' method
+  // row, not 'purchase'.
+  const unknownMethodEfficiencyRow = realizedByMethodRows.find((r) => r.acquisition_method === 'unknown');
+  check('unknown-method efficiency row: total_realized_net_profit is a number (historical items included)', typeof unknownMethodEfficiencyRow?.total_realized_net_profit === 'number', unknownMethodEfficiencyRow?.total_realized_net_profit);
+  check(
+    'unknown-method efficiency row: holding_sample_size < realized_item_count (fixture item 9, historical, excluded)',
+    !!unknownMethodEfficiencyRow && (unknownMethodEfficiencyRow.holding_sample_size ?? 0) < unknownMethodEfficiencyRow.realized_item_count,
+    unknownMethodEfficiencyRow,
+  );
+  check(
+    'unknown-method efficiency row: time_efficiency_sample_size <= holding_sample_size (time efficiency is at least as strict as holding eligibility)',
+    !!unknownMethodEfficiencyRow && (unknownMethodEfficiencyRow.time_efficiency_sample_size ?? 0) <= unknownMethodEfficiencyRow.holding_sample_size,
+    unknownMethodEfficiencyRow,
+  );
+
+  console.log('\n[v1.7 — profit per 30 holding days computed item-level-first, never a ratio of medians]');
+  const bandEfficiencyRows: any[] = cl?.realized_capital_efficiency_by_acquisition_value_band ?? [];
+  const band4to5kRow = bandEfficiencyRows.find((r) => r.acquisition_value_band_label === '$4,000-4,999');
+  check(
+    'isolated $4,000-4,999 band (fixture items 35, 36): realized_item_count = 2',
+    band4to5kRow?.realized_item_count === 2,
+    band4to5kRow,
+  );
+  check(
+    'median_net_profit_per_30_holding_days = 600 (item-level-first: median(300, 900)) — NOT 700 (the wrong ratio-of-medians result)',
+    Number(band4to5kRow?.median_net_profit_per_30_holding_days) === 600,
+    band4to5kRow?.median_net_profit_per_30_holding_days,
+  );
+  check('median_net_profit = 350 (median of item-level net_profit 100, 600)', Number(band4to5kRow?.median_net_profit) === 350, band4to5kRow?.median_net_profit);
+
+  console.log('\n[v1.7 — aggregate profit-to-capital is never substituted for median ROI]');
+  check(
+    'profit_to_acquisition_capital_percent (8.43, aggregate SUM ratio) differs from median_roi (8.36, median of per-item ratios) for the isolated band',
+    Number(band4to5kRow?.profit_to_acquisition_capital_percent) === 8.43 && Number(band4to5kRow?.median_roi) === 8.36,
+    { profitToCapital: band4to5kRow?.profit_to_acquisition_capital_percent, medianRoi: band4to5kRow?.median_roi },
+  );
+
+  console.log('\n[v1.7 — shared evidence has no user-level or item-level fields]');
+  check('no open_capital_age_buckets row exposes user_id or item_id', ageBuckets.every((r) => !('user_id' in r) && !('item_id' in r)), ageBuckets[0]);
+  check('no realized_capital_efficiency_by_acquisition_value_band row exposes user_id or item_id', bandEfficiencyRows.every((r) => !('user_id' in r) && !('item_id' in r)), bandEfficiencyRows[0]);
+
+  console.log('\n[v1.7 — privacy across both fixture users]');
+  const { data: v17SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userBId });
+  const candidatesA17 = v17SnapshotA?.recommendation_candidates?.open_business_items ?? [];
+  const candidatesB17 = v17SnapshotB?.recommendation_candidates?.open_business_items ?? [];
+  const idsA17 = new Set(candidatesA17.map((c: any) => c.item_id));
+  const idsB17 = new Set(candidatesB17.map((c: any) => c.item_id));
+  check("v1.7 user A's and user B's candidates don't overlap", Array.from(idsA17).every((id) => !idsB17.has(id)));
+
+  console.log('\n[v1.7 — permissions on new functions]');
+  const { error: clAuthedError } = await clientA.rpc('build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v1_7 directly', !!clAuthedError, clAuthedError);
+  const { error: clHelperAuthedError } = await clientA.rpc('_build_capital_liquidity_snapshot_v1');
+  check('authenticated client cannot call _build_capital_liquidity_snapshot_v1 directly', !!clHelperAuthedError, clHelperAuthedError);
+
+  console.log('\n[v1.7 — new runner call persists analytics_version 1.7]');
+  const v17Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new run analytics_version is 1.7', v17Run.analytics_version === '1.7', v17Run.analytics_version);
+  check('new run status is completed', v17Run.status === 'completed');
+  check('new run snapshot has 1.7 metadata', (v17Run.snapshot as any)?.snapshot_schema_version === '1.7');
+  check('new run snapshot includes capital_liquidity', !!(v17Run.snapshot as any)?.evidence_aggregates?.capital_liquidity);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

@@ -471,6 +471,15 @@ export default function AnalyticsPage() {
                     </p>
                   )}
                 </CollapsibleSection>
+                <CollapsibleSection title="Capital & Liquidity">
+                  {selectedSnapshot.evidence_aggregates.capital_liquidity ? (
+                    <JsonBlock value={selectedSnapshot.evidence_aggregates.capital_liquidity} />
+                  ) : (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      Not available in this run — Capital & Liquidity was added in Snapshot v1.7. Run analytics again to generate it.
+                    </p>
+                  )}
+                </CollapsibleSection>
                 <CollapsibleSection title="My Open Business Items">
                   <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
                 </CollapsibleSection>

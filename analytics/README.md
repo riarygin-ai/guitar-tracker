@@ -81,9 +81,22 @@ Reusable numbered analysis sequence, under `analytics/sql/`:
   See `analytics/SEMANTIC_CONTRACT.md` section 19 for the full definition,
   including why `confidence` here is tiered from the REALIZED sample
   (unlike the Channel Analytics modules, which tier from the whole group).
-  Capital & Liquidity, Open Inventory Decision Support, AI interpretation,
+  Capital & Liquidity (below) is the only other module in scope alongside
+  this file; Open Inventory Decision Support, AI interpretation,
   recommendations/rankings, and Business Coach are explicitly out of scope
   for this file.
+- `sql/09_capital_liquidity.sql` — how much acquisition capital is tied up
+  in open Business inventory, how much is listed vs. unlisted, how old the
+  open capital is, which Acquisition Value Bands/acquisition methods hold
+  the most open capital, and how efficiently realized inventory has turned
+  acquisition capital into profit. Reports CAPITAL (`acquisition_value`
+  assigned to inventory), never a user's `cash_flow` ledger/cash-balance.
+  See `analytics/SEMANTIC_CONTRACT.md` section 20 for the full definition,
+  including the mutually-exclusive open-capital age buckets and why
+  `profit_to_acquisition_capital_percent` is never interchangeable with
+  `median_roi`. Open Inventory Decision Support, item-level
+  recommendations, recent trends, AI recommendations, Business Coach, and
+  cash-balance analysis are explicitly out of scope for this file.
 
 One-off scripts (not part of the reusable numbered sequence), under
 `analytics/audits/`:
@@ -296,9 +309,9 @@ Current limitations (deliberate, for this step):
 consolidated into a single implementation, the same analytical definitions
 exist in two places that must be kept in sync by hand: the developer-readable
 manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...`, `04_...`,
-`05_...`, `06_...`, `07_...`, `08_...` — these reflect the CURRENT
-semantics, edited in place) and the versioned snapshot builder functions,
-one migration per version
+`05_...`, `06_...`, `07_...`, `08_...`, `09_...` — these reflect the
+CURRENT semantics, edited in place) and the versioned snapshot builder
+functions, one migration per version
 (`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql`
 for v1.0, `supabase/migrations/20260730000000_build_analytics_snapshot_v1_1.sql`
 for v1.1, `supabase/migrations/20260801000000_build_analytics_snapshot_v1_2.sql`
@@ -306,7 +319,8 @@ for v1.2, `supabase/migrations/20260803000000_build_analytics_snapshot_v1_3.sql`
 for v1.3, `supabase/migrations/20260804000000_build_analytics_snapshot_v1_4.sql`
 for v1.4, `supabase/migrations/20260805000000_build_analytics_snapshot_v1_5.sql`
 for v1.5, `supabase/migrations/20260806000000_build_analytics_snapshot_v1_6.sql`
-for v1.6). A change to an analytical definition (a band boundary, an
+for v1.6, `supabase/migrations/20260807000000_build_analytics_snapshot_v1_7.sql`
+for v1.7). A change to an analytical definition (a band boundary, an
 eligibility rule, a new metric) must be applied to both the manual files
 and the CURRENT builder version, or they will silently disagree. Already-
 shipped versioned builder migrations (like v1.0's) are never edited after
@@ -632,6 +646,50 @@ message when selecting an older run instead of assuming the field exists.
 Capital & Liquidity, Open Inventory Decision Support, AI interpretation,
 recommendations/rankings, and Business Coach are all explicitly out of
 scope for this step.
+
+## Analytics Snapshot v1.7 (Capital & Liquidity)
+
+`public.build_analytics_snapshot_v1_7(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260807000000_build_analytics_snapshot_v1_7.sql`) is
+a **lightweight, additive** version. `build_analytics_snapshot_v1` (v1.0)
+through `build_analytics_snapshot_v1_6` (v1.6) are unchanged and remain
+callable; no previously stored v1.0-v1.6 `analytics_runs.snapshot` row is
+altered. `src/lib/analytics/runAnalytics.ts` now calls v1.7 for new runs
+(`ANALYTICS_VERSION = '1.7'`); the Analytics page's new "Capital &
+Liquidity" collapsible section shows a plain "not available in this run"
+message when selecting an older run instead of assuming the field exists.
+
+**What's new:**
+
+- **No lifecycle view changes.** Every field used (`acquisition_value`,
+  `current_status`, `holding_days`, `estimated_sold_value`,
+  `is_historical_import`, `has_lifecycle_date_issue`) already existed on
+  `analytics_item_lifecycle` — no new migration was needed.
+- **`evidence_aggregates.capital_liquidity`** (new):
+  `capital_position_summary`, `open_capital_age_buckets`,
+  `open_capital_by_acquisition_value_band`,
+  `open_capital_by_acquisition_method`,
+  `realized_capital_efficiency_by_acquisition_value_band`,
+  `realized_capital_efficiency_by_acquisition_method` — see
+  `analytics/sql/09_capital_liquidity.sql` and
+  `analytics/SEMANTIC_CONTRACT.md` section 20 for the full field-by-field
+  contract. Reports acquisition CAPITAL, never a user's `cash_flow`
+  ledger/cash-balance.
+  Every open Business item lands in exactly one mutually-exclusive age
+  bucket (`0-29 days`/`30-59 days`/`60-119 days`/`120+ days`/
+  `unreliable/unknown age`) — historical imports always land in the
+  unreliable/unknown bucket, never a calendar one.
+- **Item-level-first time efficiency**: `median_net_profit_per_30_holding_
+  days` is computed per item (`net_profit / holding_days * 30`, never
+  dividing by zero, excluding historical imports) and THEN medianed —
+  never a group-level ratio of medians.
+- **Lightweight wrapper, one level up**: v1.7's top-level function calls
+  `build_analytics_snapshot_v1_6(int)` WHOLESALE and merges in one extra
+  `evidence_aggregates.capital_liquidity` key.
+
+Open Inventory Decision Support, item-level recommendations, recent
+trends, AI recommendations, Business Coach, and cash-balance analysis are
+all explicitly out of scope for this step.
 
 ## Conventions
 
