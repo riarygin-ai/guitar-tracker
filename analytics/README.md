@@ -40,17 +40,17 @@ Reusable numbered analysis sequence, under `analytics/sql/`:
   which contact-source channel (Marketplace/Kijiji/Reverb/Regular Buyer /
   Seller) a Business item entered inventory through, and how items sourced
   through each channel perform. See `analytics/SEMANTIC_CONTRACT.md`
-  section 15 for the full Deal In Channel definition. Listing Channel
-  Exposure and every other Channel Analytics module besides Deal Out
-  Channel and Channel Journey (below) are explicitly out of scope for this
-  file.
+  section 15 for the full Deal In Channel definition. Category/Type
+  Performance, Open Inventory Decision Support, and every Channel
+  Analytics module besides Deal Out Channel, Channel Journey, and Listing
+  Channel Exposure (below) are explicitly out of scope for this file.
 - `sql/05_deal_out_channel_performance.sql` — Channel Analytics module 2:
   which contact-source channel a Business item LEFT inventory through
   (cash sale or trade), and how cash-sale and trade exits perform per
   channel. See `analytics/SEMANTIC_CONTRACT.md` section 16 for the full
-  Deal Out Channel definition. Listing Channel Exposure and every other
-  Channel Analytics module besides Channel Journey (below) are explicitly
-  out of scope for this file.
+  Deal Out Channel definition. Every Channel Analytics module besides
+  Channel Journey and Listing Channel Exposure (below) is explicitly out of
+  scope for this file.
 - `sql/06_channel_journey.sql` — Channel Analytics module 3A: how Business
   items move from their Deal In contact-source channel to their Deal Out
   contact-source channel — the deal-in → deal-out matrix, same-channel vs.
@@ -58,9 +58,20 @@ Reusable numbered analysis sequence, under `analytics/sql/`:
   See `analytics/SEMANTIC_CONTRACT.md` section 17 for the full Channel
   Journey definition, including why same-channel-exit percentages are
   descriptive path evidence, never a conversion rate. Listing Channel
-  Exposure, listing conversion, current listing recommendations, and every
-  other Channel Analytics module are explicitly out of scope for this
-  file.
+  Exposure (below) is the only other Channel Analytics module in scope
+  alongside this file; every other module is explicitly out of scope.
+- `sql/07_listing_channel_exposure.sql` — Channel Analytics module 3B:
+  where Business items were ADVERTISED (read directly from
+  `item_listings`, never inferred from Deal In/Deal Out Channel), how
+  often items were cross-listed, which listing platforms were associated
+  with realized exits, and which open inventory remains listed,
+  cross-listed, or not listed. See `analytics/SEMANTIC_CONTRACT.md`
+  section 18 for the full Listing Channel Exposure definition, including
+  the `item_listings` active-state schema findings and the canonical
+  item/channel exposure dedup logic. Category/Type Performance, Open
+  Inventory Decision Support, listing conversion, current listing
+  recommendations, AI interpretation, and recommendations/rankings are
+  explicitly out of scope for this file.
 
 One-off scripts (not part of the reusable numbered sequence), under
 `analytics/audits/`:
@@ -273,14 +284,15 @@ Current limitations (deliberate, for this step):
 consolidated into a single implementation, the same analytical definitions
 exist in two places that must be kept in sync by hand: the developer-readable
 manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...`, `04_...`,
-`05_...`, `06_...` — these reflect the CURRENT semantics, edited in place)
-and the versioned snapshot builder functions, one migration per version
-(`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql` for
-v1.0, `supabase/migrations/20260730000000_build_analytics_snapshot_v1_1.sql`
+`05_...`, `06_...`, `07_...` — these reflect the CURRENT semantics, edited
+in place) and the versioned snapshot builder functions, one migration per
+version (`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql`
+for v1.0, `supabase/migrations/20260730000000_build_analytics_snapshot_v1_1.sql`
 for v1.1, `supabase/migrations/20260801000000_build_analytics_snapshot_v1_2.sql`
 for v1.2, `supabase/migrations/20260803000000_build_analytics_snapshot_v1_3.sql`
 for v1.3, `supabase/migrations/20260804000000_build_analytics_snapshot_v1_4.sql`
-for v1.4). A change to an analytical definition (a band boundary, an
+for v1.4, `supabase/migrations/20260805000000_build_analytics_snapshot_v1_5.sql`
+for v1.5). A change to an analytical definition (a band boundary, an
 eligibility rule, a new metric) must be applied to both the manual files
 and the CURRENT builder version, or they will silently disagree. Already-
 shipped versioned builder migrations (like v1.0's) are never edited after
@@ -518,6 +530,56 @@ message when selecting an older run instead of assuming the field exists.
 Listing Channel Exposure, listing conversion, current listing
 recommendations, AI interpretation, and recommendations/rankings are all
 explicitly out of scope for this step.
+
+## Analytics Snapshot v1.5 (Channel Analytics module 3B: Listing Channel Exposure)
+
+`public.build_analytics_snapshot_v1_5(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260805000000_build_analytics_snapshot_v1_5.sql`) is
+a **lightweight, additive** version. `build_analytics_snapshot_v1` (v1.0)
+through `build_analytics_snapshot_v1_4` (v1.4) are unchanged and remain
+callable; no previously stored v1.0-v1.4 `analytics_runs.snapshot` row is
+altered. `src/lib/analytics/runAnalytics.ts` now calls v1.5 for new runs
+(`ANALYTICS_VERSION = '1.5'`); the Analytics page's new "Listing Channel
+Exposure" collapsible section shows a plain "not available in this run"
+message when selecting an older run instead of assuming the field exists.
+
+**What's new:**
+
+- **No lifecycle view changes.** Listing Channel Exposure joins
+  `item_listings`/`deal_channels` directly to `analytics_item_lifecycle`
+  at query time — no new migration to `analytics_item_lifecycle` was
+  needed.
+- **`item_listings` active-state finding**: no active/current-state column
+  exists (`status` was dropped in
+  `20260721000000_migrate_date_listed_to_item_listings.sql`; publication is
+  determined solely by `listed_at IS NOT NULL`). CURRENT exposure is
+  therefore defined as an OPEN Business item with an eligible listing
+  record — a documented limitation, not an invented state.
+- **Canonical item/channel exposure**: multiple `item_listings` rows for
+  the same (item, channel) pair are collapsed into one exposure, preserving
+  `listing_record_count` (physical records) alongside `MIN`/`MAX(listed_at)`
+  — an item is never double-counted on the same channel.
+- **`evidence_aggregates.listing_channel_exposure`** (new):
+  `population_summary`, `listing_channel_performance`,
+  `cross_listing_summary` (an object: `buckets[]` plus
+  `single_listed_item_count`/`cross_listed_item_count`/
+  `cross_listed_item_percent`), `listing_to_deal_out_matrix`,
+  `open_inventory_by_listing_channel`, `open_unlisted_summary` — see
+  `analytics/sql/07_listing_channel_exposure.sql` and
+  `analytics/SEMANTIC_CONTRACT.md` section 18 for the full field-by-field
+  contract.
+- **Non-mutually-exclusive exposure counts**: `listing_channel_performance`,
+  `listing_to_deal_out_matrix`, and `open_inventory_by_listing_channel` are
+  exposure-level — a cross-listed item appears in multiple rows. Only
+  `population_summary` and `cross_listing_summary` report unique item
+  counts.
+- **Lightweight wrapper, one level up**: v1.5's top-level function calls
+  `build_analytics_snapshot_v1_4(int)` WHOLESALE and merges in one extra
+  `evidence_aggregates.listing_channel_exposure` key.
+
+Category/Type Performance, Open Inventory Decision Support, listing
+conversion, current listing recommendations, AI interpretation, and
+recommendations/rankings are all explicitly out of scope for this step.
 
 ## Conventions
 

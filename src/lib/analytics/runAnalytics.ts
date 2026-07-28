@@ -19,16 +19,17 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // updating both this file and the database migrations together — see the
 // "duplicated logic" note in analytics/README.md.
 //
-// v1.4: new runs call build_analytics_snapshot_v1_4 (Channel Analytics
-// module 3A — Channel Journey — see analytics/SEMANTIC_CONTRACT.md).
-// v1.0/v1.1/v1.2/v1.3's builder functions and every previously stored
-// v1.0/v1.1/v1.2/v1.3 analytics_runs.snapshot row are untouched and remain
-// readable — this is a forward version bump, not a rewrite of history.
-export const ANALYTICS_VERSION = '1.4';
+// v1.5: new runs call build_analytics_snapshot_v1_5 (Channel Analytics
+// module 3B — Listing Channel Exposure — see
+// analytics/SEMANTIC_CONTRACT.md). v1.0/v1.1/v1.2/v1.3/v1.4's builder
+// functions and every previously stored v1.0/v1.1/v1.2/v1.3/v1.4
+// analytics_runs.snapshot row are untouched and remain readable — this is
+// a forward version bump, not a rewrite of history.
+export const ANALYTICS_VERSION = '1.5';
 export const EVIDENCE_SCOPE = 'shared_business_population';
-const SNAPSHOT_SCHEMA_VERSION = '1.4';
-const ANALYTICS_DEFINITION_VERSION = '1.4';
-const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v1_4';
+const SNAPSHOT_SCHEMA_VERSION = '1.5';
+const ANALYTICS_DEFINITION_VERSION = '1.5';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v1_5';
 
 // ── Types ────────────────────────────────────────────────────────────────
 

@@ -67,7 +67,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_4
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_5
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -76,7 +76,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_4') {
+          if (name === 'build_analytics_snapshot_v1_5') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -96,7 +96,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_4') {
+          if (name === 'build_analytics_snapshot_v1_5') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -151,8 +151,8 @@ async function main() {
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '1.4',
-    analytics_definition_version: '1.4',
+    snapshot_schema_version: '1.5',
+    analytics_definition_version: '1.5',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     recommendation_target_user_id: userAId,
@@ -200,7 +200,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -709,12 +709,130 @@ async function main() {
   const { error: cjHelperAuthedError } = await clientA.rpc('_build_channel_journey_snapshot_v1');
   check('authenticated client cannot call _build_channel_journey_snapshot_v1 directly', !!cjHelperAuthedError, cjHelperAuthedError);
 
-  console.log('\n[v1.4 — new runner call persists analytics_version 1.4]');
-  const v14Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new run analytics_version is 1.4', v14Run.analytics_version === '1.4', v14Run.analytics_version);
-  check('new run status is completed', v14Run.status === 'completed');
-  check('new run snapshot has 1.4 metadata', (v14Run.snapshot as any)?.snapshot_schema_version === '1.4');
-  check('new run snapshot includes channel_journey', !!(v14Run.snapshot as any)?.evidence_aggregates?.channel_journey);
+  console.log('\n[v1.4 — builder still callable directly (unaffected by v1.5)]');
+  const { error: v14StillCallableError } = await serviceClient.rpc('build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_4 still callable by service_role', !v14StillCallableError, v14StillCallableError);
+
+  // ── Channel Analytics module 3B: Listing Channel Exposure (Snapshot v1.5) ──
+  console.log('\n[v1.5 — builder callable, top-level metadata]');
+  const { data: v15SnapshotA, error: v15ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_5 callable by service_role', !v15ErrorA, v15ErrorA);
+  check('v1.5 snapshot_schema_version is 1.5', v15SnapshotA?.snapshot_schema_version === '1.5', v15SnapshotA?.snapshot_schema_version);
+  check('v1.5 analytics_definition_version is 1.5', v15SnapshotA?.analytics_definition_version === '1.5', v15SnapshotA?.analytics_definition_version);
+  check('v1.5 recommendation_target_user_id === userAId', v15SnapshotA?.recommendation_target_user_id === userAId);
+  check('v1.5 still carries channel_journey (v1.4 reused wholesale)', Array.isArray(v15SnapshotA?.evidence_aggregates?.channel_journey?.population_summary));
+
+  console.log('\n[v1.5 — Listing Channel Exposure population_summary]');
+  const lce = v15SnapshotA?.evidence_aggregates?.listing_channel_exposure;
+  const lcePop = lce?.population_summary?.[0];
+  check(
+    'listing_channel_exposure section exists with all 6 subsections',
+    !!lce && Array.isArray(lce.population_summary) && Array.isArray(lce.listing_channel_performance)
+      && typeof lce.cross_listing_summary === 'object' && Array.isArray(lce.cross_listing_summary?.buckets)
+      && Array.isArray(lce.listing_to_deal_out_matrix) && Array.isArray(lce.open_inventory_by_listing_channel)
+      && Array.isArray(lce.open_unlisted_summary),
+    lce ? Object.keys(lce) : lce,
+  );
+
+  console.log('\n[v1.5 — coverage reconciliation]');
+  check(
+    'business_item_count = item_with_eligible_listing_count + item_without_eligible_listing_count',
+    lcePop?.business_item_count === (lcePop?.item_with_eligible_listing_count ?? 0) + (lcePop?.item_without_eligible_listing_count ?? 0),
+    lcePop,
+  );
+  check(
+    'realized_business_item_count reconciles separately',
+    lcePop?.realized_business_item_count === (lcePop?.realized_item_with_eligible_listing_count ?? 0) + (lcePop?.realized_item_without_eligible_listing_count ?? 0),
+    lcePop,
+  );
+  check(
+    'open_business_item_count reconciles separately',
+    lcePop?.open_business_item_count === (lcePop?.open_item_with_eligible_listing_count ?? 0) + (lcePop?.open_item_without_eligible_listing_count ?? 0),
+    lcePop,
+  );
+
+  console.log('\n[v1.5 — one item_listing creates one exposure; duplicates collapse]');
+  check('eligible_listing_exposure_count >= 1 (at least one real item/channel exposure)', (lcePop?.eligible_listing_exposure_count ?? 0) >= 1, lcePop?.eligible_listing_exposure_count);
+  check(
+    'eligible_listing_record_count > eligible_listing_exposure_count (fixture item 25: 2 Marketplace records collapse to 1 exposure)',
+    (lcePop?.eligible_listing_record_count ?? 0) > (lcePop?.eligible_listing_exposure_count ?? 0),
+    lcePop,
+  );
+
+  console.log('\n[v1.5 — missing/ignored records remain visible in coverage]');
+  check('ignored_non_listing_channel_record_count >= 1 (fixture item 26, Regular Buyer/Seller)', (lcePop?.ignored_non_listing_channel_record_count ?? 0) >= 1, lcePop?.ignored_non_listing_channel_record_count);
+  check('missing_listing_channel_record_count >= 1 (fixture item 27, draft with no listed_at)', (lcePop?.missing_listing_channel_record_count ?? 0) >= 1, lcePop?.missing_listing_channel_record_count);
+
+  console.log('\n[v1.5 — non-listing channels excluded from listing_channel_performance]');
+  const channelPerfRows: any[] = lce?.listing_channel_performance ?? [];
+  check('listing_channel_performance has at least one row', channelPerfRows.length > 0);
+  check('no listing_channel_performance row is Regular Buyer / Seller (requires_listing = false)', channelPerfRows.every((r) => r.listing_channel_name !== 'Regular Buyer / Seller'), channelPerfRows.map((r) => r.listing_channel_name));
+
+  console.log('\n[v1.5 — cross-listed item appears once per channel, once per bucket]');
+  const distinctChannelsInPerf = new Set(channelPerfRows.map((r) => r.listing_channel_name));
+  check('cross-listed item 25 (Marketplace + Kijiji) shows up as exposure on both channels', distinctChannelsInPerf.has('Marketplace') && distinctChannelsInPerf.has('Kijiji'), Array.from(distinctChannelsInPerf));
+  const buckets: any[] = lce?.cross_listing_summary?.buckets ?? [];
+  const bucketItemSum = buckets.reduce((sum, b) => sum + (b.business_item_count ?? 0), 0);
+  check('cross_listing_summary buckets reconcile to business_item_count (each item counted exactly once)', bucketItemSum === lcePop?.business_item_count, { bucketItemSum, businessItemCount: lcePop?.business_item_count });
+  const twoChannelBucket = buckets.find((b) => b.listing_channel_count_bucket === '2 channels');
+  check('the "2 channels" bucket includes fixture item 25 (business_item_count >= 1)', !!twoChannelBucket && twoChannelBucket.business_item_count >= 1, twoChannelBucket);
+  check('cross_listed_item_count is a number and cross_listed_item_percent is a number', typeof lce?.cross_listing_summary?.cross_listed_item_count === 'number' && typeof lce?.cross_listing_summary?.cross_listed_item_percent === 'number');
+
+  console.log('\n[v1.5 — realized sale/trade counts use lifecycle exit methods]');
+  const marketplacePerfRow = channelPerfRows.find((r) => r.listing_channel_name === 'Marketplace');
+  check('Marketplace channel performance row has sale_exit_item_count >= 1 (fixture items 1, 25, ...)', !!marketplacePerfRow && marketplacePerfRow.sale_exit_item_count >= 1, marketplacePerfRow);
+
+  console.log('\n[v1.5 — Listing -> Deal Out: one item can appear in multiple exposure rows]');
+  const matrixLceRows: any[] = lce?.listing_to_deal_out_matrix ?? [];
+  check('listing_to_deal_out_matrix has at least one row', matrixLceRows.length > 0);
+  const marketplaceToMarketplace = matrixLceRows.find((r) => r.listing_channel_name === 'Marketplace' && r.deal_out_channel_name === 'Marketplace');
+  const kijijiToMarketplace = matrixLceRows.find((r) => r.listing_channel_name === 'Kijiji' && r.deal_out_channel_name === 'Marketplace');
+  check('fixture item 25 produces a Marketplace -> Marketplace row (same-channel)', !!marketplaceToMarketplace && marketplaceToMarketplace.exposed_realized_item_count >= 1, marketplaceToMarketplace);
+  check('fixture item 25 also produces a Kijiji -> Marketplace row (different-channel, same item)', !!kijijiToMarketplace && kijijiToMarketplace.exposed_realized_item_count >= 1, kijijiToMarketplace);
+  check('same-channel row has same_channel_flag === true', marketplaceToMarketplace?.same_channel_flag === true, marketplaceToMarketplace?.same_channel_flag);
+  check('different-channel row has same_channel_flag === false', kijijiToMarketplace?.same_channel_flag === false, kijijiToMarketplace?.same_channel_flag);
+
+  console.log('\n[v1.5 — same-channel percentage is descriptive, never labelled conversion]');
+  check('listing_channel_performance rows use same_channel_exit_percent, never a "conversion" key', !!marketplacePerfRow && 'same_channel_exit_percent' in marketplacePerfRow && !Object.keys(marketplacePerfRow).some((k) => k.toLowerCase().includes('conversion')), marketplacePerfRow ? Object.keys(marketplacePerfRow) : marketplacePerfRow);
+
+  console.log('\n[v1.5 — channel-specific listing age uses item_listings.listed_at]');
+  const openByChannelRows: any[] = lce?.open_inventory_by_listing_channel ?? [];
+  const reverbOpenRow = openByChannelRows.find((r) => r.listing_channel_name === 'Reverb');
+  check(
+    'Reverb open-inventory row reflects fixture item 28 alone: sample_size = 1, median age = 45 days',
+    !!reverbOpenRow && reverbOpenRow.current_listing_age_sample_size === 1 && Number(reverbOpenRow.median_current_listing_age_days) === 45,
+    reverbOpenRow,
+  );
+
+  console.log('\n[v1.5 — historical items excluded from ownership age]');
+  const openUnlisted = lce?.open_unlisted_summary?.[0];
+  check('open_unlisted_summary.historical_excluded_from_age_count >= 1 (fixture item 14)', (openUnlisted?.historical_excluded_from_age_count ?? 0) >= 1, openUnlisted?.historical_excluded_from_age_count);
+
+  console.log('\n[v1.5 — shared evidence has no user-level or item-level fields]');
+  check('no listing_channel_performance row exposes user_id or item_id', channelPerfRows.every((r) => !('user_id' in r) && !('item_id' in r)), channelPerfRows[0]);
+  check('no listing_to_deal_out_matrix row exposes user_id or item_id', matrixLceRows.every((r) => !('user_id' in r) && !('item_id' in r)), matrixLceRows[0]);
+  check('no open_inventory_by_listing_channel row exposes user_id or item_id', openByChannelRows.every((r) => !('user_id' in r) && !('item_id' in r)), openByChannelRows[0]);
+
+  console.log('\n[v1.5 — privacy across both fixture users]');
+  const { data: v15SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userBId });
+  const candidatesA15 = v15SnapshotA?.recommendation_candidates?.open_business_items ?? [];
+  const candidatesB15 = v15SnapshotB?.recommendation_candidates?.open_business_items ?? [];
+  const idsA15 = new Set(candidatesA15.map((c: any) => c.item_id));
+  const idsB15 = new Set(candidatesB15.map((c: any) => c.item_id));
+  check("v1.5 user A's and user B's candidates don't overlap", Array.from(idsA15).every((id) => !idsB15.has(id)));
+
+  console.log('\n[v1.5 — permissions on new functions]');
+  const { error: lceAuthedError } = await clientA.rpc('build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v1_5 directly', !!lceAuthedError, lceAuthedError);
+  const { error: lceHelperAuthedError } = await clientA.rpc('_build_listing_channel_exposure_snapshot_v1');
+  check('authenticated client cannot call _build_listing_channel_exposure_snapshot_v1 directly', !!lceHelperAuthedError, lceHelperAuthedError);
+
+  console.log('\n[v1.5 — new runner call persists analytics_version 1.5]');
+  const v15Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new run analytics_version is 1.5', v15Run.analytics_version === '1.5', v15Run.analytics_version);
+  check('new run status is completed', v15Run.status === 'completed');
+  check('new run snapshot has 1.5 metadata', (v15Run.snapshot as any)?.snapshot_schema_version === '1.5');
+  check('new run snapshot includes listing_channel_exposure', !!(v15Run.snapshot as any)?.evidence_aggregates?.listing_channel_exposure);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

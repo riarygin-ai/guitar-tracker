@@ -398,6 +398,9 @@ export interface AnalyticsSnapshot {
     // Added in Snapshot v1.4 (Channel Analytics module 3A) — absent on
     // older v1.0/v1.1/v1.2/v1.3 stored snapshots, so optional here.
     channel_journey?:        Record<string, unknown>;
+    // Added in Snapshot v1.5 (Channel Analytics module 3B) — absent on
+    // older v1.0/v1.1/v1.2/v1.3/v1.4 stored snapshots, so optional here.
+    listing_channel_exposure?: Record<string, unknown>;
   };
   recommendation_candidates: {
     open_business_items: Record<string, unknown>[];

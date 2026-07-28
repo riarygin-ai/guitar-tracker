@@ -453,6 +453,15 @@ export default function AnalyticsPage() {
                     </p>
                   )}
                 </CollapsibleSection>
+                <CollapsibleSection title="Listing Channel Exposure">
+                  {selectedSnapshot.evidence_aggregates.listing_channel_exposure ? (
+                    <JsonBlock value={selectedSnapshot.evidence_aggregates.listing_channel_exposure} />
+                  ) : (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      Not available in this run — Listing Channel Exposure was added in Snapshot v1.5. Run analytics again to generate it.
+                    </p>
+                  )}
+                </CollapsibleSection>
                 <CollapsibleSection title="My Open Business Items">
                   <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
                 </CollapsibleSection>

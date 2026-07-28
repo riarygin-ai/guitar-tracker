@@ -824,20 +824,23 @@ This contract governs semantics only. It does not:
   (Acquisition Value Band, Acquisition-to-Exit, Brand) — it does not add a
   fourth module. `build_analytics_snapshot_v1` (v1.0) remains unchanged and
   callable; v1.1 is additive, not a replacement.
-- Add Listing Channel Exposure, listing conversion, current listing
-  recommendations, channel x brand, channel x category/type, or monthly
-  channel trends. Analytics Snapshot v1.2
+- Add Category/Type Performance, Open Inventory Decision Support, listing
+  conversion, current listing recommendations, channel x brand, channel x
+  category/type, or monthly channel trends. Analytics Snapshot v1.2
   (`20260801000000_build_analytics_snapshot_v1_2.sql`, section 15) adds
   EXACTLY ONE Channel Analytics module — Deal In Channel Performance;
   Snapshot v1.3 (`20260803000000_build_analytics_snapshot_v1_3.sql`,
   section 16) adds EXACTLY ONE further module — Deal Out Channel
   Performance; Snapshot v1.4
   (`20260804000000_build_analytics_snapshot_v1_4.sql`, section 17) adds
-  EXACTLY ONE further module — Channel Journey — and nothing else.
-  `build_analytics_snapshot_v1` (v1.0), `build_analytics_snapshot_v1_1`
-  (v1.1), `build_analytics_snapshot_v1_2` (v1.2), and
-  `build_analytics_snapshot_v1_3` (v1.3) remain unchanged and callable;
-  v1.4 is additive, not a replacement.
+  EXACTLY ONE further module — Channel Journey; Snapshot v1.5
+  (`20260805000000_build_analytics_snapshot_v1_5.sql`, section 18) adds
+  EXACTLY ONE further module — Listing Channel Exposure — and nothing
+  else. `build_analytics_snapshot_v1` (v1.0), `build_analytics_snapshot_v1_1`
+  (v1.1), `build_analytics_snapshot_v1_2` (v1.2),
+  `build_analytics_snapshot_v1_3` (v1.3), and `build_analytics_snapshot_v1_4`
+  (v1.4) remain unchanged and callable; v1.5 is additive, not a
+  replacement.
 
 ## 15. Deal In Channel (Channel Analytics module 1)
 
@@ -1032,3 +1035,85 @@ counts are always present and never conflated into one. Historical items
 may contribute to the matrix when both channels are known, but remain
 excluded from `holding_sample_size`/`median_holding_days`, same as every
 other module.
+
+## 18. Listing Channel Exposure (Channel Analytics module 3B)
+
+Governs `analytics/sql/07_listing_channel_exposure.sql` and
+`public._build_listing_channel_exposure_snapshot_v1()`
+(`supabase/migrations/20260805000000_build_analytics_snapshot_v1_5.sql`).
+This is "module 3B" because it is a sibling of Channel Journey (module 3A,
+section 17) rather than a strict sequel — both build on Deal In/Deal Out
+Channel (modules 1-2) but Listing Channel Exposure introduces an
+independent third fact source, `item_listings`, not derived from either.
+
+**Definition.** Listing Channel is where an item was ADVERTISED, read
+directly from `item_listings`. It is explicitly NOT Deal In Channel
+(section 15 — where seller/trade-partner contact originated for the
+acquisition) and NOT Deal Out Channel (section 16 — where buyer/
+trade-partner contact originated for the exit). This module never infers
+listing exposure from either of those — every exposure fact comes straight
+from `item_listings` joined to `deal_channels`.
+
+**`item_listings` schema findings** (established while building this
+module, not assumed): there is NO active/current-state column.
+`status` (draft/published/archived) existed briefly but was DROPPED in
+`20260721000000_migrate_date_listed_to_item_listings.sql`, whose header
+states the replacement rule verbatim: "Publication is determined solely by
+`listed_at IS NOT NULL`." No `unlisted_at`/`delisted_at`/`is_active` column
+exists. Per this module's own design decision (documented, not invented
+silently): CURRENT/ACTIVE exposure means an OPEN (`NOT is_realized`)
+Business item with an eligible listing record — there is no way, with
+today's schema, to distinguish "still actively listed" from "listed once,
+never explicitly delisted." `item_listings.deal_channel_id` is `NOT NULL`
+(enforced since `20260713000001_listing_platform_channels.sql`), so
+`missing_listing_channel_record_count` (population_summary) means records
+missing a usable `listed_at`, never a missing channel.
+
+**Eligible listing record**: an `item_listings` row where its
+`deal_channels.is_listing_platform = true` (Marketplace/Kijiji/Reverb
+today — "Regular Buyer / Seller" is a relationship/non-listing channel,
+always excluded) AND `listed_at IS NOT NULL`.
+
+**Canonical exposure — one row per (item, listing channel).** Multiple
+`item_listings` rows can exist for the same (`inventory_item_id`,
+`deal_channel_id`) pair (the unique constraint added in
+`20260721000000_migrate_date_listed_to_item_listings.sql` was only applied
+if zero duplicates existed at that migration's run time — not a permanent
+schema guarantee). Eligible records are grouped by
+(`inventory_item_id`, `deal_channel_id`) into one canonical exposure,
+preserving `listing_record_count` (physical record count) alongside
+`MIN(listed_at)` (first_listed_at) and `MAX(listed_at)` (latest_listed_at).
+An item is never double-counted on the same channel.
+
+**Cross-listing is non-mutually-exclusive.** An item may have canonical
+exposure on more than one Listing Channel. `listing_channel_performance`,
+`listing_to_deal_out_matrix`, and `open_inventory_by_listing_channel` are
+ALL exposure-level — a cross-listed item appears in MULTIPLE rows across
+those sections, and their item counts must NEVER be summed across channels
+and compared to a unique Business item total. Only `population_summary`
+and `cross_listing_summary` report unique item counts, each item counted
+exactly once.
+
+**Same channel — descriptive, not causal** (same rule as section 17's
+Channel Journey): "same channel" means
+`listing_channel_id = deal_out_channel_id`. `same_channel_exit_percent` is
+NEVER a "conversion rate" and never implies the listing caused the exit.
+`listing_to_deal_out_matrix` is explicitly NOT a mutually exclusive journey
+matrix and NOT a conversion funnel — because one item can have multiple
+Listing Channel exposures, the SAME realized item may appear in MULTIPLE
+matrix rows (one per channel it was exposed on). Rows represent EXPOSURE
+ASSOCIATIONS, never a single deterministic path.
+
+**Channel-specific listing age.** `open_inventory_by_listing_channel` uses
+`CURRENT_DATE - <that channel's own canonical first_listed_at>` for
+listing age — never the item's overall (any-channel) `first_listed_at` —
+so a cross-listed item's staggered per-channel listing dates are never
+misattributed to the wrong channel.
+
+**Scope.** Listing Channel evidence uses the shared eligible Business
+population, same evidence/recommendation boundary as every other module
+(section 9-11) — no `user_id`, `item_id`, item name, or model appears
+anywhere in this module's output, and no per-user listing breakdown
+exists. `recommendation_candidates` are unchanged and remain restricted to
+`recommendation_target_user_id`; this module adds no target-user listing
+recommendations.
