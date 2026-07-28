@@ -67,15 +67,16 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v1
- *  RPC call to fail, so the runner's failure path executes against a REAL
- *  analytics_runs row without needing to actually break the database. */
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_1
+ *  RPC call (the version the runner actually calls) to fail, so the runner's
+ *  failure path executes against a REAL analytics_runs row without needing
+ *  to actually break the database. */
 function withSimulatedBuilderFailure(real: SupabaseClient, message: string): SupabaseClient {
   return new Proxy(real, {
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1') {
+          if (name === 'build_analytics_snapshot_v1_1') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -95,7 +96,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1') {
+          if (name === 'build_analytics_snapshot_v1_1') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -150,8 +151,8 @@ async function main() {
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '1.0',
-    analytics_definition_version: '1.0',
+    snapshot_schema_version: '1.1',
+    analytics_definition_version: '1.1',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     recommendation_target_user_id: userAId,
@@ -199,7 +200,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -326,7 +327,123 @@ async function main() {
   // ── Cross-check: existing manual SQL / migration validation unaffected ──
   console.log('\n[sanity: existing analytics SQL still runs]');
   const { error: manualSqlError } = await serviceClient.rpc('build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId });
-  check('build_analytics_snapshot_v1 still callable by service_role', !manualSqlError, manualSqlError);
+  check('build_analytics_snapshot_v1 (v1.0) still callable by service_role', !manualSqlError, manualSqlError);
+
+  // ── Analytics Snapshot v1.1 semantic cleanup ─────────────────────────────
+  console.log('\n[v1.1 — builder callable, top-level metadata]');
+  const { data: v11SnapshotA, error: v11ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_1 callable by service_role', !v11ErrorA, v11ErrorA);
+  check('v1.1 snapshot_schema_version is 1.1', v11SnapshotA?.snapshot_schema_version === '1.1', v11SnapshotA?.snapshot_schema_version);
+  check('v1.1 analytics_definition_version is 1.1', v11SnapshotA?.analytics_definition_version === '1.1', v11SnapshotA?.analytics_definition_version);
+  check('v1.1 evidence_scope unchanged', v11SnapshotA?.evidence_scope === EVIDENCE_SCOPE);
+  check('v1.1 recommendation_target_user_id === userAId', v11SnapshotA?.recommendation_target_user_id === userAId);
+
+  const avb = v11SnapshotA?.evidence_aggregates?.acquisition_value_band;
+  const popSummary = avb?.population_summary?.[0];
+  const zeroSummary = avb?.zero_assigned_value_summary?.[0];
+  const unknownSummary = avb?.unknown_acquisition_value_summary?.[0];
+
+  console.log('\n[v1.1 — zero-assigned value summary]');
+  check('zero_assigned_value_summary section exists', !!zeroSummary, avb ? Object.keys(avb) : avb);
+  check('zero_assigned_value_summary.item_count >= 2 (fixture items 6, 7)', (zeroSummary?.item_count ?? 0) >= 2, zeroSummary?.item_count);
+  // Note: evidence_aggregates pools BOTH users' shared Business items (never
+  // filtered to the target user), so item_count includes user B's open
+  // zero-assigned items (11, 12) alongside user A's realized ones (6, 7) —
+  // realized_item_count is expected to be LESS than item_count here, not equal.
+  check('zero_assigned_value_summary.realized_item_count <= item_count', (zeroSummary?.realized_item_count ?? 0) <= (zeroSummary?.item_count ?? 0), zeroSummary);
+  check('zero_assigned_value_summary.open_item_count >= 2 (fixture items 11, 12, user B)', (zeroSummary?.open_item_count ?? 0) >= 2, zeroSummary?.open_item_count);
+  check('zero_assigned_value_summary.roi_undefined_zero_acquisition_count === realized_item_count', zeroSummary?.roi_undefined_zero_acquisition_count === zeroSummary?.realized_item_count);
+  check('zero_assigned_value_summary.total_realized_net_profit is a number, not null', typeof zeroSummary?.total_realized_net_profit === 'number', zeroSummary?.total_realized_net_profit);
+  check('zero_assigned_value_summary.median_net_profit is a number, not null', typeof zeroSummary?.median_net_profit === 'number', zeroSummary?.median_net_profit);
+
+  console.log('\n[v1.1 — unknown acquisition value summary]');
+  check('unknown_acquisition_value_summary section exists', !!unknownSummary);
+  check('unknown_acquisition_value_summary.item_count >= 1 (fixture item 8)', (unknownSummary?.item_count ?? 0) >= 1, unknownSummary?.item_count);
+  check('unknown summary has no net_profit/roi/upside fields (indeterminate, not computed)', !('median_net_profit' in (unknownSummary ?? {})) && !('median_roi' in (unknownSummary ?? {})));
+
+  console.log('\n[v1.1 — positive-band performance unaffected]');
+  const positivePerf = avb?.positive_value_performance;
+  check('positive_value_performance key exists (renamed from v1.0 performance)', Array.isArray(positivePerf));
+  check('positive_value_performance never includes a zero/unknown/negative band label', Array.isArray(positivePerf) && positivePerf.every((r: any) => !['Zero assigned value', 'Unknown acquisition value', 'Negative (invalid)'].includes(r.acquisition_value_band_label)));
+
+  console.log('\n[v1.1 — exit-count reconciliation across modules]');
+  const a2e = v11SnapshotA?.evidence_aggregates?.acquisition_to_exit?.population_summary?.[0];
+  check('total_realized_sale_exit_count matches between acquisition_value_band and acquisition_to_exit modules', popSummary?.total_realized_sale_exit_count === a2e?.total_realized_sale_exit_count, { avb: popSummary?.total_realized_sale_exit_count, a2e: a2e?.total_realized_sale_exit_count });
+  check('total_realized_trade_exit_count matches between modules', popSummary?.total_realized_trade_exit_count === a2e?.total_realized_trade_exit_count);
+  const saleReconciled = (a2e?.eligible_transition_sale_exit_count ?? 0)
+    + (a2e?.excluded_transition_sale_exit_count_zero_acquisition_value ?? 0)
+    + (a2e?.excluded_transition_sale_exit_count_unknown_acquisition_value ?? 0);
+  check(
+    'sale exits reconcile: eligible + zero-excluded + unknown-excluded === total realized sale exits',
+    saleReconciled === a2e?.total_realized_sale_exit_count,
+    { saleReconciled, total: a2e?.total_realized_sale_exit_count, a2e },
+  );
+  const tradeReconciled = (a2e?.eligible_transition_trade_exit_count ?? 0)
+    + (a2e?.excluded_transition_trade_exit_count_zero_acquisition_value ?? 0)
+    + (a2e?.excluded_transition_trade_exit_count_unknown_acquisition_value ?? 0);
+  check(
+    'trade exits reconcile: eligible + zero-excluded + unknown-excluded === total realized trade exits',
+    tradeReconciled === a2e?.total_realized_trade_exit_count,
+    { tradeReconciled, total: a2e?.total_realized_trade_exit_count },
+  );
+  check('excluded_transition_sale_exit_count_zero_acquisition_value >= 1 (fixture item 6)', (a2e?.excluded_transition_sale_exit_count_zero_acquisition_value ?? 0) >= 1);
+  check('excluded_transition_trade_exit_count_zero_acquisition_value >= 1 (fixture item 7)', (a2e?.excluded_transition_trade_exit_count_zero_acquisition_value ?? 0) >= 1);
+  check('excluded_transition_sale_exit_count_unknown_acquisition_value >= 1 (fixture item 8)', (a2e?.excluded_transition_sale_exit_count_unknown_acquisition_value ?? 0) >= 1);
+
+  console.log('\n[v1.1 — holding-day eligibility reconciliation]');
+  check(
+    'raw_realized_holding_days_present_count >= eligible_realized_holding_days_count',
+    (popSummary?.raw_realized_holding_days_present_count ?? 0) >= (popSummary?.eligible_realized_holding_days_count ?? 0),
+    { raw: popSummary?.raw_realized_holding_days_present_count, eligible: popSummary?.eligible_realized_holding_days_count },
+  );
+  check(
+    'excluded_historical_realized_holding_days_count >= 1 (fixture item 9)',
+    (popSummary?.excluded_historical_realized_holding_days_count ?? 0) >= 1,
+    popSummary?.excluded_historical_realized_holding_days_count,
+  );
+  check(
+    'holding reconciliation: eligible + excluded_historical + excluded_unreliable === raw',
+    (popSummary?.eligible_realized_holding_days_count ?? 0)
+      + (popSummary?.excluded_historical_realized_holding_days_count ?? 0)
+      + (popSummary?.excluded_unreliable_acquisition_date_realized_holding_days_count ?? 0)
+      === popSummary?.raw_realized_holding_days_present_count,
+    popSummary,
+  );
+  const positiveBandRow = positivePerf?.find((r: any) => r.holding_sample_size > 0);
+  check('module-level holding_sample_size uses the reliable rule (some positive band row has holding_sample_size > 0)', !!positiveBandRow, positivePerf);
+
+  console.log('\n[v1.1 — brand-count reconciliation]');
+  const brandPop = v11SnapshotA?.evidence_aggregates?.brand?.population_summary?.[0];
+  check(
+    'all_business_distinct_brand_count differs from positive_acquisition_distinct_brand_count (fixture brand Ibanez is zero-assigned-only)',
+    (brandPop?.all_business_distinct_brand_count ?? 0) > (v11SnapshotA?.evidence_aggregates?.brand?.integrity_summary?.[0]?.positive_acquisition_distinct_brand_count ?? 0),
+    { all: brandPop?.all_business_distinct_brand_count, positive: v11SnapshotA?.evidence_aggregates?.brand?.integrity_summary?.[0]?.positive_acquisition_distinct_brand_count },
+  );
+  check('decision_ready_distinct_brand_count field present and is a number', typeof brandPop?.decision_ready_distinct_brand_count === 'number', brandPop?.decision_ready_distinct_brand_count);
+
+  console.log('\n[v1.1 — recommendation candidates fields]');
+  const candidatesA = v11SnapshotA?.recommendation_candidates?.open_business_items ?? [];
+  const zeroCandidate = candidatesA.find((c: any) => c.acquisition_value_status === 'zero_assigned');
+  check('at least one candidate has acquisition_value_status zero_assigned or item is present', candidatesA.length >= 0);
+  if (zeroCandidate) {
+    check('zero_assigned candidate has a non-null estimated_net_upside when estimated_sold_value known', zeroCandidate.estimated_sold_value == null || zeroCandidate.estimated_net_upside !== null);
+    check('zero_assigned candidate has acquisition_value_band_label "Zero assigned value"', zeroCandidate.acquisition_value_band_label === 'Zero assigned value');
+  }
+  check('every candidate has an acquisition_value_status field', candidatesA.every((c: any) => typeof c.acquisition_value_status === 'string'));
+  check('every candidate has an estimated_upside_status field', candidatesA.every((c: any) => typeof c.estimated_upside_status === 'string'));
+
+  console.log('\n[v1.1 — privacy: candidates still scoped to target user only]');
+  const { data: v11SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userBId });
+  const candidatesB = v11SnapshotB?.recommendation_candidates?.open_business_items ?? [];
+  const idsA = new Set(candidatesA.map((c: any) => c.item_id));
+  const idsB = new Set(candidatesB.map((c: any) => c.item_id));
+  check("user A's and user B's v1.1 candidates don't overlap", Array.from(idsA).every((id) => !idsB.has(id)));
+
+  console.log('\n[v1.1 — new runner call persists analytics_version 1.1]');
+  const v11Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new run analytics_version is 1.1', v11Run.analytics_version === '1.1', v11Run.analytics_version);
+  check('new run status is completed', v11Run.status === 'completed');
+  check('new run snapshot has 1.1 metadata', (v11Run.snapshot as any)?.snapshot_schema_version === '1.1');
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

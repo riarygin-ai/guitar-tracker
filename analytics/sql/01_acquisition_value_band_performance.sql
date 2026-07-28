@@ -150,8 +150,20 @@
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -160,7 +172,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -179,19 +193,43 @@ SELECT
   (SELECT COUNT(*) FROM acquisition_value_band WHERE purpose_name IS DISTINCT FROM 'Business')             AS non_business_items,
   (SELECT COUNT(*) FROM business WHERE is_realized)                                            AS realized_business_items,
   (SELECT COUNT(*) FROM business WHERE NOT is_realized)                                        AS open_business_items,
-  (SELECT COUNT(*) FROM business WHERE exit_type = 'sale')                                      AS sale_exits,
-  (SELECT COUNT(*) FROM business WHERE exit_type = 'trade')                                     AS trade_exits,
+  -- v1.1: "total realized" exit counts — every realized exit of this type,
+  -- regardless of acquisition-value eligibility. Do NOT confuse with
+  -- 02_acquisition_to_exit_analysis.sql's eligible_transition_*_exit_count,
+  -- which additionally requires a positive acquisition value AND a positive
+  -- exit value. See analytics/SEMANTIC_CONTRACT.md section 7.1.
+  (SELECT COUNT(*) FROM business WHERE exit_type = 'sale')                                      AS total_realized_sale_exit_count,
+  (SELECT COUNT(*) FROM business WHERE exit_type = 'trade')                                     AS total_realized_trade_exit_count,
   (SELECT COUNT(*) FROM business WHERE is_historical_import)                                    AS historical_import_business_items,
   (SELECT COUNT(*) FROM business WHERE NOT is_historical_import)                                AS non_historical_import_business_items,
-  (SELECT COUNT(*) FROM business WHERE acquisition_value > 0)                                   AS acquisition_value_positive,
-  (SELECT COUNT(*) FROM business WHERE acquisition_value = 0)                                   AS acquisition_value_zero,
-  (SELECT COUNT(*) FROM business WHERE acquisition_value < 0)                                   AS acquisition_value_negative,
-  (SELECT COUNT(*) FROM business WHERE acquisition_value IS NULL)                                AS acquisition_value_null,
+  (SELECT COUNT(*) FROM business WHERE acquisition_value_status = 'positive')                   AS acquisition_value_positive,
+  (SELECT COUNT(*) FROM business WHERE acquisition_value_status = 'zero_assigned')               AS acquisition_value_zero,
+  (SELECT COUNT(*) FROM business WHERE acquisition_value_status = 'negative_invalid')            AS acquisition_value_negative,
+  (SELECT COUNT(*) FROM business WHERE acquisition_value_status = 'unknown')                     AS acquisition_value_null,
   (SELECT COUNT(*) FROM business WHERE has_lifecycle_date_issue)                                 AS rows_with_lifecycle_date_issues,
 
   -- Timing coverage — holding-time and DOM are tracked SEPARATELY, and
   -- realized/open are never mixed. See TIMING SEMANTICS above.
-  (SELECT COUNT(*) FROM business WHERE is_realized AND holding_days IS NOT NULL)                 AS realized_holding_days_usable_count,
+  --
+  -- v1.1: raw presence vs. analytical eligibility are DIFFERENT claims.
+  -- raw_realized_holding_days_present_count says holding_days is technically
+  -- non-null (includes historical-import rows, whose acquisition_date is
+  -- approximate). eligible_realized_holding_days_count is the population
+  -- every holding_sample_size in this file actually uses: realized,
+  -- non-historical, holding_days non-null, AND no lifecycle date issue. The
+  -- two exclusion counts below always sum to the raw-minus-eligible gap.
+  (SELECT COUNT(*) FROM business WHERE is_realized AND holding_days IS NOT NULL)                 AS raw_realized_holding_days_present_count,
+  (SELECT COUNT(*) FROM business
+     WHERE is_realized AND holding_days IS NOT NULL
+       AND NOT is_historical_import AND NOT has_lifecycle_date_issue)                            AS eligible_realized_holding_days_count,
+  (SELECT COUNT(*) FROM business
+     WHERE is_realized AND holding_days IS NOT NULL
+       AND (is_historical_import OR has_lifecycle_date_issue))                                   AS excluded_realized_holding_days_count,
+  (SELECT COUNT(*) FROM business
+     WHERE is_realized AND holding_days IS NOT NULL AND is_historical_import)                     AS excluded_historical_realized_holding_days_count,
+  (SELECT COUNT(*) FROM business
+     WHERE is_realized AND holding_days IS NOT NULL
+       AND NOT is_historical_import AND has_lifecycle_date_issue)                                AS excluded_unreliable_acquisition_date_realized_holding_days_count,
   (SELECT COUNT(*) FROM business WHERE is_realized AND global_days_on_market IS NOT NULL)        AS realized_dom_usable_count,
   (SELECT COUNT(*) FROM business WHERE is_realized AND global_days_on_market IS NULL)             AS realized_dom_missing_count,
   (SELECT COUNT(*) FROM business WHERE NOT is_realized AND current_status = 'listed'
@@ -212,13 +250,28 @@ SELECT
 -- ============================================================================
 -- QUERY A2 — Data coverage: item count in each fixed acquisition value band
 -- CLASSIFICATION: shared aggregate evidence.
--- (Business items only, all acquisition values including Zero / unknown.)
+-- (Business items only, every acquisition_value_status: positive bands,
+-- Zero assigned value, Unknown acquisition value, and Negative (invalid) —
+-- v1.1 splits these into distinct labels; see Query A1's acquisition_value_
+-- status-based counts and analytics/SEMANTIC_CONTRACT.md section 7.1.)
 -- ============================================================================
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -227,7 +280,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -267,8 +322,20 @@ ORDER BY acquisition_value_band_order;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -277,7 +344,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -319,12 +388,144 @@ SELECT
   -- does NOT remove historical rows from sample_size, realized_items,
   -- median_net_profit, median_roi, or the DOM metrics above — only from this
   -- one holding-based pair of columns.
-  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue)::numeric, 2) AS median_holding_days
 
 FROM eligible
 GROUP BY acquisition_value_band_order, acquisition_value_band_label
 ORDER BY acquisition_value_band_order;
+
+
+-- ============================================================================
+-- QUERY B-ZERO — Zero assigned acquisition value: realized economics summary
+-- CLASSIFICATION: shared aggregate evidence.
+-- v1.1. acquisition_value = 0 is a POSSIBLY INTENTIONAL assigned value (e.g.
+-- one incoming item in a multi-item trade given zero standalone value) — it
+-- is NEVER treated as unknown, and never mixed into the positive
+-- Acquisition Value Bands above (Query B excludes it, same as v1.0). Net
+-- profit and estimated net upside remain fully calculable for a known zero
+-- acquisition value (gross_profit = exit_value - 0; net_profit = exit_value
+-- - 0 - expenses) — the view's own net_profit column already computes this
+-- correctly via ordinary arithmetic; nothing here changes that. Only ROI is
+-- undefined at acquisition_value = 0 (division by zero) — the view's roi
+-- column already returns NULL in this case (see
+-- 20260723000000_analytics_item_lifecycle.sql), never a computed 0 or
+-- infinity. roi_undefined_zero_acquisition_count is descriptive coverage of
+-- that fact, not a computed ratio. See analytics/SEMANTIC_CONTRACT.md
+-- section 7.1.
+-- ============================================================================
+WITH acquisition_value_band AS (
+  SELECT
+    *,
+    CASE
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status
+  FROM analytics_item_lifecycle
+),
+business AS (
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business'
+),
+zero_assigned AS (
+  SELECT * FROM business WHERE acquisition_value_status = 'zero_assigned'
+)
+SELECT
+  (SELECT COUNT(*) FROM zero_assigned)                                                              AS item_count,
+  (SELECT COUNT(*) FROM zero_assigned WHERE is_realized)                                             AS realized_item_count,
+  (SELECT COUNT(*) FROM zero_assigned WHERE NOT is_realized)                                         AS open_item_count,
+  (SELECT COUNT(*) FROM zero_assigned WHERE exit_type = 'sale')                                      AS sale_exit_count,
+  (SELECT COUNT(*) FROM zero_assigned WHERE exit_type = 'trade')                                     AS trade_exit_count,
+
+  (SELECT COUNT(*) FROM zero_assigned WHERE is_realized AND global_days_on_market IS NOT NULL)       AS dom_sample_size,
+  (SELECT ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market)::numeric, 2)
+     FROM zero_assigned WHERE is_realized AND global_days_on_market IS NOT NULL)                     AS median_days_on_market,
+
+  (SELECT COUNT(*) FROM zero_assigned WHERE is_realized AND exit_value IS NOT NULL)                  AS exit_value_sample_size,
+  (SELECT ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY exit_value)::numeric, 2)
+     FROM zero_assigned WHERE is_realized AND exit_value IS NOT NULL)                                AS median_exit_value,
+
+  (SELECT COUNT(*) FROM zero_assigned WHERE is_realized AND net_profit IS NOT NULL)                  AS net_profit_sample_size,
+  (SELECT ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY net_profit)::numeric, 2)
+     FROM zero_assigned WHERE is_realized AND net_profit IS NOT NULL)                                AS median_net_profit,
+  (SELECT SUM(net_profit) FROM zero_assigned WHERE is_realized)                                      AS total_realized_net_profit,
+
+  (SELECT COUNT(*) FROM zero_assigned WHERE is_realized)                                             AS roi_undefined_zero_acquisition_count,
+
+  -- Estimated-upside coverage — OPEN zero-acquisition items only. A known
+  -- zero acquisition value plus a known estimated_sold_value produces a
+  -- valid estimated_net_upside; never NULL merely because acquisition_value
+  -- is zero (see Part 9 in the v1.1 changelog / SEMANTIC_CONTRACT.md).
+  (SELECT COUNT(*) FROM zero_assigned WHERE NOT is_realized AND estimated_sold_value IS NULL)        AS open_estimated_value_missing_count,
+  (SELECT COUNT(*) FROM zero_assigned WHERE NOT is_realized AND estimated_sold_value IS NOT NULL)    AS open_estimated_upside_available_count,
+  (SELECT SUM(estimated_sold_value - acquisition_value - item_expenses_total)
+     FROM zero_assigned WHERE NOT is_realized AND estimated_sold_value IS NOT NULL)                  AS total_open_estimated_net_upside,
+
+  -- holding_sample_size/median_holding_days use the SAME eligibility rule as
+  -- every other holding metric in this file (realized, non-historical,
+  -- holding_days non-null, no lifecycle date issue) — see Query A1.
+  (SELECT COUNT(*) FROM zero_assigned
+     WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue) AS holding_sample_size,
+  (SELECT ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days)::numeric, 2)
+     FROM zero_assigned
+     WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue) AS median_holding_days;
+
+
+-- ============================================================================
+-- QUERY B-UNKNOWN — Unknown acquisition value: available evidence summary
+-- CLASSIFICATION: shared aggregate evidence.
+-- v1.1. acquisition_value IS NULL — genuinely unknown, never treated as
+-- zero. No net profit, ROI, value increase, or estimated upside is
+-- calculated here: all of them require an acquisition-value basis that does
+-- not exist for this population (the view already returns NULL for these
+-- via ordinary SQL NULL propagation — this query documents that, it doesn't
+-- force it). Only DOM/exit-value evidence that does not require an
+-- acquisition basis is reported. Currently always 0 rows against production
+-- data (no NULL acquisition_value exists as of this writing) — this
+-- population is SUPPORTED for future data, not fabricated today; the
+-- underlying view already permits it structurally (acquisition_value flows
+-- from a LEFT JOIN to an item's incoming deal_item — see
+-- 20260723000000_analytics_item_lifecycle.sql's `acquisition` CTE). See
+-- analytics/SEMANTIC_CONTRACT.md section 7.1.
+-- ============================================================================
+WITH acquisition_value_band AS (
+  SELECT
+    *,
+    CASE
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status
+  FROM analytics_item_lifecycle
+),
+business AS (
+  SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business'
+),
+unknown_acquisition AS (
+  SELECT * FROM business WHERE acquisition_value_status = 'unknown'
+)
+SELECT
+  (SELECT COUNT(*) FROM unknown_acquisition)                                                         AS item_count,
+  (SELECT COUNT(*) FROM unknown_acquisition WHERE is_realized)                                        AS realized_item_count,
+  (SELECT COUNT(*) FROM unknown_acquisition WHERE NOT is_realized)                                    AS open_item_count,
+  (SELECT COUNT(*) FROM unknown_acquisition WHERE exit_type = 'sale')                                 AS sale_exit_count,
+  (SELECT COUNT(*) FROM unknown_acquisition WHERE exit_type = 'trade')                                AS trade_exit_count,
+
+  (SELECT COUNT(*) FROM unknown_acquisition WHERE is_realized AND global_days_on_market IS NOT NULL)  AS dom_sample_size,
+  (SELECT ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY global_days_on_market)::numeric, 2)
+     FROM unknown_acquisition WHERE is_realized AND global_days_on_market IS NOT NULL)                AS median_days_on_market,
+
+  (SELECT COUNT(*) FROM unknown_acquisition WHERE is_realized AND exit_value IS NOT NULL)             AS exit_value_sample_size,
+  (SELECT ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY exit_value)::numeric, 2)
+     FROM unknown_acquisition WHERE is_realized AND exit_value IS NOT NULL)                           AS median_exit_value,
+
+  -- Estimated-upside coverage — OPEN unknown-acquisition items. Acquisition
+  -- basis is unknown, so estimated_net_upside is INDETERMINATE (NULL) even
+  -- when estimated_sold_value is known — never presented as zero capital.
+  (SELECT COUNT(*) FROM unknown_acquisition WHERE NOT is_realized AND estimated_sold_value IS NULL)     AS open_estimated_value_missing_count,
+  (SELECT COUNT(*) FROM unknown_acquisition WHERE NOT is_realized AND estimated_sold_value IS NOT NULL) AS open_estimated_upside_indeterminate_count;
 
 
 -- ============================================================================
@@ -348,8 +549,20 @@ ORDER BY acquisition_value_band_order;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -358,7 +571,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -397,8 +612,8 @@ SELECT
   -- metric. Excludes Historical Import/Purchase/Trade — same holding-only
   -- exclusion rationale as Query B; sample_size/realized_items/profit/ROI/DOM
   -- above are unaffected.
-  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue)::numeric, 2) AS median_holding_days
 FROM quartiled
 GROUP BY quartile
 ORDER BY quartile;
@@ -424,8 +639,20 @@ ORDER BY quartile;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -434,7 +661,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -527,8 +756,20 @@ ORDER BY capital.acquisition_value_band_order;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -537,7 +778,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -596,8 +839,9 @@ ORDER BY acquisition_value_band_order, population_label;
 -- CLASSIFICATION: shared aggregate evidence.
 -- "Open" = NOT is_realized (the view's own lifecycle fact — current_status
 -- currently new/owned/listed, never sold/traded). Business items, ALL
--- acquisition values (including Zero / unknown) since this is about risk
--- exposure, not profit/ROI math.
+-- acquisition values (positive, Zero assigned value, and Unknown
+-- acquisition value alike) since this is about risk exposure, not profit/
+-- ROI math.
 --
 -- Reported separately from Query E2 (owned / not-listed) because a listed
 -- item has real market-exposure (DOM) to report and an unlisted one does
@@ -629,8 +873,20 @@ ORDER BY acquisition_value_band_order, population_label;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -639,7 +895,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -653,17 +911,42 @@ business AS (
   SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business'
 ),
 listed_items AS (
-  SELECT * FROM business WHERE NOT is_realized AND current_status = 'listed'
+  -- v1.1: negative_invalid items are excluded from this open-inventory risk
+  -- view entirely — they are a data-quality state surfaced by integrity
+  -- checks (Query A1/G5A), not a normal band. Zero-assigned and unknown
+  -- items REMAIN included (unchanged from v1.0) since this query is about
+  -- risk exposure, not profit/ROI math.
+  SELECT * FROM business
+  WHERE NOT is_realized AND current_status = 'listed'
+    AND acquisition_value_status <> 'negative_invalid'
 ),
 listed_full AS (
   SELECT
     acquisition_value_band_order,
     acquisition_value_band_label,
-    COUNT(*)                                                    AS listed_item_count,
-    SUM(acquisition_value) FILTER (WHERE acquisition_value > 0) AS listed_acquisition_capital,
-    SUM(estimated_sold_value)                                   AS listed_estimated_value,
-    SUM(acquisition_value) FILTER (WHERE acquisition_value > 0) AS acquisition_for_upside,
-    SUM(item_expenses_total)                                    AS item_expenses_for_upside
+    COUNT(*)                                                        AS listed_item_count,
+    -- v1.1 FIX: a known zero acquisition value must contribute $0 to a
+    -- capital SUM, not be silently excluded (the v1.0 `WHERE
+    -- acquisition_value > 0` filter caused a band containing ONLY
+    -- zero-acquisition items to sum to NULL instead of 0). Filtering on
+    -- IS NOT NULL instead treats "known, including zero" correctly, and
+    -- leaves an all-unknown band's sum as NULL (genuinely indeterminate) —
+    -- see analytics/SEMANTIC_CONTRACT.md section 7.1 / Part 9.
+    SUM(acquisition_value) FILTER (WHERE acquisition_value IS NOT NULL) AS listed_acquisition_capital,
+    SUM(estimated_sold_value)                                       AS listed_estimated_value,
+    SUM(acquisition_value) FILTER (WHERE acquisition_value IS NOT NULL) AS acquisition_for_upside,
+    SUM(item_expenses_total)                                        AS item_expenses_for_upside,
+
+    -- Coverage — never silently fold "known zero" into "unknown" or vice
+    -- versa. acquisition_value_known_count includes positive AND zero.
+    COUNT(*) FILTER (WHERE acquisition_value IS NOT NULL)           AS acquisition_value_known_count,
+    COUNT(*) FILTER (WHERE acquisition_value = 0)                   AS acquisition_value_zero_assigned_count,
+    COUNT(*) FILTER (WHERE acquisition_value IS NULL)               AS acquisition_value_unknown_count,
+    COUNT(*) FILTER (WHERE estimated_sold_value IS NULL)            AS estimated_value_missing_count,
+    COUNT(*) FILTER (WHERE estimated_sold_value IS NOT NULL
+                       AND acquisition_value IS NOT NULL)           AS estimated_upside_available_count,
+    COUNT(*) FILTER (WHERE estimated_sold_value IS NOT NULL
+                       AND acquisition_value IS NULL)               AS estimated_upside_indeterminate_count
   FROM listed_items
   GROUP BY acquisition_value_band_order, acquisition_value_band_label
 ),
@@ -726,6 +1009,13 @@ SELECT
     ELSE NULL
   END AS listed_estimated_net_upside,
 
+  listed_full.acquisition_value_known_count,
+  listed_full.acquisition_value_zero_assigned_count,
+  listed_full.acquisition_value_unknown_count,
+  listed_full.estimated_value_missing_count,
+  listed_full.estimated_upside_available_count,
+  listed_full.estimated_upside_indeterminate_count,
+
   COALESCE(listed_dom_summary.dom_sample_size, 0)                      AS dom_sample_size,
   ROUND(listed_dom_summary.median_current_days_on_market::numeric, 2) AS median_current_days_on_market,
   listed_dom_summary.max_current_days_on_market,
@@ -756,8 +1046,20 @@ ORDER BY listed_full.acquisition_value_band_order;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -766,7 +1068,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -780,17 +1084,31 @@ business AS (
   SELECT * FROM acquisition_value_band WHERE purpose_name = 'Business'
 ),
 unlisted_items AS (
-  SELECT * FROM business WHERE NOT is_realized AND current_status <> 'listed'
+  -- v1.1: negative_invalid items excluded — see E1's header comment on the
+  -- same exclusion.
+  SELECT * FROM business
+  WHERE NOT is_realized AND current_status <> 'listed'
+    AND acquisition_value_status <> 'negative_invalid'
 ),
 unlisted_full AS (
   SELECT
     acquisition_value_band_order,
     acquisition_value_band_label,
-    COUNT(*)                                                    AS unlisted_item_count,
-    SUM(acquisition_value) FILTER (WHERE acquisition_value > 0) AS unlisted_acquisition_capital,
-    SUM(estimated_sold_value)                                   AS unlisted_estimated_value,
-    SUM(acquisition_value) FILTER (WHERE acquisition_value > 0) AS acquisition_for_upside,
-    SUM(item_expenses_total)                                    AS item_expenses_for_upside
+    COUNT(*)                                                        AS unlisted_item_count,
+    -- v1.1 FIX: same known-zero-must-sum-to-0 fix as E1 — see its comment.
+    SUM(acquisition_value) FILTER (WHERE acquisition_value IS NOT NULL) AS unlisted_acquisition_capital,
+    SUM(estimated_sold_value)                                       AS unlisted_estimated_value,
+    SUM(acquisition_value) FILTER (WHERE acquisition_value IS NOT NULL) AS acquisition_for_upside,
+    SUM(item_expenses_total)                                        AS item_expenses_for_upside,
+
+    COUNT(*) FILTER (WHERE acquisition_value IS NOT NULL)           AS acquisition_value_known_count,
+    COUNT(*) FILTER (WHERE acquisition_value = 0)                   AS acquisition_value_zero_assigned_count,
+    COUNT(*) FILTER (WHERE acquisition_value IS NULL)               AS acquisition_value_unknown_count,
+    COUNT(*) FILTER (WHERE estimated_sold_value IS NULL)            AS estimated_value_missing_count,
+    COUNT(*) FILTER (WHERE estimated_sold_value IS NOT NULL
+                       AND acquisition_value IS NOT NULL)           AS estimated_upside_available_count,
+    COUNT(*) FILTER (WHERE estimated_sold_value IS NOT NULL
+                       AND acquisition_value IS NULL)               AS estimated_upside_indeterminate_count
   FROM unlisted_items
   GROUP BY acquisition_value_band_order, acquisition_value_band_label
 ),
@@ -823,6 +1141,13 @@ SELECT
     ELSE NULL
   END AS unlisted_estimated_net_upside,
 
+  unlisted_full.acquisition_value_known_count,
+  unlisted_full.acquisition_value_zero_assigned_count,
+  unlisted_full.acquisition_value_unknown_count,
+  unlisted_full.estimated_value_missing_count,
+  unlisted_full.estimated_upside_available_count,
+  unlisted_full.estimated_upside_indeterminate_count,
+
   COALESCE(unlisted_reliable_summary.holding_sample_size, 0)              AS holding_sample_size,
   ROUND(unlisted_reliable_summary.median_ownership_age_days::numeric, 2) AS median_ownership_age_days,
   unlisted_reliable_summary.max_ownership_age_days
@@ -845,8 +1170,20 @@ ORDER BY unlisted_full.acquisition_value_band_order;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -855,7 +1192,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -890,8 +1229,8 @@ SELECT
   -- metric. Excludes Historical Import/Purchase/Trade — same holding-only
   -- exclusion rationale as Query B; sample_size/realized_items/profit/ROI/DOM
   -- above are unaffected.
-  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue)::numeric, 2) AS median_holding_days
 FROM eligible
 GROUP BY category_id, category_name, acquisition_value_band_order, acquisition_value_band_label
 ORDER BY category_id, acquisition_value_band_order;
@@ -912,8 +1251,20 @@ ORDER BY category_id, acquisition_value_band_order;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -922,7 +1273,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -981,8 +1334,20 @@ ORDER BY category_id, acquisition_value_band_order;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -991,7 +1356,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -1006,16 +1373,16 @@ eligible AS (
 ),
 combined AS (
   SELECT 'All eligible Business items' AS population_label,
-    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import, has_lifecycle_date_issue
   FROM eligible
   UNION ALL
   SELECT 'Imported historical Business items' AS population_label,
-    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import, has_lifecycle_date_issue
   FROM eligible
   WHERE is_historical_import
   UNION ALL
   SELECT 'App-tracked Business items' AS population_label,
-    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import, has_lifecycle_date_issue
   FROM eligible
   WHERE NOT is_historical_import
 )
@@ -1038,8 +1405,8 @@ SELECT
   -- header) — this is why "Imported historical Business items" always shows
   -- holding_sample_size = 0 / median_holding_days = NULL, by design, not a
   -- coverage gap.
-  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue)::numeric, 2) AS median_holding_days
 FROM combined
 GROUP BY population_label, acquisition_value_band_order, acquisition_value_band_label
 ORDER BY acquisition_value_band_order, population_label;
@@ -1063,8 +1430,20 @@ ORDER BY acquisition_value_band_order, population_label;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -1073,7 +1452,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -1089,13 +1470,13 @@ eligible AS (
 per_user AS (
   SELECT
     user_id::text AS user_group,
-    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import, has_lifecycle_date_issue
   FROM eligible
 ),
 combined_all AS (
   SELECT
     'All accessible users' AS user_group,
-    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import
+    acquisition_value_band_order, acquisition_value_band_label, is_realized, net_profit, roi, holding_days, global_days_on_market, is_historical_import, has_lifecycle_date_issue
   FROM eligible
 ),
 unioned AS (
@@ -1120,8 +1501,8 @@ SELECT
   -- metric. Excludes Historical Import/Purchase/Trade — same holding-only
   -- exclusion rationale as Query B; sample_size/realized_items/profit/ROI/DOM
   -- above are unaffected.
-  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue)::numeric, 2) AS median_holding_days
 FROM unioned
 GROUP BY user_group, acquisition_value_band_order, acquisition_value_band_label
 ORDER BY acquisition_value_band_order, user_group;
@@ -1145,8 +1526,20 @@ ORDER BY acquisition_value_band_order, user_group;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -1155,7 +1548,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -1190,8 +1585,8 @@ SELECT
   -- row (Historical Import) will always show holding_sample_size = 0 here —
   -- expected, not a bug: every row grouped under 'unknown' is historical by
   -- definition (see analytics_item_lifecycle's acquisition_method CASE).
-  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days
+  COUNT(*) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE is_realized AND NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue)::numeric, 2) AS median_holding_days
 FROM eligible
 GROUP BY acquisition_method, acquisition_value_band_order, acquisition_value_band_label
 ORDER BY acquisition_method, acquisition_value_band_order;
@@ -1251,8 +1646,20 @@ ORDER BY acquisition_method, acquisition_value_band_order;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -1261,7 +1668,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -1295,7 +1704,7 @@ full_population AS (
   SELECT
     'All realized items' AS population_label,
     acquisition_value_band_order, acquisition_value_band_label,
-    net_profit, roi, holding_days, global_days_on_market, is_historical_import,
+    net_profit, roi, holding_days, global_days_on_market, is_historical_import, has_lifecycle_date_issue,
     band_sample_size AS original_sample_size,
     0 AS removed_low_count,
     0 AS removed_high_count
@@ -1307,7 +1716,7 @@ trimmed_population AS (
   SELECT
     'Profit outliers excluded (5% trim each side, by acquisition value band)' AS population_label,
     acquisition_value_band_order, acquisition_value_band_label,
-    net_profit, roi, holding_days, global_days_on_market, is_historical_import,
+    net_profit, roi, holding_days, global_days_on_market, is_historical_import, has_lifecycle_date_issue,
     band_sample_size AS original_sample_size,
     trim_count AS removed_low_count,
     trim_count AS removed_high_count
@@ -1343,8 +1752,8 @@ SELECT
   -- rationale as Query B. This trims the holding-time pair only; it does not
   -- remove historical rows from analysis_sample_size or the profit/ROI/DOM
   -- metrics in this same row.
-  COUNT(*) FILTER (WHERE NOT is_historical_import AND holding_days IS NOT NULL) AS holding_sample_size,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE NOT is_historical_import AND holding_days IS NOT NULL)::numeric, 2) AS median_holding_days,
+  COUNT(*) FILTER (WHERE NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue) AS holding_sample_size,
+  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY holding_days) FILTER (WHERE NOT is_historical_import AND holding_days IS NOT NULL AND NOT has_lifecycle_date_issue)::numeric, 2) AS median_holding_days,
 
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY net_profit)::numeric, 2) AS median_net_profit,
   ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY roi) FILTER (WHERE roi IS NOT NULL)::numeric, 2) AS median_roi
@@ -1411,8 +1820,20 @@ ORDER BY acquisition_value_band_order, population_label;
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -1421,7 +1842,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'
@@ -1520,8 +1943,20 @@ ORDER BY acquisition_value_band_order, is_realized DESC, acquisition_value, item
 WITH acquisition_value_band AS (
   SELECT
     *,
+    -- v1.1: zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT semantic categories — never
+    -- treat one as the other. negative_invalid is a data-quality state, not
+    -- a normal band. See analytics/SEMANTIC_CONTRACT.md section 7.1.
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 0
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status,
+    CASE
+      WHEN acquisition_value IS NULL THEN 8
+      WHEN acquisition_value = 0    THEN 0
+      WHEN acquisition_value < 0    THEN -1
       WHEN acquisition_value < 1000 THEN 1
       WHEN acquisition_value < 2000 THEN 2
       WHEN acquisition_value < 3000 THEN 3
@@ -1530,7 +1965,9 @@ WITH acquisition_value_band AS (
       ELSE 6
     END AS acquisition_value_band_order,
     CASE
-      WHEN acquisition_value IS NULL OR acquisition_value <= 0 THEN 'Zero / unknown'
+      WHEN acquisition_value IS NULL THEN 'Unknown acquisition value'
+      WHEN acquisition_value = 0    THEN 'Zero assigned value'
+      WHEN acquisition_value < 0    THEN 'Negative (invalid)'
       WHEN acquisition_value < 1000 THEN '$1-999'
       WHEN acquisition_value < 2000 THEN '$1,000-1,999'
       WHEN acquisition_value < 3000 THEN '$2,000-2,999'

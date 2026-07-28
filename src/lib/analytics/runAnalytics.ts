@@ -13,15 +13,22 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 // ── Constants — must match the current snapshot contract exactly ───────────
-// (analytics_runs' own DEFAULTs and build_analytics_snapshot_v1's own
+// (analytics_runs' own DEFAULTs and build_analytics_snapshot_v1_1's own
 // literals — see supabase/migrations/20260727000000_analytics_runs.sql and
-// 20260728000000_build_analytics_snapshot_v1.sql). Bumping either requires
+// 20260730000000_build_analytics_snapshot_v1_1.sql). Bumping either requires
 // updating both this file and the database migrations together — see the
 // "duplicated logic" note in analytics/README.md.
-export const ANALYTICS_VERSION = '1.0';
+//
+// v1.1: new runs call build_analytics_snapshot_v1_1 (Analytics Snapshot
+// v1.1 semantic cleanup — see analytics/SEMANTIC_CONTRACT.md section 7.1).
+// v1.0's builder function and every previously stored v1.0
+// analytics_runs.snapshot row are untouched and remain readable — this is a
+// forward version bump, not a rewrite of history.
+export const ANALYTICS_VERSION = '1.1';
 export const EVIDENCE_SCOPE = 'shared_business_population';
-const SNAPSHOT_SCHEMA_VERSION = '1.0';
-const ANALYTICS_DEFINITION_VERSION = '1.0';
+const SNAPSHOT_SCHEMA_VERSION = '1.1';
+const ANALYTICS_DEFINITION_VERSION = '1.1';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v1_1';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -201,7 +208,7 @@ export async function runAnalyticsForCurrentUser(
   try {
     // ── 3. Call the snapshot builder ────────────────────────────────────
     const { data: snapshot, error: builderError } = await serviceClient.rpc(
-      'build_analytics_snapshot_v1',
+      SNAPSHOT_BUILDER_RPC,
       { p_recommendation_target_user_id: appUserId },
     );
 

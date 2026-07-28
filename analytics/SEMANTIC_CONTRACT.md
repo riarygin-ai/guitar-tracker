@@ -3,8 +3,10 @@
 Source of truth for (1) how historical-import records are treated, (2)
 acquisition/exit value-band terminology, (3) acquisition-to-exit value
 analysis semantics, (4) the separation between shared statistical evidence
-and current-user item-level recommendation targets, and (5) the required
-conceptual structure of future Business Coach insights, across the
+and current-user item-level recommendation targets, (5) the required
+conceptual structure of future Business Coach insights, and (6) the
+distinction between zero-assigned, unknown, and negative-invalid
+acquisition values (Analytics Snapshot v1.1, section 7.1), across the
 analytics layer (`analytics/sql/*.sql`, `analytics_item_lifecycle`, and any
 future AI analysis / Business Coach feature built on top of them). If a
 query, comment, label, or AI prompt disagrees with this document, THIS
@@ -250,6 +252,136 @@ these restrictions and use the restricted terms correctly:
 codebase — including every other section of that same file — is an
 Acquisition Value Band or Exit Value Band, never a Purchase Price Band or
 Sale Price Band.
+
+### 7.1 Analytics Snapshot v1.1: zero, unknown, and negative acquisition values
+
+Introduced with Analytics Snapshot v1.1 (`supabase/migrations/20260730000000_
+build_analytics_snapshot_v1_1.sql`) to correct field names and semantics that
+Snapshot v1.0 left ambiguous. **v1.0's builder function and every previously
+stored v1.0 `analytics_runs.snapshot` row are unchanged and remain fully
+readable** — v1.1 is a forward, additive correction, not a rewrite of
+history. See `analytics/README.md` for the full v1.1 changelog.
+
+**`acquisition_value_status`** — one consistent derived field, exposed
+wherever item-level or cohort logic needs it:
+
+| Status | Meaning |
+|---|---|
+| `positive` | `acquisition_value > 0` |
+| `zero_assigned` | `acquisition_value = 0` — **possibly an intentional assigned value** (e.g. one incoming item in a multi-item trade given zero standalone value). Never a data-quality error by itself. |
+| `unknown` | `acquisition_value IS NULL` — genuinely not known. The underlying view permits this structurally (`acquisition_value` flows from a `LEFT JOIN` to an item's incoming `deal_item` in `analytics_item_lifecycle`'s `acquisition` CTE), though no row in production data has this status as of this writing. |
+| `negative_invalid` | `acquisition_value < 0` — a data-quality state, excluded from normal performance analysis and surfaced only by integrity checks. |
+
+**Rule 1 — zero assigned is never unknown, and vice versa.** These are two
+different facts about two different populations. Never fold one into the
+other in a query, a label, a comment, or a future AI-generated sentence.
+
+**Rule 2 — ROI is undefined (NULL) when acquisition value is zero**, because
+ROI divides by acquisition value. `analytics_item_lifecycle`'s own `roi`
+column already returns `NULL` whenever `acquisition_value IS NULL OR
+acquisition_value <= 0` (see `20260723000000_analytics_item_lifecycle.sql`)
+— this is existing, correct behavior, not something v1.1 changes. Represent
+undefined ROI as `NULL`, never `0` and never infinity.
+
+**Rule 3 — net profit and estimated net upside remain calculable for a
+known zero acquisition value.** `gross_profit = exit_value - 0`, `net_profit
+= exit_value - 0 - item_expenses_total`, and `estimated_net_upside =
+estimated_sold_value - 0 - item_expenses_total` are all valid arithmetic —
+the view's existing `net_profit` column and the snapshot builder's
+`estimated_net_upside` `CASE` expression already compute these correctly by
+ordinary NULL-safe arithmetic (0 is a real number, not NULL). A capital `SUM`
+over one or more known-zero rows must produce `0`, not `NULL` — Snapshot
+v1.0's open-inventory queries (`01`/`03` Query E1/E2) had a bug here
+(`SUM(acquisition_value) FILTER (WHERE acquisition_value > 0)` silently
+excluded known-zero rows, producing `NULL` for an all-zero-acquisition band
+or brand instead of `0`), fixed in v1.1 by filtering on `acquisition_value
+IS NOT NULL` instead.
+
+**Rule 4 — unknown acquisition value prevents any calculation that requires
+an acquisition basis.** Net profit, ROI, value increase, and estimated net
+upside are all `NULL` when `acquisition_value IS NULL` — this already falls
+out of ordinary SQL NULL propagation in every formula above; nothing forces
+it, nothing needs to. Never present an unknown acquisition value as zero
+capital, and never present a known zero as missing/unknown capital.
+
+**Rule 5 — the six positive Acquisition Value Bands exclude zero and
+unknown, but neither disappears silently.** `$1-999` through `$5,000+` (see
+section 7 above) are computed ONLY over `acquisition_value_status =
+'positive'`, unchanged from v1.0. Zero-assigned and unknown items are
+reported in their own dedicated summaries instead of being mixed into a
+positive-band median:
+`evidence_aggregates.acquisition_value_band.zero_assigned_value_summary`
+and `.unknown_acquisition_value_summary` (new in v1.1). Their exclusion from
+the positive-band transition matrix (`evidence_aggregates.acquisition_to_
+exit.transition_matrix`) is likewise explicit, not silent — see the
+`excluded_transition_*` fields below.
+
+**Rule 6 — raw holding-day availability is different from reliable holding
+eligibility.** "`holding_days` is populated" and "`holding_days` is
+analytically usable" are different claims. v1.1 exposes both explicitly at
+the acquisition-value-band population-summary level:
+`raw_realized_holding_days_present_count` (realized, `holding_days IS NOT
+NULL`, regardless of reliability — includes historical imports) vs.
+`eligible_realized_holding_days_count` (realized, non-historical,
+`holding_days IS NOT NULL`, AND no lifecycle date issue — the population
+every `holding_sample_size` in every module actually uses).
+`excluded_historical_realized_holding_days_count` and
+`excluded_unreliable_acquisition_date_realized_holding_days_count` account
+for the gap between the two. Every `holding_sample_size` /
+`median_holding_days` pair in every analytics module (Acquisition Value
+Band, Acquisition-to-Exit, Brand) now uses this SAME eligibility rule —
+v1.0 was inconsistent (several queries in `01_acquisition_value_band_
+performance.sql` and `03_brand_performance.sql` omitted the lifecycle-date-
+issue check that others already had), fixed uniformly in v1.1.
+
+**Rule 7 — historical imports are excluded ONLY from acquisition-date-
+dependent timing metrics** (holding days, ownership age, acquisition-to-
+listing delay, acquisition-to-exit duration measured as time, profit per
+30 holding days) — restated from section 4 above, unchanged by v1.1.
+Historical imports remain fully eligible for acquisition value, exit value,
+net profit, ROI (when acquisition value is positive), listing dates, days
+on market, realization evidence, and acquisition/exit method analysis.
+
+**Rule 8 — exit counts must state whether they mean ALL realized exits or
+POSITIVE-VALUE-TRANSITION-ELIGIBLE exits.** These are different
+populations and must never share a field name:
+- `total_realized_sale_exit_count` / `total_realized_trade_exit_count`
+  (Acquisition Value Band module, `population_summary`) — every realized
+  exit of that type, regardless of acquisition-value eligibility.
+- `eligible_transition_sale_exit_count` / `eligible_transition_trade_exit_
+  count` (Acquisition-to-Exit module, `population_summary`) — additionally
+  requires a positive acquisition value AND a positive exit value.
+- The gap between the two is accounted for explicitly:
+  `excluded_transition_sale_exit_count_zero_acquisition_value`,
+  `excluded_transition_sale_exit_count_unknown_acquisition_value`, and the
+  trade-side equivalents, plus item-level
+  `excluded_transition_item_count_zero_acquisition_value` /
+  `_unknown_acquisition_value` / `_negative_acquisition_value`.
+  Reconciliation: `total_realized_sale_exit_count = eligible_transition_
+  sale_exit_count + excluded_transition_sale_exit_count_zero_acquisition_
+  value + excluded_transition_sale_exit_count_unknown_acquisition_value`
+  (plus any negative-value exclusion) — same for trade.
+
+**Rule 9 — brand counts must state their population scope.** Three
+distinct brand-count populations exist in the Brand module and must never
+share a field name:
+- `all_business_distinct_brand_count` (`population_summary`) — every
+  Business item, positive/zero-assigned/unknown/negative-invalid alike.
+- `positive_acquisition_distinct_brand_count` (`integrity_summary`) —
+  positive acquisition value only (the same population `overall_
+  performance` and every other profit/ROI query in this module uses).
+- `decision_ready_distinct_brand_count` (`population_summary`) — brands
+  passing the decision-ready threshold (`sample_size >= 3 AND
+  realized_items >= 3`, over the positive-acquisition population) —
+  i.e. the brands that appear in `decision_ready_performance`.
+
+**Rule 10 — v1.0 runs remain immutable historical snapshots.** Any
+`analytics_runs` row with `analytics_version = '1.0'` was produced by, and
+must always be interpreted against, `build_analytics_snapshot_v1`'s v1.0
+field names and semantics — it is never reinterpreted under v1.1 naming.
+`analytics_version = '1.1'` marks the corrected definition. Both versions
+coexist in `analytics_runs` and the Analytics page's run history; neither
+is deleted, migrated in place, or silently reinterpreted.
 
 ## 8. Acquisition-to-Exit value analysis
 
@@ -685,3 +817,10 @@ This contract governs semantics only. It does not:
   four private helpers are all `SECURITY INVOKER` — see section 10 and
   `20260728000000_build_analytics_snapshot_v1.sql`.
 - Weaken, modify, or replace any existing RLS policy.
+- Add Channel Analytics, Open Inventory Decision Support, or any new
+  business-performance module. Analytics Snapshot v1.1
+  (`20260730000000_build_analytics_snapshot_v1_1.sql`, section 7.1) is a
+  semantic-naming and consistency correction to the THREE existing modules
+  (Acquisition Value Band, Acquisition-to-Exit, Brand) — it does not add a
+  fourth module. `build_analytics_snapshot_v1` (v1.0) remains unchanged and
+  callable; v1.1 is additive, not a replacement.

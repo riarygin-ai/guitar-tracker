@@ -134,38 +134,92 @@ WITH business AS (
   SELECT * FROM analytics_item_lifecycle WHERE purpose_name = 'Business'
 ),
 realized_business AS (
-  SELECT * FROM business WHERE is_realized
+  SELECT
+    *,
+    -- v1.1: same acquisition_value_status definition as
+    -- 01_acquisition_value_band_performance.sql and 03_brand_performance.sql
+    -- — zero_assigned (intentional/possibly-assigned zero) and unknown
+    -- (acquisition_value IS NULL) are DISTINCT, never conflated. See
+    -- analytics/SEMANTIC_CONTRACT.md section 7.1.
+    CASE
+      WHEN acquisition_value IS NULL THEN 'unknown'
+      WHEN acquisition_value = 0    THEN 'zero_assigned'
+      WHEN acquisition_value < 0    THEN 'negative_invalid'
+      ELSE 'positive'
+    END AS acquisition_value_status
+  FROM business WHERE is_realized
 ),
 eligible AS (
+  -- v1.1 renamed: this is the population ELIGIBLE FOR POSITIVE-VALUE
+  -- TRANSITION ANALYSIS (Sections B-E, H below) — NOT "every realized exit."
+  -- See analytics/sql/01_acquisition_value_band_performance.sql's Query A1
+  -- for the "every realized exit regardless of eligibility" counts
+  -- (total_realized_sale_exit_count / total_realized_trade_exit_count) —
+  -- the two files' exit counts intentionally differ when zero/unknown/
+  -- negative acquisition values exist; that difference is exactly what the
+  -- exclusion counts below account for.
   SELECT * FROM realized_business
-  WHERE acquisition_value IS NOT NULL AND acquisition_value > 0
-    AND exit_value        IS NOT NULL AND exit_value        > 0
+  WHERE acquisition_value_status = 'positive'
+    AND exit_value IS NOT NULL AND exit_value > 0
 )
 SELECT
   (SELECT COUNT(*) FROM business)                                                                     AS total_business_items,
   (SELECT COUNT(*) FROM realized_business)                                                             AS realized_business_items,
-  (SELECT COUNT(*) FROM realized_business WHERE acquisition_value IS NOT NULL AND acquisition_value > 0) AS realized_items_positive_acquisition_value,
+  (SELECT COUNT(*) FROM realized_business WHERE acquisition_value_status = 'positive')                 AS realized_items_positive_acquisition_value,
   (SELECT COUNT(*) FROM realized_business WHERE exit_value IS NOT NULL AND exit_value > 0)               AS realized_items_positive_exit_value,
-  (SELECT COUNT(*) FROM eligible)                                                                       AS eligible_for_value_transition_analysis,
+  (SELECT COUNT(*) FROM eligible)                                                                       AS eligible_transition_item_count,
+
+  -- All-realized exit-type totals, for direct comparison against
+  -- 01_acquisition_value_band_performance.sql's Query A1 totals of the same
+  -- name (should be IDENTICAL — both count every realized exit of that
+  -- type, regardless of acquisition-value eligibility).
+  (SELECT COUNT(*) FROM realized_business WHERE exit_type = 'sale')                                     AS total_realized_sale_exit_count,
+  (SELECT COUNT(*) FROM realized_business WHERE exit_type = 'trade')                                    AS total_realized_trade_exit_count,
+
+  -- Eligible-for-transition-analysis exit-type counts — a NARROWER
+  -- population than total_realized_*_exit_count above (additionally
+  -- requires a positive acquisition value AND a positive exit value).
+  (SELECT COUNT(*) FROM eligible WHERE exit_type = 'sale')                                              AS eligible_transition_sale_exit_count,
+  (SELECT COUNT(*) FROM eligible WHERE exit_type = 'trade')                                             AS eligible_transition_trade_exit_count,
+
+  -- Reconciliation: total_realized_sale_exit_count =
+  --   eligible_transition_sale_exit_count
+  --   + excluded_transition_sale_exit_count_zero_acquisition_value
+  --   + excluded_transition_sale_exit_count_unknown_acquisition_value
+  --   + (any realized sale with a negative or zero/unknown exit_value,
+  --      already tracked separately by excluded_exit_value_zero_or_unknown
+  --      below — expected 0 in current data, see file header).
+  -- Same reconciliation for trade. Zero is NEVER folded into unknown or
+  -- vice versa — see analytics/SEMANTIC_CONTRACT.md section 7.1.
+  (SELECT COUNT(*) FROM realized_business WHERE acquisition_value_status = 'zero_assigned')                                AS excluded_transition_item_count_zero_acquisition_value,
+  (SELECT COUNT(*) FROM realized_business WHERE acquisition_value_status = 'unknown')                                      AS excluded_transition_item_count_unknown_acquisition_value,
+  (SELECT COUNT(*) FROM realized_business WHERE acquisition_value_status = 'negative_invalid')                             AS excluded_transition_item_count_negative_acquisition_value,
+  (SELECT COUNT(*) FROM realized_business WHERE exit_type = 'sale'  AND acquisition_value_status = 'zero_assigned')        AS excluded_transition_sale_exit_count_zero_acquisition_value,
+  (SELECT COUNT(*) FROM realized_business WHERE exit_type = 'sale'  AND acquisition_value_status = 'unknown')              AS excluded_transition_sale_exit_count_unknown_acquisition_value,
+  (SELECT COUNT(*) FROM realized_business WHERE exit_type = 'trade' AND acquisition_value_status = 'zero_assigned')        AS excluded_transition_trade_exit_count_zero_acquisition_value,
+  (SELECT COUNT(*) FROM realized_business WHERE exit_type = 'trade' AND acquisition_value_status = 'unknown')              AS excluded_transition_trade_exit_count_unknown_acquisition_value,
 
   -- Exclusions — every row NOT in `eligible` is accounted for by one (or
   -- both) of these two counts, so nothing above is silently discarded.
-  (SELECT COUNT(*) FROM realized_business WHERE acquisition_value IS NULL OR acquisition_value <= 0)     AS excluded_acquisition_value_zero_or_unknown,
+  -- Kept from v1.0 for continuity; superseded in precision by the
+  -- acquisition_value_status-based breakdown above (this field still
+  -- combines zero/unknown/negative on the acquisition side).
+  (SELECT COUNT(*) FROM realized_business WHERE acquisition_value_status <> 'positive')                  AS excluded_acquisition_value_zero_or_unknown,
   (SELECT COUNT(*) FROM realized_business WHERE exit_value IS NULL OR exit_value <= 0)                   AS excluded_exit_value_zero_or_unknown,
 
   -- Acquisition method breakdown of the eligible population — should sum to
-  -- eligible_for_value_transition_analysis.
+  -- eligible_transition_item_count.
   (SELECT COUNT(*) FROM eligible WHERE acquisition_method = 'purchase')                                  AS purchase_acquisitions,
   (SELECT COUNT(*) FROM eligible WHERE acquisition_method = 'trade')                                     AS trade_acquisitions,
   (SELECT COUNT(*) FROM eligible WHERE acquisition_method NOT IN ('purchase', 'trade'))                  AS unknown_acquisition_methods,
 
   -- Exit method breakdown of the eligible population — should sum to
-  -- eligible_for_value_transition_analysis. unknown_exit_methods is expected
-  -- to be 0 (is_realized already requires exit_type IN ('sale','trade')) but
-  -- is computed, not assumed, so a future third exit deal_type would show up
-  -- here instead of silently vanishing.
-  (SELECT COUNT(*) FROM eligible WHERE exit_type = 'sale')                                               AS sale_exits,
-  (SELECT COUNT(*) FROM eligible WHERE exit_type = 'trade')                                              AS trade_exits,
+  -- eligible_transition_item_count (eligible_transition_sale_exit_count /
+  -- eligible_transition_trade_exit_count above already cover sale/trade;
+  -- unknown_exit_methods is expected to be 0, since is_realized already
+  -- requires exit_type IN ('sale','trade'), but is computed, not assumed,
+  -- so a future third exit deal_type would show up here instead of
+  -- silently vanishing).
   (SELECT COUNT(*) FROM eligible WHERE exit_type IS NULL OR exit_type NOT IN ('sale', 'trade'))          AS unknown_exit_methods,
 
   -- DOM coverage of the eligible population — should sum to

@@ -247,12 +247,17 @@ Current limitations (deliberate, for this step):
 **Duplicated-logic maintenance rule.** Until analytics logic is
 consolidated into a single implementation, the same analytical definitions
 exist in two places that must be kept in sync by hand: the developer-readable
-manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...`) and the
-versioned snapshot builder functions
-(`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql`). A
-change to an analytical definition (a band boundary, an eligibility rule, a
-new metric) must be applied to both, or the manual files and the snapshot
-will silently disagree. This duplication is not redesigned in this step.
+manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...` — these reflect
+the CURRENT/v1.1 semantics, edited in place) and the versioned snapshot
+builder functions, one migration per version
+(`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql` for
+v1.0, `supabase/migrations/20260730000000_build_analytics_snapshot_v1_1.sql`
+for v1.1). A change to an analytical definition (a band boundary, an
+eligibility rule, a new metric) must be applied to both the manual files
+and the CURRENT builder version, or they will silently disagree. Already-
+shipped versioned builder migrations (like v1.0's) are never edited after
+the fact — a semantic change always ships as a new version. This
+duplication is not redesigned in this step.
 
 ## Frontend: /analytics page (Phase 2 Step 4)
 
@@ -283,6 +288,71 @@ The page issues no lifecycle-table queries of its own — it only ever reads
 `analytics_runs` metadata and the persisted `snapshot` JSONB column, so it
 cannot show more than what `build_analytics_snapshot_v1` already decided to
 put in the snapshot (no other user's items, no developer-only drilldowns).
+
+## Analytics Snapshot v1.1 (semantic cleanup)
+
+`public.build_analytics_snapshot_v1_1(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260730000000_build_analytics_snapshot_v1_1.sql`) is
+a **new, additive version** that corrects ambiguous field names and
+semantics identified in Snapshot v1.0. **`build_analytics_snapshot_v1`
+(v1.0) is unchanged and remains callable; no previously stored v1.0
+`analytics_runs.snapshot` row is altered.** `src/lib/analytics/
+runAnalytics.ts` now calls v1.1 for new runs (`ANALYTICS_VERSION = '1.1'`),
+but the Analytics page continues to display both `analytics_version` values
+in run history and renders whichever JSON a selected run actually has
+stored — it makes no assumption about which version's field names appear
+inside `evidence_aggregates`/`recommendation_candidates` (those are typed
+as `Record<string, unknown>` in `src/types/index.d.ts`, already
+version-agnostic).
+
+**Changelog (see `analytics/SEMANTIC_CONTRACT.md` section 7.1 for full
+rationale and reconciliation formulas):**
+
+- **`acquisition_value_status`** (`positive` / `zero_assigned` / `unknown` /
+  `negative_invalid`) — one consistent derived field, added wherever
+  item-level or cohort logic needs it, including recommendation candidates.
+- **Band labels split**: v1.0's combined `"Zero / unknown"` label is now
+  `"Zero assigned value"` and `"Unknown acquisition value"` (plus a
+  defensive `"Negative (invalid)"` catch-all). The six positive bands
+  (`$1-999` … `$5,000+`) are unchanged.
+- **New special-value summaries**: `evidence_aggregates.acquisition_value_
+  band.zero_assigned_value_summary` and `.unknown_acquisition_value_
+  summary` — zero-assigned and unknown items are reported explicitly
+  instead of being excluded with no trace. `positive_value_performance`
+  replaces v1.0's `performance` key (same query, same numbers).
+- **Exit-count naming**: `total_realized_sale_exit_count` /
+  `total_realized_trade_exit_count` (every realized exit) vs. `eligible_
+  transition_sale_exit_count` / `eligible_transition_trade_exit_count`
+  (positive-value-transition-eligible only), with explicit `excluded_
+  transition_*_zero_acquisition_value` / `_unknown_acquisition_value`
+  reconciliation counts.
+- **Holding-day naming**: `raw_realized_holding_days_present_count`
+  (merely non-null) vs. `eligible_realized_holding_days_count` (realized,
+  non-historical, non-null, no lifecycle date issue) are now distinct, and
+  every `holding_sample_size` in every module uses this same eligibility
+  rule (v1.0 was inconsistent across a few queries — now fixed uniformly).
+- **Brand-count naming**: `all_business_distinct_brand_count` vs.
+  `positive_acquisition_distinct_brand_count` vs. `decision_ready_distinct_
+  brand_count` — three explicitly distinct populations that used to share
+  ambiguous names.
+- **Estimated-upside fix**: a known zero acquisition value now correctly
+  contributes `$0` to a capital `SUM` in the open-inventory sections
+  (`open_listed_inventory`/`open_unlisted_inventory` in both the
+  Acquisition Value Band and Brand modules) instead of silently producing
+  `NULL` for an all-zero band/brand. Ambiguous `estimated_upside_missing_
+  count` fields are replaced with explicit `estimated_value_missing_count`
+  / `estimated_upside_available_count` / `estimated_upside_indeterminate_
+  count`, plus `acquisition_value_known_count` / `_zero_assigned_count` /
+  `_unknown_count` coverage.
+- **Recommendation candidates** gain `acquisition_value_status`,
+  `acquisition_value_band_label`, and `estimated_upside_status`
+  (`available` / `missing_estimated_value` / `unknown_acquisition_value` /
+  `other_indeterminate`) alongside the existing `estimated_net_upside`.
+
+No existing calculation for POSITIVE acquisition values changed — this is a
+naming/consistency/coverage correction, not a business-logic change.
+Channel Analytics, Open Inventory Decision Support, and Business Coach are
+explicitly out of scope for this cleanup.
 
 ## Conventions
 
