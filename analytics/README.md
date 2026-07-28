@@ -36,6 +36,13 @@ Reusable numbered analysis sequence, under `analytics/sql/`:
   its own header and `analytics/SEMANTIC_CONTRACT.md`.
 - `sql/03_brand_performance.sql` — the same profit/ROI/DOM/holding
   methodology as file 01, grouped by brand instead of acquisition value.
+- `sql/04_deal_in_channel_performance.sql` — Channel Analytics module 1:
+  which contact-source channel (Marketplace/Kijiji/Reverb/Regular Buyer /
+  Seller) a Business item entered inventory through, and how items sourced
+  through each channel perform. See `analytics/SEMANTIC_CONTRACT.md`
+  section 15 for the full Deal In Channel definition. Deal Out Channel,
+  Listing Channel, and every other Channel Analytics module are explicitly
+  out of scope for this file.
 
 One-off scripts (not part of the reusable numbered sequence), under
 `analytics/audits/`:
@@ -353,6 +360,52 @@ No existing calculation for POSITIVE acquisition values changed — this is a
 naming/consistency/coverage correction, not a business-logic change.
 Channel Analytics, Open Inventory Decision Support, and Business Coach are
 explicitly out of scope for this cleanup.
+
+## Analytics Snapshot v1.2 (Channel Analytics module 1: Deal In Channel)
+
+`public.build_analytics_snapshot_v1_2(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260801000000_build_analytics_snapshot_v1_2.sql`) is
+a **lightweight, additive** version. `build_analytics_snapshot_v1` (v1.0)
+and `build_analytics_snapshot_v1_1` (v1.1) are unchanged and remain
+callable; no previously stored v1.0/v1.1 `analytics_runs.snapshot` row is
+altered. `src/lib/analytics/runAnalytics.ts` now calls v1.2 for new runs
+(`ANALYTICS_VERSION = '1.2'`); the Analytics page's new "Deal In Channel"
+collapsible section shows a plain "not available in this run" message when
+selecting an older v1.0/v1.1 run instead of assuming the field exists.
+
+**What's new:**
+
+- `analytics_item_lifecycle` gains three columns
+  (`20260731000000_analytics_item_lifecycle_deal_in_channel.sql`):
+  `deal_in_channel_id`, `deal_in_channel_name`,
+  `deal_in_channel_requires_listing` — the explicit Channel-Analytics
+  names for the same acquisition-deal-channel join already exposed (under
+  older, more ambiguous names) as `acquisition_channel_id`/
+  `acquisition_channel_name`. Every existing column and calculation on the
+  view is unchanged.
+- **`evidence_aggregates.deal_in_channel`** (new): `population_summary`,
+  `overall_performance`, `by_acquisition_method`,
+  `by_acquisition_value_band`, `open_inventory_exposure` — see
+  `analytics/sql/04_deal_in_channel_performance.sql` and
+  `analytics/SEMANTIC_CONTRACT.md` section 15 for the full field-by-field
+  contract. Missing-channel items (Historical Import, or any acquisition
+  with no recorded channel) are reported explicitly, never hidden.
+- **Truncated-key fix**: v1.1's `acquisition_value_band.population_summary`
+  key `excluded_unreliable_acquisition_date_realized_holding_days_count`
+  (64 bytes) was silently truncated by PostgreSQL's 63-byte identifier
+  limit to `..._holding_days_coun` in every stored v1.1 snapshot. v1.2
+  renames it to the shorter `excluded_unreliable_acquisition_date_holding_
+  count` via a narrow JSONB patch around v1.1's own helper output — the
+  helper itself was not rewritten, and existing v1.1 snapshots are
+  untouched (they still have the truncated v1.0/v1.1-era key).
+- `acquisition_to_exit`, `brand`, and `recommendation_candidates` are
+  v1.1's own helper functions, called directly and unmodified — v1.2 does
+  not re-implement or duplicate them.
+
+Deal Out Channel, Listing Channel, the Deal In → Deal Out journey matrix,
+listing-conversion/same-channel-exit-rate, channel × brand, channel ×
+category/type, monthly channel trends, AI interpretation, and
+recommendations/rankings are all explicitly out of scope for this step.
 
 ## Conventions
 

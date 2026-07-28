@@ -67,7 +67,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_1
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_2
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -76,7 +76,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_1') {
+          if (name === 'build_analytics_snapshot_v1_2') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -96,7 +96,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_1') {
+          if (name === 'build_analytics_snapshot_v1_2') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -151,8 +151,8 @@ async function main() {
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '1.1',
-    analytics_definition_version: '1.1',
+    snapshot_schema_version: '1.2',
+    analytics_definition_version: '1.2',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     recommendation_target_user_id: userAId,
@@ -200,7 +200,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -439,11 +439,88 @@ async function main() {
   const idsB = new Set(candidatesB.map((c: any) => c.item_id));
   check("user A's and user B's v1.1 candidates don't overlap", Array.from(idsA).every((id) => !idsB.has(id)));
 
-  console.log('\n[v1.1 — new runner call persists analytics_version 1.1]');
-  const v11Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new run analytics_version is 1.1', v11Run.analytics_version === '1.1', v11Run.analytics_version);
-  check('new run status is completed', v11Run.status === 'completed');
-  check('new run snapshot has 1.1 metadata', (v11Run.snapshot as any)?.snapshot_schema_version === '1.1');
+  console.log('\n[v1.1 — builder still callable directly (unaffected by v1.2)]');
+  const { error: v11StillCallableError } = await serviceClient.rpc('build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_1 still callable by service_role', !v11StillCallableError, v11StillCallableError);
+
+  // ── Channel Analytics module 1: Deal In Channel (Snapshot v1.2) ──────────
+  console.log('\n[v1.2 — builder callable, top-level metadata]');
+  const { data: v12SnapshotA, error: v12ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_2 callable by service_role', !v12ErrorA, v12ErrorA);
+  check('v1.2 snapshot_schema_version is 1.2', v12SnapshotA?.snapshot_schema_version === '1.2', v12SnapshotA?.snapshot_schema_version);
+  check('v1.2 analytics_definition_version is 1.2', v12SnapshotA?.analytics_definition_version === '1.2', v12SnapshotA?.analytics_definition_version);
+  check('v1.2 recommendation_target_user_id === userAId', v12SnapshotA?.recommendation_target_user_id === userAId);
+
+  console.log('\n[v1.2 — truncated-key fix]');
+  const v12AvbPop = v12SnapshotA?.evidence_aggregates?.acquisition_value_band?.population_summary?.[0];
+  check(
+    'excluded_unreliable_acquisition_date_holding_count key present (renamed, not truncated)',
+    v12AvbPop != null && 'excluded_unreliable_acquisition_date_holding_count' in v12AvbPop,
+    v12AvbPop ? Object.keys(v12AvbPop) : v12AvbPop,
+  );
+  check(
+    'old truncated key no longer present in v1.2 snapshots',
+    v12AvbPop != null && !('excluded_unreliable_acquisition_date_realized_holding_days_coun' in v12AvbPop),
+  );
+  check('acquisition_to_exit section still present (v1.1 helper reused)', Array.isArray(v12SnapshotA?.evidence_aggregates?.acquisition_to_exit?.population_summary));
+  check('brand section still present (v1.1 helper reused)', Array.isArray(v12SnapshotA?.evidence_aggregates?.brand?.population_summary));
+
+  console.log('\n[v1.2 — Deal In Channel population_summary]');
+  const dic = v12SnapshotA?.evidence_aggregates?.deal_in_channel;
+  const dicPop = dic?.population_summary?.[0];
+  check('deal_in_channel section exists with all 5 subsections', !!dic && Array.isArray(dic.population_summary) && Array.isArray(dic.overall_performance) && Array.isArray(dic.by_acquisition_method) && Array.isArray(dic.by_acquisition_value_band) && Array.isArray(dic.open_inventory_exposure), dic ? Object.keys(dic) : dic);
+  check(
+    'business_item_count = deal_in_channel_known_item_count + deal_in_channel_missing_item_count',
+    dicPop?.business_item_count === (dicPop?.deal_in_channel_known_item_count ?? 0) + (dicPop?.deal_in_channel_missing_item_count ?? 0),
+    dicPop,
+  );
+  check('deal_in_channel_missing_item_count >= 1 (fixture item 14, Historical Import with no channel)', (dicPop?.deal_in_channel_missing_item_count ?? 0) >= 1, dicPop?.deal_in_channel_missing_item_count);
+  check('deal_in_channel_coverage_percent is a number', typeof dicPop?.deal_in_channel_coverage_percent === 'number');
+
+  console.log('\n[v1.2 — overall_performance: multi-item single-deal aggregation]');
+  const overallRows: any[] = dic?.overall_performance ?? [];
+  check('overall_performance has at least one row', overallRows.length > 0);
+  const totalItemsAcrossChannels = overallRows.reduce((sum, r) => sum + (r.deal_in_item_count ?? 0), 0);
+  check('SUM(deal_in_item_count) across channels === business_item_count', totalItemsAcrossChannels === dicPop?.business_item_count, { totalItemsAcrossChannels, businessItemCount: dicPop?.business_item_count });
+  const multiItemDealRow = overallRows.find((r) => r.deal_in_item_count > r.deal_in_distinct_deal_count);
+  check(
+    'at least one channel has deal_in_item_count > deal_in_distinct_deal_count (fixture deal 20: 2 items, 1 deal)',
+    !!multiItemDealRow,
+    overallRows.map((r) => ({ channel: r.deal_in_channel_name, items: r.deal_in_item_count, deals: r.deal_in_distinct_deal_count })),
+  );
+
+  console.log('\n[v1.2 — historical items included with channel, excluded from holding]');
+  const missingChannelRow = overallRows.find((r) => r.deal_in_channel_id === null);
+  check('missing-channel row exists in overall_performance (not dropped)', !!missingChannelRow, overallRows.map((r) => r.deal_in_channel_id));
+  check('missing-channel row includes the historical item (historical_item_count >= 1)', (missingChannelRow?.historical_item_count ?? 0) >= 1, missingChannelRow);
+  const anyHoldingExcludesHistorical = overallRows.some((r) => (r.historical_item_count ?? 0) > 0 && (r.holding_sample_size ?? 0) < (r.deal_in_realized_item_count ?? 0));
+  check('at least one channel shows holding_sample_size < realized_item_count where historical items are present', anyHoldingExcludesHistorical || overallRows.every((r) => (r.historical_item_count ?? 0) === 0), overallRows);
+
+  console.log('\n[v1.2 — by_acquisition_value_band excludes zero/unknown]');
+  const bandRows: any[] = dic?.by_acquisition_value_band ?? [];
+  check('by_acquisition_value_band never includes a zero/unknown/negative band label', bandRows.every((r) => !['Zero assigned value', 'Unknown acquisition value', 'Negative (invalid)'].includes(r.acquisition_value_band_label)), bandRows);
+
+  console.log('\n[v1.2 — privacy across both fixture users]');
+  const { data: v12SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userBId });
+  const candidatesA12 = v12SnapshotA?.recommendation_candidates?.open_business_items ?? [];
+  const candidatesB12 = v12SnapshotB?.recommendation_candidates?.open_business_items ?? [];
+  const idsA12 = new Set(candidatesA12.map((c: any) => c.item_id));
+  const idsB12 = new Set(candidatesB12.map((c: any) => c.item_id));
+  check("v1.2 user A's and user B's candidates don't overlap", Array.from(idsA12).every((id) => !idsB12.has(id)));
+  check('deal_in_channel evidence pools both users (population_summary business_item_count reflects shared population)', (dicPop?.business_item_count ?? 0) > candidatesA12.length);
+
+  console.log('\n[v1.2 — permissions on new functions]');
+  const { error: dicAuthedError } = await clientA.rpc('build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v1_2 directly', !!dicAuthedError, dicAuthedError);
+  const { error: dicHelperAuthedError } = await clientA.rpc('_build_deal_in_channel_snapshot_v1');
+  check('authenticated client cannot call _build_deal_in_channel_snapshot_v1 directly', !!dicHelperAuthedError, dicHelperAuthedError);
+
+  console.log('\n[v1.2 — new runner call persists analytics_version 1.2]');
+  const v12Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new run analytics_version is 1.2', v12Run.analytics_version === '1.2', v12Run.analytics_version);
+  check('new run status is completed', v12Run.status === 'completed');
+  check('new run snapshot has 1.2 metadata', (v12Run.snapshot as any)?.snapshot_schema_version === '1.2');
+  check('new run snapshot includes deal_in_channel', !!(v12Run.snapshot as any)?.evidence_aggregates?.deal_in_channel);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

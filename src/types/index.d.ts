@@ -389,6 +389,9 @@ export interface AnalyticsSnapshot {
     acquisition_value_band: Record<string, unknown>;
     acquisition_to_exit:    Record<string, unknown>;
     brand:                  Record<string, unknown>;
+    // Added in Snapshot v1.2 (Channel Analytics module 1) — absent on
+    // older v1.0/v1.1 stored snapshots, so optional here.
+    deal_in_channel?:        Record<string, unknown>;
   };
   recommendation_candidates: {
     open_business_items: Record<string, unknown>[];

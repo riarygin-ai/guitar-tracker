@@ -426,6 +426,15 @@ export default function AnalyticsPage() {
                 <CollapsibleSection title="Brand">
                   <JsonBlock value={selectedSnapshot.evidence_aggregates.brand} />
                 </CollapsibleSection>
+                <CollapsibleSection title="Deal In Channel">
+                  {selectedSnapshot.evidence_aggregates.deal_in_channel ? (
+                    <JsonBlock value={selectedSnapshot.evidence_aggregates.deal_in_channel} />
+                  ) : (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      Not available in this run — Deal In Channel was added in Snapshot v1.2. Run analytics again to generate it.
+                    </p>
+                  )}
+                </CollapsibleSection>
                 <CollapsibleSection title="My Open Business Items">
                   <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
                 </CollapsibleSection>

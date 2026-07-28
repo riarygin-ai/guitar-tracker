@@ -817,10 +817,70 @@ This contract governs semantics only. It does not:
   four private helpers are all `SECURITY INVOKER` — see section 10 and
   `20260728000000_build_analytics_snapshot_v1.sql`.
 - Weaken, modify, or replace any existing RLS policy.
-- Add Channel Analytics, Open Inventory Decision Support, or any new
-  business-performance module. Analytics Snapshot v1.1
+- Add Open Inventory Decision Support or any new non-channel business-
+  performance module. Analytics Snapshot v1.1
   (`20260730000000_build_analytics_snapshot_v1_1.sql`, section 7.1) is a
   semantic-naming and consistency correction to the THREE existing modules
   (Acquisition Value Band, Acquisition-to-Exit, Brand) — it does not add a
   fourth module. `build_analytics_snapshot_v1` (v1.0) remains unchanged and
   callable; v1.1 is additive, not a replacement.
+- Add Deal Out Channel, Listing Channel, a Deal In → Deal Out journey
+  matrix, listing-conversion/same-channel-exit-rate analysis, channel x
+  brand, channel x category/type, or monthly channel trends. Analytics
+  Snapshot v1.2 (`20260801000000_build_analytics_snapshot_v1_2.sql`,
+  section 15) adds EXACTLY ONE Channel Analytics module — Deal In Channel
+  Performance — and nothing else. `build_analytics_snapshot_v1` (v1.0) and
+  `build_analytics_snapshot_v1_1` (v1.1) remain unchanged and callable;
+  v1.2 is additive, not a replacement.
+
+## 15. Deal In Channel (Channel Analytics module 1)
+
+Governs `analytics/sql/04_deal_in_channel_performance.sql` and
+`public._build_deal_in_channel_snapshot_v1()`
+(`supabase/migrations/20260801000000_build_analytics_snapshot_v1_2.sql`).
+This is the FIRST of what will eventually be several Channel Analytics
+modules — see the Non-goals bullet above for exactly which future modules
+are explicitly out of scope for now.
+
+**Definition.** Deal In Channel is the channel where CONTACT with the
+seller or trade partner ORIGINATED for the operation through which an item
+ENTERED inventory: Marketplace, Kijiji, Reverb, or Regular Buyer / Seller.
+It is NOT a payment method, NOT a shipping method, and NOT "the technical
+place where the deal was completed."
+
+- For a purchase, this is the purchase deal's `deal_channel_id`.
+- For a trade acquisition, this is the trade deal's `deal_channel_id`.
+- For Historical Purchase / Historical Trade, this is the historical
+  deal's own channel, when one was recorded.
+- Historical Import (acquisition method never determined) or any
+  acquisition with no recorded channel has `deal_in_channel_id = NULL` —
+  a real, visible "missing channel" state, reported explicitly via
+  `population_summary.deal_in_channel_missing_item_count`, never hidden or
+  defaulted to a fake channel.
+
+**Columns** (`analytics_item_lifecycle`, added
+`20260731000000_analytics_item_lifecycle_deal_in_channel.sql`):
+`deal_in_channel_id`, `deal_in_channel_name`,
+`deal_in_channel_requires_listing` (the channel's own
+`deal_channels.is_listing_platform`, NULL when the channel itself is
+unknown). These are sourced from exactly the same acquisition-deal-channel
+join the pre-existing `acquisition_channel_id`/`acquisition_channel_name`
+columns already use — this is a naming addition for Channel Analytics, not
+a new join or a new fact about the data. The older
+`acquisition_channel_id`/`acquisition_channel_name` names are unchanged and
+not removed.
+
+**Naming rule.** Never use the ambiguous names `channel_id`,
+`channel_name`, `acquisition_channel`, or `source_channel` in any Channel
+Analytics output. Always use the explicit `deal_in_channel_*` /
+`deal_in_item_count` / `deal_in_distinct_deal_count` /
+`deal_in_realized_item_count` / `deal_in_open_item_count` forms.
+
+**Scope.** Deal In Channel evidence uses the full shared eligible Business
+population (`purpose_name = 'Business'`), same evidence/recommendation
+boundary as every other module (section 9-11) — no per-user channel
+breakdown exists or is added here (unlike 01/03's developer-only Query
+G2/G, no per-user analog exists in file 04 at all). `deal_in_distinct_deal_count`
+counts DISTINCT `acquisition_deal_id`, not items — a single multi-item
+purchase/trade deal contributes many items but one deal.
+
