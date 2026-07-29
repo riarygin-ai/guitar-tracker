@@ -411,4 +411,13 @@ export interface AnalyticsSnapshot {
   recommendation_candidates: {
     open_business_items: Record<string, unknown>[];
   };
+  // Added in Snapshot v1.8 (Open Inventory Decision Support v1) — a NEW
+  // top-level section, sibling to evidence_aggregates/recommendation_
+  // candidates, not nested inside either. Absent on older v1.0-v1.7 stored
+  // snapshots, so optional here. Item-level, but every row is restricted
+  // to the snapshot's own recommendation_target_user_id — see
+  // analytics/SEMANTIC_CONTRACT.md section 21.
+  target_user_evidence?: {
+    open_inventory_decision_support: Record<string, unknown>;
+  };
 }

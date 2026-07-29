@@ -480,6 +480,15 @@ export default function AnalyticsPage() {
                     </p>
                   )}
                 </CollapsibleSection>
+                <CollapsibleSection title="Open Inventory Decision Support">
+                  {selectedSnapshot.target_user_evidence?.open_inventory_decision_support ? (
+                    <JsonBlock value={selectedSnapshot.target_user_evidence.open_inventory_decision_support} />
+                  ) : (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      Not available in this run — Open Inventory Decision Support was added in Snapshot v1.8. Run analytics again to generate it.
+                    </p>
+                  )}
+                </CollapsibleSection>
                 <CollapsibleSection title="My Open Business Items">
                   <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
                 </CollapsibleSection>

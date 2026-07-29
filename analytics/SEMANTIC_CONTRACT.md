@@ -848,9 +848,8 @@ This contract governs semantics only. It does not:
   `build_analytics_snapshot_v1` (v1.0) through `build_analytics_snapshot_v1_5`
   (v1.5) remain unchanged and callable; v1.6 is additive, not a
   replacement.
-- Add Open Inventory Decision Support, item-level recommendations, recent
-  trends, AI recommendations, Business Coach, or cash-balance analysis.
-  Analytics Snapshot v1.7
+- Add item-level recommendations, recent trends, AI recommendations,
+  Business Coach, or cash-balance analysis. Analytics Snapshot v1.7
   (`20260807000000_build_analytics_snapshot_v1_7.sql`, section 20) adds
   EXACTLY ONE module — Capital & Liquidity — and nothing else. It reports
   acquisition CAPITAL (value assigned to inventory), never a user's
@@ -858,6 +857,17 @@ This contract governs semantics only. It does not:
   not read anywhere in that module. `build_analytics_snapshot_v1` (v1.0)
   through `build_analytics_snapshot_v1_6` (v1.6) remain unchanged and
   callable; v1.7 is additive, not a replacement.
+- Add AI-generated recommendations, Business Coach, recent trends, cash-
+  balance logic, automatic repricing, notifications, or a UI redesign.
+  Analytics Snapshot v1.8
+  (`20260808000000_build_analytics_snapshot_v1_8.sql`, section 21) adds
+  EXACTLY ONE module — Open Inventory Decision Support v1 — and nothing
+  else. It never produces a `score`, `priority_score`, `recommended_action`,
+  sell/keep/reprice decision, or AI-generated prose — `reason_codes` is a
+  deterministic array of evidence flags only, never counted or weighted
+  into anything. `build_analytics_snapshot_v1` (v1.0) through
+  `build_analytics_snapshot_v1_7` (v1.7) remain unchanged and callable;
+  v1.8 is additive, not a replacement.
 
 ## 15. Deal In Channel (Channel Analytics module 1)
 
@@ -1274,3 +1284,107 @@ boundary as every other module (section 9-11) — no `user_id`, `item_id`,
 item name, or model appears anywhere in this module's output, and no
 per-user capital breakdown exists. `recommendation_candidates` are
 unchanged and remain restricted to `recommendation_target_user_id`.
+
+## 21. Open Inventory Decision Support v1
+
+Governs `analytics/sql/10_open_inventory_decision_support.sql` and
+`public._build_open_inventory_decision_support_snapshot_v1(int)`
+(`supabase/migrations/20260808000000_build_analytics_snapshot_v1_8.sql`).
+This module provides transparent, ITEM-LEVEL evidence for the CALLING
+user's own open Business inventory, meant to help a later Business Coach —
+never this module itself — answer which open items deserve attention.
+
+**This module never produces an opaque score or a final action.** No
+`score`, `priority_score`, `recommended_action`, sell/keep/reprice
+decision, or AI-generated prose exists anywhere here. `reason_codes` is a
+deterministic array of independent evidence FLAGS — never counted,
+weighted, or combined into a single number. One item may legitimately
+trigger several related reason codes without that meaning "multiple
+independent pieces of evidence agree" — it means multiple separate, true
+facts are being surfaced together.
+
+**A new top-level section, not `evidence_aggregates`.** This is the first
+module to expose item-level identity (item_id, brand, category, type,
+model) in a snapshot, via a NEW top-level key —
+`target_user_evidence.open_inventory_decision_support` — sibling to
+`evidence_aggregates` (shared, never item-level) and
+`recommendation_candidates` (target-user-only, fixed narrow shape). This is
+safe ONLY because every row is filtered to the calling user's own
+`user_id`, identically to `_build_recommendation_candidates_snapshot_v1_1`'s
+own filter. Comparable-cohort STATISTICS may pool every user's Business
+items (the same shared population every other module reads), but no other
+user's item identity is ever exposed.
+
+**Model field decision.** `inventory_items.model` is free text with no
+normalization table — two items could be the "same model" under different
+spelling/capitalization/abbreviation with no reliable way to detect that.
+This module therefore SKIPS the "exact model" comparable-cohort level
+entirely (the hierarchy starts at "brand + type + acquisition value band")
+and documents this via the `MODEL_COHORT_UNAVAILABLE` limitation code on
+every item row. `model` is still exposed as a plain DISPLAY field (a real,
+existing column), just never used as an equality-matching cohort key.
+
+**Listing-state limitation.** `item_listings` has no active/unlisted state
+(section 18). For an open item, "listed" means "has at least one eligible
+`item_listings` record" — never a true "still actively promoted" signal.
+Every item row carries `listing_state_basis =
+"open_item_with_listing_record"`; the module carries a `module_limitations`
+entry documenting this. No listing-schema change is made or implied.
+
+**Population.** Target items: the calling user's own OPEN (`NOT
+is_realized`) Business items, listed and unlisted. Comparable cohorts: the
+shared Business population across every user — open AND realized items
+contribute to a cohort's item/realization-rate counts; ONLY realized items
+contribute to profit/ROI/DOM/holding metrics. Historical imports: included
+in profit, ROI, realization, DOM, category, type, brand, value-band, and
+acquisition-method evidence; excluded from ownership-age and holding-time
+evidence (sections 1-4's rule, unchanged).
+
+**Comparable-cohort specificity hierarchy.** For each target item, up to 7
+candidate cohorts are computed (skipping the model level — see above):
+2. brand + type + acquisition value band (positive acquisition value only)
+3. brand + acquisition value band (positive only)
+4. brand (unrestricted)
+5. category + acquisition value band (positive only)
+6. category (unrestricted)
+7. acquisition value band (positive only)
+8. all Business items (unrestricted)
+
+Band-restricted levels never apply to a zero-assigned/unknown/negative
+item, matching every band section elsewhere in this analytics layer.
+Selection rule (broader moderate-confidence evidence is preferred over an
+unusably small exact match): search the hierarchy (specificity order) for
+the first cohort with `realized_item_count >= 5`; if none, search again
+for `>= 3`; if none, use the most specific cohort with `>= 1`; if none at
+all, no cohort (`comparable_evidence_available = false`). A cohort's own
+`confidence` label is computed from its OWN `realized_item_count` using
+the standard 4-tier thresholds (1-2 insufficient, 3-5 low, 6-9 moderate,
+10+ stronger) — independent of which hierarchy pass located it.
+
+**Reason codes** (v1, exhaustive): `UNLISTED_OPEN_ITEM`,
+`DOM_ABOVE_COMPARABLE_MEDIAN`, `DOM_ABOVE_COMPARABLE_P75`,
+`OWNERSHIP_AGE_120_PLUS`, `HIGH_CAPITAL_EXPOSURE` (positive value AND
+(top-3-by-value OR >=10% of the user's positive open capital)),
+`LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL` (positive value, estimate
+available, non-negative upside, upside % < 15), `NEGATIVE_ESTIMATED_UPSIDE`,
+`LOW_COMPARABLE_CONFIDENCE`, `NO_COMPARABLE_EVIDENCE`,
+`HISTORICAL_AGE_UNRELIABLE`, `ZERO_ASSIGNED_ACQUISITION_VALUE`,
+`UNKNOWN_ACQUISITION_VALUE`, `ESTIMATED_VALUE_MISSING`. None of these are
+counted into a score.
+
+**Ordering** is fully transparent: (1) positive acquisition value
+descending, (2) reliable ownership age descending, (3) `item_id` — never a
+hidden ranking formula.
+
+**Interpretation safeguards**: reason codes are evidence flags, not
+recommendations; high capital does not automatically mean a bad item;
+estimated upside is based on a user-entered estimate; cohort performance is
+descriptive, not causal; broader fallback cohorts are less specific;
+historical imports may have reliable profit/DOM but unreliable ownership
+age; listing state is inferred from records and open status; missing
+Marketplace/Kijiji history may understate historical cross-listing.
+
+**Scope.** `item_decision_evidence` and `within_brand_comparison` contain
+ONLY the calling user's own items — no other user's `item_id`, item name,
+model, or identity is ever exposed. `recommendation_candidates` is
+unchanged and remains restricted to `recommendation_target_user_id`.

@@ -67,7 +67,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_7
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_8
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -76,7 +76,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_7') {
+          if (name === 'build_analytics_snapshot_v1_8') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -96,7 +96,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_7') {
+          if (name === 'build_analytics_snapshot_v1_8') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -151,8 +151,8 @@ async function main() {
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '1.7',
-    analytics_definition_version: '1.7',
+    snapshot_schema_version: '1.8',
+    analytics_definition_version: '1.8',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     recommendation_target_user_id: userAId,
@@ -200,7 +200,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -640,7 +640,13 @@ async function main() {
   );
 
   console.log('\n[v1.4 — open items excluded from realized population]');
-  check('realized_business_item_count is less than total tracked items (open items exist and are excluded)', (cjPop?.realized_business_item_count ?? 0) > 0 && (cjPop?.realized_business_item_count ?? 0) < 24, cjPop?.realized_business_item_count);
+  const { count: totalBusinessItemCount } = await serviceClient
+    .from('analytics_item_lifecycle').select('item_id', { count: 'exact', head: true }).eq('purpose_name', 'Business');
+  check(
+    'realized_business_item_count is less than total tracked Business items (open items exist and are excluded)',
+    (cjPop?.realized_business_item_count ?? 0) > 0 && (cjPop?.realized_business_item_count ?? 0) < (totalBusinessItemCount ?? 0),
+    { realized: cjPop?.realized_business_item_count, total: totalBusinessItemCount },
+  );
 
   console.log('\n[v1.4 — journey eligibility reconciliation]');
   check(
@@ -1095,12 +1101,162 @@ async function main() {
   const { error: clHelperAuthedError } = await clientA.rpc('_build_capital_liquidity_snapshot_v1');
   check('authenticated client cannot call _build_capital_liquidity_snapshot_v1 directly', !!clHelperAuthedError, clHelperAuthedError);
 
-  console.log('\n[v1.7 — new runner call persists analytics_version 1.7]');
-  const v17Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new run analytics_version is 1.7', v17Run.analytics_version === '1.7', v17Run.analytics_version);
-  check('new run status is completed', v17Run.status === 'completed');
-  check('new run snapshot has 1.7 metadata', (v17Run.snapshot as any)?.snapshot_schema_version === '1.7');
-  check('new run snapshot includes capital_liquidity', !!(v17Run.snapshot as any)?.evidence_aggregates?.capital_liquidity);
+  console.log('\n[v1.7 — builder still callable directly (unaffected by v1.8)]');
+  const { error: v17StillCallableError } = await serviceClient.rpc('build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_7 still callable by service_role', !v17StillCallableError, v17StillCallableError);
+
+  // ── Open Inventory Decision Support v1 (Snapshot v1.8) ───────────────────
+  console.log('\n[v1.8 — builder callable, top-level metadata]');
+  const { data: v18SnapshotA, error: v18ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_8 callable by service_role', !v18ErrorA, v18ErrorA);
+  check('v1.8 snapshot_schema_version is 1.8', v18SnapshotA?.snapshot_schema_version === '1.8', v18SnapshotA?.snapshot_schema_version);
+  check('v1.8 analytics_definition_version is 1.8', v18SnapshotA?.analytics_definition_version === '1.8', v18SnapshotA?.analytics_definition_version);
+  check('v1.8 recommendation_target_user_id === userAId', v18SnapshotA?.recommendation_target_user_id === userAId);
+
+  console.log('\n[v1.8 — evidence_aggregates and recommendation_candidates unchanged from v1.7]');
+  check(
+    'evidence_aggregates is byte-identical to v1.7 (test #21)',
+    JSON.stringify(v18SnapshotA?.evidence_aggregates) === JSON.stringify(v17SnapshotA?.evidence_aggregates),
+  );
+  check(
+    'recommendation_candidates is byte-identical to v1.7 (test #20)',
+    JSON.stringify(v18SnapshotA?.recommendation_candidates) === JSON.stringify(v17SnapshotA?.recommendation_candidates),
+  );
+
+  console.log('\n[v1.8 — Open Inventory Decision Support section shape]');
+  const oids = v18SnapshotA?.target_user_evidence?.open_inventory_decision_support;
+  check(
+    'open_inventory_decision_support exists with all subsections',
+    !!oids && Array.isArray(oids.population_summary) && Array.isArray(oids.item_decision_evidence)
+      && Array.isArray(oids.within_brand_comparison) && typeof oids.listing_state_basis === 'string'
+      && Array.isArray(oids.module_limitations),
+    oids ? Object.keys(oids) : oids,
+  );
+  check('listing-state basis is present (test #8)', oids?.listing_state_basis === 'open_item_with_listing_record', oids?.listing_state_basis);
+  check('module_limitations is present and non-empty (test #8)', (oids?.module_limitations ?? []).length > 0, oids?.module_limitations);
+
+  const oidsPop = oids?.population_summary?.[0];
+  const items: any[] = oids?.item_decision_evidence ?? [];
+
+  console.log('\n[v1.8 — only target-user items appear (tests #1, #2)]');
+  check('item_decision_evidence.length === open_business_item_count', items.length === oidsPop?.open_business_item_count, { length: items.length, open: oidsPop?.open_business_item_count });
+  const userBOpenItemIds = [3, 4, 11, 12, 13];
+  check("no User B item_id (3, 4, 11, 12, 13) appears in User A's item_decision_evidence", items.every((r) => !userBOpenItemIds.includes(r.item_id)), items.map((r) => r.item_id));
+
+  console.log('\n[v1.8 — population reconciliation (tests #4, #5)]');
+  check(
+    'open_business_item_count = listed_open_item_count + unlisted_open_item_count',
+    oidsPop?.open_business_item_count === (oidsPop?.listed_open_item_count ?? 0) + (oidsPop?.unlisted_open_item_count ?? 0),
+    oidsPop,
+  );
+  check(
+    'open_business_item_count = positive + zero_assigned + unknown acquisition item counts',
+    oidsPop?.open_business_item_count === (oidsPop?.positive_acquisition_item_count ?? 0) + (oidsPop?.zero_assigned_acquisition_item_count ?? 0) + (oidsPop?.unknown_acquisition_item_count ?? 0),
+    oidsPop,
+  );
+  check(
+    'open_business_item_count = reliable + unreliable ownership age counts',
+    oidsPop?.open_business_item_count === (oidsPop?.reliable_ownership_age_item_count ?? 0) + (oidsPop?.unreliable_ownership_age_item_count ?? 0),
+    oidsPop,
+  );
+  check(
+    'open_business_item_count = sufficient + low_confidence + no_comparable cohort item counts',
+    oidsPop?.open_business_item_count === (oidsPop?.sufficient_comparable_cohort_item_count ?? 0) + (oidsPop?.low_confidence_comparable_cohort_item_count ?? 0) + (oidsPop?.no_comparable_cohort_item_count ?? 0),
+    oidsPop,
+  );
+  check('at least one item has low-confidence comparable cohort (fixture item 44)', (oidsPop?.low_confidence_comparable_cohort_item_count ?? 0) >= 1, oidsPop?.low_confidence_comparable_cohort_item_count);
+
+  console.log('\n[v1.8 — unlisted items have NULL current DOM; historical items have NULL ownership age (tests #6, #7)]');
+  check('every unlisted item has current_dom_days === null', items.filter((r) => !r.listed_flag).every((r) => r.current_dom_days === null), items.filter((r) => !r.listed_flag).map((r) => r.current_dom_days));
+  const item14 = items.find((r) => r.item_id === 14);
+  check('fixture item 14 (Historical Import, open) has is_historical_import = true and ownership_age_days === null', !!item14 && item14.is_historical_import === true && item14.ownership_age_days === null, item14);
+
+  console.log('\n[v1.8 — comparable cohort hierarchy: specific-sufficient and broad-fallback (tests #3, #9, #10)]');
+  const item2 = items.find((r) => r.item_id === 2);
+  check('fixture item 2 (Fender, $1-999 band) resolves to a specific sufficient cohort (brand_band or brand_type_band), not all_business', !!item2?.comparable_cohort && ['brand_band', 'brand_type_band'].includes(item2.comparable_cohort.cohort_scope), item2?.comparable_cohort);
+  const item37 = items.find((r) => r.item_id === 37);
+  check('fixture item 37 (brand-new brand/category, $2,500) falls all the way back to all_business (test #10)', item37?.comparable_cohort?.cohort_scope === 'all_business', item37?.comparable_cohort);
+
+  console.log('\n[v1.8 — cohort profit/ROI/DOM use realized items only; realization rate uses open+realized (tests #11, #12)]');
+  const cohortsSeen = items.map((r) => r.comparable_cohort).filter((c) => c);
+  check('every cohort: realized_item_count <= cohort_item_count', cohortsSeen.every((c) => c.realized_item_count <= c.cohort_item_count), cohortsSeen);
+  check(
+    'every cohort: cohort_item_count = open_item_count + realized_item_count (realization rate uses both)',
+    cohortsSeen.every((c) => c.cohort_item_count === c.open_item_count + c.realized_item_count),
+    cohortsSeen,
+  );
+
+  console.log('\n[v1.8 — historical rows contribute to DOM but not holding evidence (test #13)]');
+  const item27 = items.find((r) => r.item_id === 27);
+  check(
+    'Gibson brand cohort (fixture item 9, historical): holding_sample_size < realized_item_count',
+    !!item27?.comparable_cohort && (item27.comparable_cohort.holding_sample_size ?? 0) < item27.comparable_cohort.realized_item_count,
+    item27?.comparable_cohort,
+  );
+
+  console.log('\n[v1.8 — p75 DOM calculated correctly (test #14)]');
+  const cohortsWithDom = cohortsSeen.filter((c) => c.dom_sample_size >= 2 && c.p75_days_on_market !== null && c.median_days_on_market !== null);
+  check('every cohort with >=2 DOM samples: p75_days_on_market >= median_days_on_market', cohortsWithDom.every((c) => c.p75_days_on_market >= c.median_days_on_market), cohortsWithDom);
+
+  console.log('\n[v1.8 — reason-code thresholds (tests #15, #16, #17)]');
+  check('fixture item 27 (highest acquisition value, $1,300) carries HIGH_CAPITAL_EXPOSURE', !!item27 && item27.reason_codes.includes('HIGH_CAPITAL_EXPOSURE'), item27?.reason_codes);
+  const item45 = items.find((r) => r.item_id === 45);
+  check(
+    'fixture item 45 (10% estimated upside, positive value) carries LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL',
+    !!item45 && item45.reason_codes.includes('LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL') && item45.estimated_upside_percent === 10,
+    item45,
+  );
+  const item44 = items.find((r) => r.item_id === 44);
+  check(
+    'fixture item 44 (cohort confidence = low) carries LOW_COMPARABLE_CONFIDENCE, not NO_COMPARABLE_EVIDENCE',
+    !!item44 && item44.reason_codes.includes('LOW_COMPARABLE_CONFIDENCE') && !item44.reason_codes.includes('NO_COMPARABLE_EVIDENCE') && item44.comparable_cohort?.confidence === 'low',
+    item44,
+  );
+  check(
+    'NO_COMPARABLE_EVIDENCE and LOW_COMPARABLE_CONFIDENCE logic is self-consistent for every item (comparable_evidence_available <=> comparable_cohort present <=> reason code correctness)',
+    items.every((r) =>
+      (r.comparable_evidence_available === (r.comparable_cohort !== null))
+      && (r.reason_codes.includes('NO_COMPARABLE_EVIDENCE') === (r.comparable_cohort === null))
+      && (r.reason_codes.includes('LOW_COMPARABLE_CONFIDENCE') === (r.comparable_cohort !== null && ['insufficient', 'low'].includes(r.comparable_cohort.confidence)))
+    ),
+    items.map((r) => ({ id: r.item_id, available: r.comparable_evidence_available, cohort: r.comparable_cohort?.confidence ?? null, codes: r.reason_codes })),
+  );
+
+  console.log('\n[v1.8 — no score/priority/action fields anywhere (test #18)]');
+  const forbiddenKeys = ['score', 'priority_score', 'recommended_action'];
+  check('no item_decision_evidence row exposes score/priority_score/recommended_action', items.every((r) => forbiddenKeys.every((k) => !(k in r))), items[0] ? Object.keys(items[0]) : items);
+  check('module-level object exposes no score/priority_score/recommended_action', forbiddenKeys.every((k) => oids && !(k in oids)));
+
+  console.log('\n[v1.8 — within-brand reconciliation to target-user open inventory (test #19)]');
+  const brandRows: any[] = oids?.within_brand_comparison ?? [];
+  const brandItemSum = brandRows.reduce((sum, b) => sum + (b.open_item_count ?? 0), 0);
+  check('sum of within_brand_comparison.open_item_count === open_business_item_count', brandItemSum === oidsPop?.open_business_item_count, { brandItemSum, open: oidsPop?.open_business_item_count });
+  const brandCapitalSum = brandRows.reduce((sum, b) => sum + Number(b.open_acquisition_capital ?? 0), 0);
+  check('sum of within_brand_comparison.open_acquisition_capital === open_acquisition_capital', brandCapitalSum === Number(oidsPop?.open_acquisition_capital ?? 0), { brandCapitalSum, capital: oidsPop?.open_acquisition_capital });
+
+  console.log('\n[v1.8 — shared comparable cohorts pool beyond the target user alone (test #3)]');
+  const fenderBrandRow = brandRows.find((b) => b.brand_name === 'Fender');
+  check(
+    "fixture item 2's Fender brand_band cohort_item_count exceeds User A's own Fender open_item_count (within_brand_comparison, target-user-only) — proves the cohort pools more than just this user's own open inventory",
+    !!item2?.comparable_cohort && !!fenderBrandRow && item2.comparable_cohort.cohort_item_count > fenderBrandRow.open_item_count,
+    { cohortItemCount: item2?.comparable_cohort?.cohort_item_count, fenderOwnOpenItemCount: fenderBrandRow?.open_item_count },
+  );
+
+  console.log('\n[v1.8 — privacy: within_brand_comparison and identity fields never leak another user]');
+  check('no within_brand_comparison row exposes user_id or item_id', brandRows.every((r) => !('user_id' in r) && !('item_id' in r)), brandRows[0]);
+
+  console.log('\n[v1.8 — permissions on new functions]');
+  const { error: oidsAuthedError } = await clientA.rpc('build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v1_8 directly', !!oidsAuthedError, oidsAuthedError);
+  const { error: oidsHelperAuthedError } = await clientA.rpc('_build_open_inventory_decision_support_snapshot_v1', { p_target_user_id: userAId });
+  check('authenticated client cannot call _build_open_inventory_decision_support_snapshot_v1 directly', !!oidsHelperAuthedError, oidsHelperAuthedError);
+
+  console.log('\n[v1.8 — new runner call persists analytics_version 1.8]');
+  const v18Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new run analytics_version is 1.8', v18Run.analytics_version === '1.8', v18Run.analytics_version);
+  check('new run status is completed', v18Run.status === 'completed');
+  check('new run snapshot has 1.8 metadata', (v18Run.snapshot as any)?.snapshot_schema_version === '1.8');
+  check('new run snapshot includes target_user_evidence.open_inventory_decision_support', !!(v18Run.snapshot as any)?.target_user_evidence?.open_inventory_decision_support);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

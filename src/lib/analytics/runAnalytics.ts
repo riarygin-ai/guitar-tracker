@@ -19,16 +19,23 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // updating both this file and the database migrations together — see the
 // "duplicated logic" note in analytics/README.md.
 //
-// v1.7: new runs call build_analytics_snapshot_v1_7 (Capital & Liquidity —
-// see analytics/SEMANTIC_CONTRACT.md). v1.0/v1.1/v1.2/v1.3/v1.4/v1.5/v1.6's
-// builder functions and every previously stored v1.0/v1.1/v1.2/v1.3/v1.4/
-// v1.5/v1.6 analytics_runs.snapshot row are untouched and remain readable
-// — this is a forward version bump, not a rewrite of history.
-export const ANALYTICS_VERSION = '1.7';
+// v1.8: new runs call build_analytics_snapshot_v1_8 (Open Inventory
+// Decision Support v1 — see analytics/SEMANTIC_CONTRACT.md). v1.0 through
+// v1.7's builder functions and every previously stored v1.0-v1.7
+// analytics_runs.snapshot row are untouched and remain readable — this is
+// a forward version bump, not a rewrite of history. v1.8 adds a NEW
+// top-level snapshot key, target_user_evidence.open_inventory_decision_
+// support — item-level evidence restricted to the caller's own open
+// Business items — alongside the existing evidence_aggregates (shared,
+// never item-level) and recommendation_candidates (target-user-only,
+// unchanged shape). See isValidAnalyticsSnapshot below: it intentionally
+// does NOT require target_user_evidence to be present, so older stored
+// v1.0-v1.7 snapshots (which never had it) keep validating correctly.
+export const ANALYTICS_VERSION = '1.8';
 export const EVIDENCE_SCOPE = 'shared_business_population';
-const SNAPSHOT_SCHEMA_VERSION = '1.7';
-const ANALYTICS_DEFINITION_VERSION = '1.7';
-const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v1_7';
+const SNAPSHOT_SCHEMA_VERSION = '1.8';
+const ANALYTICS_DEFINITION_VERSION = '1.8';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v1_8';
 
 // ── Types ────────────────────────────────────────────────────────────────
 

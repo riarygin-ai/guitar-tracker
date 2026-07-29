@@ -94,9 +94,25 @@ Reusable numbered analysis sequence, under `analytics/sql/`:
   See `analytics/SEMANTIC_CONTRACT.md` section 20 for the full definition,
   including the mutually-exclusive open-capital age buckets and why
   `profit_to_acquisition_capital_percent` is never interchangeable with
-  `median_roi`. Open Inventory Decision Support, item-level
-  recommendations, recent trends, AI recommendations, Business Coach, and
-  cash-balance analysis are explicitly out of scope for this file.
+  `median_roi`. Open Inventory Decision Support (below) is the only other
+  module in scope alongside this file; item-level recommendations, recent
+  trends, AI recommendations, Business Coach, and cash-balance analysis are
+  explicitly out of scope for this file.
+- `sql/10_open_inventory_decision_support.sql` — transparent, item-level
+  evidence for the CURRENT user's own open Business inventory (capital
+  exposure, comparable-cohort DOM/profit/ROI, ownership age, estimated
+  upside, within-brand comparison) meant to help a later Business Coach,
+  never a final answer itself. Produces NO score, priority_score,
+  recommended_action, or AI-generated prose — only a deterministic
+  `reason_codes` evidence-flag array. The first module to expose item-level
+  identity, via a NEW top-level snapshot section
+  (`target_user_evidence.open_inventory_decision_support`), always
+  restricted to the calling user's own items. See
+  `analytics/SEMANTIC_CONTRACT.md` section 21 for the full definition,
+  including the comparable-cohort specificity hierarchy and the model-field
+  reliability decision. AI-generated recommendations, Business Coach,
+  recent trends, cash-balance logic, automatic repricing, notifications,
+  and UI redesign are explicitly out of scope for this file.
 
 One-off scripts (not part of the reusable numbered sequence), under
 `analytics/audits/`:
@@ -309,8 +325,8 @@ Current limitations (deliberate, for this step):
 consolidated into a single implementation, the same analytical definitions
 exist in two places that must be kept in sync by hand: the developer-readable
 manual SQL files (`analytics/sql/01_...`, `02_...`, `03_...`, `04_...`,
-`05_...`, `06_...`, `07_...`, `08_...`, `09_...` — these reflect the
-CURRENT semantics, edited in place) and the versioned snapshot builder
+`05_...`, `06_...`, `07_...`, `08_...`, `09_...`, `10_...` — these reflect
+the CURRENT semantics, edited in place) and the versioned snapshot builder
 functions, one migration per version
 (`supabase/migrations/20260728000000_build_analytics_snapshot_v1.sql`
 for v1.0, `supabase/migrations/20260730000000_build_analytics_snapshot_v1_1.sql`
@@ -320,7 +336,8 @@ for v1.3, `supabase/migrations/20260804000000_build_analytics_snapshot_v1_4.sql`
 for v1.4, `supabase/migrations/20260805000000_build_analytics_snapshot_v1_5.sql`
 for v1.5, `supabase/migrations/20260806000000_build_analytics_snapshot_v1_6.sql`
 for v1.6, `supabase/migrations/20260807000000_build_analytics_snapshot_v1_7.sql`
-for v1.7). A change to an analytical definition (a band boundary, an
+for v1.7, `supabase/migrations/20260808000000_build_analytics_snapshot_v1_8.sql`
+for v1.8). A change to an analytical definition (a band boundary, an
 eligibility rule, a new metric) must be applied to both the manual files
 and the CURRENT builder version, or they will silently disagree. Already-
 shipped versioned builder migrations (like v1.0's) are never edited after
@@ -690,6 +707,46 @@ message when selecting an older run instead of assuming the field exists.
 Open Inventory Decision Support, item-level recommendations, recent
 trends, AI recommendations, Business Coach, and cash-balance analysis are
 all explicitly out of scope for this step.
+
+## Analytics Snapshot v1.8 (Open Inventory Decision Support v1)
+
+`public.build_analytics_snapshot_v1_8(p_recommendation_target_user_id int)`
+(`supabase/migrations/20260808000000_build_analytics_snapshot_v1_8.sql`) is
+a **lightweight, additive** version. `build_analytics_snapshot_v1` (v1.0)
+through `build_analytics_snapshot_v1_7` (v1.7) are unchanged and remain
+callable; no previously stored v1.0-v1.7 `analytics_runs.snapshot` row is
+altered. `src/lib/analytics/runAnalytics.ts` now calls v1.8 for new runs
+(`ANALYTICS_VERSION = '1.8'`); the Analytics page's new "Open Inventory
+Decision Support" collapsible section reads from the NEW
+`target_user_evidence.open_inventory_decision_support` key (not
+`evidence_aggregates`) and shows a plain "not available in this run"
+message when selecting an older run.
+
+**What's new:**
+
+- **A new top-level snapshot section**, not `evidence_aggregates`:
+  `target_user_evidence.open_inventory_decision_support` — the first
+  section in this analytics layer to expose item-level identity (item_id,
+  brand, category, type, model), always restricted to the calling user's
+  own open Business items. `evidence_aggregates` and
+  `recommendation_candidates` are passed through from v1.7 UNCHANGED.
+- **`population_summary`, `item_decision_evidence`, `within_brand_
+  comparison`** — see `analytics/sql/10_open_inventory_decision_support.sql`
+  and `analytics/SEMANTIC_CONTRACT.md` section 21 for the full contract.
+- **Comparable-cohort specificity hierarchy**: for each open item, up to 7
+  candidate cohorts (brand+type+band down to all-Business) are searched,
+  preferring the most specific one with at least 5 realized items, falling
+  back to 3, then 1, then no cohort. The exact-model cohort level is
+  deliberately skipped (`model` is free text with no normalization table).
+- **Deterministic `reason_codes`** — an array of evidence flags (e.g.
+  `HIGH_CAPITAL_EXPOSURE`, `OWNERSHIP_AGE_120_PLUS`,
+  `DOM_ABOVE_COMPARABLE_MEDIAN`), never counted, weighted, or turned into a
+  score. No `score`, `priority_score`, `recommended_action`, or
+  sell/keep/reprice decision exists anywhere in this module.
+
+Open Inventory Decision Support beyond v1 (AI-generated recommendations,
+Business Coach, recent trends, cash-balance logic, automatic repricing,
+notifications, and UI redesign) is explicitly out of scope for this step.
 
 ## Conventions
 
