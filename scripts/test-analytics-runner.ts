@@ -1651,6 +1651,254 @@ async function main() {
     { targetBreakdownItemSum, positionTotal: targetPos?.total_item_count },
   );
 
+  // ── Open Inventory Decision Support v2.1 ─────────────────────────────────
+  console.log('\n[v2.1 — builder callable, top-level metadata, preserves v2.0 sections]');
+  const { data: v21SnapshotA, error: v21ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v2_1', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_1 callable by service_role', !v21ErrorA, v21ErrorA);
+  check('v2.1 snapshot_schema_version is 2.1', v21SnapshotA?.snapshot_schema_version === '2.1', v21SnapshotA?.snapshot_schema_version);
+  check('v2.1 analytics_definition_version is 2.1', v21SnapshotA?.analytics_definition_version === '2.1', v21SnapshotA?.analytics_definition_version);
+  check('v2.1 evidence_scope/purpose_semantics preserved from v2.0', v21SnapshotA?.evidence_scope === 'shared_inventory_population' && v21SnapshotA?.purpose_semantics === 'current_item_purpose');
+  const v21RequiredLimitations = [
+    'CURRENT_PURPOSE_IS_NOT_HISTORICAL_PURPOSE', 'PURPOSE_CHANGES_ARE_NOT_HISTORICALLY_TRACKED',
+    'PERSONAL_INTEREST_AND_APPRECIATION_THESIS_NOT_STORED', 'LISTING_ACTIVE_STATE_INFERRED_NO_IS_ACTIVE_FIELD',
+    'MODEL_COHORT_UNAVAILABLE_FREE_TEXT_MODEL_FIELD',
+  ];
+  check(
+    'v2.1 module_limitations contains all five required codes',
+    v21RequiredLimitations.every((code) => (v21SnapshotA?.module_limitations ?? []).includes(code)),
+    v21SnapshotA?.module_limitations,
+  );
+
+  console.log('\n[v2.1 — test #16: v2.0 sections remain unchanged inside v2.1]');
+  check(
+    'shared_purpose_evidence is byte-identical between v2.0 and v2.1',
+    JSON.stringify(v21SnapshotA?.shared_purpose_evidence) === JSON.stringify(v20SnapshotA?.shared_purpose_evidence),
+  );
+  check(
+    'target_user_purpose_evidence is byte-identical between v2.0 and v2.1',
+    JSON.stringify(v21SnapshotA?.target_user_purpose_evidence) === JSON.stringify(v20SnapshotA?.target_user_purpose_evidence),
+  );
+  const { data: v20SnapshotAfterV21, error: v20AfterV21Error } = await serviceClient.rpc('build_analytics_snapshot_v2_0', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_0 still callable after v2.1 migration', !v20AfterV21Error, v20AfterV21Error);
+  const { generated_at: _genV20Before, ...v20BeforeWithoutTimestamp } = (v20SnapshotA ?? {}) as Record<string, unknown>;
+  const { generated_at: _genV20After, ...v20AfterWithoutTimestamp } = (v20SnapshotAfterV21 ?? {}) as Record<string, unknown>;
+  check(
+    'v2.0 output remains unchanged (byte-identical ignoring generated_at) after the v2.1 migration',
+    JSON.stringify(v20AfterWithoutTimestamp) === JSON.stringify(v20BeforeWithoutTimestamp),
+  );
+
+  const oie = v21SnapshotA?.target_user_open_inventory_evidence;
+  const oiePop = oie?.population_summary?.[0];
+  const oiePurposePos: any[] = oie?.purpose_position_summary ?? [];
+  const oieItems: any[] = oie?.item_decision_evidence ?? [];
+  const oieHybrid: any[] = oie?.hybrid_purpose_review ?? [];
+  const oiePersonalControl: any[] = oie?.personal_inventory_control?.personal_item_control ?? [];
+  const oiePersonalPos = oie?.personal_inventory_control?.personal_position_summary?.[0];
+
+  console.log('\n[v2.1 — test #1: all target-user open Business, Hybrid, and Personal items appear]');
+  check(
+    'population_summary counts at least one open item for Business, Hybrid, and Personal',
+    (oiePop?.business_open_item_count ?? 0) > 0 && (oiePop?.hybrid_open_item_count ?? 0) > 0 && (oiePop?.personal_open_item_count ?? 0) > 0,
+    oiePop,
+  );
+  check(
+    'purpose_position_summary has a row for Business, Hybrid, and Personal',
+    ['Business', 'Hybrid', 'Personal'].every((name) => oiePurposePos.some((r) => r.purpose_policy_status === 'mapped' && r.current_purpose_name === name)),
+    oiePurposePos.map((r) => r.current_purpose_name),
+  );
+  check(
+    'fixture items 104 and 105 (open Hybrid) and 103 (open Personal) all appear in item_decision_evidence',
+    [103, 104, 105].every((id) => oieItems.some((r) => r.item_id === id)),
+    oieItems.map((r) => r.item_id),
+  );
+
+  console.log('\n[v2.1 — test #2: no other user item identity appears]');
+  const userBOpenItemIdsV21 = [3, 4, 11, 12, 13];
+  check(
+    'no User B item_id appears in item_decision_evidence, hybrid_purpose_review, or personal_item_control',
+    userBOpenItemIdsV21.every((id) => !oieItems.some((r) => r.item_id === id) && !oieHybrid.some((r) => r.item_id === id) && !oiePersonalControl.some((r) => r.item_id === id)),
+  );
+
+  console.log('\n[v2.1 — test #3: Purpose counts reconcile]');
+  check(
+    'population_summary: business + hybrid + personal + missing_purpose + missing_policy === open_item_count',
+    (oiePop?.business_open_item_count ?? 0) + (oiePop?.hybrid_open_item_count ?? 0) + (oiePop?.personal_open_item_count ?? 0)
+      + (oiePop?.missing_purpose_open_item_count ?? 0) + (oiePop?.missing_policy_open_item_count ?? 0) === oiePop?.open_item_count,
+    oiePop,
+  );
+  check(
+    'population_summary: listed + unlisted === open_item_count',
+    (oiePop?.listed_open_item_count ?? 0) + (oiePop?.unlisted_open_item_count ?? 0) === oiePop?.open_item_count,
+    oiePop,
+  );
+  check(
+    'population_summary: positive + zero_assigned + unknown acquisition counts === open_item_count',
+    (oiePop?.positive_acquisition_item_count ?? 0) + (oiePop?.zero_assigned_acquisition_item_count ?? 0) + (oiePop?.unknown_acquisition_item_count ?? 0) === oiePop?.open_item_count,
+    oiePop,
+  );
+  check(
+    'population_summary: reliable + unreliable ownership age === open_item_count',
+    (oiePop?.reliable_ownership_age_item_count ?? 0) + (oiePop?.unreliable_ownership_age_item_count ?? 0) === oiePop?.open_item_count,
+    oiePop,
+  );
+
+  console.log('\n[v2.1 — test #4: capital reconciles across Purpose rows]');
+  const purposePosCapitalSum = oiePurposePos.reduce((sum, r) => sum + Number(r.open_acquisition_capital ?? 0), 0);
+  check(
+    'sum of purpose_position_summary.open_acquisition_capital === population_summary.open_acquisition_capital',
+    purposePosCapitalSum === Number(oiePop?.open_acquisition_capital ?? 0),
+    { purposePosCapitalSum, populationTotal: oiePop?.open_acquisition_capital },
+  );
+
+  console.log('\n[v2.1 — test #5: Business urgency thresholds work]');
+  const item106 = oieItems.find((r) => r.item_id === 106);
+  check(
+    'fixture item 106 (Business, Fender, listed ~200 days, same band as item 28) carries BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN and _P75',
+    !!item106 && item106.reason_codes.includes('BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN') && item106.reason_codes.includes('BUSINESS_DOM_ABOVE_COMPARABLE_P75'),
+    item106,
+  );
+  check(
+    'no Business item with current_dom_days < 30 carries a DOM urgency reason code',
+    oieItems.filter((r) => r.current_purpose_name === 'Business' && r.current_dom_days !== null && r.current_dom_days < 30)
+      .every((r) => !r.reason_codes.includes('BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN') && !r.reason_codes.includes('BUSINESS_DOM_ABOVE_COMPARABLE_P75')),
+  );
+  check(
+    'every Business item with ownership_age_days >= 120 carries BUSINESS_OWNERSHIP_AGE_120_PLUS',
+    oieItems.filter((r) => r.current_purpose_name === 'Business' && r.ownership_age_days !== null && r.ownership_age_days >= 120)
+      .every((r) => r.reason_codes.includes('BUSINESS_OWNERSHIP_AGE_120_PLUS')),
+  );
+
+  console.log('\n[v2.1 — test #6: Hybrid creates review signals, not automatic decisions]');
+  const item104 = oieItems.find((r) => r.item_id === 104);
+  const item105 = oieItems.find((r) => r.item_id === 105);
+  check(
+    'fixture items 104 and 105 (Hybrid) both carry HYBRID_REVIEW_REQUIRED',
+    !!item104?.reason_codes.includes('HYBRID_REVIEW_REQUIRED') && !!item105?.reason_codes.includes('HYBRID_REVIEW_REQUIRED'),
+    { item104: item104?.reason_codes, item105: item105?.reason_codes },
+  );
+  check(
+    'no Hybrid item carries a BUSINESS_* or PERSONAL_* reason code',
+    oieItems.filter((r) => r.current_purpose_name === 'Hybrid')
+      .every((r) => r.reason_codes.every((c: string) => !c.startsWith('BUSINESS_') && !c.startsWith('PERSONAL_'))),
+    oieItems.filter((r) => r.current_purpose_name === 'Hybrid').map((r) => r.reason_codes),
+  );
+  check(
+    'no reclassify/keep/recommended-purpose field or value exists anywhere in the v2.1 snapshot',
+    !['reclassify_to_business', 'reclassify_to_personal', 'keep_hybrid', 'recommended_purpose'].some((s) => JSON.stringify(v21SnapshotA).includes(s)),
+  );
+
+  console.log('\n[v2.1 — test #7: Personal does not receive age/DOM urgency flags]');
+  const personalItems = oieItems.filter((r) => r.current_purpose_name === 'Personal');
+  check(
+    'no Personal item carries any BUSINESS_* or HYBRID_* reason code',
+    personalItems.every((r) => r.reason_codes.every((c: string) => !c.startsWith('BUSINESS_') && !c.startsWith('HYBRID_'))),
+    personalItems.map((r) => r.reason_codes),
+  );
+  check(
+    'PERSONAL_AGE_UNRELIABLE (if present) is a data-completeness flag, never paired with an urgency code',
+    personalItems.every((r) => r.reason_codes.every((c: string) => !c.includes('OWNERSHIP_AGE') || c === 'PERSONAL_AGE_UNRELIABLE')),
+  );
+
+  console.log('\n[v2.1 — test #8: zero/unknown acquisition values never produce a ROI/upside comparison]');
+  check(
+    'every item with zero-assigned or unknown acquisition value has estimated_upside_percent === null',
+    oieItems.filter((r) => r.acquisition_value === null || Number(r.acquisition_value) === 0).every((r) => r.estimated_upside_percent === null),
+  );
+  check(
+    'no zero-assigned/unknown-value item carries HIGH_CAPITAL_EXPOSURE, LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL, or a Hybrid/Personal high-capital/low-upside variant',
+    oieItems.filter((r) => r.acquisition_value === null || Number(r.acquisition_value) === 0)
+      .every((r) => !['HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LOW_UPSIDE_SIGNAL', 'PERSONAL_HIGH_CAPITAL_EXPOSURE'].some((c) => r.reason_codes.includes(c))),
+  );
+
+  console.log('\n[v2.1 — test #9: economic and liquidity cohorts are selected independently]');
+  check(
+    'item 104 has BOTH an economic_cohort and a liquidity_cohort, from independently-scoped cohort keys',
+    !!item104?.economic_cohort && !!item104?.liquidity_cohort && item104.economic_cohort.cohort_scope !== item104.liquidity_cohort.cohort_scope,
+    { economic: item104?.economic_cohort, liquidity: item104?.liquidity_cohort },
+  );
+
+  console.log('\n[v2.1 — test #10: purpose-matched liquidity cohort is preferred]');
+  const item2v21 = oieItems.find((r) => r.item_id === 2);
+  check(
+    'fixture item 2 (Business, has a purpose-specific liquidity cohort with realized evidence) resolves liquidity_cohort_match = purpose_matched',
+    item2v21?.liquidity_cohort_match === 'purpose_matched',
+    item2v21?.liquidity_cohort,
+  );
+
+  console.log('\n[v2.1 — test #11: cross-purpose fallback is clearly marked]');
+  check(
+    'fixture items 104 and 105 (Hybrid, insufficient purpose-matched liquidity evidence) resolve liquidity_cohort_match = cross_purpose_fallback with the reason code present',
+    item104?.liquidity_cohort_match === 'cross_purpose_fallback' && item104.reason_codes.includes('PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE')
+      && item105?.liquidity_cohort_match === 'cross_purpose_fallback' && item105.reason_codes.includes('PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE'),
+    { item104: item104?.liquidity_cohort_match, item105: item105?.liquidity_cohort_match },
+  );
+
+  console.log('\n[v2.1 — test #12: historical age remains NULL]');
+  const item14v21 = oieItems.find((r) => r.item_id === 14);
+  check(
+    'fixture item 14 (Historical Import, open Business) has ownership_age_days === null in item_decision_evidence',
+    !!item14v21 && item14v21.is_historical_import === true && item14v21.ownership_age_days === null,
+    item14v21,
+  );
+
+  console.log('\n[v2.1 — test #13: Hybrid review contains all Hybrid open items]');
+  check(
+    'hybrid_purpose_review.length === population_summary.hybrid_open_item_count',
+    oieHybrid.length === oiePop?.hybrid_open_item_count,
+    { reviewLength: oieHybrid.length, popCount: oiePop?.hybrid_open_item_count },
+  );
+
+  console.log('\n[v2.1 — test #14: Personal control contains all Personal open items]');
+  check(
+    'personal_item_control.length === population_summary.personal_open_item_count',
+    oiePersonalControl.length === oiePop?.personal_open_item_count,
+    { controlLength: oiePersonalControl.length, popCount: oiePop?.personal_open_item_count },
+  );
+  check(
+    'personal_position_summary.personal_open_item_count === population_summary.personal_open_item_count',
+    oiePersonalPos?.personal_open_item_count === oiePop?.personal_open_item_count,
+  );
+
+  console.log('\n[v2.1 — test #15: no score or recommended-action field exists anywhere]');
+  const v21Serialized = JSON.stringify(v21SnapshotA);
+  check(
+    'no "score", "priority_score", or "recommended_action" key appears anywhere in the v2.1 snapshot',
+    !['"score"', '"priority_score"', '"recommended_action"', '"recommended_purpose"'].some((k) => v21Serialized.includes(k)),
+  );
+
+  console.log('\n[v2.1 — test #17: v1.0-v1.8 remain unchanged and callable]');
+  const v21StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v21StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.1 migration`, !error, error);
+  }
+  const { data: v18SnapshotAfterV21 } = await serviceClient.rpc('build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId });
+  const { generated_at: _genV18Before, ...v18BeforeV21WithoutTimestamp } = (v18SnapshotAfterV20 ?? {}) as Record<string, unknown>;
+  const { generated_at: _genV18After, ...v18AfterV21WithoutTimestamp } = (v18SnapshotAfterV21 ?? {}) as Record<string, unknown>;
+  check(
+    'v1.8 output remains byte-identical (ignoring generated_at) after the v2.1 migration',
+    JSON.stringify(v18AfterV21WithoutTimestamp) === JSON.stringify(v18BeforeV21WithoutTimestamp),
+  );
+
+  console.log('\n[v2.1 — test #18: production runner remains on v1.8]');
+  check('ANALYTICS_VERSION constant used by the production runner is still 1.8', ANALYTICS_VERSION === '1.8', ANALYTICS_VERSION);
+
+  console.log('\n[v2.1 — test #19: permissions on new functions]');
+  const { error: v21AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_1', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_1 directly', !!v21AuthedError, v21AuthedError);
+  const { error: v21HelperAuthedError } = await clientA.rpc('_build_open_inventory_decision_support_snapshot_v2', { p_target_user_id: userAId });
+  check('authenticated client cannot call _build_open_inventory_decision_support_snapshot_v2 directly', !!v21HelperAuthedError, v21HelperAuthedError);
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
 }

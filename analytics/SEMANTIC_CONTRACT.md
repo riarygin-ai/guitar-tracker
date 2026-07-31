@@ -1539,3 +1539,50 @@ autorunner or any UI.
 **Out of scope for this section:** Calendar & Seasonality, the Findings
 Selector, Business Coach, recommendations, scores, and any UI redesign —
 all deferred, per the task's explicit scope.
+
+## 24. Open Inventory Decision Support v2.1
+
+`public.build_analytics_snapshot_v2_1(p_target_user_id int)`
+(`supabase/migrations/20260812000000_build_analytics_snapshot_v2_1.sql`)
+calls `build_analytics_snapshot_v2_0` wholesale (preserving
+`shared_purpose_evidence`/`target_user_purpose_evidence` unchanged) and
+adds `target_user_open_inventory_evidence`: item-level Purpose-aware
+evidence for every OPEN item of one target user, across Business, Hybrid,
+Personal, missing-purpose, and missing-policy. Does not call, embed, or
+replace any v1.x builder; `v1.0`-`v1.8` and `v2.0` are unaffected;
+`runAnalytics.ts` still calls `v1.8` for production runs.
+
+**Two cohort objects, not one.** `economic_cohort` (median profit/ROI/
+realization rate) pools every Purpose — economic eligibility is shared
+regardless of Purpose. `liquidity_cohort` (DOM/holding time) prefers the
+item's own current Purpose first, falling back to a cross-purpose cohort
+only when no purpose-matched cohort clears the standard confidence bar
+(`liquidity_cohort_match`: `purpose_matched` / `cross_purpose_fallback` /
+`unavailable`; a fallback adds `PURPOSE_MATCHED_LIQUIDITY_COHORT_
+UNAVAILABLE`). Both use the same selection rule as every prior cohort in
+this analytics layer.
+
+**Purpose-aware urgency, not a universal "Hybrid is risky" rule.**
+Business gets DOM (`>= 30` days) and ownership-age (`120+` reliable days)
+urgency codes; Hybrid gets neutral `HYBRID_*` review signals only
+(`HYBRID_REVIEW_REQUIRED` is unconditional — never a realization
+recommendation); Personal gets no DOM/age urgency code at all
+(`PERSONAL_AGE_UNRELIABLE` is a data-completeness flag, not urgency) and
+instead surfaces capital concentration, missing estimates, and a neutral
+listed-for-opportunistic-exit note. `hybrid_purpose_review` exposes
+descriptive `behavioral_signals` (e.g. `LISTED_ACTIVE_REALIZATION_
+SIGNAL`, `LONG_HOLD_SIGNAL`) for the user's own stated goal of resolving
+Hybrid ambiguity over time — it never outputs `reclassify_to_business`,
+`reclassify_to_personal`, `keep_hybrid`, or `recommended_purpose`, and
+this module never writes to `inventory_items.purpose_id`.
+
+**No score, no recommended action, anywhere.** `reason_codes` /
+`behavioral_signals` / `control_reason_codes` are deterministic,
+independent evidence flags — never counted, weighted, or combined.
+
+**Manual inspection only.** `POST /api/analytics/v2-preview` calls
+`build_analytics_snapshot_v2_1` directly for the authenticated caller and
+returns it — nothing is persisted to `analytics_runs`, and this route is
+never called by the production "Run Analytics" flow. The Analytics page's
+"Open Inventory Decision Support v2.1 (Manual Preview)" section is a
+separate, on-demand card, not part of the stored-run history above it.

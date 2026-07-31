@@ -843,6 +843,51 @@ Calendar & Seasonality, the Findings Selector, Business Coach,
 recommendations, scores, and any UI redesign are explicitly out of scope
 for this step.
 
+## Analytics Snapshot v2.1 (Open Inventory Decision Support v2.1)
+
+`public.build_analytics_snapshot_v2_1(p_target_user_id int)`
+(`supabase/migrations/20260812000000_build_analytics_snapshot_v2_1.sql`)
+calls `build_analytics_snapshot_v2_0` wholesale (unchanged) and adds
+`target_user_open_inventory_evidence` — item-level, Purpose-aware evidence
+for every open item of one target user (Business/Hybrid/Personal/missing-
+purpose/missing-policy). Does not call, embed, or replace any v1.x
+builder; `runAnalytics.ts` still calls `v1.8` for production runs.
+
+**What's new:**
+
+- **`population_summary` / `purpose_position_summary`** — open-item
+  counts and capital reconciled per Purpose/status, mirroring v2.0's
+  pattern but scoped to one user's open items only.
+- **`item_decision_evidence`** — one row per open item with TWO separate
+  cohort objects: `economic_cohort` (profit/ROI/realization rate, pools
+  all Purposes) and `liquidity_cohort` (DOM/holding time, prefers the
+  item's own current Purpose, falls back to cross-purpose evidence when
+  necessary — `liquidity_cohort_match` marks which).
+- **Purpose-aware reason codes**: Business gets DOM/ownership-age urgency
+  (`BUSINESS_*`); Hybrid gets neutral review signals only (`HYBRID_*`,
+  never urgency, never a reclassify decision); Personal gets no DOM/age
+  urgency at all (`PERSONAL_*` covers capital concentration and data
+  completeness only).
+- **`hybrid_purpose_review`** — one row per open Hybrid item with
+  descriptive `behavioral_signals`, supporting the user's own goal of
+  periodically resolving Hybrid ambiguity — never an automatic
+  reclassify/keep decision.
+- **`personal_inventory_control`** — capital concentration, missing
+  estimates, and listing activity for open Personal items; long ownership
+  and slow DOM are never treated as negative.
+- **Manual preview only**: `POST /api/analytics/v2-preview` calls
+  `build_analytics_snapshot_v2_1` directly and returns it — nothing is
+  persisted, and it's never called by the production "Run Analytics" flow.
+  The Analytics page's "Open Inventory Decision Support v2.1 (Manual
+  Preview)" card is a separate, on-demand section for this reason.
+
+See `analytics/sql/12_open_inventory_decision_support_v2.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 24 for the full contract.
+
+Calendar & Seasonality, the Findings Selector, Business Coach, AI prose,
+automatic Purpose changes, opaque scores, notifications, and any UI
+redesign beyond the one preview card above are explicitly out of scope.
+
 ## Conventions
 
 - One file per analysis, numbered (`01_`, `02_`, ...) in the order they were

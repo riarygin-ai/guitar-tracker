@@ -421,3 +421,22 @@ export interface AnalyticsSnapshot {
     open_inventory_decision_support: Record<string, unknown>;
   };
 }
+
+// ─── Analytics v2.1 manual preview (Open Inventory Decision Support v2.1) ──
+// Returned only by the manual/testing preview endpoint (POST /api/analytics/
+// v2-preview) — NOT persisted to analytics_runs and NOT part of the
+// production run flow, which remains on v1.8 (AnalyticsSnapshot above).
+// Nested contents intentionally left as Record<string, unknown>; see
+// analytics/SEMANTIC_CONTRACT.md for the authoritative v2.0/v2.1
+// field-level definitions.
+export interface AnalyticsSnapshotV2_1 {
+  snapshot_schema_version:              string;
+  analytics_definition_version:         string;
+  generated_at:                         string;
+  evidence_scope:                       string;
+  purpose_semantics:                    string;
+  shared_purpose_evidence:              Record<string, unknown>;
+  target_user_purpose_evidence:         Record<string, unknown>;
+  target_user_open_inventory_evidence:  Record<string, unknown>;
+  module_limitations:                   string[];
+}
