@@ -1425,6 +1425,232 @@ async function main() {
     { v1Count: v1AuthedRows?.length, v2Count: v2AuthedRows?.length },
   );
 
+  // ── Analytics v2.0 Snapshot Foundation and Purpose Overview ──────────────
+  console.log('\n[v2.0 — builder callable, top-level metadata, clean contract]');
+  const { data: v20SnapshotA, error: v20ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v2_0', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_0 callable by service_role', !v20ErrorA, v20ErrorA);
+  check('v2.0 snapshot_schema_version is 2.0', v20SnapshotA?.snapshot_schema_version === '2.0', v20SnapshotA?.snapshot_schema_version);
+  check('v2.0 analytics_definition_version is 2.0', v20SnapshotA?.analytics_definition_version === '2.0', v20SnapshotA?.analytics_definition_version);
+  check('v2.0 evidence_scope is shared_inventory_population', v20SnapshotA?.evidence_scope === 'shared_inventory_population', v20SnapshotA?.evidence_scope);
+  check('v2.0 purpose_semantics is current_item_purpose', v20SnapshotA?.purpose_semantics === 'current_item_purpose', v20SnapshotA?.purpose_semantics);
+  const v20RequiredLimitations = ['CURRENT_PURPOSE_IS_NOT_HISTORICAL_PURPOSE', 'PURPOSE_CHANGES_ARE_NOT_HISTORICALLY_TRACKED', 'LISTING_ACTIVE_STATE_INFERRED_NO_IS_ACTIVE_FIELD'];
+  check(
+    'v2.0 module_limitations contains all three required codes',
+    v20RequiredLimitations.every((code) => (v20SnapshotA?.module_limitations ?? []).includes(code)),
+    v20SnapshotA?.module_limitations,
+  );
+  check(
+    'v2.0 does not include evidence_aggregates, recommendation_candidates, or target_user_evidence (Open Inventory Decision Support)',
+    !('evidence_aggregates' in (v20SnapshotA ?? {})) && !('recommendation_candidates' in (v20SnapshotA ?? {})) && !('target_user_evidence' in (v20SnapshotA ?? {})),
+    v20SnapshotA ? Object.keys(v20SnapshotA) : v20SnapshotA,
+  );
+
+  const sharedPop = v20SnapshotA?.shared_purpose_evidence?.population_summary?.[0];
+  const sharedBreakdown: any[] = v20SnapshotA?.shared_purpose_evidence?.purpose_breakdown ?? [];
+  const targetPos = v20SnapshotA?.target_user_purpose_evidence?.position_summary?.[0];
+  const targetBreakdown: any[] = v20SnapshotA?.target_user_purpose_evidence?.purpose_position_breakdown ?? [];
+
+  console.log('\n[v2.0 — test #1: all Business, Hybrid, and Personal items are included]');
+  check(
+    'purpose_breakdown includes a mapped row for Business, Hybrid, and Personal',
+    ['Business', 'Hybrid', 'Personal'].every((name) => sharedBreakdown.some((r) => r.purpose_policy_status === 'mapped' && r.current_purpose_name === name)),
+    sharedBreakdown.map((r) => r.current_purpose_name),
+  );
+
+  console.log('\n[v2.0 — test #2: total population reconciles to analytics_item_lifecycle_v2]');
+  const { data: v2AllRows, error: v2AllRowsError } = await serviceClient
+    .from('analytics_item_lifecycle_v2')
+    .select('item_id, user_id, is_realized, current_status, acquisition_value, net_profit, roi, is_historical_import, has_lifecycle_date_issue, holding_days, global_days_on_market, estimated_sold_value, item_expenses_total, purpose_policy_status');
+  check('analytics_item_lifecycle_v2 readable by service_role', !v2AllRowsError, v2AllRowsError);
+  check(
+    'population_summary.total_item_count === analytics_item_lifecycle_v2 row count',
+    sharedPop?.total_item_count === (v2AllRows?.length ?? -1),
+    { snapshot: sharedPop?.total_item_count, view: v2AllRows?.length },
+  );
+
+  console.log('\n[v2.0 — test #3: open + realized reconciles to total]');
+  check(
+    'population_summary: open_item_count + realized_item_count === total_item_count',
+    (sharedPop?.open_item_count ?? 0) + (sharedPop?.realized_item_count ?? 0) === sharedPop?.total_item_count,
+    sharedPop,
+  );
+
+  console.log('\n[v2.0 — test #4: listed open + unlisted open reconciles to open]');
+  check(
+    'population_summary: listed_open_item_count + unlisted_open_item_count === open_item_count',
+    (sharedPop?.listed_open_item_count ?? 0) + (sharedPop?.unlisted_open_item_count ?? 0) === sharedPop?.open_item_count,
+    sharedPop,
+  );
+
+  console.log('\n[v2.0 — test #5: mapped + missing purpose + missing policy reconciles to total]');
+  check(
+    'population_summary: mapped_purpose_item_count + missing_purpose_item_count + missing_policy_item_count === total_item_count',
+    (sharedPop?.mapped_purpose_item_count ?? 0) + (sharedPop?.missing_purpose_item_count ?? 0) + (sharedPop?.missing_policy_item_count ?? 0) === sharedPop?.total_item_count,
+    sharedPop,
+  );
+
+  console.log('\n[v2.0 — test #6: Business, Hybrid, Personal policy metadata is correct]');
+  const businessRow = sharedBreakdown.find((r) => r.current_purpose_name === 'Business');
+  const hybridRow = sharedBreakdown.find((r) => r.current_purpose_name === 'Hybrid');
+  const personalRow = sharedBreakdown.find((r) => r.current_purpose_name === 'Personal');
+  check(
+    'Business row: active_realization / priority 1 / active_realization_flag=true / shorter_holding_preferred',
+    businessRow?.disposition_mode === 'active_realization' && businessRow?.realization_priority_order === 1
+      && businessRow?.active_realization_flag === true && businessRow?.expected_holding_policy === 'shorter_holding_preferred',
+    businessRow,
+  );
+  check(
+    'Hybrid row: selective_realization / priority 2 / active_realization_flag=true / extended_holding_acceptable',
+    hybridRow?.disposition_mode === 'selective_realization' && hybridRow?.realization_priority_order === 2
+      && hybridRow?.active_realization_flag === true && hybridRow?.expected_holding_policy === 'extended_holding_acceptable',
+    hybridRow,
+  );
+  check(
+    'Personal row: opportunistic_realization / priority 3 / active_realization_flag=false / long_holding_acceptable',
+    personalRow?.disposition_mode === 'opportunistic_realization' && personalRow?.realization_priority_order === 3
+      && personalRow?.active_realization_flag === false && personalRow?.expected_holding_policy === 'long_holding_acceptable',
+    personalRow,
+  );
+
+  console.log('\n[v2.0 — test #7/#8: missing-purpose and missing-policy rows remain visible]');
+  const missingPurposeRow = sharedBreakdown.find((r) => r.purpose_policy_status === 'missing_purpose');
+  const missingPolicyRow = sharedBreakdown.find((r) => r.purpose_policy_status === 'missing_policy');
+  check(
+    'a missing_purpose row is present with total_item_count >= 1 and NULL policy fields',
+    !!missingPurposeRow && missingPurposeRow.total_item_count >= 1 && missingPurposeRow.current_purpose_id === null
+      && missingPurposeRow.disposition_mode === null && missingPurposeRow.realization_priority_order === null,
+    missingPurposeRow,
+  );
+  check(
+    'a missing_policy row is present with total_item_count >= 1 and NULL policy fields',
+    !!missingPolicyRow && missingPolicyRow.total_item_count >= 1 && missingPolicyRow.current_purpose_id === null
+      && missingPolicyRow.disposition_mode === null && missingPolicyRow.realization_priority_order === null,
+    missingPolicyRow,
+  );
+
+  console.log('\n[v2.0 — test #9/#10: acquisition capital and realized profit reconcile across Purpose rows]');
+  const breakdownCapitalSum = sharedBreakdown.reduce((sum, r) => sum + Number(r.total_acquisition_capital ?? 0), 0);
+  check(
+    'sum of purpose_breakdown.total_acquisition_capital === population_summary.total_acquisition_capital',
+    breakdownCapitalSum === Number(sharedPop?.total_acquisition_capital ?? 0),
+    { breakdownCapitalSum, populationTotal: sharedPop?.total_acquisition_capital },
+  );
+  const breakdownProfitSum = sharedBreakdown.reduce((sum, r) => sum + Number(r.total_realized_net_profit ?? 0), 0);
+  check(
+    'sum of purpose_breakdown.total_realized_net_profit === population_summary.total_realized_net_profit',
+    breakdownProfitSum === Number(sharedPop?.total_realized_net_profit ?? 0),
+    { breakdownProfitSum, populationTotal: sharedPop?.total_realized_net_profit },
+  );
+
+  console.log('\n[v2.0 — test #11: ROI excludes zero/unknown acquisition values]');
+  check(
+    'every realized row with zero-assigned or unknown acquisition_value has roi === null in analytics_item_lifecycle_v2',
+    (v2AllRows ?? []).filter((r: any) => r.is_realized && (r.acquisition_value === null || Number(r.acquisition_value) === 0)).every((r: any) => r.roi === null),
+    (v2AllRows ?? []).filter((r: any) => r.is_realized && (r.acquisition_value === null || Number(r.acquisition_value) === 0)),
+  );
+  check(
+    'Business row: realized_positive_acquisition_item_count <= realized_item_count (median_roi computed over a subset)',
+    (businessRow?.realized_positive_acquisition_item_count ?? 0) <= (businessRow?.realized_item_count ?? 0),
+    businessRow,
+  );
+
+  console.log('\n[v2.0 — test #12: historical rows contribute to profit/ROI but not unreliable holding metrics]');
+  check(
+    'Business row: holding_sample_size < realized_item_count (fixture item 9, historical, excluded from holding evidence)',
+    (businessRow?.holding_sample_size ?? 0) < (businessRow?.realized_item_count ?? 0),
+    businessRow,
+  );
+  check(
+    'Business row: total_realized_net_profit is a finite number (historical realized items still contribute to profit)',
+    typeof businessRow?.total_realized_net_profit === 'number' || !Number.isNaN(Number(businessRow?.total_realized_net_profit)),
+    businessRow?.total_realized_net_profit,
+  );
+
+  console.log('\n[v2.0 — test #13: target-user totals include only the target user]');
+  const { data: v2TargetRows, error: v2TargetRowsError } = await serviceClient
+    .from('analytics_item_lifecycle_v2')
+    .select('item_id')
+    .eq('user_id', userAId);
+  check('analytics_item_lifecycle_v2 filtered by target user readable', !v2TargetRowsError, v2TargetRowsError);
+  check(
+    'target_user_purpose_evidence.position_summary.total_item_count === target user\'s own analytics_item_lifecycle_v2 row count',
+    targetPos?.total_item_count === (v2TargetRows?.length ?? -1),
+    { snapshot: targetPos?.total_item_count, view: v2TargetRows?.length },
+  );
+  check(
+    'target_user_purpose_evidence.total_item_count is strictly less than the shared population (User B\'s items are excluded)',
+    (targetPos?.total_item_count ?? 0) < (sharedPop?.total_item_count ?? 0),
+    { target: targetPos?.total_item_count, shared: sharedPop?.total_item_count },
+  );
+
+  console.log('\n[v2.0 — test #14/#16: no item identity fields exist anywhere in v2.0 output]');
+  const v20Serialized = JSON.stringify(v20SnapshotA);
+  const forbiddenIdentityKeys = ['"item_id"', '"item_display_name"', '"model"', '"brand_id"', '"brand_name"', '"category_id"', '"category_name"', '"tag_ids"', '"tag_names"', '"notes"'];
+  check(
+    'no item-identity field name appears anywhere in the serialized v2.0 snapshot',
+    forbiddenIdentityKeys.every((key) => !v20Serialized.includes(key)),
+    forbiddenIdentityKeys.filter((key) => v20Serialized.includes(key)),
+  );
+  const userBOpenItemIdsV2 = [3, 4, 11, 12, 13];
+  check(
+    "no User B item_id appears as a bare value anywhere (defense in depth alongside the key-name check above)",
+    userBOpenItemIdsV2.every((id) => !v20Serialized.includes(`"item_id":${id}`)),
+  );
+
+  console.log('\n[v2.0 — test #15: shared evidence contains no per-user grouping]');
+  check(
+    'no shared_purpose_evidence row (population_summary or purpose_breakdown) exposes a user_id field',
+    !('user_id' in (sharedPop ?? {})) && sharedBreakdown.every((r) => !('user_id' in r)),
+    { sharedPop, sharedBreakdown },
+  );
+
+  console.log('\n[v2.0 — test #17: v1.8 output remains byte-identical (except generated_at)]');
+  const { data: v18SnapshotAfterV20, error: v18AfterV20Error } = await serviceClient.rpc('build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_8 still callable after v2.0 migration', !v18AfterV20Error, v18AfterV20Error);
+  const { generated_at: _genBeforeV20, ...v18BeforeV20WithoutTimestamp } = (v18SnapshotAfterFixture ?? {}) as Record<string, unknown>;
+  const { generated_at: _genAfterV20, ...v18AfterV20WithoutTimestamp } = (v18SnapshotAfterV20 ?? {}) as Record<string, unknown>;
+  check(
+    'v1.8 snapshot is byte-identical (ignoring generated_at) before and after the v2.0 migration/builder calls',
+    JSON.stringify(v18AfterV20WithoutTimestamp) === JSON.stringify(v18BeforeV20WithoutTimestamp),
+  );
+
+  console.log('\n[v2.0 — test #18: v1.0-v1.8 remain callable]');
+  const v20StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v20StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.0 migration`, !error, error);
+  }
+
+  console.log('\n[v2.0 — test #19: authenticated cannot execute either v2 function]');
+  const { error: v20AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_0', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_0 directly', !!v20AuthedError, v20AuthedError);
+  const { error: v20HelperAuthedError } = await clientA.rpc('_build_purpose_overview_snapshot_v2', { p_target_user_id: userAId });
+  check('authenticated client cannot call _build_purpose_overview_snapshot_v2 directly', !!v20HelperAuthedError, v20HelperAuthedError);
+
+  console.log('\n[v2.0 — cross-check: target_user_purpose_evidence sums reconcile to position_summary]');
+  const targetBreakdownCapitalSum = targetBreakdown.reduce((sum, r) => sum + Number(r.total_acquisition_capital ?? 0), 0);
+  check(
+    'sum of purpose_position_breakdown.total_acquisition_capital === position_summary.total_acquisition_capital',
+    targetBreakdownCapitalSum === Number(targetPos?.total_acquisition_capital ?? 0),
+    { targetBreakdownCapitalSum, positionTotal: targetPos?.total_acquisition_capital },
+  );
+  const targetBreakdownItemSum = targetBreakdown.reduce((sum, r) => sum + Number(r.total_item_count ?? 0), 0);
+  check(
+    'sum of purpose_position_breakdown.total_item_count === position_summary.total_item_count',
+    targetBreakdownItemSum === targetPos?.total_item_count,
+    { targetBreakdownItemSum, positionTotal: targetPos?.total_item_count },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
 }

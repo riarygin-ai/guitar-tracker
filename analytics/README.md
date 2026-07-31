@@ -793,6 +793,56 @@ analytics (`v2.0+`) without wiring anything into it yet:
 
 See `analytics/SEMANTIC_CONTRACT.md` section 22 for the full contract.
 
+## Analytics Snapshot v2.0 (Snapshot Foundation and Purpose Overview)
+
+`public.build_analytics_snapshot_v2_0(p_target_user_id int)`
+(`supabase/migrations/20260811000000_build_analytics_snapshot_v2_0.sql`) is
+the **first Purpose-aware snapshot contract** — a clean, independent
+builder that does NOT call or wrap `build_analytics_snapshot_v1_8` (or any
+v1.x builder) and does NOT include `evidence_aggregates`,
+`recommendation_candidates`, or Open Inventory Decision Support. `v1.0`-
+`v1.8` are completely unaffected and remain independently callable.
+
+**Production runs stay on v1.8 for now.** `runAnalytics.ts` is not updated
+by this step — `build_analytics_snapshot_v2_0` is reachable only directly
+(service_role), not through the autorunner or any UI, until the v2
+evidence modules are sufficiently complete.
+
+**What's new:**
+
+- **A clean top-level shape**: `snapshot_schema_version`/
+  `analytics_definition_version` = `"2.0"`, `evidence_scope =
+  "shared_inventory_population"`, `purpose_semantics =
+  "current_item_purpose"`, `shared_purpose_evidence`,
+  `target_user_purpose_evidence`, and `module_limitations` — no
+  `evidence_aggregates`, `recommendation_candidates`, item identity, AI
+  prose, scores, or recommended actions anywhere.
+- **Reads every Purpose, not Business-only**: `analytics_item_lifecycle_v2`
+  is the population — Business, Hybrid, Personal, plus explicit
+  `missing_purpose`/`missing_policy` coverage rows. Purpose in v2 means the
+  item's CURRENT disposition; economic eligibility (whether profit/ROI/
+  capital/DOM are computed at all) includes every Purpose equally.
+- **`shared_purpose_evidence`**: pooled `population_summary` (one row) and
+  `purpose_breakdown` (one row per mapped Purpose plus one
+  `missing_purpose` and one `missing_policy` coverage row) — aggregate
+  only, no item identity, no per-user grouping.
+- **`target_user_purpose_evidence`**: the same shape restricted to
+  `p_target_user_id` — `position_summary` and
+  `purpose_position_breakdown`. Aggregate only; no individual item row is
+  ever produced (contrast with Open Inventory Decision Support's
+  `item_decision_evidence`).
+- **Purpose is mutable, not historically tracked** — see
+  `module_limitations`: `CURRENT_PURPOSE_IS_NOT_HISTORICAL_PURPOSE`,
+  `PURPOSE_CHANGES_ARE_NOT_HISTORICALLY_TRACKED`,
+  `LISTING_ACTIVE_STATE_INFERRED_NO_IS_ACTIVE_FIELD`.
+
+See `analytics/sql/11_purpose_overview.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 23 for the full contract.
+
+Calendar & Seasonality, the Findings Selector, Business Coach,
+recommendations, scores, and any UI redesign are explicitly out of scope
+for this step.
+
 ## Conventions
 
 - One file per analysis, numbered (`01_`, `02_`, ...) in the order they were

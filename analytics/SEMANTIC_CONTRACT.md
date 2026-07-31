@@ -1452,3 +1452,90 @@ never used to drop a row) — intended as the read surface a future `v2`
 snapshot builder would query instead of `analytics_item_lifecycle`
 directly. It is not itself a snapshot builder and produces no aggregate or
 recommendation output on its own.
+
+## 23. Analytics v2.0 Snapshot Foundation and Purpose Overview
+
+`public.build_analytics_snapshot_v2_0(p_target_user_id int)`
+(`supabase/migrations/20260811000000_build_analytics_snapshot_v2_0.sql`) is
+the **first Purpose-aware snapshot contract** in this analytics layer. It
+is a clean, independent builder — it does NOT call, embed, or extend
+`build_analytics_snapshot_v1_8` (or any v1.x builder), and does not include
+`evidence_aggregates`, `recommendation_candidates`, or Open Inventory
+Decision Support. `v1.0`-`v1.8` are completely unaffected and remain
+independently callable; every previously stored `analytics_runs.snapshot`
+row is untouched.
+
+**v1.x remains Business-only; v2.0 reads every Purpose.** Every v1.x
+builder narrows to `purpose_name = 'Business'` (section 9 — `EVIDENCE_SCOPE`
+is NOT redefined by this section). `build_analytics_snapshot_v2_0` instead
+reads the full `analytics_item_lifecycle_v2` population: Business, Hybrid,
+Personal, items with no Purpose assigned (`missing_purpose`), and items
+whose Purpose has no `analytics_purpose_policy` row yet (`missing_policy`).
+Economic eligibility — whether an item's profit, ROI, capital, and DOM are
+computed at all — is identical for every Purpose; Purpose is never a
+filter here.
+
+**Purpose in v2 means CURRENT disposition, not historical Purpose.**
+`current_purpose_id`/`current_purpose_name` (and every grouping in this
+section) reflect an item's Purpose right now. Purpose is mutable and this
+schema keeps no historical record — an item's entire lifecycle (including
+profit realized in the past) is attributed to whatever Purpose it holds
+today. See `module_limitations` below and section 22.
+
+**Top-level shape:**
+
+```
+{
+  "snapshot_schema_version": "2.0",
+  "analytics_definition_version": "2.0",
+  "generated_at": "...",
+  "evidence_scope": "shared_inventory_population",
+  "purpose_semantics": "current_item_purpose",
+  "shared_purpose_evidence": { "population_summary": [...], "purpose_breakdown": [...] },
+  "target_user_purpose_evidence": { "position_summary": [...], "purpose_position_breakdown": [...] },
+  "module_limitations": [
+    "CURRENT_PURPOSE_IS_NOT_HISTORICAL_PURPOSE",
+    "PURPOSE_CHANGES_ARE_NOT_HISTORICALLY_TRACKED",
+    "LISTING_ACTIVE_STATE_INFERRED_NO_IS_ACTIVE_FIELD"
+  ]
+}
+```
+
+**`shared_purpose_evidence`** pools aggregate statistics across every
+user — no item identity, no per-user grouping. `population_summary` is one
+row reconciling total/open/realized, listed/unlisted, mapped/missing-
+purpose/missing-policy, and positive/zero-assigned/unknown acquisition
+value, all against `total_item_count`. `purpose_breakdown` has one row per
+mapped Purpose (Business/Hybrid/Personal — distinguished by their
+`disposition_mode`/`realization_priority_order`/`active_realization_flag`/
+`expected_holding_policy`, which never collapse together) plus exactly one
+explicit `missing_purpose` coverage row and one explicit `missing_policy`
+coverage row (current_purpose_id/name NULLed before grouping, so multiple
+different unmapped Purpose names still collapse into a single
+`missing_policy` row — never merged into a mapped Purpose, "unknown," or
+an acquisition-method bucket).
+
+**`target_user_purpose_evidence`** is filtered to `p_target_user_id` only
+— another user's items may affect pooled shared statistics but can never
+be isolated from this section. Like `shared_purpose_evidence`, it exposes
+aggregates only: no individual item row exists anywhere in this module
+(contrast with Open Inventory Decision Support's `item_decision_evidence`,
+which this module does not touch or include).
+
+**Metric rules (unchanged from every prior module):** profit and ROI use
+realized items only; ROI additionally requires a positive acquisition
+value; DOM uses realized items with a reliable `global_days_on_market`;
+holding-time metrics (holding days, open ownership age) exclude Historical
+Imports and lifecycle-date issues, per the standing reliable-date rule
+(sections 1-4).
+
+**Production runner remains on v1.8 temporarily.** `runAnalytics.ts` is not
+updated by this section — production analytics runs continue to call
+`build_analytics_snapshot_v1_8` until the v2 evidence modules are
+sufficiently complete. `build_analytics_snapshot_v2_0` is reachable only
+directly (service_role, e.g. a manual test script), not through the
+autorunner or any UI.
+
+**Out of scope for this section:** Calendar & Seasonality, the Findings
+Selector, Business Coach, recommendations, scores, and any UI redesign —
+all deferred, per the task's explicit scope.
