@@ -1388,3 +1388,67 @@ Marketplace/Kijiji history may understate historical cross-listing.
 ONLY the calling user's own items — no other user's `item_id`, item name,
 model, or identity is ever exposed. `recommendation_candidates` is
 unchanged and remains restricted to `recommendation_target_user_id`.
+
+## 22. Purpose-Aware Analytics Foundation (documentation only — no snapshot builder, runner, or UI change in this step)
+
+Lays the ground for Purpose-aware analytics (v2.0+) without wiring it into
+anything yet. `analytics_purpose_policy`
+(`20260809000000_analytics_purpose_policy.sql`) and
+`analytics_item_lifecycle_v2`
+(`20260810000000_analytics_item_lifecycle_v2.sql`) exist and are readable,
+but no snapshot builder, `runAnalytics.ts`, `recommendation_candidates`,
+Open Inventory Decision Support, Calendar analytics, or UI reads from them
+as of this step. Sections 1-21 above, and every existing snapshot version
+`v1.0`-`v1.8`, are entirely unaffected.
+
+**Purpose controls disposition and urgency, never economic eligibility.**
+`item_purposes` (`Business` / `Hybrid` / `Personal`) already gates which
+items are *eligible* for Business analytics at all (section 4, section 9).
+`analytics_purpose_policy` does not change or duplicate that gate — it
+governs how a Purpose-aware module should *interpret* an already-eligible
+item: how urgently it should be realized (`disposition_mode`,
+`realization_priority_order`), whether active realization is expected at
+all (`active_realization_flag`), and how holding time should be read
+(`expected_holding_policy`, a descriptive label, not a day-count
+threshold). A Business item under this policy is exactly as eligible for
+every existing metric as it always was; the policy only informs how a
+future module might prioritize or narrate it.
+
+**Profit, ROI, acquisition/exit values, and every other economic fact are
+computed identically regardless of Purpose.** Nothing in
+`analytics_purpose_policy` or `analytics_item_lifecycle_v2` filters,
+reweights, or excludes an item's financial figures by Purpose — those
+formulas (sections 1-8) are Purpose-blind and remain so.
+
+**Purpose is currently mutable, with no historical record.** An item's
+`purpose_id` can change at any time via the app's own item-editing UI, and
+no table anywhere records what an item's Purpose was at any past date.
+`current_purpose_id`/`current_purpose_name` on `analytics_item_lifecycle_v2`
+are named with the `current_` prefix specifically to flag this: they
+describe the item's Purpose *right now*, not at acquisition or at any
+other point in its lifecycle. Any future analysis that assumes Purpose was
+constant over an item's holding period is not supported by this schema.
+
+**`v1.0`-`v1.8` remain Business-only and are unaffected.** Every snapshot
+builder through `v1.8` continues to read `analytics_item_lifecycle` (v1),
+continues to scope evidence and recommendations to `purpose_name =
+'Business'` exactly as before (section 9), and is not modified by this
+step. `analytics_purpose_policy` and `analytics_item_lifecycle_v2` are new,
+additive, currently-unconsumed objects alongside them.
+
+**Purpose-aware analytics begins at `v2.0`.** Any future module that reads
+Hybrid or Personal items, or varies its interpretation by
+`disposition_mode`/`realization_priority_order`/`active_realization_flag`/
+`expected_holding_policy`, is a `v2.0+` concern and must be introduced as
+its own versioned step — this step deliberately stops short of that,
+including deliberately not redefining `EVIDENCE_SCOPE` (section 9) to admit
+Hybrid/Personal items.
+
+**`analytics_item_lifecycle_v2` is the foundation for `v2` modules.** It is
+a strict superset of `analytics_item_lifecycle` — every existing column
+unchanged, every row still present regardless of Purpose or policy state
+(`purpose_policy_status`: `mapped` / `missing_purpose` / `missing_policy`,
+never used to drop a row) — intended as the read surface a future `v2`
+snapshot builder would query instead of `analytics_item_lifecycle`
+directly. It is not itself a snapshot builder and produces no aggregate or
+recommendation output on its own.

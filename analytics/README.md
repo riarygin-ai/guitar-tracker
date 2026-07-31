@@ -748,6 +748,51 @@ Open Inventory Decision Support beyond v1 (AI-generated recommendations,
 Business Coach, recent trends, cash-balance logic, automatic repricing,
 notifications, and UI redesign) is explicitly out of scope for this step.
 
+## Purpose-Aware Analytics Foundation (schema-only — no snapshot builder change)
+
+Two new, additive database objects lay the ground for Purpose-aware
+analytics (`v2.0+`) without wiring anything into it yet:
+
+- **`public.analytics_purpose_policy`**
+  (`supabase/migrations/20260809000000_analytics_purpose_policy.sql`) — one
+  row per `item_purposes` row (seeded by case-insensitive name lookup, not
+  assumed IDs), holding `disposition_mode`, `realization_priority_order`
+  (Business `1` < Hybrid `2` < Personal `3`), `active_realization_flag`,
+  and a descriptive `expected_holding_policy` label (no numeric day
+  thresholds yet). `authenticated` may only `SELECT` it; only
+  `service_role` may write to it.
+- **`public.analytics_item_lifecycle_v2`**
+  (`supabase/migrations/20260810000000_analytics_item_lifecycle_v2.sql`) —
+  a thin `security_invoker` view that left-joins
+  `analytics_purpose_policy` onto every `analytics_item_lifecycle` row.
+  Exposes every existing column unchanged, plus `current_purpose_id`/
+  `current_purpose_name` (documented aliases of `purpose_id`/`purpose_name`
+  — see the migration header), the four policy columns above, and
+  `purpose_policy_status` (`mapped` / `missing_purpose` / `missing_policy`)
+  — a row is never dropped for lacking a Purpose or policy row.
+
+**Six points to keep in mind when building on this:**
+
+1. Purpose controls disposition and urgency — it does not gate economic
+   eligibility. `item_purposes` already decides which items are Business-
+   eligible (section 4/9 of `SEMANTIC_CONTRACT.md`); this policy only says
+   how urgently an already-eligible item should be realized.
+2. Profit, ROI, and acquisition/exit values are computed identically for
+   every Purpose — nothing here reweights or filters those formulas.
+3. Purpose is currently mutable and has no historical record; `current_
+   purpose_id`/`current_purpose_name` name that limitation explicitly.
+4. `v1.0`-`v1.8` remain Business-only and are entirely unaffected — they
+   still read `analytics_item_lifecycle` (v1), not v2.
+5. Purpose-aware analytics (reading Hybrid/Personal items, or varying
+   behavior by `disposition_mode`) begins at a future `v2.0` snapshot
+   version, not this step. `EVIDENCE_SCOPE` (SEMANTIC_CONTRACT.md section
+   9) is deliberately NOT redefined here.
+6. `analytics_item_lifecycle_v2` is the intended read surface for that
+   future `v2` builder — it is not a snapshot builder itself and is not
+   consumed by anything yet.
+
+See `analytics/SEMANTIC_CONTRACT.md` section 22 for the full contract.
+
 ## Conventions
 
 - One file per analysis, numbered (`01_`, `02_`, ...) in the order they were

@@ -1258,6 +1258,173 @@ async function main() {
   check('new run snapshot has 1.8 metadata', (v18Run.snapshot as any)?.snapshot_schema_version === '1.8');
   check('new run snapshot includes target_user_evidence.open_inventory_decision_support', !!(v18Run.snapshot as any)?.target_user_evidence?.open_inventory_decision_support);
 
+  // ── Purpose-Aware Analytics Foundation (analytics_purpose_policy + analytics_item_lifecycle_v2) ──
+  console.log('\n[Purpose-Aware Foundation — analytics_purpose_policy seeded rows and mapping]');
+  const { data: policyRows, error: policyRowsError } = await serviceClient
+    .from('analytics_purpose_policy')
+    .select('purpose_id, disposition_mode, realization_priority_order, active_realization_flag, expected_holding_policy, item_purposes:purpose_id(name)')
+    .order('realization_priority_order');
+  check('analytics_purpose_policy readable and has exactly 3 seeded rows', !policyRowsError && policyRows?.length === 3, policyRowsError ?? policyRows);
+
+  const policyByName = new Map<string, any>();
+  for (const row of policyRows ?? []) {
+    const name = ((row as any).item_purposes?.name ?? '').toLowerCase();
+    policyByName.set(name, row);
+  }
+  const businessPolicy = policyByName.get('business');
+  const hybridPolicy = policyByName.get('hybrid');
+  const personalPolicy = policyByName.get('personal');
+  check(
+    'Business maps to active_realization / active_realization_flag=true / shorter_holding_preferred',
+    businessPolicy?.disposition_mode === 'active_realization'
+      && businessPolicy?.active_realization_flag === true
+      && businessPolicy?.expected_holding_policy === 'shorter_holding_preferred',
+    businessPolicy,
+  );
+  check(
+    'Hybrid maps to selective_realization / active_realization_flag=true / extended_holding_acceptable',
+    hybridPolicy?.disposition_mode === 'selective_realization'
+      && hybridPolicy?.active_realization_flag === true
+      && hybridPolicy?.expected_holding_policy === 'extended_holding_acceptable',
+    hybridPolicy,
+  );
+  check(
+    'Personal maps to opportunistic_realization / active_realization_flag=false / long_holding_acceptable',
+    personalPolicy?.disposition_mode === 'opportunistic_realization'
+      && personalPolicy?.active_realization_flag === false
+      && personalPolicy?.expected_holding_policy === 'long_holding_acceptable',
+    personalPolicy,
+  );
+  check(
+    'realization_priority_order: Business < Hybrid < Personal',
+    businessPolicy?.realization_priority_order < hybridPolicy?.realization_priority_order
+      && hybridPolicy?.realization_priority_order < personalPolicy?.realization_priority_order,
+    { business: businessPolicy?.realization_priority_order, hybrid: hybridPolicy?.realization_priority_order, personal: personalPolicy?.realization_priority_order },
+  );
+
+  console.log('\n[Purpose-Aware Foundation — analytics_item_lifecycle_v2 row-count reconciliation]');
+  const { data: v1Rows, error: v1RowsError } = await serviceClient
+    .from('analytics_item_lifecycle')
+    .select('item_id, user_id, purpose_id, purpose_name, acquisition_value, is_historical_import, is_realized, net_profit');
+  const { data: v2Rows, error: v2RowsError } = await serviceClient
+    .from('analytics_item_lifecycle_v2')
+    .select('item_id, user_id, purpose_id, purpose_name, current_purpose_id, current_purpose_name, acquisition_value, is_historical_import, is_realized, net_profit, disposition_mode, realization_priority_order, active_realization_flag, expected_holding_policy, purpose_policy_status');
+  check('analytics_item_lifecycle and analytics_item_lifecycle_v2 both readable', !v1RowsError && !v2RowsError, v1RowsError ?? v2RowsError);
+  check('analytics_item_lifecycle_v2 row count === analytics_item_lifecycle row count (no row dropped)', (v1Rows?.length ?? -1) === (v2Rows?.length ?? -2), { v1: v1Rows?.length, v2: v2Rows?.length });
+
+  const v2ByItemId = new Map<number, any>((v2Rows ?? []).map((r: any) => [r.item_id, r]));
+  console.log('\n[Purpose-Aware Foundation — no existing lifecycle value changed, current_* aliases match]');
+  check(
+    'every v1 row has a matching v2 row with byte-identical shared column values',
+    (v1Rows ?? []).every((v1r: any) => {
+      const v2r = v2ByItemId.get(v1r.item_id);
+      return !!v2r
+        && v2r.user_id === v1r.user_id
+        && v2r.purpose_id === v1r.purpose_id
+        && v2r.purpose_name === v1r.purpose_name
+        && Number(v2r.acquisition_value ?? 0) === Number(v1r.acquisition_value ?? 0)
+        && v2r.is_historical_import === v1r.is_historical_import
+        && v2r.is_realized === v1r.is_realized
+        && Number(v2r.net_profit ?? 0) === Number(v1r.net_profit ?? 0);
+    }),
+    (v1Rows ?? []).filter((v1r: any) => {
+      const v2r = v2ByItemId.get(v1r.item_id);
+      return !v2r || v2r.purpose_id !== v1r.purpose_id || v2r.purpose_name !== v1r.purpose_name;
+    }),
+  );
+  check(
+    'current_purpose_id/current_purpose_name are byte-identical aliases of purpose_id/purpose_name for every row',
+    (v2Rows ?? []).every((r: any) => r.current_purpose_id === r.purpose_id && r.current_purpose_name === r.purpose_name),
+  );
+
+  console.log('\n[Purpose-Aware Foundation — missing_purpose fixture (item 100) and missing_policy fixture (item 101)]');
+  const item100 = v2ByItemId.get(100);
+  check(
+    'fixture item 100 (purpose_id NULL) is visible via v2 with purpose_policy_status = missing_purpose and NULL policy fields',
+    !!item100 && item100.purpose_id === null && item100.purpose_policy_status === 'missing_purpose'
+      && item100.disposition_mode === null && item100.realization_priority_order === null
+      && item100.active_realization_flag === null && item100.expected_holding_policy === null,
+    item100,
+  );
+  const item101 = v2ByItemId.get(101);
+  check(
+    'fixture item 101 (unmapped "Loaner" purpose) is visible via v2 with purpose_policy_status = missing_policy, current_purpose_name populated, policy fields NULL',
+    !!item101 && item101.purpose_id !== null && item101.current_purpose_name === 'Loaner' && item101.purpose_policy_status === 'missing_policy'
+      && item101.disposition_mode === null && item101.realization_priority_order === null
+      && item101.active_realization_flag === null && item101.expected_holding_policy === null,
+    item101,
+  );
+  check(
+    'every non-fixture row with a mapped Business/Hybrid/Personal purpose has purpose_policy_status = mapped',
+    (v2Rows ?? [])
+      .filter((r: any) => ![100, 101].includes(r.item_id) && r.purpose_id !== null)
+      .every((r: any) => r.purpose_policy_status === 'mapped'),
+  );
+
+  console.log('\n[Purpose-Aware Foundation — v1.0-v1.8 snapshot outputs unaffected by the new fixture items]');
+  const { data: v18SnapshotAfterFixture, error: v18AfterFixtureError } = await serviceClient.rpc('build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_8 still callable after Purpose-Aware Foundation migrations', !v18AfterFixtureError, v18AfterFixtureError);
+  const itemsAfterFixture: any[] = v18SnapshotAfterFixture?.target_user_evidence?.open_inventory_decision_support?.item_decision_evidence ?? [];
+  check(
+    'items 100 and 101 (non-Business purpose) do not appear in v1.8 item_decision_evidence',
+    itemsAfterFixture.every((r) => r.item_id !== 100 && r.item_id !== 101),
+    itemsAfterFixture.map((r) => r.item_id),
+  );
+  const { generated_at: _genA, ...v18SnapshotAWithoutTimestamp } = (v18SnapshotA ?? {}) as Record<string, unknown>;
+  const { generated_at: _genAfter, ...v18SnapshotAfterFixtureWithoutTimestamp } = (v18SnapshotAfterFixture ?? {}) as Record<string, unknown>;
+  check(
+    'v1.8 snapshot is otherwise unchanged (byte-identical to the earlier call in this run, ignoring generated_at)',
+    JSON.stringify(v18SnapshotAfterFixtureWithoutTimestamp) === JSON.stringify(v18SnapshotAWithoutTimestamp),
+  );
+
+  console.log('\n[Purpose-Aware Foundation — v1.0 through v1.7 remain callable]');
+  const stillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of stillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after Purpose-Aware Foundation migrations`, !error, error);
+  }
+
+  console.log('\n[Purpose-Aware Foundation — security: authenticated can SELECT policy, cannot write it]');
+  const { data: policyAuthedSelect, error: policyAuthedSelectError } = await clientA
+    .from('analytics_purpose_policy')
+    .select('purpose_id')
+    .limit(1);
+  check('authenticated client can SELECT analytics_purpose_policy', !policyAuthedSelectError && !!policyAuthedSelect, policyAuthedSelectError);
+  const { error: policyInsertError } = await clientA
+    .from('analytics_purpose_policy')
+    .insert({ purpose_id: 999999, disposition_mode: 'x', realization_priority_order: 1, active_realization_flag: true, expected_holding_policy: 'x', description: 'x' });
+  check('authenticated client cannot INSERT into analytics_purpose_policy', !!policyInsertError, policyInsertError);
+  const { error: policyUpdateError } = await clientA
+    .from('analytics_purpose_policy')
+    .update({ disposition_mode: 'tampered' })
+    .eq('purpose_id', businessPolicy?.purpose_id ?? -1);
+  check('authenticated client cannot UPDATE analytics_purpose_policy', !!policyUpdateError, policyUpdateError);
+  const { error: policyDeleteError } = await clientA
+    .from('analytics_purpose_policy')
+    .delete()
+    .eq('purpose_id', businessPolicy?.purpose_id ?? -1);
+  check('authenticated client cannot DELETE from analytics_purpose_policy', !!policyDeleteError, policyDeleteError);
+
+  console.log('\n[Purpose-Aware Foundation — analytics_item_lifecycle_v2 security model matches v1 (per-user RLS via security_invoker)]');
+  const { data: v1AuthedRows, error: v1AuthedError } = await clientA.from('analytics_item_lifecycle').select('item_id');
+  const { data: v2AuthedRows, error: v2AuthedError } = await clientA.from('analytics_item_lifecycle_v2').select('item_id');
+  check('authenticated client can SELECT both analytics_item_lifecycle and analytics_item_lifecycle_v2', !v1AuthedError && !v2AuthedError, v1AuthedError ?? v2AuthedError);
+  check(
+    'authenticated client sees the same set of item_ids through v2 as through v1 (same RLS scoping)',
+    JSON.stringify((v1AuthedRows ?? []).map((r: any) => r.item_id).sort((a: number, b: number) => a - b))
+      === JSON.stringify((v2AuthedRows ?? []).map((r: any) => r.item_id).sort((a: number, b: number) => a - b)),
+    { v1Count: v1AuthedRows?.length, v2Count: v2AuthedRows?.length },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
 }
