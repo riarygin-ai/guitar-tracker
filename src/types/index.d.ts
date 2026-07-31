@@ -350,14 +350,19 @@ export interface InventorySearchItem extends InventoryItem {
   item_subtype_name: string | null;
 }
 
-// ─── Analytics (Phase 2 Step 4) ────────────────────────────────────────────────
+// ─── Analytics (Phase 2 Step 4, promoted to v2.2 — see analytics/README.md) ────
 // Mirrors public.analytics_runs columns (supabase/migrations/20260727000000_
-// analytics_runs.sql) and the build_analytics_snapshot_v1 top-level contract
-// (20260728000000_build_analytics_snapshot_v1.sql). Nested module contents
-// under evidence_aggregates/recommendation_candidates are intentionally left
-// as Record<string, unknown> — the full ~2,000-line SQL schema is not
-// duplicated into TypeScript at this step; see analytics/SEMANTIC_CONTRACT.md
-// for the authoritative field-level definitions.
+// analytics_runs.sql). AnalyticsSnapshot covers BOTH shapes ever persisted
+// into analytics_runs.snapshot: the v1.0-v1.8 shape (evidence_aggregates/
+// recommendation_candidates/target_user_evidence) and the v2.0+ shape
+// (purpose_semantics/shared_purpose_evidence/target_user_purpose_evidence/
+// target_user_open_inventory_evidence) that build_analytics_snapshot_v2_2
+// (the current production version) actually returns. Every version-specific
+// field is optional so old stored runs of EITHER shape remain readable —
+// see analytics/SEMANTIC_CONTRACT.md for the authoritative field-level
+// definitions. Nested module contents are intentionally left as
+// Record<string, unknown> — the full SQL schema is not duplicated into
+// TypeScript.
 
 export type AnalyticsRunStatus = 'pending' | 'running' | 'completed' | 'failed';
 
@@ -384,59 +389,41 @@ export interface AnalyticsSnapshot {
   analytics_definition_version:   string;
   generated_at:                   string;
   evidence_scope:                 string;
-  recommendation_target_user_id:  number;
-  evidence_aggregates: {
+
+  // ── v1.0-v1.8 shape — absent on v2.0+ stored snapshots ──────────────────
+  recommendation_target_user_id?:  number;
+  evidence_aggregates?: {
     acquisition_value_band: Record<string, unknown>;
     acquisition_to_exit:    Record<string, unknown>;
     brand:                  Record<string, unknown>;
-    // Added in Snapshot v1.2 (Channel Analytics module 1) — absent on
-    // older v1.0/v1.1 stored snapshots, so optional here.
     deal_in_channel?:        Record<string, unknown>;
-    // Added in Snapshot v1.3 (Channel Analytics module 2) — absent on
-    // older v1.0/v1.1/v1.2 stored snapshots, so optional here.
     deal_out_channel?:       Record<string, unknown>;
-    // Added in Snapshot v1.4 (Channel Analytics module 3A) — absent on
-    // older v1.0/v1.1/v1.2/v1.3 stored snapshots, so optional here.
     channel_journey?:        Record<string, unknown>;
-    // Added in Snapshot v1.5 (Channel Analytics module 3B) — absent on
-    // older v1.0/v1.1/v1.2/v1.3/v1.4 stored snapshots, so optional here.
     listing_channel_exposure?: Record<string, unknown>;
-    // Added in Snapshot v1.6 (Category & Type Performance) — absent on
-    // older v1.0-v1.5 stored snapshots, so optional here.
     category_type_performance?: Record<string, unknown>;
-    // Added in Snapshot v1.7 (Capital & Liquidity) — absent on older
-    // v1.0-v1.6 stored snapshots, so optional here.
     capital_liquidity?: Record<string, unknown>;
   };
-  recommendation_candidates: {
+  recommendation_candidates?: {
     open_business_items: Record<string, unknown>[];
   };
-  // Added in Snapshot v1.8 (Open Inventory Decision Support v1) — a NEW
-  // top-level section, sibling to evidence_aggregates/recommendation_
-  // candidates, not nested inside either. Absent on older v1.0-v1.7 stored
-  // snapshots, so optional here. Item-level, but every row is restricted
-  // to the snapshot's own recommendation_target_user_id — see
-  // analytics/SEMANTIC_CONTRACT.md section 21.
+  // Item-level, but every row is restricted to the snapshot's own
+  // recommendation_target_user_id — see analytics/SEMANTIC_CONTRACT.md
+  // section 21.
   target_user_evidence?: {
     open_inventory_decision_support: Record<string, unknown>;
   };
-}
 
-// ─── Analytics v2.1 manual preview (Open Inventory Decision Support v2.1) ──
-// Returned only by the manual/testing preview endpoint (POST /api/analytics/
-// v2-preview) — NOT persisted to analytics_runs and NOT part of the
-// production run flow, which remains on v1.8 (AnalyticsSnapshot above).
-// Nested contents intentionally left as Record<string, unknown>; see
-// analytics/SEMANTIC_CONTRACT.md for the authoritative v2.0/v2.1
-// field-level definitions.
-export interface AnalyticsSnapshotV2_1 {
-  snapshot_schema_version:              string;
-  analytics_definition_version:         string;
-  generated_at:                         string;
-  evidence_scope:                       string;
-  purpose_semantics:                    string;
-  shared_purpose_evidence:              Record<string, unknown>;
-  target_user_purpose_evidence:         Record<string, unknown>;
-  target_user_open_inventory_evidence:  Record<string, unknown>;
-  module_limitations:                   string[];
+  // ── v2.0+ shape — absent on v1.0-v1.8 stored snapshots ──────────────────
+  // build_analytics_snapshot_v2_2 (the current production version, section
+  // 25) is a clean, independent contract — no evidence_aggregates/
+  // recommendation_candidates/recommendation_target_user_id field exists
+  // in a v2.x payload. shared_purpose_evidence pools every user's items
+  // (aggregate only, no item identity); target_user_purpose_evidence and
+  // target_user_open_inventory_evidence are restricted to the snapshot's
+  // own target user — see analytics/SEMANTIC_CONTRACT.md sections 22-25.
+  purpose_semantics?:                    string;
+  shared_purpose_evidence?:              Record<string, unknown>;
+  target_user_purpose_evidence?:         Record<string, unknown>;
+  target_user_open_inventory_evidence?:  Record<string, unknown>;
+  module_limitations?:                   string[];
 }

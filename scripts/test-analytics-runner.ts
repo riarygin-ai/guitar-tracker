@@ -26,6 +26,8 @@ import dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
+import fs from 'fs';
+import path from 'path';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   runAnalyticsForCurrentUser,
@@ -42,6 +44,23 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 let passed = 0;
 let failed = 0;
+
+/** Deep-sorts object keys before JSON.stringify, so a value that went
+ *  through a jsonb `-`/`||` round-trip (which can reorder keys without
+ *  changing meaning) still compares equal to a value that didn't. */
+function stableStringify(value: unknown): string {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (v !== null && typeof v === 'object') {
+      return Object.keys(v as Record<string, unknown>).sort().reduce((acc, k) => {
+        acc[k] = sort((v as Record<string, unknown>)[k]);
+        return acc;
+      }, {} as Record<string, unknown>);
+    }
+    return v;
+  };
+  return JSON.stringify(sort(value));
+}
 
 function check(label: string, condition: boolean, detail?: unknown) {
   if (condition) {
@@ -67,7 +86,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v1_8
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_2
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -76,7 +95,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_8') {
+          if (name === 'build_analytics_snapshot_v2_2') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -96,7 +115,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v1_8') {
+          if (name === 'build_analytics_snapshot_v2_2') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -149,25 +168,31 @@ async function main() {
   const clientB = authedClient(tokenB);
 
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
+  // v2.2 shape — no recommendation_target_user_id/evidence_aggregates/
+  // recommendation_candidates field exists in a v2.x payload (see
+  // runAnalytics.ts). The function no longer takes an expectedTargetUserId
+  // parameter since there is nothing target-user-specific left to check
+  // inside the JSON itself.
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '1.8',
-    analytics_definition_version: '1.8',
+    snapshot_schema_version: '2.2',
+    analytics_definition_version: '2.2',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
-    recommendation_target_user_id: userAId,
-    evidence_aggregates: {},
-    recommendation_candidates: {},
+    purpose_semantics: 'current_item_purpose',
+    shared_purpose_evidence: {},
+    target_user_purpose_evidence: {},
+    target_user_open_inventory_evidence: {},
   };
-  check('valid snapshot passes', isValidAnalyticsSnapshot(validSnapshot, userAId));
-  check('wrong schema version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, snapshot_schema_version: '2.0' }, userAId));
-  check('wrong definition version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, analytics_definition_version: '0.9' }, userAId));
-  check('wrong evidence_scope rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, evidence_scope: 'something_else' }, userAId));
-  check('wrong target user rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, recommendation_target_user_id: userBId }, userAId));
-  check('missing evidence_aggregates rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, evidence_aggregates: undefined }, userAId));
-  check('missing recommendation_candidates rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, recommendation_candidates: null }, userAId));
-  check('null value rejected', !isValidAnalyticsSnapshot(null, userAId));
-  check('non-object value rejected', !isValidAnalyticsSnapshot('not an object', userAId));
+  check('valid snapshot passes', isValidAnalyticsSnapshot(validSnapshot));
+  check('wrong schema version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, snapshot_schema_version: '2.1' }));
+  check('wrong definition version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, analytics_definition_version: '0.9' }));
+  check('wrong evidence_scope rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, evidence_scope: 'something_else' }));
+  check('missing shared_purpose_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, shared_purpose_evidence: undefined }));
+  check('missing target_user_purpose_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, target_user_purpose_evidence: null }));
+  check('missing target_user_open_inventory_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, target_user_open_inventory_evidence: undefined }));
+  check('null value rejected', !isValidAnalyticsSnapshot(null));
+  check('non-object value rejected', !isValidAnalyticsSnapshot('not an object'));
 
   // ── Pure unit tests: sanitizeErrorMessage ───────────────────────────────
   console.log('\n[sanitizeErrorMessage]');
@@ -184,23 +209,27 @@ async function main() {
   const { error: directRpcError } = await clientA.rpc('build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId });
   check('authenticated client cannot call build_analytics_snapshot_v1 directly', !!directRpcError, directRpcError);
 
-  // ── Real successful runs ─────────────────────────────────────────────────
+  // ── Real successful runs (production runner, now backed by v2.2) ───────
   console.log('\n[successful run — user A]');
   const runA = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
   check('status is completed', runA.status === 'completed', runA.status);
   check('snapshot is non-null', runA.snapshot !== null);
-  check('analytics_version matches', runA.analytics_version === ANALYTICS_VERSION);
-  check('evidence_scope matches', runA.evidence_scope === EVIDENCE_SCOPE);
+  check('analytics_version matches (2.2)', runA.analytics_version === ANALYTICS_VERSION, runA.analytics_version);
+  check('evidence_scope matches (shared_inventory_population)', runA.evidence_scope === EVIDENCE_SCOPE, runA.evidence_scope);
   check('duration_ms is a nonnegative integer', typeof runA.duration_ms === 'number' && runA.duration_ms >= 0, runA.duration_ms);
   const snapA = runA.snapshot as any;
-  check('snapshot recommendation_target_user_id === userAId', snapA.recommendation_target_user_id === userAId);
+  check(
+    'snapshot displays shared_purpose_evidence, target_user_purpose_evidence, and target_user_open_inventory_evidence',
+    !!snapA.shared_purpose_evidence && !!snapA.target_user_purpose_evidence && !!snapA.target_user_open_inventory_evidence,
+    snapA ? Object.keys(snapA) : snapA,
+  );
 
   const { data: fullRunA } = await serviceClient
     .from('analytics_runs').select('requested_by_user_id, recommendation_target_user_id').eq('id', runA.id).single();
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_2', { p_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -210,10 +239,13 @@ async function main() {
   const runB = await runAnalyticsForCurrentUser({ appUserId: userBId, serviceClient });
   check('status is completed', runB.status === 'completed', runB.status);
   const snapB = runB.snapshot as any;
-  check('snapshot recommendation_target_user_id === userBId', snapB.recommendation_target_user_id === userBId);
-  check("user A's candidates and user B's candidates don't overlap", (() => {
-    const idsA = new Set((snapA.recommendation_candidates.open_business_items as any[]).map((i) => i.item_id));
-    const idsB = new Set((snapB.recommendation_candidates.open_business_items as any[]).map((i) => i.item_id));
+  check(
+    'snapshot displays shared_purpose_evidence, target_user_purpose_evidence, and target_user_open_inventory_evidence',
+    !!snapB.shared_purpose_evidence && !!snapB.target_user_purpose_evidence && !!snapB.target_user_open_inventory_evidence,
+  );
+  check("user A's and user B's item_decision_evidence don't overlap (no other user's item identity is exposed)", (() => {
+    const idsA = new Set((snapA.target_user_open_inventory_evidence.item_decision_evidence as any[]).map((i) => i.item_id));
+    const idsB = new Set((snapB.target_user_open_inventory_evidence.item_decision_evidence as any[]).map((i) => i.item_id));
     return Array.from(idsA).every((id) => !idsB.has(id));
   })());
 
@@ -335,7 +367,12 @@ async function main() {
   check('build_analytics_snapshot_v1_1 callable by service_role', !v11ErrorA, v11ErrorA);
   check('v1.1 snapshot_schema_version is 1.1', v11SnapshotA?.snapshot_schema_version === '1.1', v11SnapshotA?.snapshot_schema_version);
   check('v1.1 analytics_definition_version is 1.1', v11SnapshotA?.analytics_definition_version === '1.1', v11SnapshotA?.analytics_definition_version);
-  check('v1.1 evidence_scope unchanged', v11SnapshotA?.evidence_scope === EVIDENCE_SCOPE);
+  // v1.x's own evidence_scope literal ('shared_business_population') is
+  // fixed and unaffected by the v2.2 production promotion — compared
+  // against a literal here, not the EVIDENCE_SCOPE constant (which now
+  // reflects the CURRENT production version, v2.2's 'shared_inventory_
+  // population').
+  check('v1.1 evidence_scope unchanged', v11SnapshotA?.evidence_scope === 'shared_business_population', v11SnapshotA?.evidence_scope);
   check('v1.1 recommendation_target_user_id === userAId', v11SnapshotA?.recommendation_target_user_id === userAId);
 
   const avb = v11SnapshotA?.evidence_aggregates?.acquisition_value_band;
@@ -1251,12 +1288,13 @@ async function main() {
   const { error: oidsHelperAuthedError } = await clientA.rpc('_build_open_inventory_decision_support_snapshot_v1', { p_target_user_id: userAId });
   check('authenticated client cannot call _build_open_inventory_decision_support_snapshot_v1 directly', !!oidsHelperAuthedError, oidsHelperAuthedError);
 
-  console.log('\n[v1.8 — new runner call persists analytics_version 1.8]');
-  const v18Run = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new run analytics_version is 1.8', v18Run.analytics_version === '1.8', v18Run.analytics_version);
-  check('new run status is completed', v18Run.status === 'completed');
-  check('new run snapshot has 1.8 metadata', (v18Run.snapshot as any)?.snapshot_schema_version === '1.8');
-  check('new run snapshot includes target_user_evidence.open_inventory_decision_support', !!(v18Run.snapshot as any)?.target_user_evidence?.open_inventory_decision_support);
+  // Note: at the point v1.8 was introduced, a new runner call persisted
+  // analytics_version 1.8 — the runner has since been promoted to v2.2
+  // (see the "[v2.2 ...]" tests below), so a new call now persists 2.2.
+  // build_analytics_snapshot_v1_8 itself remains directly callable and
+  // unchanged, exercised via the direct RPC calls throughout this file.
+  const { error: v18DirectCallError } = await serviceClient.rpc('build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId });
+  check('build_analytics_snapshot_v1_8 remains directly callable by service_role', !v18DirectCallError, v18DirectCallError);
 
   // ── Purpose-Aware Analytics Foundation (analytics_purpose_policy + analytics_item_lifecycle_v2) ──
   console.log('\n[Purpose-Aware Foundation — analytics_purpose_policy seeded rows and mapping]');
@@ -1890,14 +1928,211 @@ async function main() {
     JSON.stringify(v18AfterV21WithoutTimestamp) === JSON.stringify(v18BeforeV21WithoutTimestamp),
   );
 
-  console.log('\n[v2.1 — test #18: production runner remains on v1.8]');
-  check('ANALYTICS_VERSION constant used by the production runner is still 1.8', ANALYTICS_VERSION === '1.8', ANALYTICS_VERSION);
+  // Note: at the point v2.1 was introduced, the production runner had not
+  // yet been promoted off v1.8. It has since been promoted to v2.2 — see
+  // the "[v2.2 ...]" section below for the current-state assertion
+  // (ANALYTICS_VERSION === '2.2').
 
   console.log('\n[v2.1 — test #19: permissions on new functions]');
   const { error: v21AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_1', { p_target_user_id: userAId });
   check('authenticated client cannot call build_analytics_snapshot_v2_1 directly', !!v21AuthedError, v21AuthedError);
   const { error: v21HelperAuthedError } = await clientA.rpc('_build_open_inventory_decision_support_snapshot_v2', { p_target_user_id: userAId });
   check('authenticated client cannot call _build_open_inventory_decision_support_snapshot_v2 directly', !!v21HelperAuthedError, v21HelperAuthedError);
+
+  // ── Analytics v2.2 — Hybrid reason-code correction + production promotion ──
+  console.log('\n[v2.2 — builder callable, top-level metadata]');
+  const { data: v22SnapshotA, error: v22ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v2_2', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_2 callable by service_role', !v22ErrorA, v22ErrorA);
+  check('v2.2 snapshot_schema_version is 2.2', v22SnapshotA?.snapshot_schema_version === '2.2', v22SnapshotA?.snapshot_schema_version);
+  check('v2.2 analytics_definition_version is 2.2', v22SnapshotA?.analytics_definition_version === '2.2', v22SnapshotA?.analytics_definition_version);
+
+  const v22Items: any[] = v22SnapshotA?.target_user_open_inventory_evidence?.item_decision_evidence ?? [];
+  const v22Serialized = JSON.stringify(v22SnapshotA);
+
+  console.log('\n[v2.2 — test #1: a reliable recent Hybrid item receives HYBRID_RECENT_ITEM]');
+  const item105v22 = v22Items.find((r) => r.item_id === 105);
+  check(
+    'fixture item 105 (Hybrid, ownership_age_days=10, reliable) carries HYBRID_RECENT_ITEM',
+    !!item105v22 && item105v22.ownership_age_days !== null && item105v22.ownership_age_days < 30 && item105v22.reason_codes.includes('HYBRID_RECENT_ITEM'),
+    item105v22,
+  );
+
+  console.log('\n[v2.2 — test #2: an unreliable-age Hybrid item receives HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY]');
+  const item107v22 = v22Items.find((r) => r.item_id === 107);
+  check(
+    'fixture item 107 (Hybrid, Historical Import, ownership_age_days === null) carries HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY',
+    !!item107v22 && item107v22.ownership_age_days === null && item107v22.reason_codes.includes('HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY'),
+    item107v22,
+  );
+
+  console.log('\n[v2.2 — test #3: the two codes are mutually exclusive]');
+  check(
+    'no item carries both HYBRID_RECENT_ITEM and HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY',
+    v22Items.every((r) => !(r.reason_codes.includes('HYBRID_RECENT_ITEM') && r.reason_codes.includes('HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY'))),
+    v22Items.filter((r) => r.reason_codes.includes('HYBRID_RECENT_ITEM') && r.reason_codes.includes('HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY')),
+  );
+
+  console.log('\n[v2.2 — test #4: HYBRID_RECENT_INSUFFICIENT_HISTORY is absent from v2.2]');
+  check('the old ambiguous combined code does not appear anywhere in v2.2 output', !v22Serialized.includes('HYBRID_RECENT_INSUFFICIENT_HISTORY'));
+
+  console.log('\n[v2.2 — test #5: historical items with large DOM are not labelled recent]');
+  check(
+    'fixture item 107 (is_historical_import, current_dom_days=150) does NOT carry HYBRID_RECENT_ITEM',
+    !!item107v22 && item107v22.is_historical_import === true && item107v22.current_dom_days === 150 && !item107v22.reason_codes.includes('HYBRID_RECENT_ITEM'),
+    item107v22,
+  );
+
+  console.log('\n[v2.2 — test #6: all non-reason-code v2.1 values remain unchanged in v2.2]');
+  const { data: v21SnapshotForCompare } = await serviceClient.rpc('build_analytics_snapshot_v2_1', { p_target_user_id: userAId });
+  const v21ItemsForCompare: any[] = v21SnapshotForCompare?.target_user_open_inventory_evidence?.item_decision_evidence ?? [];
+  check(
+    'every item_decision_evidence field except reason_codes is stable-stringify identical between v2.1 and v2.2',
+    v22Items.every((v22r) => {
+      const v21r = v21ItemsForCompare.find((r) => r.item_id === v22r.item_id);
+      if (!v21r) return false;
+      const { reason_codes: _v22codes, ...v22rest } = v22r;
+      const { reason_codes: _v21codes, ...v21rest } = v21r;
+      return stableStringify(v22rest) === stableStringify(v21rest);
+    }),
+  );
+  check(
+    'population_summary is stable-stringify identical between v2.1 and v2.2',
+    stableStringify(v22SnapshotA?.target_user_open_inventory_evidence?.population_summary)
+      === stableStringify(v21SnapshotForCompare?.target_user_open_inventory_evidence?.population_summary),
+  );
+  check(
+    'purpose_position_summary is stable-stringify identical between v2.1 and v2.2',
+    stableStringify(v22SnapshotA?.target_user_open_inventory_evidence?.purpose_position_summary)
+      === stableStringify(v21SnapshotForCompare?.target_user_open_inventory_evidence?.purpose_position_summary),
+  );
+  check(
+    'hybrid_purpose_review (behavioral_signals) is stable-stringify identical between v2.1 and v2.2',
+    stableStringify(v22SnapshotA?.target_user_open_inventory_evidence?.hybrid_purpose_review)
+      === stableStringify(v21SnapshotForCompare?.target_user_open_inventory_evidence?.hybrid_purpose_review),
+  );
+  check(
+    'personal_inventory_control is stable-stringify identical between v2.1 and v2.2',
+    stableStringify(v22SnapshotA?.target_user_open_inventory_evidence?.personal_inventory_control)
+      === stableStringify(v21SnapshotForCompare?.target_user_open_inventory_evidence?.personal_inventory_control),
+  );
+  check(
+    'item_decision_evidence ordering (item_id sequence) is identical between v2.1 and v2.2',
+    JSON.stringify(v22Items.map((r) => r.item_id)) === JSON.stringify(v21ItemsForCompare.map((r) => r.item_id)),
+  );
+  check(
+    'shared_purpose_evidence and target_user_purpose_evidence are stable-stringify identical between v2.1 and v2.2',
+    stableStringify(v22SnapshotA?.shared_purpose_evidence) === stableStringify(v21SnapshotForCompare?.shared_purpose_evidence)
+      && stableStringify(v22SnapshotA?.target_user_purpose_evidence) === stableStringify(v21SnapshotForCompare?.target_user_purpose_evidence),
+  );
+
+  console.log('\n[v2.2 — test #7: v2.1 remains byte-identical except generated_at]');
+  const { data: v21SnapshotSecondCall } = await serviceClient.rpc('build_analytics_snapshot_v2_1', { p_target_user_id: userAId });
+  const { generated_at: _v21gen1, ...v21FirstWithoutTimestamp } = (v21SnapshotForCompare ?? {}) as Record<string, unknown>;
+  const { generated_at: _v21gen2, ...v21SecondWithoutTimestamp } = (v21SnapshotSecondCall ?? {}) as Record<string, unknown>;
+  check(
+    'two fresh build_analytics_snapshot_v2_1 calls are byte-identical (ignoring generated_at) — v2.1 unaffected by v2.2 existing',
+    stableStringify(v21FirstWithoutTimestamp) === stableStringify(v21SecondWithoutTimestamp),
+  );
+  check(
+    'v2.1 still produces the OLD ambiguous combined code (untouched by v2.2)',
+    JSON.stringify(v21SnapshotForCompare).includes('HYBRID_RECENT_INSUFFICIENT_HISTORY'),
+  );
+
+  console.log('\n[v2.2 — test #8/#9: the main runner creates a completed v2.2 run; stored metadata says 2.2]');
+  const runA22 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('main runner run status is completed', runA22.status === 'completed', runA22.status);
+  check('main runner run analytics_version is 2.2', runA22.analytics_version === '2.2', runA22.analytics_version);
+  const { data: storedRunA22 } = await serviceClient
+    .from('analytics_runs').select('analytics_version, evidence_scope, snapshot').eq('id', runA22.id).single();
+  check('stored analytics_runs.analytics_version is 2.2', storedRunA22?.analytics_version === '2.2', storedRunA22?.analytics_version);
+  check(
+    'stored snapshot.snapshot_schema_version is 2.2',
+    (storedRunA22?.snapshot as any)?.snapshot_schema_version === '2.2',
+    (storedRunA22?.snapshot as any)?.snapshot_schema_version,
+  );
+
+  console.log('\n[v2.2 — test #10: forged target-user input is ignored]');
+  // The runner exposes no parameter other than appUserId (resolved
+  // server-side from the session) — there is no code path to override the
+  // target. Reinforce this at the SQL layer: even a direct, authenticated
+  // RPC call cannot invoke the builder for ANY target, forged or not.
+  const { error: forgedTargetError } = await clientA.rpc('build_analytics_snapshot_v2_2', { p_target_user_id: userBId });
+  check('authenticated client cannot invoke build_analytics_snapshot_v2_2 for a different (forged) target user id either', !!forgedTargetError, forgedTargetError);
+  check(
+    "runA22's stored target is always the caller's own id, never overridable",
+    runA22.status === 'completed' && (await serviceClient.from('analytics_runs').select('recommendation_target_user_id').eq('id', runA22.id).single()).data?.recommendation_target_user_id === userAId,
+  );
+
+  console.log('\n[v2.2 — test #11: another user\'s item identity is not exposed]');
+  const runB22 = await runAnalyticsForCurrentUser({ appUserId: userBId, serviceClient });
+  const snapB22 = runB22.snapshot as any;
+  const userAItemIdsV22 = new Set(v22Items.map((r) => r.item_id));
+  const userBItemIdsV22 = new Set((snapB22?.target_user_open_inventory_evidence?.item_decision_evidence ?? []).map((r: any) => r.item_id));
+  check(
+    "user A's and user B's item_decision_evidence item_ids don't overlap in v2.2",
+    Array.from(userAItemIdsV22).every((id) => !userBItemIdsV22.has(id)),
+  );
+
+  console.log('\n[v2.2 — test #12: old analytics_runs rows remain readable]');
+  const { data: syntheticOldRun, error: syntheticOldRunError } = await serviceClient
+    .from('analytics_runs')
+    .insert({
+      requested_by_user_id: userAId,
+      recommendation_target_user_id: userAId,
+      analytics_version: '1.8',
+      evidence_scope: 'shared_business_population',
+      status: 'completed',
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      duration_ms: 42,
+      snapshot: {
+        snapshot_schema_version: '1.8',
+        analytics_definition_version: '1.8',
+        generated_at: new Date().toISOString(),
+        evidence_scope: 'shared_business_population',
+        recommendation_target_user_id: userAId,
+        evidence_aggregates: { acquisition_value_band: {}, acquisition_to_exit: {}, brand: {} },
+        recommendation_candidates: { open_business_items: [] },
+      },
+    })
+    .select('id, analytics_version, snapshot')
+    .single();
+  check('a synthetic old-shaped (v1.8) analytics_runs row can still be inserted', !syntheticOldRunError && !!syntheticOldRun, syntheticOldRunError);
+  const { data: readBackOldRun } = await serviceClient
+    .from('analytics_runs').select('analytics_version, snapshot').eq('id', syntheticOldRun!.id).single();
+  check(
+    'the old-shaped row reads back unchanged (v1.8 shape untouched by the v2.2 promotion)',
+    readBackOldRun?.analytics_version === '1.8' && (readBackOldRun?.snapshot as any)?.snapshot_schema_version === '1.8'
+      && !!(readBackOldRun?.snapshot as any)?.evidence_aggregates,
+    readBackOldRun,
+  );
+
+  console.log('\n[v2.2 — test #13: v1.0-v1.8, v2.0, and v2.1 remain callable]');
+  const v22StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_0', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_1', { p_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v22StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.2 migration`, !error, error);
+  }
+
+  console.log('\n[v2.2 — test #14: the temporary preview route/card has been removed]');
+  const previewRoutePath = path.join(__dirname, '..', 'src', 'app', 'api', 'analytics', 'v2-preview');
+  check('src/app/api/analytics/v2-preview no longer exists', !fs.existsSync(previewRoutePath), previewRoutePath);
+
+  console.log('\n[v2.2 — test #15: authenticated cannot execute the builder directly]');
+  const { error: v22AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_2', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_2 directly', !!v22AuthedError, v22AuthedError);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

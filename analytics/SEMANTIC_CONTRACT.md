@@ -1580,9 +1580,54 @@ this module never writes to `inventory_items.purpose_id`.
 `behavioral_signals` / `control_reason_codes` are deterministic,
 independent evidence flags — never counted, weighted, or combined.
 
-**Manual inspection only.** `POST /api/analytics/v2-preview` calls
-`build_analytics_snapshot_v2_1` directly for the authenticated caller and
-returns it — nothing is persisted to `analytics_runs`, and this route is
-never called by the production "Run Analytics" flow. The Analytics page's
-"Open Inventory Decision Support v2.1 (Manual Preview)" section is a
-separate, on-demand card, not part of the stored-run history above it.
+**Manual inspection only, historically.** At the time this section was
+written, `v2.1` was reachable only via a temporary manual-preview route
+(`POST /api/analytics/v2-preview`) — not through the production runner.
+As of section 25 (`v2.2`), that manual-preview route has been REMOVED and
+`v2.2` (which wraps `v2.1` unchanged) is the production analytics
+version. `v2.1` itself was never modified by that promotion — see section
+25.
+
+## 25. Hybrid reason-code correction (v2.2) and production promotion
+
+`public.build_analytics_snapshot_v2_2(p_target_user_id int)`
+(`supabase/migrations/20260813000000_build_analytics_snapshot_v2_2.sql`)
+calls `build_analytics_snapshot_v2_1` wholesale and applies exactly ONE
+deterministic correction to
+`target_user_open_inventory_evidence.item_decision_evidence[*].reason_
+codes`: every occurrence of `HYBRID_RECENT_INSUFFICIENT_HISTORY` is
+replaced with exactly one of `HYBRID_RECENT_ITEM` or `HYBRID_
+INSUFFICIENT_OWNERSHIP_HISTORY`, chosen from that same row's own
+`ownership_age_days` — no new threshold, no recomputation. Nothing else
+changes: every count, capital value, cohort, other reason code,
+`behavioral_signal`, limitation, and item ordering is identical to
+`v2.1`.
+
+**Why:** `v2.1` conflated two different situations under one code — a
+genuinely recent item (reliable age under 30 days) and an item whose age
+is unavailable (historical import or otherwise unreliable). In
+production this meant historical items with DOM values of 100-400+ days
+carried a code containing the word "RECENT." `hybrid_purpose_review.
+behavioral_signals` already distinguished these correctly
+(`RECENT_ITEM_SIGNAL` / `INSUFFICIENT_HISTORY_SIGNAL`); `v2.2` gives
+`item_decision_evidence.reason_codes` the same distinction, using the
+identical condition each signal already used. The two new codes are
+mutually exclusive (`ownership_age_days IS NULL` vs. reliable-and-under-
+30) and together exactly reconstruct `v2.1`'s original combined
+condition — no item gains or loses a flag, only the code name changes.
+
+**`v2.1` is unchanged.** `_build_open_inventory_decision_support_
+snapshot_v2` and `build_analytics_snapshot_v2_1` were not modified.
+Previously stored `v2.1` snapshots remain historically interpretable
+exactly as generated; a fresh `v2.1` call still produces the old,
+ambiguous combined code, unchanged.
+
+**`v2.2` is now the production analytics version.** `runAnalytics.ts`
+calls `build_analytics_snapshot_v2_2` for every new run (constants:
+`ANALYTICS_VERSION = '2.2'`, `EVIDENCE_SCOPE = 'shared_inventory_
+population'`). `v1.0`-`v1.8`, `v2.0`, and `v2.1` remain independently
+callable and every previously stored `analytics_runs.snapshot` row
+(whichever version it was created under) remains readable — this is a
+forward version bump, not a rewrite of history. The temporary manual-
+preview route and UI card introduced alongside `v2.1` have been removed
+now that the production runner itself serves the same evidence.

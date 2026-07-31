@@ -13,29 +13,32 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 // ── Constants — must match the current snapshot contract exactly ───────────
-// (analytics_runs' own DEFAULTs and build_analytics_snapshot_v1_2's own
+// (analytics_runs' own DEFAULTs and build_analytics_snapshot_v2_2's own
 // literals — see supabase/migrations/20260727000000_analytics_runs.sql and
-// 20260801000000_build_analytics_snapshot_v1_2.sql). Bumping either requires
-// updating both this file and the database migrations together — see the
-// "duplicated logic" note in analytics/README.md.
+// 20260813000000_build_analytics_snapshot_v2_2.sql). Bumping either
+// requires updating both this file and the database migrations together —
+// see the "duplicated logic" note in analytics/README.md.
 //
-// v1.8: new runs call build_analytics_snapshot_v1_8 (Open Inventory
-// Decision Support v1 — see analytics/SEMANTIC_CONTRACT.md). v1.0 through
-// v1.7's builder functions and every previously stored v1.0-v1.7
-// analytics_runs.snapshot row are untouched and remain readable — this is
-// a forward version bump, not a rewrite of history. v1.8 adds a NEW
-// top-level snapshot key, target_user_evidence.open_inventory_decision_
-// support — item-level evidence restricted to the caller's own open
-// Business items — alongside the existing evidence_aggregates (shared,
-// never item-level) and recommendation_candidates (target-user-only,
-// unchanged shape). See isValidAnalyticsSnapshot below: it intentionally
-// does NOT require target_user_evidence to be present, so older stored
-// v1.0-v1.7 snapshots (which never had it) keep validating correctly.
-export const ANALYTICS_VERSION = '1.8';
-export const EVIDENCE_SCOPE = 'shared_business_population';
-const SNAPSHOT_SCHEMA_VERSION = '1.8';
-const ANALYTICS_DEFINITION_VERSION = '1.8';
-const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v1_8';
+// v2.2: new runs call build_analytics_snapshot_v2_2 (Hybrid reason-code
+// correction on top of v2.1 — see analytics/SEMANTIC_CONTRACT.md section
+// 25). This PROMOTES the production runner off v1.8 — v2.2 wraps v2.1
+// wholesale (which wraps v2.0 wholesale), so the payload shape is
+// entirely different from every v1.x snapshot: there is no
+// evidence_aggregates, no recommendation_candidates, and no
+// recommendation_target_user_id field inside the JSON itself (the target
+// user is still always the caller's own resolved app_users.id — enforced
+// by the RPC argument this module passes, not by a field inside the
+// returned JSON). The RPC argument name is also different: v2.x builders
+// take `p_target_user_id`, not v1.x's `p_recommendation_target_user_id`.
+// v1.0-v1.8, v2.0, and v2.1 are completely unaffected and remain
+// independently callable; every previously stored analytics_runs.snapshot
+// row (whichever version it was created under) remains readable — this is
+// a forward version bump, not a rewrite of history.
+export const ANALYTICS_VERSION = '2.2';
+export const EVIDENCE_SCOPE = 'shared_inventory_population';
+const SNAPSHOT_SCHEMA_VERSION = '2.2';
+const ANALYTICS_DEFINITION_VERSION = '2.2';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_2';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -80,22 +83,30 @@ export class AnalyticsRunError extends Error {
 // ── Snapshot metadata validation ────────────────────────────────────────
 // Type guard, not an unsafe cast. Only checks the top-level contract fields
 // documented in analytics/README.md — does not validate the shape of
-// evidence_aggregates/recommendation_candidates in detail (that full
-// TypeScript schema is a later step, per this task's own scope).
+// shared_purpose_evidence/target_user_purpose_evidence/target_user_open_
+// inventory_evidence in detail (that full TypeScript schema is a later
+// step, per this task's own scope).
+//
+// v2.x snapshots carry no recommendation_target_user_id field inside the
+// JSON (unlike v1.x) — there is nothing to compare against an expected
+// caller id here. The target-user guarantee is enforced entirely by the
+// RPC argument this module passes (always the caller's own resolved
+// app_users.id, never client-suppliable — see runAnalyticsForCurrentUser
+// below), not by validating a field on the JSON the database hands back.
 
 interface ValidatedAnalyticsSnapshot {
   snapshot_schema_version: string;
   analytics_definition_version: string;
   generated_at: string;
   evidence_scope: string;
-  recommendation_target_user_id: number;
-  evidence_aggregates: Record<string, unknown>;
-  recommendation_candidates: Record<string, unknown>;
+  purpose_semantics: string;
+  shared_purpose_evidence: Record<string, unknown>;
+  target_user_purpose_evidence: Record<string, unknown>;
+  target_user_open_inventory_evidence: Record<string, unknown>;
 }
 
 export function isValidAnalyticsSnapshot(
   value: unknown,
-  expectedTargetUserId: number,
 ): value is ValidatedAnalyticsSnapshot {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
@@ -104,9 +115,9 @@ export function isValidAnalyticsSnapshot(
     v.snapshot_schema_version === SNAPSHOT_SCHEMA_VERSION &&
     v.analytics_definition_version === ANALYTICS_DEFINITION_VERSION &&
     v.evidence_scope === EVIDENCE_SCOPE &&
-    v.recommendation_target_user_id === expectedTargetUserId &&
-    typeof v.evidence_aggregates === 'object' && v.evidence_aggregates !== null &&
-    typeof v.recommendation_candidates === 'object' && v.recommendation_candidates !== null
+    typeof v.shared_purpose_evidence === 'object' && v.shared_purpose_evidence !== null &&
+    typeof v.target_user_purpose_evidence === 'object' && v.target_user_purpose_evidence !== null &&
+    typeof v.target_user_open_inventory_evidence === 'object' && v.target_user_open_inventory_evidence !== null
   );
 }
 
@@ -214,9 +225,12 @@ export async function runAnalyticsForCurrentUser(
 
   try {
     // ── 3. Call the snapshot builder ────────────────────────────────────
+    // v2.x builders take p_target_user_id (not v1.x's
+    // p_recommendation_target_user_id) — always the caller's own resolved
+    // appUserId, never a value that could come from the client.
     const { data: snapshot, error: builderError } = await serviceClient.rpc(
       SNAPSHOT_BUILDER_RPC,
-      { p_recommendation_target_user_id: appUserId },
+      { p_target_user_id: appUserId },
     );
 
     if (builderError) {
@@ -224,7 +238,7 @@ export async function runAnalyticsForCurrentUser(
     }
 
     // ── 4. Validate returned snapshot metadata before persisting ────────
-    if (!isValidAnalyticsSnapshot(snapshot, appUserId)) {
+    if (!isValidAnalyticsSnapshot(snapshot)) {
       throw new Error('Snapshot builder returned unexpected or inconsistent metadata');
     }
 

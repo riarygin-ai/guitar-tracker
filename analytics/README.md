@@ -803,10 +803,10 @@ v1.x builder) and does NOT include `evidence_aggregates`,
 `recommendation_candidates`, or Open Inventory Decision Support. `v1.0`-
 `v1.8` are completely unaffected and remain independently callable.
 
-**Production runs stay on v1.8 for now.** `runAnalytics.ts` is not updated
-by this step — `build_analytics_snapshot_v2_0` is reachable only directly
-(service_role), not through the autorunner or any UI, until the v2
-evidence modules are sufficiently complete.
+**Production runs stayed on v1.8 at this step.** `runAnalytics.ts` was not
+updated here — `build_analytics_snapshot_v2_0` was reachable only
+directly (service_role), not through the autorunner or any UI. As of
+v2.2 (below), the production runner has been promoted off v1.8.
 
 **What's new:**
 
@@ -851,7 +851,9 @@ calls `build_analytics_snapshot_v2_0` wholesale (unchanged) and adds
 `target_user_open_inventory_evidence` — item-level, Purpose-aware evidence
 for every open item of one target user (Business/Hybrid/Personal/missing-
 purpose/missing-policy). Does not call, embed, or replace any v1.x
-builder; `runAnalytics.ts` still calls `v1.8` for production runs.
+builder. At this step `runAnalytics.ts` still called `v1.8` for
+production runs; as of v2.2 (below) it calls v2.2, which wraps this
+version unchanged plus one reason-code correction.
 
 **What's new:**
 
@@ -875,18 +877,55 @@ builder; `runAnalytics.ts` still calls `v1.8` for production runs.
 - **`personal_inventory_control`** — capital concentration, missing
   estimates, and listing activity for open Personal items; long ownership
   and slow DOM are never treated as negative.
-- **Manual preview only**: `POST /api/analytics/v2-preview` calls
-  `build_analytics_snapshot_v2_1` directly and returns it — nothing is
-  persisted, and it's never called by the production "Run Analytics" flow.
-  The Analytics page's "Open Inventory Decision Support v2.1 (Manual
-  Preview)" card is a separate, on-demand section for this reason.
+- **Manual preview only, at this step**: a temporary `POST /api/analytics/
+  v2-preview` route called `build_analytics_snapshot_v2_1` directly for
+  manual/testing inspection, since the production runner still called
+  v1.8. That route and its "Manual Preview" UI card have since been
+  REMOVED (see v2.2 below) — the production runner itself now serves this
+  evidence.
 
 See `analytics/sql/12_open_inventory_decision_support_v2.sql` and
 `analytics/SEMANTIC_CONTRACT.md` section 24 for the full contract.
 
 Calendar & Seasonality, the Findings Selector, Business Coach, AI prose,
 automatic Purpose changes, opaque scores, notifications, and any UI
-redesign beyond the one preview card above are explicitly out of scope.
+redesign are explicitly out of scope.
+
+## Analytics Snapshot v2.2 (Hybrid reason-code correction) — PRODUCTION
+
+`public.build_analytics_snapshot_v2_2(p_target_user_id int)`
+(`supabase/migrations/20260813000000_build_analytics_snapshot_v2_2.sql`)
+calls `build_analytics_snapshot_v2_1` wholesale and applies exactly ONE
+correction: every `HYBRID_RECENT_INSUFFICIENT_HISTORY` in
+`target_user_open_inventory_evidence.item_decision_evidence[*].reason_
+codes` is replaced with `HYBRID_RECENT_ITEM` (reliable `ownership_age_
+days < 30`) or `HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY` (`ownership_age_
+days IS NULL`) — the same distinction `hybrid_purpose_review.behavioral_
+signals` already made correctly. Nothing else changes; `v2.1` itself is
+untouched and remains historically interpretable.
+
+**`v2.2` is now the production analytics version.** `src/lib/analytics/
+runAnalytics.ts` calls `build_analytics_snapshot_v2_2` for every new run
+(`ANALYTICS_VERSION = '2.2'`, `EVIDENCE_SCOPE = 'shared_inventory_
+population'`, RPC argument `p_target_user_id`). `POST /api/analytics/runs`
+is unchanged in every other respect: it still authenticates the request,
+resolves `app_users.id` from the session, uses a service-role client only
+server-side, always targets the authenticated caller's own resolved id
+(ignoring any client-supplied user id), sanitizes errors, and follows the
+same `pending -> running -> completed/failed` lifecycle.
+
+The temporary `POST /api/analytics/v2-preview` route and the Analytics
+page's "Manual Preview" card (introduced alongside v2.1) have been
+REMOVED — the Analytics page's normal "Run Analytics" button and stored-
+run history now show `shared_purpose_evidence`, `target_user_purpose_
+evidence`, and `target_user_open_inventory_evidence` directly, via the
+same collapsible-JSON / Copy JSON pattern used for every earlier section.
+Previously stored v1.8/v2.0/v2.1 runs (if any) remain readable in run
+history unchanged; `v1.0`-`v1.8`, `v2.0`, and `v2.1` all remain
+independently callable.
+
+See `analytics/sql/13_hybrid_reason_code_correction_v2_2.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 25 for the full contract.
 
 ## Conventions
 

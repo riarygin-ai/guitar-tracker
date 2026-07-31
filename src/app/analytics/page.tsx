@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import { supabase, getRecentAnalyticsRuns, getAnalyticsRunSnapshot } from '@/lib/supabase';
-import type { AnalyticsRun, AnalyticsRunMeta, AnalyticsRunStatus, AnalyticsSnapshot, AnalyticsSnapshotV2_1 } from '@/types';
+import type { AnalyticsRun, AnalyticsRunMeta, AnalyticsRunStatus, AnalyticsSnapshot } from '@/types';
 
 const HISTORY_LIMIT = 10;
 
@@ -54,6 +54,7 @@ function formatDuration(ms: number | null): string {
 // scope string is shown as-is rather than guessed at.
 function readableEvidenceScope(scope: string): string {
   if (scope === 'shared_business_population') return 'Shared Business Population';
+  if (scope === 'shared_inventory_population') return 'Shared Inventory Population';
   return scope;
 }
 
@@ -127,14 +128,6 @@ export default function AnalyticsPage() {
 
   const [copied, setCopied] = useState(false);
 
-  // Manual/testing preview of Analytics v2.1 (Open Inventory Decision
-  // Support v2.1) — NOT persisted, NOT part of the production "Run
-  // Analytics" flow above (which remains on v1.8).
-  const [v21Preview, setV21Preview] = useState<AnalyticsSnapshotV2_1 | null>(null);
-  const [v21PreviewLoading, setV21PreviewLoading] = useState(false);
-  const [v21PreviewError, setV21PreviewError] = useState<string | null>(null);
-  const [v21Copied, setV21Copied] = useState(false);
-
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null;
 
   useEffect(() => {
@@ -199,7 +192,8 @@ export default function AnalyticsPage() {
       }
 
       // Deliberately no body: the route ignores any request body and always
-      // targets the authenticated caller's own app_users.id.
+      // targets the authenticated caller's own app_users.id. Backed by
+      // build_analytics_snapshot_v2_2 as of the v2.2 promotion.
       const res = await fetch('/api/analytics/runs', {
         method: 'POST',
         headers: { Authorization: `Bearer ${session.access_token}` },
@@ -232,46 +226,6 @@ export default function AnalyticsPage() {
       await navigator.clipboard.writeText(JSON.stringify(selectedSnapshot, null, 2));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard API unavailable in non-secure context — no-op.
-    }
-  }
-
-  async function handleLoadV21Preview() {
-    setV21PreviewLoading(true);
-    setV21PreviewError(null);
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        throw new Error('Not authenticated — please sign in again.');
-      }
-
-      const res = await fetch('/api/analytics/v2-preview', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-
-      const payload = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(typeof payload.error === 'string' ? payload.error : `Server error (${res.status})`);
-      }
-
-      setV21Preview((payload.snapshot as AnalyticsSnapshotV2_1) ?? null);
-    } catch (err) {
-      setV21PreviewError(err instanceof Error ? err.message : 'Something went wrong loading the v2.1 preview.');
-    } finally {
-      setV21PreviewLoading(false);
-    }
-  }
-
-  async function handleCopyV21Preview() {
-    if (!v21Preview) return;
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(v21Preview, null, 2));
-      setV21Copied(true);
-      setTimeout(() => setV21Copied(false), 2000);
     } catch {
       // Clipboard API unavailable in non-secure context — no-op.
     }
@@ -465,81 +419,81 @@ export default function AnalyticsPage() {
               </p>
             ) : (
               <>
-                <CollapsibleSection title="Acquisition Value Band">
-                  <JsonBlock value={selectedSnapshot.evidence_aggregates.acquisition_value_band} />
-                </CollapsibleSection>
-                <CollapsibleSection title="Acquisition to Exit">
-                  <JsonBlock value={selectedSnapshot.evidence_aggregates.acquisition_to_exit} />
-                </CollapsibleSection>
-                <CollapsibleSection title="Brand">
-                  <JsonBlock value={selectedSnapshot.evidence_aggregates.brand} />
-                </CollapsibleSection>
-                <CollapsibleSection title="Deal In Channel">
-                  {selectedSnapshot.evidence_aggregates.deal_in_channel ? (
-                    <JsonBlock value={selectedSnapshot.evidence_aggregates.deal_in_channel} />
-                  ) : (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Not available in this run — Deal In Channel was added in Snapshot v1.2. Run analytics again to generate it.
-                    </p>
-                  )}
-                </CollapsibleSection>
-                <CollapsibleSection title="Deal Out Channel">
-                  {selectedSnapshot.evidence_aggregates.deal_out_channel ? (
-                    <JsonBlock value={selectedSnapshot.evidence_aggregates.deal_out_channel} />
-                  ) : (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Not available in this run — Deal Out Channel was added in Snapshot v1.3. Run analytics again to generate it.
-                    </p>
-                  )}
-                </CollapsibleSection>
-                <CollapsibleSection title="Channel Journey">
-                  {selectedSnapshot.evidence_aggregates.channel_journey ? (
-                    <JsonBlock value={selectedSnapshot.evidence_aggregates.channel_journey} />
-                  ) : (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Not available in this run — Channel Journey was added in Snapshot v1.4. Run analytics again to generate it.
-                    </p>
-                  )}
-                </CollapsibleSection>
-                <CollapsibleSection title="Listing Channel Exposure">
-                  {selectedSnapshot.evidence_aggregates.listing_channel_exposure ? (
-                    <JsonBlock value={selectedSnapshot.evidence_aggregates.listing_channel_exposure} />
-                  ) : (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Not available in this run — Listing Channel Exposure was added in Snapshot v1.5. Run analytics again to generate it.
-                    </p>
-                  )}
-                </CollapsibleSection>
-                <CollapsibleSection title="Category & Type Performance">
-                  {selectedSnapshot.evidence_aggregates.category_type_performance ? (
-                    <JsonBlock value={selectedSnapshot.evidence_aggregates.category_type_performance} />
-                  ) : (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Not available in this run — Category & Type Performance was added in Snapshot v1.6. Run analytics again to generate it.
-                    </p>
-                  )}
-                </CollapsibleSection>
-                <CollapsibleSection title="Capital & Liquidity">
-                  {selectedSnapshot.evidence_aggregates.capital_liquidity ? (
-                    <JsonBlock value={selectedSnapshot.evidence_aggregates.capital_liquidity} />
-                  ) : (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Not available in this run — Capital & Liquidity was added in Snapshot v1.7. Run analytics again to generate it.
-                    </p>
-                  )}
-                </CollapsibleSection>
-                <CollapsibleSection title="Open Inventory Decision Support">
-                  {selectedSnapshot.target_user_evidence?.open_inventory_decision_support ? (
+                {/* v2.0+ sections — present on the current production shape
+                    (build_analytics_snapshot_v2_2 and its v2.0/v2.1 ancestors).
+                    Absent on older stored v1.0-v1.8 runs. */}
+                {selectedSnapshot.shared_purpose_evidence && (
+                  <CollapsibleSection title="Shared Purpose Evidence">
+                    <JsonBlock value={selectedSnapshot.shared_purpose_evidence} />
+                  </CollapsibleSection>
+                )}
+                {selectedSnapshot.target_user_purpose_evidence && (
+                  <CollapsibleSection title="Target User Purpose Evidence">
+                    <JsonBlock value={selectedSnapshot.target_user_purpose_evidence} />
+                  </CollapsibleSection>
+                )}
+                {selectedSnapshot.target_user_open_inventory_evidence && (
+                  <CollapsibleSection title="Open Inventory Decision Support" defaultOpen>
+                    <JsonBlock value={selectedSnapshot.target_user_open_inventory_evidence} />
+                  </CollapsibleSection>
+                )}
+
+                {/* v1.0-v1.8 sections — present only on older stored runs from
+                    before the v2.2 promotion. */}
+                {selectedSnapshot.evidence_aggregates && (
+                  <>
+                    <CollapsibleSection title="Acquisition Value Band">
+                      <JsonBlock value={selectedSnapshot.evidence_aggregates.acquisition_value_band} />
+                    </CollapsibleSection>
+                    <CollapsibleSection title="Acquisition to Exit">
+                      <JsonBlock value={selectedSnapshot.evidence_aggregates.acquisition_to_exit} />
+                    </CollapsibleSection>
+                    <CollapsibleSection title="Brand">
+                      <JsonBlock value={selectedSnapshot.evidence_aggregates.brand} />
+                    </CollapsibleSection>
+                    {selectedSnapshot.evidence_aggregates.deal_in_channel && (
+                      <CollapsibleSection title="Deal In Channel">
+                        <JsonBlock value={selectedSnapshot.evidence_aggregates.deal_in_channel} />
+                      </CollapsibleSection>
+                    )}
+                    {selectedSnapshot.evidence_aggregates.deal_out_channel && (
+                      <CollapsibleSection title="Deal Out Channel">
+                        <JsonBlock value={selectedSnapshot.evidence_aggregates.deal_out_channel} />
+                      </CollapsibleSection>
+                    )}
+                    {selectedSnapshot.evidence_aggregates.channel_journey && (
+                      <CollapsibleSection title="Channel Journey">
+                        <JsonBlock value={selectedSnapshot.evidence_aggregates.channel_journey} />
+                      </CollapsibleSection>
+                    )}
+                    {selectedSnapshot.evidence_aggregates.listing_channel_exposure && (
+                      <CollapsibleSection title="Listing Channel Exposure">
+                        <JsonBlock value={selectedSnapshot.evidence_aggregates.listing_channel_exposure} />
+                      </CollapsibleSection>
+                    )}
+                    {selectedSnapshot.evidence_aggregates.category_type_performance && (
+                      <CollapsibleSection title="Category & Type Performance">
+                        <JsonBlock value={selectedSnapshot.evidence_aggregates.category_type_performance} />
+                      </CollapsibleSection>
+                    )}
+                    {selectedSnapshot.evidence_aggregates.capital_liquidity && (
+                      <CollapsibleSection title="Capital & Liquidity">
+                        <JsonBlock value={selectedSnapshot.evidence_aggregates.capital_liquidity} />
+                      </CollapsibleSection>
+                    )}
+                  </>
+                )}
+                {selectedSnapshot.target_user_evidence?.open_inventory_decision_support && (
+                  <CollapsibleSection title="Open Inventory Decision Support v1">
                     <JsonBlock value={selectedSnapshot.target_user_evidence.open_inventory_decision_support} />
-                  ) : (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Not available in this run — Open Inventory Decision Support was added in Snapshot v1.8. Run analytics again to generate it.
-                    </p>
-                  )}
-                </CollapsibleSection>
-                <CollapsibleSection title="My Open Business Items">
-                  <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
-                </CollapsibleSection>
+                  </CollapsibleSection>
+                )}
+                {selectedSnapshot.recommendation_candidates && (
+                  <CollapsibleSection title="My Open Business Items">
+                    <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
+                  </CollapsibleSection>
+                )}
+
                 <CollapsibleSection title="Raw Snapshot">
                   <div className="space-y-3">
                     <JsonBlock value={selectedSnapshot} />
@@ -574,71 +528,6 @@ export default function AnalyticsPage() {
           </div>
         </div>
       )}
-
-      {/* ── Open Inventory Decision Support v2.1 (manual preview) ────────── */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Open Inventory Decision Support v2.1 (Manual Preview)</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Direct, on-demand preview only — not persisted, and separate from the Run Analytics history above (which remains on Snapshot v1.8).
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleLoadV21Preview}
-            disabled={v21PreviewLoading || sessionMissing}
-            className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-          >
-            {v21PreviewLoading ? (
-              <>
-                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400/40 border-t-slate-600 dark:border-slate-300/40 dark:border-t-slate-100" />
-                Loading preview…
-              </>
-            ) : (
-              'Load v2.1 Preview'
-            )}
-          </button>
-        </div>
-
-        {v21PreviewError && (
-          <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-400">
-            {v21PreviewError}
-          </div>
-        )}
-
-        {v21Preview && (
-          <CollapsibleSection title="Open Inventory Decision Support v2.1" defaultOpen>
-            <div className="space-y-3">
-              <JsonBlock value={v21Preview.target_user_open_inventory_evidence} />
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={handleCopyV21Preview}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-                >
-                  {v21Copied ? (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                      </svg>
-                      Copy JSON
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </CollapsibleSection>
-        )}
-      </div>
     </div>
   );
 }
