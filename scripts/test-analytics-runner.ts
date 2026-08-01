@@ -86,7 +86,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_4
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_5
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -95,7 +95,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_4') {
+          if (name === 'build_analytics_snapshot_v2_5') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -115,7 +115,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_4') {
+          if (name === 'build_analytics_snapshot_v2_5') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -175,8 +175,8 @@ async function main() {
   // inside the JSON itself.
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '2.4',
-    analytics_definition_version: '2.4',
+    snapshot_schema_version: '2.5',
+    analytics_definition_version: '2.5',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     purpose_semantics: 'current_item_purpose',
@@ -187,9 +187,11 @@ async function main() {
     target_user_acquisition_evidence: {},
     shared_inventory_segmentation_evidence: {},
     target_user_inventory_segmentation_evidence: {},
+    shared_deal_channel_evidence: {},
+    target_user_deal_channel_evidence: {},
   };
   check('valid snapshot passes', isValidAnalyticsSnapshot(validSnapshot));
-  check('wrong schema version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, snapshot_schema_version: '2.3' }));
+  check('wrong schema version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, snapshot_schema_version: '2.4' }));
   check('wrong definition version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, analytics_definition_version: '0.9' }));
   check('wrong evidence_scope rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, evidence_scope: 'something_else' }));
   check('missing shared_purpose_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, shared_purpose_evidence: undefined }));
@@ -199,6 +201,8 @@ async function main() {
   check('missing target_user_acquisition_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, target_user_acquisition_evidence: null }));
   check('missing shared_inventory_segmentation_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, shared_inventory_segmentation_evidence: undefined }));
   check('missing target_user_inventory_segmentation_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, target_user_inventory_segmentation_evidence: null }));
+  check('missing shared_deal_channel_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, shared_deal_channel_evidence: undefined }));
+  check('missing target_user_deal_channel_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, target_user_deal_channel_evidence: null }));
   check('null value rejected', !isValidAnalyticsSnapshot(null));
   check('non-object value rejected', !isValidAnalyticsSnapshot('not an object'));
 
@@ -237,7 +241,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_4', { p_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_5', { p_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -2463,8 +2467,211 @@ async function main() {
     check(`${fn} still callable by service_role after v2.4 migration`, !error, error);
   }
 
-  console.log('\n[v2.4 — production promotion]');
-  check('ANALYTICS_VERSION constant used by the production runner is now 2.4', ANALYTICS_VERSION === '2.4', ANALYTICS_VERSION);
+  // Note: at the point v2.4 was promoted, this section asserted the runner's
+  // ANALYTICS_VERSION was 2.4 specifically. The runner has since been
+  // promoted again to v2.5 (see the "[v2.5 — production promotion]"
+  // section below) — that generic check already lives in the
+  // "[production runner — creates a completed run with the current
+  // ANALYTICS_VERSION]" block above, so it is not repeated here.
+
+  // ── Analytics v2.5 — Deal Channel Performance + fourth production promotion ──
+  console.log('\n[v2.5 — builder callable, top-level metadata]');
+  const { data: v25SnapshotA, error: v25ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v2_5', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_5 callable by service_role', !v25ErrorA, v25ErrorA);
+  check('v2.5 snapshot_schema_version is 2.5', v25SnapshotA?.snapshot_schema_version === '2.5', v25SnapshotA?.snapshot_schema_version);
+  check('v2.5 analytics_definition_version is 2.5', v25SnapshotA?.analytics_definition_version === '2.5', v25SnapshotA?.analytics_definition_version);
+  check(
+    'v2.5 output includes shared_deal_channel_evidence and target_user_deal_channel_evidence',
+    !!v25SnapshotA?.shared_deal_channel_evidence && !!v25SnapshotA?.target_user_deal_channel_evidence,
+    v25SnapshotA ? Object.keys(v25SnapshotA) : v25SnapshotA,
+  );
+
+  console.log('\n[v2.5 — v2.4 sections remain unchanged inside v2.5]');
+  const { data: v24SnapshotForCompare } = await serviceClient.rpc('build_analytics_snapshot_v2_4', { p_target_user_id: userAId });
+  check(
+    'shared_inventory_segmentation_evidence / target_user_inventory_segmentation_evidence are stable-stringify identical between v2.4 and v2.5',
+    stableStringify(v25SnapshotA?.shared_inventory_segmentation_evidence) === stableStringify(v24SnapshotForCompare?.shared_inventory_segmentation_evidence)
+      && stableStringify(v25SnapshotA?.target_user_inventory_segmentation_evidence) === stableStringify(v24SnapshotForCompare?.target_user_inventory_segmentation_evidence),
+  );
+  const { data: v24SnapshotSecondCall } = await serviceClient.rpc('build_analytics_snapshot_v2_4', { p_target_user_id: userAId });
+  const { generated_at: _v24gen1, ...v24FirstWithoutTimestamp } = (v24SnapshotForCompare ?? {}) as Record<string, unknown>;
+  const { generated_at: _v24gen2, ...v24SecondWithoutTimestamp } = (v24SnapshotSecondCall ?? {}) as Record<string, unknown>;
+  check(
+    'v2.4 remains byte-identical (ignoring generated_at) after the v2.5 migration — v2.4 unaffected by v2.5 existing',
+    stableStringify(v24FirstWithoutTimestamp) === stableStringify(v24SecondWithoutTimestamp),
+  );
+
+  const v25DiShared = v25SnapshotA?.shared_deal_channel_evidence?.deal_in_channel_performance;
+  const v25DoShared = v25SnapshotA?.shared_deal_channel_evidence?.deal_out_channel_performance;
+  const v25CjShared = v25SnapshotA?.shared_deal_channel_evidence?.channel_journey;
+  const v25DiTarget = v25SnapshotA?.target_user_deal_channel_evidence?.deal_in_channel_performance;
+  const v25DiPop = v25DiShared?.population_summary?.[0];
+  const v25DoPop = v25DoShared?.population_summary?.[0];
+  const v25CjPop = v25CjShared?.population_summary?.[0];
+
+  console.log('\n[v2.5 — Deal In Channel: reconciliation]');
+  check(
+    'population_summary: known + missing === total',
+    (v25DiPop?.deal_in_channel_known_item_count ?? 0) + (v25DiPop?.deal_in_channel_missing_item_count ?? 0) === v25DiPop?.total_item_count,
+    v25DiPop,
+  );
+  check(
+    'population_summary: purchase + trade + unknown === total',
+    (v25DiPop?.purchase_acquisition_item_count ?? 0) + (v25DiPop?.trade_acquisition_item_count ?? 0) + (v25DiPop?.unknown_acquisition_method_item_count ?? 0) === v25DiPop?.total_item_count,
+    v25DiPop,
+  );
+  const v25DiPurposeRows: any[] = v25DiShared?.purpose_population_summary ?? [];
+  const v25DiPurposeTotalSum = v25DiPurposeRows.reduce((sum, r) => sum + Number(r.total_item_count ?? 0), 0);
+  check(
+    'sum of purpose_population_summary.total_item_count === population_summary.total_item_count',
+    v25DiPurposeTotalSum === v25DiPop?.total_item_count,
+    { v25DiPurposeTotalSum, populationTotal: v25DiPop?.total_item_count },
+  );
+  const v25PerfByDealIn: any[] = v25DiShared?.performance_by_deal_in_channel ?? [];
+  check('performance_by_deal_in_channel includes a missing-channel row when uncovered items exist', (v25DiPop?.deal_in_channel_missing_item_count ?? 0) === 0 || v25PerfByDealIn.some((r) => r.deal_in_channel_id === null), v25PerfByDealIn.map((r) => r.deal_in_channel_id));
+
+  console.log('\n[v2.5 — Deal Out Channel: reconciliation]');
+  check(
+    'population_summary: known + missing === realized_item_count',
+    (v25DoPop?.deal_out_channel_known_item_count ?? 0) + (v25DoPop?.deal_out_channel_missing_item_count ?? 0) === v25DoPop?.realized_item_count,
+    v25DoPop,
+  );
+  check(
+    'population_summary: sale + trade + unknown === realized_item_count',
+    (v25DoPop?.sale_exit_item_count ?? 0) + (v25DoPop?.trade_exit_item_count ?? 0) + (v25DoPop?.unknown_exit_method_item_count ?? 0) === v25DoPop?.realized_item_count,
+    v25DoPop,
+  );
+  const v25CashSales: any[] = v25DoShared?.cash_sales_by_deal_out_channel ?? [];
+  const v25TradeExits: any[] = v25DoShared?.trade_exits_by_deal_out_channel ?? [];
+  const v25CashItemSum = v25CashSales.reduce((sum, r) => sum + Number(r.sale_item_count ?? 0), 0);
+  const v25TradeItemSum = v25TradeExits.reduce((sum, r) => sum + Number(r.trade_exit_item_count ?? 0), 0);
+  check(
+    'cash_sales_by_deal_out_channel + trade_exits_by_deal_out_channel item sums reconcile to sale/trade exit counts',
+    v25CashItemSum === (v25DoPop?.sale_exit_item_count ?? 0) && v25TradeItemSum === (v25DoPop?.trade_exit_item_count ?? 0),
+    { v25CashItemSum, v25TradeItemSum, sale: v25DoPop?.sale_exit_item_count, trade: v25DoPop?.trade_exit_item_count },
+  );
+  check(
+    'cash sales and trade exits are distinct populations (no channel row double-counts both)',
+    v25CashSales.every((r) => typeof r.median_sale_price !== 'undefined') && v25TradeExits.every((r) => typeof r.median_assigned_trade_exit_value !== 'undefined'),
+    { cashFields: v25CashSales[0], tradeFields: v25TradeExits[0] },
+  );
+
+  console.log('\n[v2.5 — Channel Journey: reconciliation]');
+  check(
+    'population_summary: eligible + missing_in + missing_out - missing_both === realized_item_count',
+    (v25CjPop?.journey_eligible_item_count ?? 0) + (v25CjPop?.missing_deal_in_channel_item_count ?? 0) + (v25CjPop?.missing_deal_out_channel_item_count ?? 0) - (v25CjPop?.missing_both_channels_item_count ?? 0) === v25CjPop?.realized_item_count,
+    v25CjPop,
+  );
+  const v25Matrix: any[] = v25CjShared?.deal_in_to_deal_out_matrix ?? [];
+  const v25MatrixItemSum = v25Matrix.reduce((sum, r) => sum + Number(r.journey_item_count ?? 0), 0);
+  check(
+    'sum of deal_in_to_deal_out_matrix.journey_item_count === population_summary.journey_eligible_item_count',
+    v25MatrixItemSum === v25CjPop?.journey_eligible_item_count,
+    { v25MatrixItemSum, eligible: v25CjPop?.journey_eligible_item_count },
+  );
+  const v25SameChan = v25CjShared?.same_channel_summary?.[0];
+  check(
+    'same_channel_summary: same + different === journey_eligible_item_count',
+    (v25SameChan?.same_channel_exit_item_count ?? 0) + (v25SameChan?.different_channel_exit_item_count ?? 0) === v25SameChan?.journey_eligible_item_count,
+    v25SameChan,
+  );
+  check(
+    'Deal In and Deal Out directions are not reversed (matrix rows carry both deal_in_channel_name and deal_out_channel_name independently)',
+    v25Matrix.every((r) => 'deal_in_channel_name' in r && 'deal_out_channel_name' in r),
+    v25Matrix[0],
+  );
+
+  console.log('\n[v2.5 — Purpose inclusion]');
+  check(
+    'Deal In Channel purpose_population_summary includes at least a mapped Business row',
+    v25DiPurposeRows.some((r) => r.purpose_policy_status === 'mapped' && r.current_purpose_name === 'Business'),
+    v25DiPurposeRows.map((r) => r.current_purpose_name),
+  );
+  const v25DoPurposeRows: any[] = v25DoShared?.purpose_population_summary ?? [];
+  check(
+    'Deal Out Channel purpose_population_summary includes at least a mapped Business row',
+    v25DoPurposeRows.some((r) => r.purpose_policy_status === 'mapped' && r.current_purpose_name === 'Business'),
+    v25DoPurposeRows.map((r) => r.current_purpose_name),
+  );
+  const v25CjPurposeRows: any[] = v25CjShared?.purpose_population_summary ?? [];
+  check(
+    'Channel Journey purpose_population_summary includes at least a mapped Business row',
+    v25CjPurposeRows.some((r) => r.purpose_policy_status === 'mapped' && r.current_purpose_name === 'Business'),
+    v25CjPurposeRows.map((r) => r.current_purpose_name),
+  );
+
+  console.log('\n[v2.5 — historical-import and missing-channel handling]');
+  check(
+    'at least one performance_by_deal_in_channel row has holding_sample_size <= deal_in_realized_item_count (Historical Import excluded from holding metrics)',
+    v25PerfByDealIn.some((r) => (r.holding_sample_size ?? 0) <= (r.deal_in_realized_item_count ?? 0)),
+    v25PerfByDealIn,
+  );
+  check('missing-channel coverage is visible in Deal In population_summary', (v25DiPop?.deal_in_channel_missing_item_count ?? 0) >= 0, v25DiPop?.deal_in_channel_missing_item_count);
+  check('missing-channel coverage is visible in Deal Out population_summary', (v25DoPop?.deal_out_channel_missing_item_count ?? 0) >= 0, v25DoPop?.deal_out_channel_missing_item_count);
+  check('missing-both-channels coverage is visible in Channel Journey population_summary', (v25CjPop?.missing_both_channels_item_count ?? 0) >= 0, v25CjPop?.missing_both_channels_item_count);
+
+  console.log('\n[v2.5 — no listing-channel evidence mixed in]');
+  const v25DealChannelSerialized = JSON.stringify(v25SnapshotA?.shared_deal_channel_evidence);
+  check(
+    'shared_deal_channel_evidence contains no listing-channel fields (listing_channel_name / requires_listing outside deal-channel context)',
+    !v25DealChannelSerialized.includes('listing_channel_name') && !v25DealChannelSerialized.includes('"listing_channel_id"'),
+  );
+
+  console.log('\n[v2.5 — privacy]');
+  check(
+    'shared_deal_channel_evidence exposes no user_id or item_id field anywhere',
+    !v25DealChannelSerialized.includes('"user_id"') && !v25DealChannelSerialized.includes('"item_id"'),
+  );
+  check(
+    "target_user_deal_channel_evidence total_item_count is strictly less than shared's pooled total (User B's items are excluded)",
+    (v25DiTarget?.population_summary?.[0]?.total_item_count ?? 0) < (v25DiPop?.total_item_count ?? 0),
+    { target: v25DiTarget?.population_summary?.[0]?.total_item_count, shared: v25DiPop?.total_item_count },
+  );
+
+  console.log('\n[v2.5 — permissions]');
+  const { error: v25AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_5', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_5 directly', !!v25AuthedError, v25AuthedError);
+  const { error: v25HelperAuthedError } = await clientA.rpc('_build_deal_channel_snapshot_v2', { p_target_user_id: userAId });
+  check('authenticated client cannot call _build_deal_channel_snapshot_v2 directly', !!v25HelperAuthedError, v25HelperAuthedError);
+  const { error: v25ForgedTargetError } = await clientA.rpc('build_analytics_snapshot_v2_5', { p_target_user_id: userBId });
+  check('authenticated client cannot invoke build_analytics_snapshot_v2_5 for a forged target user id either', !!v25ForgedTargetError, v25ForgedTargetError);
+
+  console.log('\n[v2.5 — old-version compatibility]');
+  const v25StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_0', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_1', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_2', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_3', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_4', { p_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v25StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.5 migration`, !error, error);
+  }
+
+  console.log('\n[v2.5 — production promotion]');
+  check('ANALYTICS_VERSION constant used by the production runner is now 2.5', ANALYTICS_VERSION === '2.5', ANALYTICS_VERSION);
+  const runA25 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new production run stores analytics_version 2.5', runA25.analytics_version === '2.5', runA25.analytics_version);
+  check('new production run snapshot.snapshot_schema_version is 2.5', (runA25.snapshot as any)?.snapshot_schema_version === '2.5', (runA25.snapshot as any)?.snapshot_schema_version);
+
+  console.log('\n[v2.5 — old stored runs remain readable]');
+  const { data: oldRunReadBack } = await serviceClient
+    .from('analytics_runs').select('analytics_version, snapshot').eq('id', syntheticOldRun!.id).single();
+  check(
+    'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.5 migration',
+    oldRunReadBack?.analytics_version === '1.8' && (oldRunReadBack?.snapshot as any)?.snapshot_schema_version === '1.8',
+    oldRunReadBack,
+  );
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

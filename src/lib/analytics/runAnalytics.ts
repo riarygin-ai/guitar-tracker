@@ -19,26 +19,25 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // requires updating both this file and the database migrations together —
 // see the "duplicated logic" note in analytics/README.md.
 //
-// v2.4: new runs call build_analytics_snapshot_v2_4 (Inventory
-// Segmentation — shared_inventory_segmentation_evidence / target_user_
-// inventory_segmentation_evidence on top of v2.3, see
-// analytics/SEMANTIC_CONTRACT.md section 27). v2.4 wraps v2.3 wholesale
-// (which wraps v2.2, v2.1, v2.0 in turn), so every v2.x field already
-// present remains present and unchanged; this bump only adds the two new
-// top-level keys. The RPC argument name remains v2.x's
-// `p_target_user_id` (not v1.x's `p_recommendation_target_user_id`) — the
-// target user is still always the caller's own resolved app_users.id,
-// enforced by the RPC argument this module passes, never by a field
-// inside the returned JSON. v1.0-v1.8 and v2.0-v2.3 are completely
-// unaffected and remain independently callable; every previously stored
-// analytics_runs.snapshot row (whichever version it was created under)
-// remains readable — this is a forward version bump, not a rewrite of
-// history.
-export const ANALYTICS_VERSION = '2.4';
+// v2.5: new runs call build_analytics_snapshot_v2_5 (Deal Channel
+// Performance — shared_deal_channel_evidence / target_user_deal_channel_
+// evidence on top of v2.4, see analytics/SEMANTIC_CONTRACT.md section
+// 28). v2.5 wraps v2.4 wholesale (which wraps v2.3, v2.2, v2.1, v2.0 in
+// turn), so every v2.x field already present remains present and
+// unchanged; this bump only adds the two new top-level keys. The RPC
+// argument name remains v2.x's `p_target_user_id` (not v1.x's
+// `p_recommendation_target_user_id`) — the target user is still always
+// the caller's own resolved app_users.id, enforced by the RPC argument
+// this module passes, never by a field inside the returned JSON.
+// v1.0-v1.8 and v2.0-v2.4 are completely unaffected and remain
+// independently callable; every previously stored analytics_runs.
+// snapshot row (whichever version it was created under) remains readable
+// — this is a forward version bump, not a rewrite of history.
+export const ANALYTICS_VERSION = '2.5';
 export const EVIDENCE_SCOPE = 'shared_inventory_population';
-const SNAPSHOT_SCHEMA_VERSION = '2.4';
-const ANALYTICS_DEFINITION_VERSION = '2.4';
-const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_4';
+const SNAPSHOT_SCHEMA_VERSION = '2.5';
+const ANALYTICS_DEFINITION_VERSION = '2.5';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_5';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -107,6 +106,8 @@ interface ValidatedAnalyticsSnapshot {
   target_user_acquisition_evidence: Record<string, unknown>;
   shared_inventory_segmentation_evidence: Record<string, unknown>;
   target_user_inventory_segmentation_evidence: Record<string, unknown>;
+  shared_deal_channel_evidence: Record<string, unknown>;
+  target_user_deal_channel_evidence: Record<string, unknown>;
 }
 
 export function isValidAnalyticsSnapshot(
@@ -125,7 +126,9 @@ export function isValidAnalyticsSnapshot(
     typeof v.shared_acquisition_evidence === 'object' && v.shared_acquisition_evidence !== null &&
     typeof v.target_user_acquisition_evidence === 'object' && v.target_user_acquisition_evidence !== null &&
     typeof v.shared_inventory_segmentation_evidence === 'object' && v.shared_inventory_segmentation_evidence !== null &&
-    typeof v.target_user_inventory_segmentation_evidence === 'object' && v.target_user_inventory_segmentation_evidence !== null
+    typeof v.target_user_inventory_segmentation_evidence === 'object' && v.target_user_inventory_segmentation_evidence !== null &&
+    typeof v.shared_deal_channel_evidence === 'object' && v.shared_deal_channel_evidence !== null &&
+    typeof v.target_user_deal_channel_evidence === 'object' && v.target_user_deal_channel_evidence !== null
   );
 }
 

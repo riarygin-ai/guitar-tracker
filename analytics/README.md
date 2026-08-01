@@ -960,7 +960,7 @@ See `analytics/sql/14_acquisition_value_band_performance_v2.sql`,
 `analytics/sql/15_acquisition_to_exit_analysis_v2.sql`, and
 `analytics/SEMANTIC_CONTRACT.md` section 26 for the full contract.
 
-## Analytics Snapshot v2.4 (Inventory Segmentation) — PRODUCTION
+## Analytics Snapshot v2.4 (Inventory Segmentation)
 
 `public.build_analytics_snapshot_v2_4(p_target_user_id int)`
 (`supabase/migrations/20260815000000_build_analytics_snapshot_v2_4.sql`)
@@ -1007,23 +1007,76 @@ instead of Business only.
   from `holding_days`-based duration metrics, unchanged from every prior
   module.
 
-**`v2.4` is now the production analytics version.** `src/lib/analytics/
-runAnalytics.ts` calls `build_analytics_snapshot_v2_4` for every new run
-(`ANALYTICS_VERSION = '2.4'`). `POST /api/analytics/runs` is unchanged in
-every other respect: authenticates the request, resolves `app_users.id`
-from the session, uses a service-role client only server-side, always
-targets the authenticated caller's own resolved id, sanitizes errors,
-and follows the same `pending -> running -> completed/failed` lifecycle.
-The Analytics page's "Shared Inventory Segmentation Evidence" and
-"Target User Inventory Segmentation Evidence" collapsible sections use
-the same JSON/Copy JSON pattern as every earlier section. Previously
-stored v1.8/v2.0/v2.1/v2.2/v2.3 runs remain readable in run history
-unchanged; `v1.0`-`v1.8` and `v2.0`-`v2.3` all remain independently
-callable.
+**`v2.4` was the production analytics version at this step.** As of v2.5
+(below), the production runner has been promoted again; `v2.4` itself
+remains unaffected and independently callable.
 
 See `analytics/sql/16_brand_performance_v2.sql`,
 `analytics/sql/17_category_type_performance_v2.sql`, and
 `analytics/SEMANTIC_CONTRACT.md` section 27 for the full contract.
+
+## Analytics Snapshot v2.5 (Deal Channel Performance) — PRODUCTION
+
+`public.build_analytics_snapshot_v2_5(p_target_user_id int)`
+(`supabase/migrations/20260816000000_build_analytics_snapshot_v2_5.sql`)
+calls `build_analytics_snapshot_v2_4` wholesale (unchanged) and adds two
+new top-level sections, `shared_deal_channel_evidence` and `target_user_
+deal_channel_evidence`, each containing `deal_in_channel_performance`,
+`deal_out_channel_performance`, and `channel_journey` — Purpose-aware v2
+ports of `analytics/sql/04_deal_in_channel_performance.sql`,
+`analytics/sql/05_deal_out_channel_performance.sql`, and
+`analytics/sql/06_channel_journey.sql`, reading every Purpose instead of
+Business only.
+
+**What's new:**
+
+- **Every Purpose, produced twice**: each section is computed once
+  pooled across all Purposes, and once broken down by `(current_purpose_
+  id, current_purpose_name, purpose_policy_status)`, using the same
+  missing-purpose/missing-policy collapsing rule as every prior v2
+  module. Current Purpose is never presented as Purpose at acquisition
+  or Purpose at exit.
+- **Deal In Channel Performance**: `population_summary` / `purpose_
+  population_summary`, `performance_by_deal_in_channel` / `*_by_purpose`,
+  `performance_by_deal_in_channel_and_method` / `*_by_purpose`,
+  `performance_by_deal_in_channel_and_acquisition_band` / `*_by_purpose`,
+  `open_inventory_by_deal_in_channel` / `*_by_purpose`.
+- **Deal Out Channel Performance**: `population_summary` / `purpose_
+  population_summary`, `performance_by_deal_out_channel` / `*_by_purpose`,
+  `cash_sales_by_deal_out_channel` / `*_by_purpose`, `trade_exits_by_
+  deal_out_channel` / `*_by_purpose`, `performance_by_deal_out_channel_
+  and_exit_band` / `*_by_purpose`, `performance_by_deal_out_channel_and_
+  acquisition_band` / `*_by_purpose`.
+- **Channel Journey**: `population_summary` / `purpose_population_
+  summary`, `deal_in_to_deal_out_matrix` / `*_by_purpose`, `same_channel_
+  summary` / `*_by_purpose`, `same_channel_summary_by_deal_in_channel` /
+  `*_by_purpose`, `paths_by_acquisition_and_exit_method` / `*_by_purpose`.
+- **All three v1 files ported in full** — `04`, `05`, and `06` each
+  self-classify every one of their queries as shared aggregate evidence
+  (none are developer-only diagnostics), so all 16 queries across the
+  three files are ported. Listing-Channel data is explicitly not read
+  anywhere in this module.
+- Historical Imports participate fully wherever a Deal In or Deal Out
+  channel is available; excluded only from `holding_days`-based duration
+  metrics, unchanged from every prior module.
+
+**`v2.5` is now the production analytics version.** `src/lib/analytics/
+runAnalytics.ts` calls `build_analytics_snapshot_v2_5` for every new run
+(`ANALYTICS_VERSION = '2.5'`). `POST /api/analytics/runs` is unchanged in
+every other respect: authenticates the request, resolves `app_users.id`
+from the session, uses a service-role client only server-side, always
+targets the authenticated caller's own resolved id, sanitizes errors,
+and follows the same `pending -> running -> completed/failed` lifecycle.
+The Analytics page's "Shared Deal Channel Evidence" and "Target User
+Deal Channel Evidence" collapsible sections use the same JSON/Copy JSON
+pattern as every earlier section. Previously stored v1.8/v2.0/v2.1/v2.2/
+v2.3/v2.4 runs remain readable in run history unchanged; `v1.0`-`v1.8`
+and `v2.0`-`v2.4` all remain independently callable.
+
+See `analytics/sql/18_deal_in_channel_performance_v2.sql`,
+`analytics/sql/19_deal_out_channel_performance_v2.sql`,
+`analytics/sql/20_channel_journey_v2.sql`, and
+`analytics/SEMANTIC_CONTRACT.md` section 28 for the full contract.
 
 ## Conventions
 

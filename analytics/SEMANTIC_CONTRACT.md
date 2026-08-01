@@ -1774,11 +1774,90 @@ Category/Type confidence uses the single realized-item-count tiering
 from `08_category_type_performance.sql` (unchanged from each source
 file's own convention).
 
-**`v2.4` is now the production analytics version.** `runAnalytics.ts`
-calls `build_analytics_snapshot_v2_4` for every new run (`ANALYTICS_
-VERSION = '2.4'`). `v1.0`-`v1.8` and `v2.0`-`v2.3` remain independently
+**`v2.4` was the production analytics version at this step.** `runAnalytics.ts`
+called `build_analytics_snapshot_v2_4` for every new run (`ANALYTICS_
+VERSION = '2.4'`). `v1.0`-`v1.8` and `v2.0`-`v2.3` remained independently
 callable and every previously stored `analytics_runs.snapshot` row
-remains readable — a forward version bump, not a rewrite of history. The
+remained readable — a forward version bump, not a rewrite of history. The
 Analytics page's "Shared Inventory Segmentation Evidence" and "Target
 User Inventory Segmentation Evidence" collapsible sections use the same
-JSON/Copy JSON pattern as every prior section.
+JSON/Copy JSON pattern as every prior section. See section 28 for the
+next production promotion.
+
+## 28. Deal Channel Performance (v2.5) and fourth production promotion
+
+`public.build_analytics_snapshot_v2_5(p_target_user_id int)`
+(`supabase/migrations/20260816000000_build_analytics_snapshot_v2_5.sql`)
+calls `build_analytics_snapshot_v2_4` wholesale and adds two new
+top-level sections, `shared_deal_channel_evidence` and `target_user_
+deal_channel_evidence`, each containing `deal_in_channel_performance`,
+`deal_out_channel_performance`, and `channel_journey` — Purpose-aware v2
+ports of `04_deal_in_channel_performance.sql`, `05_deal_out_channel_
+performance.sql`, and `06_channel_journey.sql` (see their v2 ports
+`analytics/sql/18`, `analytics/sql/19`, `analytics/sql/20`). Every prior
+v2.4 section (`shared_purpose_evidence`, `target_user_purpose_evidence`,
+`target_user_open_inventory_evidence`, `shared_acquisition_evidence`,
+`target_user_acquisition_evidence`, `shared_inventory_segmentation_
+evidence`, `target_user_inventory_segmentation_evidence`, `module_
+limitations`) is preserved unchanged; `v2.4` itself, and every
+`v1.x`/`v2.0`-`v2.3` builder, are untouched and remain independently
+callable.
+
+**Every Purpose, not Business-only.** Same rule as every prior v2
+module: the population is `analytics_item_lifecycle_v2`'s full
+population — Business, Hybrid, Personal, `missing_purpose`,
+`missing_policy` — never filtered by Purpose, and Purpose is never
+presented as Purpose at acquisition or Purpose at exit (it has no
+historical record). Every section is produced twice: pooled across all
+Purposes, and broken down by `(current_purpose_id, current_purpose_
+name, purpose_policy_status)` using the same missing-purpose/missing-
+policy collapsing rule established in section 22.
+
+**Scope decision — all three v1 files ported in full.** `04_deal_in_
+channel_performance.sql` (5 queries), `05_deal_out_channel_performance.
+sql` (6 queries), and `06_channel_journey.sql` (5 queries) each
+self-classify EVERY one of their queries as shared aggregate evidence in
+their own "QUERY CLASSIFICATION INDEX" — none are developer-only
+diagnostics, unlike `03_brand_performance.sql`'s Query G/H. All 16
+queries are therefore ported in full — see the migration file's own
+header for the complete section-by-section mapping. Listing-Channel
+data is explicitly NOT read anywhere in this module — Deal In/Out
+Channel and Channel Journey remain distinct from Listing Channel
+Exposure (a separate v1.5 module, not touched here).
+
+**Channel semantics preserved from v1.** Deal In Channel is where
+contact ORIGINATED for the operation an item ENTERED inventory through;
+Deal Out Channel is where it LEFT — never a payment method or shipping
+method (a Reverb contact followed by an off-platform payment remains
+Reverb). For a Trade, one `deal_channel_id` applies to both the incoming
+and outgoing item(s) — never split into two. Regular Buyer / Seller is
+reported like any other channel. Missing Deal In/Out Channel is a real,
+visible state, never silently dropped or backfilled. Cash sale and trade
+exit paths are never conflated: `exit_value` is a "sale price" only in
+cash-sale-scoped sections and an "assigned trade exit value" only in
+trade-exit-scoped sections. Channel Journey's `journey_eligible`
+population requires BOTH channels known; "same channel"
+(`deal_in_channel_id = deal_out_channel_id`) remains descriptive path
+evidence only, never a conversion rate.
+
+**Semantics preserved from v1.** Deal In Channel's population is every
+item (open + realized); Deal Out Channel and Channel Journey are
+realized items only, unchanged from v1. Historical Imports participate
+fully wherever a Deal In or Deal Out channel is available; excluded
+ONLY from `holding_days`-based duration metrics. ROI requires a positive
+acquisition value; acquisition value bands restrict to `acquisition_
+value_status = 'positive'`, with zero-assigned/unknown coverage reported
+separately. `item_count` and `distinct_deal_count` remain semantically
+distinct throughout. Confidence is tiered from the row's own item count
+(1-2 insufficient, 3-5 low, 6-9 moderate, 10+ stronger) — the
+single-tier convention `04`/`05`/`06` already use, not Brand
+Performance's dual sample/realized tiering.
+
+**`v2.5` is now the production analytics version.** `runAnalytics.ts`
+calls `build_analytics_snapshot_v2_5` for every new run (`ANALYTICS_
+VERSION = '2.5'`). `v1.0`-`v1.8` and `v2.0`-`v2.4` remain independently
+callable and every previously stored `analytics_runs.snapshot` row
+remains readable — a forward version bump, not a rewrite of history. The
+Analytics page's "Shared Deal Channel Evidence" and "Target User Deal
+Channel Evidence" collapsible sections use the same JSON/Copy JSON
+pattern as every prior section.
