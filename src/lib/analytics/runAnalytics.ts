@@ -13,32 +13,31 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 // ── Constants — must match the current snapshot contract exactly ───────────
-// (analytics_runs' own DEFAULTs and build_analytics_snapshot_v2_2's own
+// (analytics_runs' own DEFAULTs and build_analytics_snapshot_v2_3's own
 // literals — see supabase/migrations/20260727000000_analytics_runs.sql and
-// 20260813000000_build_analytics_snapshot_v2_2.sql). Bumping either
+// 20260814000000_build_analytics_snapshot_v2_3.sql). Bumping either
 // requires updating both this file and the database migrations together —
 // see the "duplicated logic" note in analytics/README.md.
 //
-// v2.2: new runs call build_analytics_snapshot_v2_2 (Hybrid reason-code
-// correction on top of v2.1 — see analytics/SEMANTIC_CONTRACT.md section
-// 25). This PROMOTES the production runner off v1.8 — v2.2 wraps v2.1
-// wholesale (which wraps v2.0 wholesale), so the payload shape is
-// entirely different from every v1.x snapshot: there is no
-// evidence_aggregates, no recommendation_candidates, and no
-// recommendation_target_user_id field inside the JSON itself (the target
-// user is still always the caller's own resolved app_users.id — enforced
-// by the RPC argument this module passes, not by a field inside the
-// returned JSON). The RPC argument name is also different: v2.x builders
-// take `p_target_user_id`, not v1.x's `p_recommendation_target_user_id`.
-// v1.0-v1.8, v2.0, and v2.1 are completely unaffected and remain
-// independently callable; every previously stored analytics_runs.snapshot
-// row (whichever version it was created under) remains readable — this is
-// a forward version bump, not a rewrite of history.
-export const ANALYTICS_VERSION = '2.2';
+// v2.3: new runs call build_analytics_snapshot_v2_3 (Acquisition
+// Economics — shared_acquisition_evidence / target_user_acquisition_
+// evidence on top of v2.2, see analytics/SEMANTIC_CONTRACT.md section 26).
+// v2.3 wraps v2.2 wholesale (which wraps v2.1, which wraps v2.0), so every
+// v2.x field already present remains present and unchanged; this bump
+// only adds the two new top-level keys. The RPC argument name remains
+// v2.x's `p_target_user_id` (not v1.x's `p_recommendation_target_user_id`)
+// — the target user is still always the caller's own resolved
+// app_users.id, enforced by the RPC argument this module passes, never by
+// a field inside the returned JSON. v1.0-v1.8 and v2.0-v2.2 are
+// completely unaffected and remain independently callable; every
+// previously stored analytics_runs.snapshot row (whichever version it was
+// created under) remains readable — this is a forward version bump, not a
+// rewrite of history.
+export const ANALYTICS_VERSION = '2.3';
 export const EVIDENCE_SCOPE = 'shared_inventory_population';
-const SNAPSHOT_SCHEMA_VERSION = '2.2';
-const ANALYTICS_DEFINITION_VERSION = '2.2';
-const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_2';
+const SNAPSHOT_SCHEMA_VERSION = '2.3';
+const ANALYTICS_DEFINITION_VERSION = '2.3';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_3';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -103,6 +102,8 @@ interface ValidatedAnalyticsSnapshot {
   shared_purpose_evidence: Record<string, unknown>;
   target_user_purpose_evidence: Record<string, unknown>;
   target_user_open_inventory_evidence: Record<string, unknown>;
+  shared_acquisition_evidence: Record<string, unknown>;
+  target_user_acquisition_evidence: Record<string, unknown>;
 }
 
 export function isValidAnalyticsSnapshot(
@@ -117,7 +118,9 @@ export function isValidAnalyticsSnapshot(
     v.evidence_scope === EVIDENCE_SCOPE &&
     typeof v.shared_purpose_evidence === 'object' && v.shared_purpose_evidence !== null &&
     typeof v.target_user_purpose_evidence === 'object' && v.target_user_purpose_evidence !== null &&
-    typeof v.target_user_open_inventory_evidence === 'object' && v.target_user_open_inventory_evidence !== null
+    typeof v.target_user_open_inventory_evidence === 'object' && v.target_user_open_inventory_evidence !== null &&
+    typeof v.shared_acquisition_evidence === 'object' && v.shared_acquisition_evidence !== null &&
+    typeof v.target_user_acquisition_evidence === 'object' && v.target_user_acquisition_evidence !== null
   );
 }
 

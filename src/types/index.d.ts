@@ -414,16 +414,21 @@ export interface AnalyticsSnapshot {
   };
 
   // ── v2.0+ shape — absent on v1.0-v1.8 stored snapshots ──────────────────
-  // build_analytics_snapshot_v2_2 (the current production version, section
-  // 25) is a clean, independent contract — no evidence_aggregates/
+  // build_analytics_snapshot_v2_3 (the current production version, section
+  // 26) is a clean, independent contract — no evidence_aggregates/
   // recommendation_candidates/recommendation_target_user_id field exists
-  // in a v2.x payload. shared_purpose_evidence pools every user's items
-  // (aggregate only, no item identity); target_user_purpose_evidence and
-  // target_user_open_inventory_evidence are restricted to the snapshot's
-  // own target user — see analytics/SEMANTIC_CONTRACT.md sections 22-25.
+  // in a v2.x payload. shared_purpose_evidence / shared_acquisition_
+  // evidence pool every user's items (aggregate only, no item identity);
+  // target_user_purpose_evidence / target_user_open_inventory_evidence /
+  // target_user_acquisition_evidence are restricted to the snapshot's own
+  // target user — see analytics/SEMANTIC_CONTRACT.md sections 22-26.
   purpose_semantics?:                    string;
   shared_purpose_evidence?:              Record<string, unknown>;
   target_user_purpose_evidence?:         Record<string, unknown>;
   target_user_open_inventory_evidence?:  Record<string, unknown>;
+  // Added in Snapshot v2.3 (Acquisition Economics) — absent on older
+  // v2.0-v2.2 stored snapshots, so optional here.
+  shared_acquisition_evidence?:          Record<string, unknown>;
+  target_user_acquisition_evidence?:     Record<string, unknown>;
   module_limitations?:                   string[];
 }

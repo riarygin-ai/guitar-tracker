@@ -86,7 +86,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_2
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_3
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -95,7 +95,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_2') {
+          if (name === 'build_analytics_snapshot_v2_3') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -115,7 +115,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_2') {
+          if (name === 'build_analytics_snapshot_v2_3') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -168,29 +168,33 @@ async function main() {
   const clientB = authedClient(tokenB);
 
   // ── Pure unit tests: isValidAnalyticsSnapshot ───────────────────────────
-  // v2.2 shape — no recommendation_target_user_id/evidence_aggregates/
+  // v2.3 shape — no recommendation_target_user_id/evidence_aggregates/
   // recommendation_candidates field exists in a v2.x payload (see
   // runAnalytics.ts). The function no longer takes an expectedTargetUserId
   // parameter since there is nothing target-user-specific left to check
   // inside the JSON itself.
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '2.2',
-    analytics_definition_version: '2.2',
+    snapshot_schema_version: '2.3',
+    analytics_definition_version: '2.3',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     purpose_semantics: 'current_item_purpose',
     shared_purpose_evidence: {},
     target_user_purpose_evidence: {},
     target_user_open_inventory_evidence: {},
+    shared_acquisition_evidence: {},
+    target_user_acquisition_evidence: {},
   };
   check('valid snapshot passes', isValidAnalyticsSnapshot(validSnapshot));
-  check('wrong schema version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, snapshot_schema_version: '2.1' }));
+  check('wrong schema version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, snapshot_schema_version: '2.2' }));
   check('wrong definition version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, analytics_definition_version: '0.9' }));
   check('wrong evidence_scope rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, evidence_scope: 'something_else' }));
   check('missing shared_purpose_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, shared_purpose_evidence: undefined }));
   check('missing target_user_purpose_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, target_user_purpose_evidence: null }));
   check('missing target_user_open_inventory_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, target_user_open_inventory_evidence: undefined }));
+  check('missing shared_acquisition_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, shared_acquisition_evidence: undefined }));
+  check('missing target_user_acquisition_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, target_user_acquisition_evidence: null }));
   check('null value rejected', !isValidAnalyticsSnapshot(null));
   check('non-object value rejected', !isValidAnalyticsSnapshot('not an object'));
 
@@ -229,7 +233,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_2', { p_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_3', { p_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -842,8 +846,12 @@ async function main() {
   const openByChannelRows: any[] = lce?.open_inventory_by_listing_channel ?? [];
   const reverbOpenRow = openByChannelRows.find((r) => r.listing_channel_name === 'Reverb');
   check(
-    'Reverb open-inventory row reflects fixture item 28 alone: sample_size = 1, median age = 45 days',
-    !!reverbOpenRow && reverbOpenRow.current_listing_age_sample_size === 1 && Number(reverbOpenRow.median_current_listing_age_days) === 45,
+    // median_current_listing_age_days grows by 1 every real calendar day
+    // since fixture item 28 was listed — asserting cardinality (sample_size
+    // = 1) and a sane positive age is stable across runs; an exact day
+    // count is not.
+    'Reverb open-inventory row reflects fixture item 28 alone: sample_size = 1, positive median age',
+    !!reverbOpenRow && reverbOpenRow.current_listing_age_sample_size === 1 && Number(reverbOpenRow.median_current_listing_age_days) > 0,
     reverbOpenRow,
   );
 
@@ -1977,8 +1985,11 @@ async function main() {
 
   console.log('\n[v2.2 — test #5: historical items with large DOM are not labelled recent]');
   check(
-    'fixture item 107 (is_historical_import, current_dom_days=150) does NOT carry HYBRID_RECENT_ITEM',
-    !!item107v22 && item107v22.is_historical_import === true && item107v22.current_dom_days === 150 && !item107v22.reason_codes.includes('HYBRID_RECENT_ITEM'),
+    // current_dom_days grows by 1 every real calendar day since fixture
+    // item 107 was listed (~150 days ago at fixture-authoring time) — a
+    // lower-bound check is stable across runs; an exact day count is not.
+    'fixture item 107 (is_historical_import, large current_dom_days) does NOT carry HYBRID_RECENT_ITEM',
+    !!item107v22 && item107v22.is_historical_import === true && item107v22.current_dom_days > 100 && !item107v22.reason_codes.includes('HYBRID_RECENT_ITEM'),
     item107v22,
   );
 
@@ -2038,24 +2049,30 @@ async function main() {
     JSON.stringify(v21SnapshotForCompare).includes('HYBRID_RECENT_INSUFFICIENT_HISTORY'),
   );
 
-  console.log('\n[v2.2 — test #8/#9: the main runner creates a completed v2.2 run; stored metadata says 2.2]');
+  // Note: at the point v2.2 was promoted, this block asserted the runner's
+  // new run persisted analytics_version 2.2 specifically. The runner has
+  // since been promoted again to v2.3 (see the "[v2.3 — production
+  // promotion]" section below) — these checks now compare against the
+  // live ANALYTICS_VERSION export rather than a hardcoded literal, so they
+  // stay correct across future promotions too.
+  console.log('\n[production runner — creates a completed run with the current ANALYTICS_VERSION]');
   const runA22 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
   check('main runner run status is completed', runA22.status === 'completed', runA22.status);
-  check('main runner run analytics_version is 2.2', runA22.analytics_version === '2.2', runA22.analytics_version);
+  check('main runner run analytics_version matches ANALYTICS_VERSION', runA22.analytics_version === ANALYTICS_VERSION, runA22.analytics_version);
   const { data: storedRunA22 } = await serviceClient
     .from('analytics_runs').select('analytics_version, evidence_scope, snapshot').eq('id', runA22.id).single();
-  check('stored analytics_runs.analytics_version is 2.2', storedRunA22?.analytics_version === '2.2', storedRunA22?.analytics_version);
+  check('stored analytics_runs.analytics_version matches ANALYTICS_VERSION', storedRunA22?.analytics_version === ANALYTICS_VERSION, storedRunA22?.analytics_version);
   check(
-    'stored snapshot.snapshot_schema_version is 2.2',
-    (storedRunA22?.snapshot as any)?.snapshot_schema_version === '2.2',
+    'stored snapshot.snapshot_schema_version matches ANALYTICS_VERSION',
+    (storedRunA22?.snapshot as any)?.snapshot_schema_version === ANALYTICS_VERSION,
     (storedRunA22?.snapshot as any)?.snapshot_schema_version,
   );
 
-  console.log('\n[v2.2 — test #10: forged target-user input is ignored]');
+  console.log('\n[v2.2 — test #10: forged target-user input is ignored (v2.2\'s own direct-call permission model)]');
   // The runner exposes no parameter other than appUserId (resolved
   // server-side from the session) — there is no code path to override the
   // target. Reinforce this at the SQL layer: even a direct, authenticated
-  // RPC call cannot invoke the builder for ANY target, forged or not.
+  // RPC call cannot invoke v2.2's builder for ANY target, forged or not.
   const { error: forgedTargetError } = await clientA.rpc('build_analytics_snapshot_v2_2', { p_target_user_id: userBId });
   check('authenticated client cannot invoke build_analytics_snapshot_v2_2 for a different (forged) target user id either', !!forgedTargetError, forgedTargetError);
   check(
@@ -2133,6 +2150,161 @@ async function main() {
   console.log('\n[v2.2 — test #15: authenticated cannot execute the builder directly]');
   const { error: v22AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_2', { p_target_user_id: userAId });
   check('authenticated client cannot call build_analytics_snapshot_v2_2 directly', !!v22AuthedError, v22AuthedError);
+
+  // ── Analytics v2.3 — Acquisition Economics + second production promotion ──
+  console.log('\n[v2.3 — builder callable, top-level metadata]');
+  const { data: v23SnapshotA, error: v23ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v2_3', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_3 callable by service_role', !v23ErrorA, v23ErrorA);
+  check('v2.3 snapshot_schema_version is 2.3', v23SnapshotA?.snapshot_schema_version === '2.3', v23SnapshotA?.snapshot_schema_version);
+  check('v2.3 analytics_definition_version is 2.3', v23SnapshotA?.analytics_definition_version === '2.3', v23SnapshotA?.analytics_definition_version);
+  check(
+    'v2.3 output includes shared_acquisition_evidence and target_user_acquisition_evidence',
+    !!v23SnapshotA?.shared_acquisition_evidence && !!v23SnapshotA?.target_user_acquisition_evidence,
+    v23SnapshotA ? Object.keys(v23SnapshotA) : v23SnapshotA,
+  );
+
+  console.log('\n[v2.3 — v2.2 sections remain unchanged inside v2.3]');
+  const { data: v22SnapshotForCompare } = await serviceClient.rpc('build_analytics_snapshot_v2_2', { p_target_user_id: userAId });
+  check(
+    'shared_purpose_evidence / target_user_purpose_evidence / target_user_open_inventory_evidence are stable-stringify identical between v2.2 and v2.3',
+    stableStringify(v23SnapshotA?.shared_purpose_evidence) === stableStringify(v22SnapshotForCompare?.shared_purpose_evidence)
+      && stableStringify(v23SnapshotA?.target_user_purpose_evidence) === stableStringify(v22SnapshotForCompare?.target_user_purpose_evidence)
+      && stableStringify(v23SnapshotA?.target_user_open_inventory_evidence) === stableStringify(v22SnapshotForCompare?.target_user_open_inventory_evidence),
+  );
+  const { data: v22SnapshotSecondCall } = await serviceClient.rpc('build_analytics_snapshot_v2_2', { p_target_user_id: userAId });
+  const { generated_at: _v22gen1, ...v22FirstWithoutTimestamp } = (v22SnapshotForCompare ?? {}) as Record<string, unknown>;
+  const { generated_at: _v22gen2, ...v22SecondWithoutTimestamp } = (v22SnapshotSecondCall ?? {}) as Record<string, unknown>;
+  check(
+    'v2.2 remains byte-identical (ignoring generated_at) after the v2.3 migration — v2.2 unaffected by v2.3 existing',
+    stableStringify(v22FirstWithoutTimestamp) === stableStringify(v22SecondWithoutTimestamp),
+  );
+
+  const avbShared = v23SnapshotA?.shared_acquisition_evidence?.acquisition_value_band_performance;
+  const a2eShared = v23SnapshotA?.shared_acquisition_evidence?.acquisition_to_exit_analysis;
+  const avbTarget = v23SnapshotA?.target_user_acquisition_evidence?.acquisition_value_band_performance;
+  const avbPop = avbShared?.population_summary?.[0];
+  const a2ePop = a2eShared?.population_summary?.[0];
+
+  console.log('\n[v2.3 — Value Band Performance: reconciliation]');
+  check(
+    'population_summary: open + realized === total',
+    (avbPop?.open_item_count ?? 0) + (avbPop?.realized_item_count ?? 0) === avbPop?.total_item_count,
+    avbPop,
+  );
+  check(
+    'population_summary: positive + zero_assigned + unknown === total',
+    (avbPop?.positive_acquisition_item_count ?? 0) + (avbPop?.zero_assigned_acquisition_item_count ?? 0) + (avbPop?.unknown_acquisition_item_count ?? 0) === avbPop?.total_item_count,
+    avbPop,
+  );
+  check(
+    'population_summary: raw_realized_holding_days_present_count === eligible + excluded',
+    (avbPop?.eligible_realized_holding_days_count ?? 0) + (avbPop?.excluded_realized_holding_days_count ?? 0) === avbPop?.raw_realized_holding_days_present_count,
+    avbPop,
+  );
+  const avbPurposeRows: any[] = avbShared?.purpose_population_summary ?? [];
+  const avbPurposeTotalSum = avbPurposeRows.reduce((sum, r) => sum + Number(r.total_item_count ?? 0), 0);
+  check(
+    'sum of purpose_population_summary.total_item_count === population_summary.total_item_count',
+    avbPurposeTotalSum === avbPop?.total_item_count,
+    { avbPurposeTotalSum, populationTotal: avbPop?.total_item_count },
+  );
+
+  console.log('\n[v2.3 — Acquisition-to-Exit: reconciliation]');
+  check(
+    'population_summary: eligible_sale_exit_count + eligible_trade_exit_count === eligible_transition_item_count',
+    (a2ePop?.eligible_sale_exit_count ?? 0) + (a2ePop?.eligible_trade_exit_count ?? 0) === a2ePop?.eligible_transition_item_count,
+    a2ePop,
+  );
+  const transitionMatrix: any[] = a2eShared?.transition_matrix ?? [];
+  const transitionItemSum = transitionMatrix.reduce((sum, r) => sum + Number(r.item_count ?? 0), 0);
+  check(
+    'sum of transition_matrix.item_count === population_summary.eligible_transition_item_count',
+    transitionItemSum === a2ePop?.eligible_transition_item_count,
+    { transitionItemSum, eligible: a2ePop?.eligible_transition_item_count },
+  );
+  const methodPaths: any[] = a2eShared?.method_paths ?? [];
+  const methodSampleSum = methodPaths.reduce((sum, r) => sum + Number(r.sample_size ?? 0), 0);
+  check(
+    'sum of method_paths.sample_size === population_summary.eligible_transition_item_count',
+    methodSampleSum === a2ePop?.eligible_transition_item_count,
+    { methodSampleSum, eligible: a2ePop?.eligible_transition_item_count },
+  );
+
+  console.log('\n[v2.3 — Purpose inclusion]');
+  check(
+    'Value Band Performance purpose_population_summary includes Business, Hybrid, and Personal',
+    ['Business', 'Hybrid', 'Personal'].every((name) => avbPurposeRows.some((r) => r.purpose_policy_status === 'mapped' && r.current_purpose_name === name)),
+    avbPurposeRows.map((r) => r.current_purpose_name),
+  );
+  const a2ePurposeRows: any[] = a2eShared?.purpose_population_summary ?? [];
+  check(
+    'Acquisition-to-Exit purpose_population_summary includes a mapped row for at least Business (Hybrid/Personal present if they have realized items)',
+    a2ePurposeRows.some((r) => r.purpose_policy_status === 'mapped' && r.current_purpose_name === 'Business'),
+    a2ePurposeRows.map((r) => r.current_purpose_name),
+  );
+
+  console.log('\n[v2.3 — historical-import handling]');
+  const businessBandRows: any[] = avbShared?.band_performance ?? [];
+  check(
+    'at least one band has holding_sample_size < realized_items (Historical Import excluded from holding metrics, fixture item 9)',
+    businessBandRows.some((r) => (r.holding_sample_size ?? 0) < (r.realized_items ?? 0)),
+    businessBandRows,
+  );
+  check(
+    'zero_assigned_summary.roi_undefined_zero_acquisition_count === its own realized_item_count (ROI undefined at zero acquisition value)',
+    avbShared?.zero_assigned_summary?.[0]?.roi_undefined_zero_acquisition_count === avbShared?.zero_assigned_summary?.[0]?.realized_item_count,
+    avbShared?.zero_assigned_summary,
+  );
+
+  console.log('\n[v2.3 — zero/unknown value handling]');
+  check(
+    'zero_assigned_summary.total_realized_net_profit is a number (0 for no rows, never null) via COALESCE',
+    typeof avbShared?.zero_assigned_summary?.[0]?.total_realized_net_profit === 'number',
+    avbShared?.zero_assigned_summary,
+  );
+  check(
+    'unknown_acquisition_summary has no ROI/net-profit field — acquisition basis does not exist for this population',
+    !('median_roi' in (avbShared?.unknown_acquisition_summary?.[0] ?? {})) && !('median_net_profit' in (avbShared?.unknown_acquisition_summary?.[0] ?? {})),
+    avbShared?.unknown_acquisition_summary?.[0],
+  );
+
+  console.log('\n[v2.3 — privacy]');
+  const v23SharedSerialized = JSON.stringify(v23SnapshotA?.shared_acquisition_evidence);
+  check('shared_acquisition_evidence exposes no user_id or item_id field anywhere', !v23SharedSerialized.includes('"user_id"') && !v23SharedSerialized.includes('"item_id"'));
+  check(
+    "target_user_acquisition_evidence total_item_count is strictly less than shared's pooled total (User B's items are excluded)",
+    (avbTarget?.population_summary?.[0]?.total_item_count ?? 0) < (avbPop?.total_item_count ?? 0),
+    { target: avbTarget?.population_summary?.[0]?.total_item_count, shared: avbPop?.total_item_count },
+  );
+
+  console.log('\n[v2.3 — permissions]');
+  const { error: v23AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_3', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_3 directly', !!v23AuthedError, v23AuthedError);
+  const { error: v23HelperAuthedError } = await clientA.rpc('_build_acquisition_economics_snapshot_v2', { p_target_user_id: userAId });
+  check('authenticated client cannot call _build_acquisition_economics_snapshot_v2 directly', !!v23HelperAuthedError, v23HelperAuthedError);
+
+  console.log('\n[v2.3 — old-version compatibility]');
+  const v23StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_0', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_1', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_2', { p_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v23StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.3 migration`, !error, error);
+  }
+
+  console.log('\n[v2.3 — production promotion]');
+  check('ANALYTICS_VERSION constant used by the production runner is now 2.3', ANALYTICS_VERSION === '2.3', ANALYTICS_VERSION);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

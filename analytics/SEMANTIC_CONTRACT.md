@@ -1622,12 +1622,82 @@ Previously stored `v2.1` snapshots remain historically interpretable
 exactly as generated; a fresh `v2.1` call still produces the old,
 ambiguous combined code, unchanged.
 
-**`v2.2` is now the production analytics version.** `runAnalytics.ts`
-calls `build_analytics_snapshot_v2_2` for every new run (constants:
-`ANALYTICS_VERSION = '2.2'`, `EVIDENCE_SCOPE = 'shared_inventory_
-population'`). `v1.0`-`v1.8`, `v2.0`, and `v2.1` remain independently
+**`v2.2` was the production analytics version at this step.**
+`runAnalytics.ts` called `build_analytics_snapshot_v2_2` for every new
+run. `v1.0`-`v1.8`, `v2.0`, and `v2.1` remained independently callable
+and every previously stored `analytics_runs.snapshot` row (whichever
+version it was created under) remains readable — this is a forward
+version bump, not a rewrite of history. The temporary manual-preview
+route and UI card introduced alongside `v2.1` were removed once the
+production runner itself served the same evidence. As of section 26
+(`v2.3`), the production runner has been promoted again, off `v2.2` and
+onto `v2.3` — `v2.2` itself is unaffected.
+
+## 26. Acquisition Economics (v2.3) and second production promotion
+
+`public.build_analytics_snapshot_v2_3(p_target_user_id int)`
+(`supabase/migrations/20260814000000_build_analytics_snapshot_v2_3.sql`)
+calls `build_analytics_snapshot_v2_2` wholesale and adds two new
+top-level sections, `shared_acquisition_evidence` and `target_user_
+acquisition_evidence`, each containing `acquisition_value_band_
+performance` and `acquisition_to_exit_analysis` — Purpose-aware v2 ports
+of the v1.1 `_build_acquisition_value_band_snapshot_v1_1` and
+`_build_acquisition_to_exit_snapshot_v1_1` helpers (see analytics/sql/01
+and analytics/sql/02, and their v2 ports analytics/sql/14 and
+analytics/sql/15). Every prior v2.2 section (`shared_purpose_evidence`,
+`target_user_purpose_evidence`, `target_user_open_inventory_evidence`,
+`module_limitations`) is preserved unchanged; `v2.2` itself, and every
+`v1.x`/`v2.0`/`v2.1` builder, are untouched and remain independently
+callable.
+
+**Every Purpose, not Business-only.** Like every prior v2 module, the
+population is `analytics_item_lifecycle_v2`'s full population —
+Business, Hybrid, Personal, `missing_purpose`, `missing_policy` — never
+filtered by Purpose. Every section is produced twice: pooled across all
+Purposes, and broken down by `(current_purpose_id, current_purpose_name,
+purpose_policy_status)` using the same missing-purpose/missing-policy
+collapsing rule established in section 22. Purpose is the item's CURRENT
+disposition only — it is never an economic eligibility filter here, and
+a Hybrid/Personal row's `realization_rate_percent` is descriptive only,
+never an urgency signal, recommendation, score, or AI prose.
+
+**Scope decision — a deliberate subset of each v1 module.** Both v1.1
+snapshot helpers are large (12-16 sections each: population coverage,
+banded performance, zero/unknown-value summaries, equal-size quartiles,
+capital-efficiency sensitivity, open-inventory-by-band, category
+cross-cuts, and cohort/method/outlier/integrity diagnostics). `v2.3`
+ports the PRIMARY, load-bearing sections of each and deliberately omits
+secondary robustness/diagnostic sections — consistent with the
+precedent v1.1 itself set by excluding its own developer-only
+per-user/item-level drilldowns from the snapshot. Ported, with field
+names, band boundaries, exclusion rules, and confidence tiers copied
+verbatim from the v1.1 source: population coverage, banded performance
+(positive acquisition value only), zero-assigned summary, and
+unknown-acquisition summary for Value Band Performance; population
+coverage, banded performance, the acquisition-to-exit-band transition
+matrix, and acquisition/exit method paths for Acquisition-to-Exit
+Analysis. See the migration file's own header for the full list of
+omitted sections and rationale.
+
+**Semantics preserved from v1.** Purchase price and assigned incoming
+trade value are acquisition value (never called "purchase price"
+unconditionally). Historical Imports participate fully in acquisition
+value, exit value, profit, ROI, transition counts, and DOM
+(`global_days_on_market`) — they are excluded ONLY from `holding_days`-
+based duration metrics, same as every prior module (sections 1-4). Rows
+with `has_lifecycle_date_issue` are excluded from the same holding-based
+metrics regardless of Purpose. ROI requires a positive acquisition
+value. Zero-assigned and unknown acquisition values remain visible in
+coverage counts but are excluded from positive-value-band performance
+rows and ROI. Additive totals return 0 for an empty group; medians,
+percentiles, ROI, and durations remain `NULL` when no valid sample
+exists.
+
+**`v2.3` is now the production analytics version.** `runAnalytics.ts`
+calls `build_analytics_snapshot_v2_3` for every new run (`ANALYTICS_
+VERSION = '2.3'`). `v1.0`-`v1.8` and `v2.0`-`v2.2` remain independently
 callable and every previously stored `analytics_runs.snapshot` row
-(whichever version it was created under) remains readable — this is a
-forward version bump, not a rewrite of history. The temporary manual-
-preview route and UI card introduced alongside `v2.1` have been removed
-now that the production runner itself serves the same evidence.
+remains readable — a forward version bump, not a rewrite of history. The
+Analytics page's "Shared Acquisition Evidence" and "Target User
+Acquisition Evidence" collapsible sections use the same JSON/Copy JSON
+pattern as every prior section.
