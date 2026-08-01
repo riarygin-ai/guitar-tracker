@@ -1693,11 +1693,92 @@ rows and ROI. Additive totals return 0 for an empty group; medians,
 percentiles, ROI, and durations remain `NULL` when no valid sample
 exists.
 
-**`v2.3` is now the production analytics version.** `runAnalytics.ts`
-calls `build_analytics_snapshot_v2_3` for every new run (`ANALYTICS_
-VERSION = '2.3'`). `v1.0`-`v1.8` and `v2.0`-`v2.2` remain independently
+**`v2.3` was the production analytics version at this step.** `runAnalytics.ts`
+called `build_analytics_snapshot_v2_3` for every new run (`ANALYTICS_
+VERSION = '2.3'`). `v1.0`-`v1.8` and `v2.0`-`v2.2` remained independently
 callable and every previously stored `analytics_runs.snapshot` row
-remains readable — a forward version bump, not a rewrite of history. The
+remained readable — a forward version bump, not a rewrite of history. The
 Analytics page's "Shared Acquisition Evidence" and "Target User
 Acquisition Evidence" collapsible sections use the same JSON/Copy JSON
-pattern as every prior section.
+pattern as every prior section. See section 27 for the next production
+promotion.
+
+## 27. Inventory Segmentation (v2.4) and third production promotion
+
+`public.build_analytics_snapshot_v2_4(p_target_user_id int)`
+(`supabase/migrations/20260815000000_build_analytics_snapshot_v2_4.sql`)
+calls `build_analytics_snapshot_v2_3` wholesale and adds two new
+top-level sections, `shared_inventory_segmentation_evidence` and
+`target_user_inventory_segmentation_evidence`, each containing
+`brand_performance` and `category_type_performance` — Purpose-aware v2
+ports of `03_brand_performance.sql` and `08_category_type_performance.sql`
+(see their v2 ports `analytics/sql/16` and `analytics/sql/17`). Every
+prior v2.3 section (`shared_purpose_evidence`, `target_user_purpose_
+evidence`, `target_user_open_inventory_evidence`, `shared_acquisition_
+evidence`, `target_user_acquisition_evidence`, `module_limitations`) is
+preserved unchanged; `v2.3` itself, and every `v1.x`/`v2.0`-`v2.2`
+builder, are untouched and remain independently callable.
+
+**Every Purpose, not Business-only.** Same rule as every prior v2
+module: the population is `analytics_item_lifecycle_v2`'s full
+population — Business, Hybrid, Personal, `missing_purpose`,
+`missing_policy` — never filtered by Purpose. Every section is produced
+twice: pooled across all Purposes, and broken down by
+`(current_purpose_id, current_purpose_name, purpose_policy_status)`
+using the same missing-purpose/missing-policy collapsing rule
+established in section 22. A Hybrid/Personal row's
+`realization_rate_percent` remains descriptive only.
+
+**Scope decision — production evidence preserved, diagnostics
+omitted.** Every v1 section was classified as PRODUCTION EVIDENCE or
+DEVELOPER DIAGNOSTIC/AUDIT before porting (see each source file's own
+"QUERY CLASSIFICATION INDEX"). `08_category_type_performance.sql` self-
+classifies all six of its queries as production evidence, so all six
+are ported in full: `population_summary`, `performance_by_category`,
+`performance_by_category_type`, `performance_by_category_and_
+acquisition_band`, `performance_by_category_type_and_acquisition_band`,
+`open_inventory_by_category_type`. `03_brand_performance.sql` has 13
+queries; five non-redundant cuts are ported (`population_summary`,
+`performance_by_brand` with the "decision-ready" filter folded into a
+`decision_ready` boolean instead of a duplicate query,
+`performance_by_brand_and_acquisition_band` likewise,
+`open_inventory_by_brand` merging the listed/unlisted queries via a
+`listing_status` dimension, and `capital_concentration_by_brand`).
+Omitted, each with its classification: the brand coverage-distribution
+histogram (production evidence, but redundant with per-brand
+`sample_size`), the brands lookup-table data-quality audit
+(reclassified as a developer/data-hygiene diagnostic — it audits the
+shared `brands` table itself, not Purpose-scoped economic evidence),
+brand x acquisition method (production evidence, secondary to the two
+headline cuts ported), the historical-vs-app-tracked cohort comparison
+(superseded by the `historical_item_count`/`non_historical_item_count`
+fields present on every ported section), and the per-user/item-level
+drilldowns (developer-only diagnostics that would also violate the
+no-cross-user-identity-exposure rule if ported to shared evidence). See
+the migration file's own header for the complete list and rationale.
+
+**Semantics preserved from v1.** Historical Imports participate fully
+in acquisition value, exit value, profit, ROI, brand, category, and
+type evidence — excluded ONLY from `holding_days`-based duration
+metrics, same as every prior module. ROI requires a positive acquisition
+value. Zero-assigned and unknown acquisition values remain visible in
+coverage but excluded from positive-value-band performance rows and
+ROI. Missing brand (`brand_name` NULL/blank) groups under "Unknown
+brand"; missing category/type (`category_id`/`type_id` NULL) are never
+dropped — GROUP BY keeps the NULL group visible; two Types sharing a
+name under different Categories are never merged. Additive totals
+return 0 for an empty group; medians, percentiles, ROI, and durations
+remain `NULL` when no valid sample exists. Brand-level confidence uses
+the dual sample/realized tiering from `03_brand_performance.sql`;
+Category/Type confidence uses the single realized-item-count tiering
+from `08_category_type_performance.sql` (unchanged from each source
+file's own convention).
+
+**`v2.4` is now the production analytics version.** `runAnalytics.ts`
+calls `build_analytics_snapshot_v2_4` for every new run (`ANALYTICS_
+VERSION = '2.4'`). `v1.0`-`v1.8` and `v2.0`-`v2.3` remain independently
+callable and every previously stored `analytics_runs.snapshot` row
+remains readable — a forward version bump, not a rewrite of history. The
+Analytics page's "Shared Inventory Segmentation Evidence" and "Target
+User Inventory Segmentation Evidence" collapsible sections use the same
+JSON/Copy JSON pattern as every prior section.

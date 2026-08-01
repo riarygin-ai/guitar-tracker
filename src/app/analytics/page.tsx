@@ -420,7 +420,7 @@ export default function AnalyticsPage() {
             ) : (
               <>
                 {/* v2.0+ sections — present on the current production shape
-                    (build_analytics_snapshot_v2_3 and its v2.0-v2.2 ancestors).
+                    (build_analytics_snapshot_v2_4 and its v2.0-v2.3 ancestors).
                     Absent on older stored v1.0-v1.8 runs. */}
                 {selectedSnapshot.shared_purpose_evidence && (
                   <CollapsibleSection title="Shared Purpose Evidence">
@@ -445,6 +445,16 @@ export default function AnalyticsPage() {
                 {selectedSnapshot.target_user_acquisition_evidence && (
                   <CollapsibleSection title="Target User Acquisition Evidence">
                     <JsonBlock value={selectedSnapshot.target_user_acquisition_evidence} />
+                  </CollapsibleSection>
+                )}
+                {selectedSnapshot.shared_inventory_segmentation_evidence && (
+                  <CollapsibleSection title="Shared Inventory Segmentation Evidence">
+                    <JsonBlock value={selectedSnapshot.shared_inventory_segmentation_evidence} />
+                  </CollapsibleSection>
+                )}
+                {selectedSnapshot.target_user_inventory_segmentation_evidence && (
+                  <CollapsibleSection title="Target User Inventory Segmentation Evidence">
+                    <JsonBlock value={selectedSnapshot.target_user_inventory_segmentation_evidence} />
                   </CollapsibleSection>
                 )}
 

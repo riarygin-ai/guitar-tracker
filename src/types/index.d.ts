@@ -350,13 +350,13 @@ export interface InventorySearchItem extends InventoryItem {
   item_subtype_name: string | null;
 }
 
-// ─── Analytics (Phase 2 Step 4, promoted to v2.2 — see analytics/README.md) ────
+// ─── Analytics (Phase 2 Step 4, promoted to v2.4 — see analytics/README.md) ────
 // Mirrors public.analytics_runs columns (supabase/migrations/20260727000000_
 // analytics_runs.sql). AnalyticsSnapshot covers BOTH shapes ever persisted
 // into analytics_runs.snapshot: the v1.0-v1.8 shape (evidence_aggregates/
 // recommendation_candidates/target_user_evidence) and the v2.0+ shape
 // (purpose_semantics/shared_purpose_evidence/target_user_purpose_evidence/
-// target_user_open_inventory_evidence) that build_analytics_snapshot_v2_2
+// target_user_open_inventory_evidence) that build_analytics_snapshot_v2_4
 // (the current production version) actually returns. Every version-specific
 // field is optional so old stored runs of EITHER shape remain readable —
 // see analytics/SEMANTIC_CONTRACT.md for the authoritative field-level
@@ -414,14 +414,16 @@ export interface AnalyticsSnapshot {
   };
 
   // ── v2.0+ shape — absent on v1.0-v1.8 stored snapshots ──────────────────
-  // build_analytics_snapshot_v2_3 (the current production version, section
-  // 26) is a clean, independent contract — no evidence_aggregates/
+  // build_analytics_snapshot_v2_4 (the current production version, section
+  // 27) is a clean, independent contract — no evidence_aggregates/
   // recommendation_candidates/recommendation_target_user_id field exists
   // in a v2.x payload. shared_purpose_evidence / shared_acquisition_
-  // evidence pool every user's items (aggregate only, no item identity);
-  // target_user_purpose_evidence / target_user_open_inventory_evidence /
-  // target_user_acquisition_evidence are restricted to the snapshot's own
-  // target user — see analytics/SEMANTIC_CONTRACT.md sections 22-26.
+  // evidence / shared_inventory_segmentation_evidence pool every user's
+  // items (aggregate only, no item identity); target_user_purpose_
+  // evidence / target_user_open_inventory_evidence / target_user_
+  // acquisition_evidence / target_user_inventory_segmentation_evidence are
+  // restricted to the snapshot's own target user — see
+  // analytics/SEMANTIC_CONTRACT.md sections 22-27.
   purpose_semantics?:                    string;
   shared_purpose_evidence?:              Record<string, unknown>;
   target_user_purpose_evidence?:         Record<string, unknown>;
@@ -430,5 +432,9 @@ export interface AnalyticsSnapshot {
   // v2.0-v2.2 stored snapshots, so optional here.
   shared_acquisition_evidence?:          Record<string, unknown>;
   target_user_acquisition_evidence?:     Record<string, unknown>;
+  // Added in Snapshot v2.4 (Inventory Segmentation) — absent on older
+  // v2.0-v2.3 stored snapshots, so optional here.
+  shared_inventory_segmentation_evidence?:        Record<string, unknown>;
+  target_user_inventory_segmentation_evidence?:   Record<string, unknown>;
   module_limitations?:                   string[];
 }

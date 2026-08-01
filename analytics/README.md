@@ -914,7 +914,7 @@ again; `v2.2` itself remains unaffected and independently callable.
 See `analytics/sql/13_hybrid_reason_code_correction_v2_2.sql` and
 `analytics/SEMANTIC_CONTRACT.md` section 25 for the full contract.
 
-## Analytics Snapshot v2.3 (Acquisition Economics) — PRODUCTION
+## Analytics Snapshot v2.3 (Acquisition Economics)
 
 `public.build_analytics_snapshot_v2_3(p_target_user_id int)`
 (`supabase/migrations/20260814000000_build_analytics_snapshot_v2_3.sql`)
@@ -952,22 +952,78 @@ reading every Purpose instead of Business only.
   `holding_days`-based duration metrics, unchanged from every prior
   module.
 
-**`v2.3` is now the production analytics version.** `src/lib/analytics/
-runAnalytics.ts` calls `build_analytics_snapshot_v2_3` for every new run
-(`ANALYTICS_VERSION = '2.3'`). `POST /api/analytics/runs` is unchanged in
-every other respect: authenticates the request, resolves `app_users.id`
-from the session, uses a service-role client only server-side, always
-targets the authenticated caller's own resolved id, sanitizes errors,
-and follows the same `pending -> running -> completed/failed` lifecycle.
-The Analytics page's "Shared Acquisition Evidence" and "Target User
-Acquisition Evidence" collapsible sections use the same JSON/Copy JSON
-pattern as every earlier section. Previously stored v1.8/v2.0/v2.1/v2.2
-runs remain readable in run history unchanged; `v1.0`-`v1.8` and
-`v2.0`-`v2.2` all remain independently callable.
+**`v2.3` was the production analytics version at this step.** As of v2.4
+(below), the production runner has been promoted again; `v2.3` itself
+remains unaffected and independently callable.
 
 See `analytics/sql/14_acquisition_value_band_performance_v2.sql`,
 `analytics/sql/15_acquisition_to_exit_analysis_v2.sql`, and
 `analytics/SEMANTIC_CONTRACT.md` section 26 for the full contract.
+
+## Analytics Snapshot v2.4 (Inventory Segmentation) — PRODUCTION
+
+`public.build_analytics_snapshot_v2_4(p_target_user_id int)`
+(`supabase/migrations/20260815000000_build_analytics_snapshot_v2_4.sql`)
+calls `build_analytics_snapshot_v2_3` wholesale (unchanged) and adds two
+new top-level sections, `shared_inventory_segmentation_evidence` and
+`target_user_inventory_segmentation_evidence`, each containing
+`brand_performance` and `category_type_performance` — Purpose-aware v2
+ports of `analytics/sql/03_brand_performance.sql` and
+`analytics/sql/08_category_type_performance.sql`, reading every Purpose
+instead of Business only.
+
+**What's new:**
+
+- **Every Purpose, produced twice**: each section is computed once
+  pooled across all Purposes, and once broken down by `(current_purpose_
+  id, current_purpose_name, purpose_policy_status)`, using the same
+  missing-purpose/missing-policy collapsing rule as every prior v2
+  module.
+- **Brand Performance**: `population_summary` / `purpose_population_
+  summary`, `performance_by_brand` / `*_by_purpose` (with a
+  `decision_ready` flag replacing the source file's separate
+  "decision-ready" duplicate query), `performance_by_brand_and_
+  acquisition_band` / `*_by_purpose`, `open_inventory_by_brand` /
+  `*_by_purpose` (listed and unlisted inventory merged via a
+  `listing_status` field), `capital_concentration_by_brand` /
+  `*_by_purpose`.
+- **Category & Type Performance**: `population_summary` / `purpose_
+  population_summary`, `performance_by_category` / `*_by_purpose`,
+  `performance_by_category_type` / `*_by_purpose`, `performance_by_
+  category_and_acquisition_band` / `*_by_purpose`, `performance_by_
+  category_type_and_acquisition_band` / `*_by_purpose`,
+  `open_inventory_by_category_type` / `*_by_purpose` — all six of
+  `08_category_type_performance.sql`'s queries are self-classified
+  production evidence, so all six are ported.
+- **A deliberate subset of Brand Performance** — the brand coverage
+  histogram, the brands lookup-table data-quality audit, brand x
+  acquisition method, the historical-vs-app-tracked cohort comparison,
+  and the per-user/item-level drilldowns are not ported (production
+  evidence redundant with what's already exposed, or developer-only
+  diagnostics — see the migration file's own header for the full
+  rationale).
+- Historical Imports participate fully in acquisition value, exit
+  value, profit, ROI, brand, category, and type evidence; excluded only
+  from `holding_days`-based duration metrics, unchanged from every prior
+  module.
+
+**`v2.4` is now the production analytics version.** `src/lib/analytics/
+runAnalytics.ts` calls `build_analytics_snapshot_v2_4` for every new run
+(`ANALYTICS_VERSION = '2.4'`). `POST /api/analytics/runs` is unchanged in
+every other respect: authenticates the request, resolves `app_users.id`
+from the session, uses a service-role client only server-side, always
+targets the authenticated caller's own resolved id, sanitizes errors,
+and follows the same `pending -> running -> completed/failed` lifecycle.
+The Analytics page's "Shared Inventory Segmentation Evidence" and
+"Target User Inventory Segmentation Evidence" collapsible sections use
+the same JSON/Copy JSON pattern as every earlier section. Previously
+stored v1.8/v2.0/v2.1/v2.2/v2.3 runs remain readable in run history
+unchanged; `v1.0`-`v1.8` and `v2.0`-`v2.3` all remain independently
+callable.
+
+See `analytics/sql/16_brand_performance_v2.sql`,
+`analytics/sql/17_category_type_performance_v2.sql`, and
+`analytics/SEMANTIC_CONTRACT.md` section 27 for the full contract.
 
 ## Conventions
 
