@@ -1853,11 +1853,101 @@ distinct throughout. Confidence is tiered from the row's own item count
 single-tier convention `04`/`05`/`06` already use, not Brand
 Performance's dual sample/realized tiering.
 
-**`v2.5` is now the production analytics version.** `runAnalytics.ts`
-calls `build_analytics_snapshot_v2_5` for every new run (`ANALYTICS_
-VERSION = '2.5'`). `v1.0`-`v1.8` and `v2.0`-`v2.4` remain independently
+**`v2.5` was the production analytics version at this step.** `runAnalytics.ts`
+called `build_analytics_snapshot_v2_5` for every new run (`ANALYTICS_
+VERSION = '2.5'`). `v1.0`-`v1.8` and `v2.0`-`v2.4` remained independently
 callable and every previously stored `analytics_runs.snapshot` row
-remains readable — a forward version bump, not a rewrite of history. The
+remained readable — a forward version bump, not a rewrite of history. The
 Analytics page's "Shared Deal Channel Evidence" and "Target User Deal
 Channel Evidence" collapsible sections use the same JSON/Copy JSON
-pattern as every prior section.
+pattern as every prior section. See section 29 for the next production
+promotion.
+
+## 29. Listing Channel Exposure (v2.6) and fifth production promotion
+
+`public.build_analytics_snapshot_v2_6(p_target_user_id int)`
+(`supabase/migrations/20260817000000_build_analytics_snapshot_v2_6.sql`)
+calls `build_analytics_snapshot_v2_5` wholesale and adds two new
+top-level sections, `shared_listing_channel_evidence` and `target_user_
+listing_channel_evidence`, each containing `population_summary`,
+`performance_by_listing_channel`, `cross_listing_summary`, `listing_to_
+deal_out`, `open_inventory_by_listing_channel`, and `open_unlisted_
+summary` — a Purpose-aware v2 port of `07_listing_channel_exposure.sql`
+(see its v2 port `analytics/sql/21_listing_channel_exposure_v2.sql`).
+Every prior v2.5 section (`shared_purpose_evidence`, `target_user_
+purpose_evidence`, `target_user_open_inventory_evidence`, `shared_
+acquisition_evidence`, `target_user_acquisition_evidence`, `shared_
+inventory_segmentation_evidence`, `target_user_inventory_segmentation_
+evidence`, `shared_deal_channel_evidence`, `target_user_deal_channel_
+evidence`, `module_limitations`) is preserved unchanged; `v2.5` itself,
+and every `v1.x`/`v2.0`-`v2.4` builder, are untouched and remain
+independently callable. Deal In Channel, Deal Out Channel, Channel
+Journey, Capital & Liquidity, and Open Inventory Decision Support are
+not touched by this migration.
+
+**Every Purpose, not Business-only.** Same rule as every prior v2
+module: the population is `analytics_item_lifecycle_v2`'s full
+population — Business, Hybrid, Personal, `missing_purpose`,
+`missing_policy` — never filtered by Purpose, and Purpose is never
+presented as Purpose at listing time or Purpose at exit. Every section
+is produced twice: pooled across all Purposes, and broken down by
+`(current_purpose_id, current_purpose_name, purpose_policy_status)`
+using the same missing-purpose/missing-policy collapsing rule
+established in section 22.
+
+**Scope decision — all six v1 queries ported in full.**
+`07_listing_channel_exposure.sql`'s own "QUERY CLASSIFICATION INDEX"
+self-classifies every one of its six queries as shared aggregate
+evidence — none are developer-only diagnostics. All six are therefore
+ported in full: `population_summary`, `performance_by_listing_channel`,
+`cross_listing_summary` (a special shape — scalar fields alongside a
+nested `buckets` array, not a plain array like every other section),
+`listing_to_deal_out`, `open_inventory_by_listing_channel`, and `open_
+unlisted_summary`.
+
+**Listing-platform eligibility rule (reused verbatim from v1, no new
+flag introduced).** An `item_listings` row is an eligible listing record
+only if its `deal_channels.is_listing_platform = true` (the existing,
+already-normalized flag distinguishing Marketplace/Kijiji/Reverb from
+Regular Buyer/Seller, a relationship channel) AND `listed_at IS NOT
+NULL`. Multiple `item_listings` rows for the same (item, channel) pair
+collapse into ONE canonical exposure row — never double-counted.
+
+**Cross-listing is non-mutually-exclusive.** One item may have canonical
+exposure on more than one Listing Channel. `performance_by_listing_
+channel`, `listing_to_deal_out`, and `open_inventory_by_listing_channel`
+are EXPOSURE-LEVEL — a cross-listed item appears in multiple rows across
+those sections, and their item counts must never be summed across
+channels and compared to a unique item total. Only `population_summary`
+and `cross_listing_summary` report unique item counts. A sale or profit
+is never attributed exclusively to one listing platform when multiple
+platforms exposed the same item.
+
+**Limitation: no active/inactive listing-state column (reused verbatim
+from v1).** `item_listings` has no active/current-state column —
+publication is determined solely by `listed_at IS NOT NULL`. There is no
+`unlisted_at`/`delisted_at`/`is_active` column anywhere in this schema.
+CURRENT/ACTIVE listing exposure therefore means an OPEN item with at
+least one eligible listing record — there is no way, with today's
+schema, to distinguish "still actively listed" from "was listed once,
+no longer promoted, but no delisting event was ever recorded." This
+module never infers a confirmed sale from a listing merely disappearing
+or becoming inactive.
+
+**Semantics preserved from v1.** Historical Imports remain eligible for
+listing/DOM evidence wherever a listing date is known — excluded ONLY
+from holding/ownership-age metrics, same as every prior module. ROI
+requires a positive acquisition value. Zero-assigned and unknown
+acquisition values remain visible in coverage. "Same channel" (`listing_
+channel_id = deal_out_channel_id`) remains descriptive exposure/path
+evidence only, never a conversion rate. `listing_to_deal_out` is
+explicitly NOT a mutually exclusive journey matrix.
+
+**`v2.6` is now the production analytics version.** `runAnalytics.ts`
+calls `build_analytics_snapshot_v2_6` for every new run (`ANALYTICS_
+VERSION = '2.6'`). `v1.0`-`v1.8` and `v2.0`-`v2.5` remain independently
+callable and every previously stored `analytics_runs.snapshot` row
+remains readable — a forward version bump, not a rewrite of history. The
+Analytics page's "Shared Listing Channel Evidence" and "Target User
+Listing Channel Evidence" collapsible sections use the same JSON/Copy
+JSON pattern as every prior section.

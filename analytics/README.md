@@ -1015,7 +1015,7 @@ See `analytics/sql/16_brand_performance_v2.sql`,
 `analytics/sql/17_category_type_performance_v2.sql`, and
 `analytics/SEMANTIC_CONTRACT.md` section 27 for the full contract.
 
-## Analytics Snapshot v2.5 (Deal Channel Performance) — PRODUCTION
+## Analytics Snapshot v2.5 (Deal Channel Performance)
 
 `public.build_analytics_snapshot_v2_5(p_target_user_id int)`
 (`supabase/migrations/20260816000000_build_analytics_snapshot_v2_5.sql`)
@@ -1060,23 +1060,75 @@ Business only.
   channel is available; excluded only from `holding_days`-based duration
   metrics, unchanged from every prior module.
 
-**`v2.5` is now the production analytics version.** `src/lib/analytics/
-runAnalytics.ts` calls `build_analytics_snapshot_v2_5` for every new run
-(`ANALYTICS_VERSION = '2.5'`). `POST /api/analytics/runs` is unchanged in
-every other respect: authenticates the request, resolves `app_users.id`
-from the session, uses a service-role client only server-side, always
-targets the authenticated caller's own resolved id, sanitizes errors,
-and follows the same `pending -> running -> completed/failed` lifecycle.
-The Analytics page's "Shared Deal Channel Evidence" and "Target User
-Deal Channel Evidence" collapsible sections use the same JSON/Copy JSON
-pattern as every earlier section. Previously stored v1.8/v2.0/v2.1/v2.2/
-v2.3/v2.4 runs remain readable in run history unchanged; `v1.0`-`v1.8`
-and `v2.0`-`v2.4` all remain independently callable.
+**`v2.5` was the production analytics version at this step.** As of v2.6
+(below), the production runner has been promoted again; `v2.5` itself
+remains unaffected and independently callable.
 
 See `analytics/sql/18_deal_in_channel_performance_v2.sql`,
 `analytics/sql/19_deal_out_channel_performance_v2.sql`,
 `analytics/sql/20_channel_journey_v2.sql`, and
 `analytics/SEMANTIC_CONTRACT.md` section 28 for the full contract.
+
+## Analytics Snapshot v2.6 (Listing Channel Exposure) — PRODUCTION
+
+`public.build_analytics_snapshot_v2_6(p_target_user_id int)`
+(`supabase/migrations/20260817000000_build_analytics_snapshot_v2_6.sql`)
+calls `build_analytics_snapshot_v2_5` wholesale (unchanged) and adds two
+new top-level sections, `shared_listing_channel_evidence` and `target_
+user_listing_channel_evidence`, a Purpose-aware v2 port of
+`analytics/sql/07_listing_channel_exposure.sql`, reading every Purpose
+instead of Business only. Deal In Channel, Deal Out Channel, Channel
+Journey, Capital & Liquidity, and Open Inventory Decision Support are
+not touched by this promotion.
+
+**What's new:**
+
+- **Every Purpose, produced twice**: each section is computed once
+  pooled across all Purposes, and once broken down by `(current_purpose_
+  id, current_purpose_name, purpose_policy_status)`, using the same
+  missing-purpose/missing-policy collapsing rule as every prior v2
+  module. Current Purpose is never presented as Purpose at listing or
+  exit time.
+- **Listing Channel Exposure**: `population_summary` / `purpose_
+  population_summary` (unique item counts), `performance_by_listing_
+  channel` / `*_by_purpose` (exposure-level), `cross_listing_summary` /
+  `*_by_purpose` (unique item counts, a special shape — scalar fields
+  alongside a nested `buckets` array), `listing_to_deal_out` /
+  `*_by_purpose` (exposure associations, not a mutually-exclusive
+  matrix), `open_inventory_by_listing_channel` / `*_by_purpose`
+  (exposure-level), `open_unlisted_summary` / `*_by_purpose`.
+- **All six v1 queries ported in full** — `07_listing_channel_exposure.
+  sql` self-classifies every query as production evidence, so nothing
+  was omitted.
+- **Listing-platform eligibility rule reused verbatim**: an
+  `item_listings` row is eligible only if its `deal_channels.is_
+  listing_platform = true` (the existing, already-normalized flag) and
+  `listed_at IS NOT NULL` — no new flag or hardcoded platform list was
+  introduced.
+- **Cross-listing is non-mutually-exclusive**: exposure-level sections
+  let a cross-listed item appear in multiple channel rows; only
+  `population_summary` and `cross_listing_summary` report unique item
+  counts. A sale or profit is never attributed exclusively to one
+  listing platform when multiple platforms exposed the same item.
+- Historical Imports remain eligible for listing/DOM evidence wherever a
+  listing date is known; excluded only from holding/ownership-age
+  metrics, unchanged from every prior module.
+
+**`v2.6` is now the production analytics version.** `src/lib/analytics/
+runAnalytics.ts` calls `build_analytics_snapshot_v2_6` for every new run
+(`ANALYTICS_VERSION = '2.6'`). `POST /api/analytics/runs` is unchanged in
+every other respect: authenticates the request, resolves `app_users.id`
+from the session, uses a service-role client only server-side, always
+targets the authenticated caller's own resolved id, sanitizes errors,
+and follows the same `pending -> running -> completed/failed` lifecycle.
+The Analytics page's "Shared Listing Channel Evidence" and "Target User
+Listing Channel Evidence" collapsible sections use the same JSON/Copy
+JSON pattern as every earlier section. Previously stored v1.8/v2.0/v2.1/
+v2.2/v2.3/v2.4/v2.5 runs remain readable in run history unchanged;
+`v1.0`-`v1.8` and `v2.0`-`v2.5` all remain independently callable.
+
+See `analytics/sql/21_listing_channel_exposure_v2.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 29 for the full contract.
 
 ## Conventions
 
