@@ -1170,7 +1170,7 @@ readable unchanged.
 See `analytics/sql/22_capital_liquidity_v2.sql` and
 `analytics/SEMANTIC_CONTRACT.md` section 30 for the full contract.
 
-## Analytics Snapshot v2.8 (Calendar & Seasonality) — PRODUCTION
+## Analytics Snapshot v2.8 (Calendar & Seasonality)
 
 `public.build_analytics_snapshot_v2_8(p_target_user_id int)`
 (`supabase/migrations/20260819000000_build_analytics_snapshot_v2_8.sql`)
@@ -1224,22 +1224,84 @@ Coach, forecasting, recommendations, external market data.
   size/contributing-year support, no forecast, no causal claim, no
   item-level row, no AI-generated prose anywhere in this module.
 
-**`v2.8` is now the production analytics version.** `src/lib/analytics/
-runAnalytics.ts` calls `build_analytics_snapshot_v2_8` for every new run
-(`ANALYTICS_VERSION = '2.8'`). `POST /api/analytics/runs` is unchanged in
-every other respect: authenticates the request, resolves `app_users.id`
-from the session, uses a service-role client only server-side, always
-targets the authenticated caller's own resolved id, sanitizes errors,
-and follows the same `pending -> running -> completed/failed` lifecycle.
-The Analytics page's "Shared Calendar & Seasonality Evidence" and
-"Target User Calendar & Seasonality Evidence" collapsible sections use
-the same JSON/Copy JSON pattern as every earlier section — this task
-does not redesign the Analytics page or add charts. Previously stored
-v1.8/v2.0-v2.7 runs remain readable in run history unchanged; `v1.0`-
-`v1.8` and `v2.0`-`v2.7` all remain independently callable.
+**`v2.8` was the production analytics version at this step.** As of v2.9
+(below), the production runner has been promoted again; `v2.8` itself
+remains independently callable and every stored `v2.8` run remains
+readable unchanged.
 
 See `analytics/sql/23_calendar_seasonality_v2.sql` and
 `analytics/SEMANTIC_CONTRACT.md` section 31 for the full contract.
+
+## Analytics Snapshot v2.9 (Calendar Observation Coverage & Confidence Correction) — PRODUCTION
+
+`public.build_analytics_snapshot_v2_9(p_target_user_id int)`
+(`supabase/migrations/20260820000000_build_analytics_snapshot_v2_9.sql`)
+calls `build_analytics_snapshot_v2_8` wholesale (unchanged) and MERGES a
+coverage-aware correction onto v2.8's own `shared_calendar_seasonality_
+evidence` / `target_user_calendar_seasonality_evidence` objects — same
+key names, not new sections. A focused correction, not a new module: v2.8
+treated a calendar year's mere existence as proof the whole year had been
+observed, so an isolated old event followed by a long tracking gap made
+pre-tracking zero months look like genuine observed zeros, and
+seasonality confidence could read "stronger" even when most observations
+came from a single year.
+
+**What's new:**
+
+- **`public.analytics_observation_coverage`** (new table): one optional
+  row per `app_users.id` recording the date from which a user's inventory
+  tracking is known COMPLETE (`complete_history_start_date`,
+  `coverage_status` `confirmed`/`estimated`/`unknown`). No existing field
+  in this schema recorded this — confirmed by a repository-wide search.
+  Never populated automatically from event dates; starts empty; `service_
+  role`-managed only (no settings UI, no authenticated grant at all —
+  stricter than `analytics_purpose_policy`'s reference-data model).
+- **Fully observed month definition**: `complete_history_start_date <=`
+  the first day of that month, EXCLUDING the current in-progress month
+  and any future month in the current year (always capped at `partial`
+  regardless of how early coverage began).
+- **`observation_coverage_summary`** (new field, both shared and
+  target-user evidence): fully-observed / partial / pre-coverage /
+  unknown-coverage user counts, as of the current month.
+- **`monthly_timeline` / `_by_purpose`**: unchanged event totals and
+  Historical Import behavior, plus a new per-row `coverage_status`
+  (`fully_observed`/`partial`/`pre_coverage`/`unknown_coverage`) so a
+  genuine zero is never confused with an untracked gap.
+- **`month_of_year_seasonality`**: confidence now gated by `fully_
+  observed_year_count` (from a coverage-year grid independent of events,
+  so a genuine zero-activity fully-observed year still counts) and by
+  `largest_year_event_share` — one dominating year caps confidence even
+  with a large total (`no_data`/`coverage_unknown`/`insufficient_years`/
+  `low`/`moderate`/`stronger`, `stronger` requiring `confirmed`-only
+  coverage). `month_of_year_seasonality_by_purpose` is explicitly out of
+  scope for this correction (emptied with a `_note`, rather than left
+  silently stale).
+- **`current_month_to_date_pace`**: prior years are comparable only when
+  `confirmed` coverage vouches for the same day-cutoff window; shared
+  evidence uses a per-year comparable-user cohort (never simple pooling
+  across users with different coverage dates) with a documented current-
+  population/prior-years-cohort asymmetry.
+- Historical Import semantics are completely unchanged — reliable
+  listing/exit/DOM stay eligible; unreliable acquisition stays excluded.
+
+**`v2.9` is now the production analytics version.** `src/lib/analytics/
+runAnalytics.ts` calls `build_analytics_snapshot_v2_9` for every new run
+(`ANALYTICS_VERSION = '2.9'`). `POST /api/analytics/runs` is unchanged in
+every other respect. The Analytics page's existing "Shared Calendar &
+Seasonality Evidence" and "Target User Calendar & Seasonality Evidence"
+collapsible sections automatically render the corrected content — no new
+section, no redesign, no charts. If production observation-coverage
+dates remain unconfigured, v2.9 is still safe to run: it honestly reports
+`coverage_unknown`/`insufficient_history` rather than overstating
+confidence. Previously stored v1.8/v2.0-v2.8 runs remain readable in run
+history unchanged; `v1.0`-`v1.8` and `v2.0`-`v2.8` all remain
+independently callable.
+
+See `analytics/sql/24_calendar_coverage_confidence_v2_9.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 32 for the full contract, and
+the operator configuration SQL template at the end of the v2.9 migration
+file for how to configure a user's coverage date after confirming it
+out-of-band.
 
 ## Conventions
 

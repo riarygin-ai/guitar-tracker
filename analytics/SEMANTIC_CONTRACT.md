@@ -2156,11 +2156,165 @@ items (aggregate only — no item identity, no row grouped by `user_id`).
 `target_user_calendar_seasonality_evidence` is filtered to `user_id =
 p_target_user_id` and is, like the shared section, aggregate only.
 
-**`v2.8` is now the production analytics version.** `runAnalytics.ts`
-calls `build_analytics_snapshot_v2_8` for every new run (`ANALYTICS_
-VERSION = '2.8'`). `v1.0`-`v1.8` and `v2.0`-`v2.7` remain independently
+**`v2.8` was the production analytics version before `v2.9` (see section
+32).** `v1.0`-`v1.8` and `v2.0`-`v2.7` remain independently callable and
+every previously stored `analytics_runs.snapshot` row remains readable —
+a forward version bump, not a rewrite of history. The Analytics page's
+"Shared Calendar & Seasonality Evidence" and "Target User Calendar &
+Seasonality Evidence" collapsible sections use the same JSON/Copy JSON
+pattern as every prior section.
+
+## 32. Calendar Observation Coverage & Confidence Correction (v2.9) and eighth production promotion
+
+`public.build_analytics_snapshot_v2_9(p_target_user_id int)`
+(`supabase/migrations/20260820000000_build_analytics_snapshot_v2_9.sql`)
+calls `build_analytics_snapshot_v2_8` wholesale and MERGES a coverage-
+aware correction onto v2.8's OWN `shared_calendar_seasonality_evidence` /
+`target_user_calendar_seasonality_evidence` objects (same key names,
+never new top-level snapshot keys) — a focused fix, not a new module. See
+`analytics/sql/24_calendar_coverage_confidence_v2_9.sql` for a standalone
+illustration of the corrected logic.
+
+**The bug.** v2.8 treated a calendar year's mere existence as proof the
+whole year had been observed. An isolated old event followed by a long
+tracking gap made pre-tracking zero months look like genuine observed
+zeros, and seasonality confidence could read `'stronger'` even when most
+observations came from a single year.
+
+**`public.analytics_observation_coverage` — new table, genuinely new
+concept.** A repository-wide search found no existing field recording
+when a user's inventory tracking became complete — `app_users` has no
+such column, no migration or import script defines one, and Historical
+Import's `acquisition_date` is an ITEM-level provenance flag, not a
+user-level completeness marker. One OPTIONAL row per `app_users.id`
+(`user_id` PK/FK, `complete_history_start_date date`, `coverage_status`
+`'confirmed'`/`'estimated'`/`'unknown'`, `notes`, timestamps). An absent
+row means `'unknown'` coverage — NEVER defaulted from the earliest
+acquisition/listing/exit/record-creation date, which would reintroduce
+the exact bug this migration fixes. `'confirmed'` requires the operator
+to have verified the date against an external fact; it is required for
+month-to-date comparability and the `'stronger'` seasonality tier.
+`'estimated'` is a best guess, sufficient to avoid false observed-zeros
+in `monthly_timeline`/`month_of_year_seasonality`, but never trusted
+enough for MTD or `'stronger'`. `'unknown'` requires `complete_history_
+start_date IS NULL` (enforced by a CHECK constraint). The table starts
+completely EMPTY; a human configures a row only after confirming the
+date out-of-band, using the SQL template at the end of the migration
+file. Security: no settings UI exists for this table in this task —
+ordinary authenticated users get NO grant at all (not even `SELECT`),
+matching `analytics_runs`' least-privilege pattern rather than
+`analytics_purpose_policy`'s authenticated-`SELECT`-all model, since this
+is per-user operational metadata, not shared reference data. `service_
+role` only, both an explicit `REVOKE` and RLS with zero policies.
+
+**Fully observed month definition.** For a user's coverage row and a
+reference calendar month (`month_start` = day 1 of that month):
+`'unknown_coverage'` when `coverage_status = 'unknown'` or no row exists;
+`'fully_observed'` when `complete_history_start_date <= month_start` —
+UNLESS `month_start` is the current, still-in-progress `America/Toronto`
+month or any future month within the current year, which is ALWAYS
+capped at `'partial'` regardless of how early coverage began (an
+in-progress month cannot yet be judged a completed observation);
+`'partial'` when `complete_history_start_date` falls strictly inside the
+month (day 1 of coverage makes that month fully observed; any later day
+makes it partial, with the NEXT month being the first fully observed
+one); `'pre_coverage'` when `complete_history_start_date` falls in some
+later month (this month entirely precedes coverage). A historical event
+before the coverage start remains visible as a real recorded event —
+only the surrounding ZERO interpretation is what changes.
+
+**Shared-scope cohort rule (deliberate, documented design choice).**
+Shared evidence pools users with different coverage-start dates. This
+module does NOT require unanimous coverage across every user who has
+ever had an item before trusting a period — that would let one late-
+onboarded user permanently poison every earlier calendar month for the
+whole pool. For `monthly_timeline` and `month_of_year_seasonality`, a
+period is `'fully_observed'` whenever ANY in-scope user's own coverage
+fully observes it (real event totals always come from ALL users
+regardless — never hidden); when no user fully observes a period, the
+label falls back to the most favorable status any user in the pool
+supports, so `'unknown_coverage'` is reported only when EVERY in-scope
+user is unknown for that period. For `current_month_to_date_pace`
+specifically, a STRICTER, PER-PRIOR-YEAR cohort applies instead: a prior
+year is "comparable" only when the SAME set of users can vouch for it
+with `coverage_status = 'confirmed'` specifically (not `'estimated'` —
+MTD is the highest-stakes comparison in this module, per this task's
+explicit "confirmed complete-history coverage" wording), and that year's
+event totals are summed ONLY over that year's comparable cohort — never
+the full population. The CURRENT month-to-date totals are always
+computed over the full current population (present-day activity is real
+regardless of any user's past coverage gaps); only PAST comparison years
+are cohort-restricted. This intentional current/prior-years asymmetry is
+a deliberate, documented scope decision, not a silent assumption.
+
+**Corrected `monthly_timeline` / `monthly_timeline_by_purpose`.** Same
+gap-filled range and event totals as v2.8 (Historical Import behavior
+unchanged), with a new `coverage_status` field per row (and per
+purpose-breakdown row) — `'fully_observed'`, `'partial'`, `'pre_
+coverage'`, or `'unknown_coverage'` — so a genuinely observed zero is
+never confused with an untracked gap. Purpose-breakdown sums continue to
+reconcile to pooled totals. Current Purpose remains current disposition
+only, never proven historical intent.
+
+**Corrected `month_of_year_seasonality` confidence.** Per event family
+(acquisition / first-listing / realized-exit), each of the 12 rows now
+exposes `total_event_count`, `active_year_count` (years with >=1 event),
+`fully_observed_year_count` and `fully_observed_confirmed_year_count`
+(confirmed-only, computed from a coverage-year grid independent of
+events, so a genuinely zero-activity fully-observed year is still
+counted), `zero_activity_fully_observed_year_count`, `largest_year_
+event_share`, and a `*_confidence` field. Rules (documented, and
+consistent with the repo-wide item-count confidence convention: `<=2`
+insufficient, `<=5` low, `<=9` moderate, `>=10` stronger):
+`'no_data'` (zero events, zero fully-observed years); `'coverage_
+unknown'` (events exist, but no year is fully observed by any in-scope
+user — coverage genuinely can't support a conclusion); `'insufficient_
+years'` (fewer than 2 fully-observed years); `'low'` (>=2 fully-observed
+years, but `total_event_count <= 5` OR the single largest year
+contributes more than 80% of all events — one-year domination caps
+confidence even with a large total); `'moderate'` (>=2 fully-observed
+years, `total_event_count >= 6`, largest-year share `<= 80%`);
+`'stronger'` (ALL of: >=3 fully-observed years using ONLY `'confirmed'`
+coverage — an `'estimated'`-only year never counts toward this tier, a
+material coverage limitation that caps confidence at `'moderate'` —
+`total_event_count >= 10`, >=2 active years, largest-year share `<=
+60%`). `month_of_year_seasonality_by_purpose` was explicitly OUT OF
+SCOPE for this correction (v2.8's version used the old, uncorrected
+logic) — rather than leave it silently stale next to the corrected
+pooled section, v2.9 replaces it with an empty array plus a `_note`
+field pointing readers to the pooled `month_of_year_seasonality`.
+
+**Corrected `current_month_to_date_pace`.** Same safe same-day cutoff and
+February/month-end handling as v2.8. Now exposes `candidate_prior_years_
+count`, `comparable_prior_years_count`, `active_comparable_year_count`,
+`excluded_pre_coverage_year_count`, `excluded_unknown_coverage_year_
+count`, per-year `comparable_user_count` inside `comparable_prior_years`,
+and an `excluded_prior_years` array (`{year, reason}`). `status` is
+`'sufficient_history'` when `comparable_prior_years_count >= 2`;
+`'coverage_unknown'` when no user in scope has ANY confirmed coverage
+configured at all; otherwise `'insufficient_history'`. A comparable prior
+year with genuine zero activity remains valid and stays zero — nonzero
+activity is never required for a fully observed year to count. Still
+descriptive only, never a forecast for the completed current month.
+
+**Historical Import semantics — unchanged.** Unreliable Historical Import
+acquisition dates remain excluded from acquisition calendar/holding
+metrics; reliable listing dates, reliable exit dates, and DOM remain
+eligible exactly as in v2.8. Event-date reliability and observation-
+period coverage are deliberately separate concepts — a reliable
+historical exit before complete tracking began is a valid recorded
+event, but it does not prove the rest of that month's activity was
+captured.
+
+**`v2.9` is now the production analytics version.** `runAnalytics.ts`
+calls `build_analytics_snapshot_v2_9` for every new run (`ANALYTICS_
+VERSION = '2.9'`). `v1.0`-`v1.8` and `v2.0`-`v2.8` remain independently
 callable and every previously stored `analytics_runs.snapshot` row
-remains readable — a forward version bump, not a rewrite of history. The
-Analytics page's "Shared Calendar & Seasonality Evidence" and "Target
-User Calendar & Seasonality Evidence" collapsible sections use the same
-JSON/Copy JSON pattern as every prior section.
+remains readable — a forward version bump, not a rewrite of history. If
+production observation-coverage dates remain unconfigured for a user,
+v2.9 is still safe to run — it honestly reports `'coverage_unknown'`/
+`'insufficient_history'` rather than overstating confidence. The
+Analytics page's existing "Shared Calendar & Seasonality Evidence" and
+"Target User Calendar & Seasonality Evidence" collapsible sections
+automatically render the corrected content — no new section, no
+redesign, no charts.

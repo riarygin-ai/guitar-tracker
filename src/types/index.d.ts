@@ -350,13 +350,13 @@ export interface InventorySearchItem extends InventoryItem {
   item_subtype_name: string | null;
 }
 
-// ─── Analytics (Phase 2 Step 4, promoted to v2.8 — see analytics/README.md) ────
+// ─── Analytics (Phase 2 Step 4, promoted to v2.9 — see analytics/README.md) ────
 // Mirrors public.analytics_runs columns (supabase/migrations/20260727000000_
 // analytics_runs.sql). AnalyticsSnapshot covers BOTH shapes ever persisted
 // into analytics_runs.snapshot: the v1.0-v1.8 shape (evidence_aggregates/
 // recommendation_candidates/target_user_evidence) and the v2.0+ shape
 // (purpose_semantics/shared_purpose_evidence/target_user_purpose_evidence/
-// target_user_open_inventory_evidence) that build_analytics_snapshot_v2_8
+// target_user_open_inventory_evidence) that build_analytics_snapshot_v2_9
 // (the current production version) actually returns. Every version-specific
 // field is optional so old stored runs of EITHER shape remain readable —
 // see analytics/SEMANTIC_CONTRACT.md for the authoritative field-level
@@ -453,7 +453,13 @@ export interface AnalyticsSnapshot {
   shared_capital_liquidity_evidence?:             Record<string, unknown>;
   target_user_capital_liquidity_evidence?:        Record<string, unknown>;
   // Added in Snapshot v2.8 (Calendar & Seasonality) — absent on older
-  // v2.0-v2.7 stored snapshots, so optional here.
+  // v2.0-v2.7 stored snapshots, so optional here. Since v2.9 (Calendar
+  // Observation Coverage & Confidence Correction), these same keys carry
+  // corrected content (observation_coverage_summary, coverage-aware
+  // monthly_timeline/month_of_year_seasonality/current_month_to_date_
+  // pace) — no new top-level snapshot key was added for the correction,
+  // so a v2.8-shaped stored run and a v2.9-shaped stored run both satisfy
+  // this same optional field.
   shared_calendar_seasonality_evidence?:          Record<string, unknown>;
   target_user_calendar_seasonality_evidence?:     Record<string, unknown>;
   module_limitations?:                   string[];

@@ -420,8 +420,11 @@ export default function AnalyticsPage() {
             ) : (
               <>
                 {/* v2.0+ sections — present on the current production shape
-                    (build_analytics_snapshot_v2_8 and its v2.0-v2.7 ancestors).
-                    Absent on older stored v1.0-v1.8 runs. */}
+                    (build_analytics_snapshot_v2_9 and its v2.0-v2.8 ancestors).
+                    Absent on older stored v1.0-v1.8 runs. Shared/Target
+                    Calendar & Seasonality Evidence below render whatever
+                    the stored run's version produced — v2.9 corrects the
+                    same section keys in place (no redesign, no charts). */}
                 {selectedSnapshot.shared_purpose_evidence && (
                   <CollapsibleSection title="Shared Purpose Evidence">
                     <JsonBlock value={selectedSnapshot.shared_purpose_evidence} />

@@ -86,7 +86,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_8
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_9
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -95,7 +95,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_8') {
+          if (name === 'build_analytics_snapshot_v2_9') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -115,7 +115,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_8') {
+          if (name === 'build_analytics_snapshot_v2_9') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -175,8 +175,8 @@ async function main() {
   // inside the JSON itself.
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '2.8',
-    analytics_definition_version: '2.8',
+    snapshot_schema_version: '2.9',
+    analytics_definition_version: '2.9',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     purpose_semantics: 'current_item_purpose',
@@ -251,7 +251,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_8', { p_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_9', { p_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -3273,11 +3273,13 @@ async function main() {
     check(`${fn} still callable by service_role after v2.8 migration`, !error, error);
   }
 
-  console.log('\n[v2.8 — production promotion]');
-  check('ANALYTICS_VERSION constant used by the production runner is now 2.8', ANALYTICS_VERSION === '2.8', ANALYTICS_VERSION);
-  const runA28 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new production run stores analytics_version 2.8', runA28.analytics_version === '2.8', runA28.analytics_version);
-  check('new production run snapshot.snapshot_schema_version is 2.8', (runA28.snapshot as any)?.snapshot_schema_version === '2.8', (runA28.snapshot as any)?.snapshot_schema_version);
+  // Note: at the point v2.8 was promoted, this section asserted the runner's
+  // ANALYTICS_VERSION was 2.8 specifically and created a fresh production
+  // run to check it. The runner has since been promoted again to v2.9 (see
+  // the "[v2.9 — production promotion]" section below) — that generic
+  // check already lives in the "[production runner — creates a completed
+  // run with the current ANALYTICS_VERSION]" block above, so it is not
+  // repeated here.
 
   console.log('\n[v2.8 — old stored runs remain readable]');
   const { data: oldRunReadBack28 } = await serviceClient
@@ -3286,6 +3288,208 @@ async function main() {
     'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.8 migration',
     oldRunReadBack28?.analytics_version === '1.8' && (oldRunReadBack28?.snapshot as any)?.snapshot_schema_version === '1.8',
     oldRunReadBack28,
+  );
+
+  // ── Analytics v2.9 — Calendar Observation Coverage & Confidence Correction + eighth production promotion ──
+  console.log('\n[v2.9 — analytics_observation_coverage: configure coverage for userA]');
+  const coverageStartA = new Date();
+  coverageStartA.setUTCFullYear(coverageStartA.getUTCFullYear() - 2);
+  coverageStartA.setUTCDate(1);
+  const coverageStartAIso = coverageStartA.toISOString().slice(0, 10);
+  const { error: coverageUpsertError } = await serviceClient
+    .from('analytics_observation_coverage')
+    .upsert({ user_id: userAId, complete_history_start_date: coverageStartAIso, coverage_status: 'confirmed', notes: 'test fixture' }, { onConflict: 'user_id' });
+  check('service_role can configure analytics_observation_coverage for userA', !coverageUpsertError, coverageUpsertError);
+
+  console.log('\n[v2.9 — analytics_observation_coverage: permissions]');
+  const { error: coverageAuthedSelectError } = await clientA.from('analytics_observation_coverage').select('*');
+  check('authenticated client cannot SELECT analytics_observation_coverage', !!coverageAuthedSelectError, coverageAuthedSelectError);
+  const { error: coverageAuthedUpsertError } = await clientA
+    .from('analytics_observation_coverage')
+    .upsert({ user_id: userBId, complete_history_start_date: '2020-01-01', coverage_status: 'confirmed' });
+  check('authenticated client cannot write another user\'s (or any) analytics_observation_coverage row', !!coverageAuthedUpsertError, coverageAuthedUpsertError);
+
+  console.log('\n[v2.9 — builder callable, top-level metadata, same section keys as v2.8]');
+  const { data: v29SnapshotA, error: v29ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v2_9', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_9 callable by service_role', !v29ErrorA, v29ErrorA);
+  check('v2.9 snapshot_schema_version is 2.9', v29SnapshotA?.snapshot_schema_version === '2.9', v29SnapshotA?.snapshot_schema_version);
+  check('v2.9 analytics_definition_version is 2.9', v29SnapshotA?.analytics_definition_version === '2.9', v29SnapshotA?.analytics_definition_version);
+  check(
+    'v2.9 reuses the SAME shared_calendar_seasonality_evidence / target_user_calendar_seasonality_evidence keys as v2.8 (no new top-level section)',
+    !!v29SnapshotA?.shared_calendar_seasonality_evidence && !!v29SnapshotA?.target_user_calendar_seasonality_evidence,
+    v29SnapshotA ? Object.keys(v29SnapshotA) : v29SnapshotA,
+  );
+
+  console.log('\n[v2.9 — every non-calendar v2.8 section is preserved unchanged]');
+  const { data: v28SnapshotForCompare } = await serviceClient.rpc('build_analytics_snapshot_v2_8', { p_target_user_id: userAId });
+  const nonCalendarKeys = Object.keys(v28SnapshotForCompare ?? {}).filter(
+    (k) => k !== 'shared_calendar_seasonality_evidence' && k !== 'target_user_calendar_seasonality_evidence'
+      && k !== 'snapshot_schema_version' && k !== 'analytics_definition_version' && k !== 'generated_at',
+  );
+  const nonCalendarUnchanged = nonCalendarKeys.every((k) => stableStringify((v29SnapshotA as any)?.[k]) === stableStringify((v28SnapshotForCompare as any)?.[k]));
+  check('every non-calendar v2.8 key is byte-identical inside v2.9 (stable-stringify)', nonCalendarUnchanged, nonCalendarKeys.filter((k) => stableStringify((v29SnapshotA as any)?.[k]) !== stableStringify((v28SnapshotForCompare as any)?.[k])));
+  const { data: v28SnapshotSecondCall } = await serviceClient.rpc('build_analytics_snapshot_v2_8', { p_target_user_id: userAId });
+  const { generated_at: _v28gen1, ...v28FirstWithoutTimestamp } = (v28SnapshotForCompare ?? {}) as Record<string, unknown>;
+  const { generated_at: _v28gen2, ...v28SecondWithoutTimestamp } = (v28SnapshotSecondCall ?? {}) as Record<string, unknown>;
+  check(
+    'v2.8 remains byte-identical (ignoring generated_at) after the v2.9 migration — v2.8 unaffected by v2.9 existing',
+    stableStringify(v28FirstWithoutTimestamp) === stableStringify(v28SecondWithoutTimestamp),
+  );
+
+  const v29Shared = v29SnapshotA?.shared_calendar_seasonality_evidence;
+  const v29Target = v29SnapshotA?.target_user_calendar_seasonality_evidence;
+
+  console.log('\n[v2.9 — observation_coverage_summary]');
+  const v29TargetCoverage = v29Target?.observation_coverage_summary;
+  check(
+    'target_user observation_coverage_summary resolves to exactly one user, now fully_observed (coverage was just configured above)',
+    v29TargetCoverage?.total_user_count === 1 && v29TargetCoverage?.fully_observed_user_count === 1,
+    v29TargetCoverage,
+  );
+  const v29SharedCoverage = v29Shared?.observation_coverage_summary;
+  check(
+    'shared observation_coverage_summary total_user_count >= target (pools every user)',
+    (v29SharedCoverage?.total_user_count ?? 0) >= (v29TargetCoverage?.total_user_count ?? 0),
+    { shared: v29SharedCoverage, target: v29TargetCoverage },
+  );
+  check(
+    'shared observation_coverage_summary counts sum to total_user_count',
+    (v29SharedCoverage?.fully_observed_user_count ?? 0) + (v29SharedCoverage?.partial_coverage_user_count ?? 0)
+      + (v29SharedCoverage?.pre_coverage_user_count ?? 0) + (v29SharedCoverage?.unknown_coverage_user_count ?? 0) === v29SharedCoverage?.total_user_count,
+    v29SharedCoverage,
+  );
+
+  console.log('\n[v2.9 — monthly_timeline: coverage_status present and valid, reconciles to purpose breakdown]');
+  const v29Monthly: any[] = v29Target?.monthly_timeline ?? [];
+  const validCoverageLabels = new Set(['fully_observed', 'partial', 'pre_coverage', 'unknown_coverage']);
+  check(
+    'every monthly_timeline row has a valid coverage_status label',
+    v29Monthly.every((m) => validCoverageLabels.has(m.coverage_status)),
+    v29Monthly.map((m) => m.coverage_status).filter((s) => !validCoverageLabels.has(s)),
+  );
+  check(
+    'the current (last) monthly_timeline row is never fully_observed (still in progress)',
+    v29Monthly.length === 0 || v29Monthly[v29Monthly.length - 1].coverage_status !== 'fully_observed',
+    v29Monthly[v29Monthly.length - 1],
+  );
+  const v29MonthlyByPurpose: any[] = v29Target?.monthly_timeline_by_purpose ?? [];
+  const v29MonthlySum = v29Monthly.reduce((sum, m) => sum + Number(m.reliable_acquisition_item_count ?? 0), 0);
+  const v29MonthlyByPurposeSum = v29MonthlyByPurpose.reduce((sum, m) => sum + Number(m.reliable_acquisition_item_count ?? 0), 0);
+  check(
+    'monthly_timeline_by_purpose reliable_acquisition_item_count sums to pooled monthly_timeline',
+    v29MonthlySum === v29MonthlyByPurposeSum,
+    { pooled: v29MonthlySum, byPurpose: v29MonthlyByPurposeSum },
+  );
+
+  console.log('\n[v2.9 — month_of_year_seasonality: valid confidence values, one-year-domination cap, out-of-scope by-purpose note]');
+  const v29Moy: any[] = v29Target?.month_of_year_seasonality ?? [];
+  check('month_of_year_seasonality has exactly 12 rows', v29Moy.length === 12, v29Moy.length);
+  const validConfidenceLabels = new Set(['no_data', 'coverage_unknown', 'insufficient_years', 'low', 'moderate', 'stronger']);
+  check(
+    'every month row uses a valid acquisition_confidence value',
+    v29Moy.every((m) => validConfidenceLabels.has(m.acquisition_confidence)),
+    v29Moy.map((m) => m.acquisition_confidence).filter((c) => !validConfidenceLabels.has(c)),
+  );
+  check(
+    'no month claims stronger/moderate acquisition_confidence when largest_year_event_share > 0.80 (one-year domination capped)',
+    v29Moy.every((m) => m.acquisition_largest_year_event_share === null || m.acquisition_largest_year_event_share <= 0.80 || (m.acquisition_confidence !== 'stronger' && m.acquisition_confidence !== 'moderate')),
+    v29Moy.filter((m) => m.acquisition_largest_year_event_share > 0.80 && (m.acquisition_confidence === 'stronger' || m.acquisition_confidence === 'moderate')),
+  );
+  check(
+    'no month claims stronger/moderate acquisition_confidence with fewer than 2 fully_observed years (insufficient_years enforced)',
+    v29Moy.every((m) => (m.acquisition_fully_observed_year_count ?? 0) >= 2 || (m.acquisition_confidence !== 'stronger' && m.acquisition_confidence !== 'moderate')),
+    v29Moy.filter((m) => (m.acquisition_fully_observed_year_count ?? 0) < 2 && (m.acquisition_confidence === 'stronger' || m.acquisition_confidence === 'moderate')),
+  );
+  check(
+    'month_of_year_seasonality_by_purpose is explicitly out of scope (empty array + note), never stale v2.8 data',
+    Array.isArray(v29Target?.month_of_year_seasonality_by_purpose) && v29Target.month_of_year_seasonality_by_purpose.length === 0 && typeof v29Target?.month_of_year_seasonality_by_purpose_note === 'string',
+    { arr: v29Target?.month_of_year_seasonality_by_purpose, note: v29Target?.month_of_year_seasonality_by_purpose_note },
+  );
+
+  console.log('\n[v2.9 — current_month_to_date_pace: valid status, no fabricated conclusions]');
+  const v29Mtd = v29Target?.current_month_to_date_pace;
+  const validMtdStatus = new Set(['coverage_unknown', 'insufficient_history', 'sufficient_history']);
+  check('current_month_to_date_pace.status is a valid value', validMtdStatus.has(v29Mtd?.status), v29Mtd?.status);
+  check(
+    'status is sufficient_history only when comparable_prior_years_count >= 2',
+    (v29Mtd?.status === 'sufficient_history') === ((v29Mtd?.comparable_prior_years_count ?? 0) >= 2),
+    v29Mtd,
+  );
+  check(
+    'prior_year_median/average/difference_vs_prior_median are null exactly when comparable_prior_years_count is 0',
+    (v29Mtd?.comparable_prior_years_count ?? 0) > 0 || (v29Mtd?.prior_year_median === null && v29Mtd?.prior_year_average === null && v29Mtd?.difference_vs_prior_median === null),
+    v29Mtd,
+  );
+  check(
+    'comparable_prior_years length matches comparable_prior_years_count, each with a comparable_user_count',
+    (v29Mtd?.comparable_prior_years ?? []).length === v29Mtd?.comparable_prior_years_count
+      && (v29Mtd?.comparable_prior_years ?? []).every((r: any) => typeof r.comparable_user_count === 'number' && r.comparable_user_count > 0),
+    v29Mtd?.comparable_prior_years,
+  );
+  check('current_month_to_date_pace note is descriptive, not a forecast claim', typeof v29Mtd?.note === 'string' && v29Mtd.note.toLowerCase().includes('not a forecast'), v29Mtd?.note);
+
+  console.log('\n[v2.9 — Historical Import semantics unchanged]');
+  const v29SharedSerialized = JSON.stringify(v29Shared);
+  check(
+    'shared_calendar_seasonality_evidence contains no recommendation/urgency/score/forecast/item_id/user_id fields',
+    !v29SharedSerialized.includes('"recommendation"') && !v29SharedSerialized.includes('"urgency"') && !v29SharedSerialized.includes('"score"')
+      && !v29SharedSerialized.includes('"forecast"') && !v29SharedSerialized.includes('"item_id"') && !v29SharedSerialized.includes('"user_id"'),
+  );
+
+  console.log('\n[v2.9 — target scope is a subset of shared scope]');
+  check(
+    "target_user monthly_timeline reliable_acquisition_item_count total is <= shared's pooled total",
+    v29MonthlySum <= (v29Shared?.monthly_timeline ?? []).reduce((sum: number, m: any) => sum + Number(m.reliable_acquisition_item_count ?? 0), 0),
+    { target: v29MonthlySum },
+  );
+
+  console.log('\n[v2.9 — permissions]');
+  const { error: v29AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_9', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_9 directly', !!v29AuthedError, v29AuthedError);
+  const { error: v29HelperAuthedError } = await clientA.rpc('_build_calendar_coverage_correction_v2_9', { p_target_user_id: userAId });
+  check('authenticated client cannot call _build_calendar_coverage_correction_v2_9 directly', !!v29HelperAuthedError, v29HelperAuthedError);
+  const { error: v29ForgedTargetError } = await clientA.rpc('build_analytics_snapshot_v2_9', { p_target_user_id: userBId });
+  check('authenticated client cannot invoke build_analytics_snapshot_v2_9 for a forged target user id either', !!v29ForgedTargetError, v29ForgedTargetError);
+
+  console.log('\n[v2.9 — old-version compatibility]');
+  const v29StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_0', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_1', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_2', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_3', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_4', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_5', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_6', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_7', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_8', { p_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v29StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.9 migration`, !error, error);
+  }
+
+  console.log('\n[v2.9 — production promotion]');
+  check('ANALYTICS_VERSION constant used by the production runner is now 2.9', ANALYTICS_VERSION === '2.9', ANALYTICS_VERSION);
+  const runA29 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new production run stores analytics_version 2.9', runA29.analytics_version === '2.9', runA29.analytics_version);
+  check('new production run snapshot.snapshot_schema_version is 2.9', (runA29.snapshot as any)?.snapshot_schema_version === '2.9', (runA29.snapshot as any)?.snapshot_schema_version);
+
+  console.log('\n[v2.9 — old stored runs remain readable]');
+  const { data: oldRunReadBack29 } = await serviceClient
+    .from('analytics_runs').select('analytics_version, snapshot').eq('id', syntheticOldRun!.id).single();
+  check(
+    'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.9 migration',
+    oldRunReadBack29?.analytics_version === '1.8' && (oldRunReadBack29?.snapshot as any)?.snapshot_schema_version === '1.8',
+    oldRunReadBack29,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);
