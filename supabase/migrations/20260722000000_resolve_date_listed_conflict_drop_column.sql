@@ -13,6 +13,20 @@ DECLARE
   v_resolved_count integer := 0;
   v_row            RECORD;
 BEGIN
+  -- On a database where 20260721000000 found zero unresolved conflicts (e.g.
+  -- a genuinely fresh/empty database), it already dropped date_listed itself
+  -- (see that migration's own step 3d) — nothing left for this follow-up to
+  -- do. Only production's specific historical conflict (item 174) required
+  -- this second migration; guard so a fresh database doesn't re-attempt work
+  -- already completed.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'inventory_items' AND column_name = 'date_listed'
+  ) THEN
+    RAISE NOTICE 'inventory_items.date_listed already dropped (no unresolved conflicts existed) — nothing to do.';
+    RETURN;
+  END IF;
+
   SELECT COUNT(*) INTO v_reverb_count FROM public.deal_channels WHERE name = 'Reverb';
   IF v_reverb_count <> 1 THEN
     RAISE EXCEPTION 'Expected exactly one ''Reverb'' deal_channels row, found %.', v_reverb_count;

@@ -19,33 +19,41 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // requires updating both this file and the database migrations together —
 // see the "duplicated logic" note in analytics/README.md.
 //
-// v2.9: new runs call build_analytics_snapshot_v2_9 (Calendar
-// Observation Coverage & Confidence Correction — merges a coverage-aware
-// correction on top of v2.8's OWN shared_calendar_seasonality_evidence /
-// target_user_calendar_seasonality_evidence objects, same key names, see
-// analytics/SEMANTIC_CONTRACT.md section 32). v2.9 wraps v2.8 wholesale
-// (which wraps v2.7, v2.6, v2.5, v2.4, v2.3, v2.2, v2.1, v2.0 in turn), so
-// every v2.x field already present remains present; this bump only
-// supersedes the calendar module's monthly_timeline(_by_purpose),
-// month_of_year_seasonality, and current_month_to_date_pace with
-// coverage-aware versions, and adds a new observation_coverage_summary
-// key — no new top-level section names beyond that. The RPC argument
-// name remains v2.x's `p_target_user_id` (not v1.x's `p_recommendation_
-// target_user_id`) — the target user is still always the caller's own
-// resolved app_users.id, enforced by the RPC argument this module
-// passes, never by a field inside the returned JSON. v1.0-v1.8 and
-// v2.0-v2.8 are completely unaffected and remain independently callable;
-// every previously stored analytics_runs.snapshot row (whichever version
-// it was created under) remains readable — this is a forward version
-// bump, not a rewrite of history. If production observation-coverage
-// dates remain unconfigured for a user, this is still safe to run — the
-// output honestly reports 'coverage_unknown'/'insufficient_history'
-// rather than overstating confidence.
-export const ANALYTICS_VERSION = '2.9';
+// v2.10: new runs call build_analytics_snapshot_v2_10 (Shared Calendar
+// Cohort Correction — a narrow follow-up to v2.9. v2.9 fixed TARGET-USER
+// calendar coverage but left two SHARED-scope cohort problems in place:
+// (1) a shared period counted as "fully_observed" whenever ANY in-scope
+// user's coverage observed it, letting one confirmed user vouch for
+// another's missing history; (2) current_month_to_date_pace compared the
+// FULL current population against a confirmed-cohort-restricted prior
+// year — two different populations. v2.10 merges a corrected shared
+// cohort logic on top of v2.9's OWN shared_calendar_seasonality_evidence
+// object, same key names, see analytics/SEMANTIC_CONTRACT.md section 33).
+// v2.10 wraps v2.9 wholesale (which wraps v2.8, v2.7, v2.6, v2.5, v2.4,
+// v2.3, v2.2, v2.1, v2.0 in turn), so every v2.x field already present
+// remains present; this bump only supersedes the shared calendar
+// module's monthly_timeline(_by_purpose), month_of_year_seasonality, and
+// current_month_to_date_pace with cohort-corrected versions — no new
+// top-level section names. target_user_calendar_seasonality_evidence is
+// NOT recomputed by v2.10 (a single-user scope cannot have a cross-user
+// vouching problem) and passes through from v2.9 unchanged. The RPC
+// argument name remains v2.x's `p_target_user_id` (not v1.x's
+// `p_recommendation_target_user_id`) — the target user is still always
+// the caller's own resolved app_users.id, enforced by the RPC argument
+// this module passes, never by a field inside the returned JSON.
+// v1.0-v1.8 and v2.0-v2.9 are completely unaffected and remain
+// independently callable; every previously stored analytics_runs.
+// snapshot row (whichever version it was created under) remains
+// readable — this is a forward version bump, not a rewrite of history.
+// If production observation-coverage dates remain unconfigured for a
+// user, this is still safe to run — the output honestly reports
+// 'coverage_unknown'/'insufficient_history' rather than overstating
+// confidence.
+export const ANALYTICS_VERSION = '2.10';
 export const EVIDENCE_SCOPE = 'shared_inventory_population';
-const SNAPSHOT_SCHEMA_VERSION = '2.9';
-const ANALYTICS_DEFINITION_VERSION = '2.9';
-const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_9';
+const SNAPSHOT_SCHEMA_VERSION = '2.10';
+const ANALYTICS_DEFINITION_VERSION = '2.10';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_10';
 
 // ── Types ────────────────────────────────────────────────────────────────
 

@@ -1232,7 +1232,7 @@ readable unchanged.
 See `analytics/sql/23_calendar_seasonality_v2.sql` and
 `analytics/SEMANTIC_CONTRACT.md` section 31 for the full contract.
 
-## Analytics Snapshot v2.9 (Calendar Observation Coverage & Confidence Correction) — PRODUCTION
+## Analytics Snapshot v2.9 (Calendar Observation Coverage & Confidence Correction)
 
 `public.build_analytics_snapshot_v2_9(p_target_user_id int)`
 (`supabase/migrations/20260820000000_build_analytics_snapshot_v2_9.sql`)
@@ -1284,24 +1284,120 @@ came from a single year.
 - Historical Import semantics are completely unchanged — reliable
   listing/exit/DOM stay eligible; unreliable acquisition stays excluded.
 
-**`v2.9` is now the production analytics version.** `src/lib/analytics/
-runAnalytics.ts` calls `build_analytics_snapshot_v2_9` for every new run
-(`ANALYTICS_VERSION = '2.9'`). `POST /api/analytics/runs` is unchanged in
-every other respect. The Analytics page's existing "Shared Calendar &
-Seasonality Evidence" and "Target User Calendar & Seasonality Evidence"
-collapsible sections automatically render the corrected content — no new
-section, no redesign, no charts. If production observation-coverage
-dates remain unconfigured, v2.9 is still safe to run: it honestly reports
-`coverage_unknown`/`insufficient_history` rather than overstating
-confidence. Previously stored v1.8/v2.0-v2.8 runs remain readable in run
-history unchanged; `v1.0`-`v1.8` and `v2.0`-`v2.8` all remain
-independently callable.
+**`v2.9` was the production analytics version at this step.** As of
+v2.10 (below), the production runner has been promoted again; `v2.9`
+itself remains independently callable and every stored `v2.9` run
+remains readable unchanged. If production observation-coverage dates
+remain unconfigured, v2.9 (and v2.10) are still safe to run: they
+honestly report `coverage_unknown`/`insufficient_history` rather than
+overstating confidence.
 
 See `analytics/sql/24_calendar_coverage_confidence_v2_9.sql` and
 `analytics/SEMANTIC_CONTRACT.md` section 32 for the full contract, and
 the operator configuration SQL template at the end of the v2.9 migration
 file for how to configure a user's coverage date after confirming it
 out-of-band.
+
+## Analytics Snapshot v2.10 (Shared Calendar Cohort Correction) — PRODUCTION
+
+`public.build_analytics_snapshot_v2_10(p_target_user_id int)`
+(`supabase/migrations/20260821000000_build_analytics_snapshot_v2_10.sql`)
+calls `build_analytics_snapshot_v2_9` wholesale (unchanged) and MERGES a
+shared-scope cohort correction onto v2.9's own `shared_calendar_
+seasonality_evidence` object — same key names, not a new section. A
+narrow follow-up to v2.9, not a new module: v2.9 correctly fixed
+TARGET-USER calendar coverage, but left two SHARED-scope cohort problems
+in place, both explicitly documented in v2.9's own header as deliberate
+scope decisions.
+
+**The two problems this corrects:**
+
+1. **One covered user vouched for the whole shared population.** v2.9's
+   shared `monthly_timeline` / `month_of_year_seasonality` called a
+   period "fully observed" whenever ANY in-scope user's coverage
+   observed it. If User 1 has confirmed coverage and User 2 is
+   pre-coverage or unknown, User 2's absent events were effectively read
+   as a confirmed zero.
+2. **Shared MTD compared different populations.** v2.9's shared
+   `current_month_to_date_pace` computed the CURRENT side over the full
+   population while restricting each PRIOR year to that year's confirmed
+   cohort — an apples-to-full-basket comparison, not a like-for-like one.
+
+**What's new:**
+
+- **`monthly_timeline` / `_by_purpose`**: unchanged recorded event totals
+  (every user, regardless of coverage — never hidden), plus new
+  explicitly-named `coverage_qualified_*` totals computed ONLY from users
+  with CONFIRMED full coverage for that month (`NULL`, never `0`, when
+  no user qualifies — an absent witness is never a confirmed zero). Each
+  row now also exposes `total_shared_user_count`, `fully_observed_
+  confirmed_user_count`, `partial_coverage_user_count`, `pre_coverage_
+  user_count`, `unknown_coverage_user_count`, `coverage_qualified_user_
+  count`, and a `shared_coverage_status` using the transparent vocabulary
+  `fully_observed` / `partially_observed` / `pre_coverage` / `unknown_
+  coverage` / `mixed_coverage` — `fully_observed` requires EVERY user in
+  scope to be confirmed-fully-observed, never just one.
+- **`month_of_year_seasonality`**: restructured onto independent
+  `(user, year, month_number)` observation units — a user-year-month
+  contributes to the denominator only when that SPECIFIC user has
+  confirmed coverage for that specific period; one user's confirmed
+  coverage never qualifies another user's cell. Each of the 12 rows now
+  exposes, per event family (acquisition/first-listing/realized-exit):
+  `*_recorded_event_count`, `*_coverage_qualified_event_count`, `*_fully_
+  observed_user_year_count`, `*_active_fully_observed_user_year_count`,
+  `*_zero_activity_fully_observed_user_year_count`, `*_confirmed_covered_
+  user_count`, `*_largest_user_year_event_share`, `*_confidence`
+  (`no_data`/`coverage_unknown`/`insufficient_years`/`low`/`moderate`/
+  `stronger`, `stronger` still requiring confirmed-only coverage and
+  balanced evidence — same conservative ladder as v2.9, generalized from
+  fully-observed YEARS to fully-observed USER-YEARS), and `*_limitations`
+  (a deterministic flag array, e.g. `SINGLE_USER_YEAR_DOMINATES`).
+- **`current_month_to_date_pace`**: `pairwise_comparisons` — one entry
+  per comparable prior year, each with its own `cohort_user_count`,
+  `excluded_pre_coverage_user_count`, `excluded_unknown_or_estimated_
+  user_count`, `current_cohort_metrics`, `prior_cohort_metrics`, and
+  `pairwise_difference` — current and prior are ALWAYS computed over the
+  exact same per-year confirmed cohort. A separately labeled
+  `full_population_current_month_to_date` is retained for descriptive
+  context only, never as a comparison side. `common_cohort_summary`
+  computes one honest median/average across every comparable year using
+  the cohort common to ALL of them (documented in `summary_rule`: by
+  monotonicity of `complete_history_start_date`, this common cohort
+  always equals the earliest comparable year's own cohort) — a pooled
+  summary is never presented across cohorts that actually differ.
+- Historical Import semantics are completely unchanged — reliable
+  listing/exit/DOM stay eligible; unreliable acquisition stays excluded;
+  a reliable historical event before complete coverage remains visible in
+  recorded totals but never proves the surrounding period was observed.
+- **`target_user_calendar_seasonality_evidence` is NOT recomputed** —
+  v2.9's target-user logic already evaluates one user's own coverage in
+  isolation, so the "one user vouches for another" and "different
+  populations" problems cannot occur in a single-user scope; it passes
+  through from v2.9 unchanged (no regression).
+
+**Production observation-coverage configuration.** The generic schema
+migration above contains no user-specific dates (kept safe to apply to
+any environment, including a disposable local stack). Production values
+are applied by a separate, explicit, idempotent data-fix script —
+`supabase/data-fixes/20260821_analytics_observation_coverage_v2_10.sql`
+(`INSERT ... ON CONFLICT (user_id) DO UPDATE`, run manually against the
+target database, `service_role`/`postgres` only — the table denies
+`anon`/`authenticated` all privileges, unchanged from v2.9):
+`app_users.id = 1` confirmed from `2025-11-01`; `app_users.id = 2`
+confirmed from `2026-03-01`.
+
+**`v2.10` is now the production analytics version.** `src/lib/analytics/
+runAnalytics.ts` calls `build_analytics_snapshot_v2_10` for every new run
+(`ANALYTICS_VERSION = '2.10'`). `POST /api/analytics/runs` is unchanged
+in every other respect. The Analytics page's existing "Shared Calendar &
+Seasonality Evidence" and "Target User Calendar & Seasonality Evidence"
+collapsible sections automatically render the corrected content — no new
+section, no redesign, no charts. Previously stored v1.8/v2.0-v2.9 runs
+remain readable in run history unchanged; `v1.0`-`v1.8` and `v2.0`-`v2.9`
+all remain independently callable.
+
+See `analytics/sql/25_shared_calendar_cohort_correction_v2_10.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 33 for the full contract.
 
 ## Conventions
 

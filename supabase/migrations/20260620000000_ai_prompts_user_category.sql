@@ -17,18 +17,40 @@ ALTER TABLE public.ai_prompts
   ADD COLUMN listing_type text;
 
 -- ── 2. Backfill existing rows → first admin user ──────────────────────────────
+-- Production already has an admin app_user at this point in its migration
+-- history, so this backfill behaves exactly as before there. A genuinely
+-- fresh/local database has no app_users yet, so these 3 rows (generic
+-- verbatim template prompts seeded by 20260614000001_ai_prompts.sql step 6,
+-- not real user data) have no real owner to assign. Rather than leave them
+-- with a NULL user_id (which would violate the NOT NULL constraint added
+-- below) or invent a fake user, they are removed instead — deleting
+-- boilerplate default-prompt seed rows is safe; nothing downstream depends
+-- on these specific rows existing, and any real user can regenerate their
+-- own per-category prompts from the app's own defaults later.
 
-UPDATE public.ai_prompts
-SET
-  user_id      = (SELECT id FROM public.app_users WHERE admin = true ORDER BY id LIMIT 1),
-  category     = 'Guitar',
-  listing_type = CASE prompt_key
-    WHEN 'listing_reverb'      THEN 'reverb'
-    WHEN 'listing_marketplace' THEN 'marketplace'
-    WHEN 'listing_kijiji'      THEN 'kijiji'
-    ELSE LOWER(REPLACE(COALESCE(prompt_key, ''), 'listing_', ''))
-  END
-WHERE user_id IS NULL;
+DO $$
+DECLARE
+  v_admin_id bigint;
+BEGIN
+  SELECT id INTO v_admin_id FROM public.app_users WHERE admin = true ORDER BY id LIMIT 1;
+
+  IF v_admin_id IS NULL THEN
+    RAISE NOTICE 'No admin app_user found — removing unowned legacy ai_prompts seed rows (fresh database).';
+    DELETE FROM public.ai_prompts WHERE user_id IS NULL;
+  ELSE
+    UPDATE public.ai_prompts
+    SET
+      user_id      = v_admin_id,
+      category     = 'Guitar',
+      listing_type = CASE prompt_key
+        WHEN 'listing_reverb'      THEN 'reverb'
+        WHEN 'listing_marketplace' THEN 'marketplace'
+        WHEN 'listing_kijiji'      THEN 'kijiji'
+        ELSE LOWER(REPLACE(COALESCE(prompt_key, ''), 'listing_', ''))
+      END
+    WHERE user_id IS NULL;
+  END IF;
+END $$;
 
 -- ── 3. FK + NOT NULL ──────────────────────────────────────────────────────────
 

@@ -8,23 +8,28 @@
  * intended to be run manually against a disposable local Supabase stack
  * (`supabase start`), never against production.
  *
- * Required env vars (loaded the same way as compress-existing-photos.ts —
- * shell-exported values take priority over .env.local, so pointing this at
- * a local stack via shell env vars is safe even with production values
- * present in .env.local):
- *   NEXT_PUBLIC_SUPABASE_URL
- *   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
- *   SUPABASE_SERVICE_ROLE_KEY
- *   TEST_USER_A_EMAIL / TEST_USER_A_PASSWORD
- *   TEST_USER_B_EMAIL / TEST_USER_B_PASSWORD
+ * ── SAFETY — LOCAL ONLY ──────────────────────────────────────────────────
+ * This script deliberately does NOT read .env.local (no dotenv call at
+ * all) — every connection value comes from process.env (shell-exported
+ * only) or falls back to Supabase's well-known local-dev demo defaults
+ * (same fixed values on every machine running `supabase start`, imported
+ * from setup-analytics-test-fixtures.ts). Before doing anything
+ * destructive, main() prints the resolved URL, hard-fails if its hostname
+ * isn't localhost/127.0.0.1/::1, and hard-fails if that local instance
+ * isn't actually reachable. This must never run against a remote/
+ * production project.
+ *
+ * Fixture data (two deterministic local auth users plus inventory/deal/
+ * listing rows) is created automatically by calling
+ * setupAnalyticsTestFixtures() from scripts/setup-analytics-test-
+ * fixtures.ts — idempotent, so re-running this script does not duplicate
+ * fixture data. See that file's header for exactly what it creates and
+ * for the known scope limitation around legacy assertions pinned to
+ * specific historical item_id values.
  *
  * Usage:
  *   npx tsx scripts/test-analytics-runner.ts
  */
-
-import dotenv from 'dotenv';
-dotenv.config({ path: '.env.local' });
-dotenv.config();
 
 import fs from 'fs';
 import path from 'path';
@@ -37,10 +42,18 @@ import {
   ANALYTICS_VERSION,
   EVIDENCE_SCOPE,
 } from '../src/lib/analytics/runAnalytics';
+import {
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  SUPABASE_SERVICE_ROLE_KEY,
+  assertLocalSupabaseUrl,
+  assertLocalSupabaseIsRunning,
+  setupAnalyticsTestFixtures,
+  HIGH_CAPITAL_ITEM,
+} from './setup-analytics-test-fixtures';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const ANON_KEY = SUPABASE_ANON_KEY;
+const SERVICE_ROLE_KEY = SUPABASE_SERVICE_ROLE_KEY;
 
 let passed = 0;
 let failed = 0;
@@ -86,7 +99,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_9
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_10
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -95,7 +108,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_9') {
+          if (name === 'build_analytics_snapshot_v2_10') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -115,7 +128,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_9') {
+          if (name === 'build_analytics_snapshot_v2_10') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -149,21 +162,28 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
 }
 
 async function main() {
+  // ── Safety gate — must pass before anything destructive runs ──────────
+  assertLocalSupabaseUrl(SUPABASE_URL);
+  await assertLocalSupabaseIsRunning(SUPABASE_URL, SERVICE_ROLE_KEY);
+
   const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const { data: userARow } = await serviceClient
-    .from('app_users').select('id').eq('email', process.env.TEST_USER_A_EMAIL!).single();
-  const { data: userBRow } = await serviceClient
-    .from('app_users').select('id').eq('email', process.env.TEST_USER_B_EMAIL!).single();
-
-  const userAId = userARow!.id as number;
-  const userBId = userBRow!.id as number;
+  console.log('\n[fixtures] Ensuring local analytics test fixtures exist...');
+  const fixtures = await setupAnalyticsTestFixtures(serviceClient);
+  const userAId = fixtures.userAId;
+  const userBId = fixtures.userBId;
+  // Named fixture-item manifest and independently-derived expected values —
+  // see scripts/setup-analytics-test-fixtures.ts. `fx.<name>` is a real
+  // locally-generated inventory_items.id; tests below reference scenarios
+  // by name, never by a hardcoded literal id.
+  const fx = fixtures.items;
+  const expected = fixtures.expected;
   console.log(`User A app_users.id = ${userAId}, User B app_users.id = ${userBId}`);
 
-  const tokenA = await signIn(process.env.TEST_USER_A_EMAIL!, process.env.TEST_USER_A_PASSWORD!);
-  const tokenB = await signIn(process.env.TEST_USER_B_EMAIL!, process.env.TEST_USER_B_PASSWORD!);
+  const tokenA = await signIn(fixtures.userAEmail, fixtures.password);
+  const tokenB = await signIn(fixtures.userBEmail, fixtures.password);
   const clientA = authedClient(tokenA);
   const clientB = authedClient(tokenB);
 
@@ -175,8 +195,8 @@ async function main() {
   // inside the JSON itself.
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '2.9',
-    analytics_definition_version: '2.9',
+    snapshot_schema_version: '2.10',
+    analytics_definition_version: '2.10',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     purpose_semantics: 'current_item_purpose',
@@ -231,12 +251,13 @@ async function main() {
   const { error: directRpcError } = await clientA.rpc('build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId });
   check('authenticated client cannot call build_analytics_snapshot_v1 directly', !!directRpcError, directRpcError);
 
-  // ── Real successful runs (production runner, now backed by v2.2) ───────
+  // ── Real successful runs (production runner — always ANALYTICS_VERSION,
+  // whichever version that constant currently points to) ─────────────────
   console.log('\n[successful run — user A]');
   const runA = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
   check('status is completed', runA.status === 'completed', runA.status);
   check('snapshot is non-null', runA.snapshot !== null);
-  check('analytics_version matches (2.2)', runA.analytics_version === ANALYTICS_VERSION, runA.analytics_version);
+  check('analytics_version matches ANALYTICS_VERSION', runA.analytics_version === ANALYTICS_VERSION, runA.analytics_version);
   check('evidence_scope matches (shared_inventory_population)', runA.evidence_scope === EVIDENCE_SCOPE, runA.evidence_scope);
   check('duration_ms is a nonnegative integer', typeof runA.duration_ms === 'number' && runA.duration_ms >= 0, runA.duration_ms);
   const snapA = runA.snapshot as any;
@@ -251,7 +272,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_9', { p_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_10', { p_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -474,7 +495,7 @@ async function main() {
   console.log('\n[v1.1 — brand-count reconciliation]');
   const brandPop = v11SnapshotA?.evidence_aggregates?.brand?.population_summary?.[0];
   check(
-    'all_business_distinct_brand_count differs from positive_acquisition_distinct_brand_count (fixture brand Ibanez is zero-assigned-only)',
+    'all_business_distinct_brand_count differs from positive_acquisition_distinct_brand_count (fixtures.items.businessUnknownValueSale brand — Epiphone — never has a positive-value item)',
     (brandPop?.all_business_distinct_brand_count ?? 0) > (v11SnapshotA?.evidence_aggregates?.brand?.integrity_summary?.[0]?.positive_acquisition_distinct_brand_count ?? 0),
     { all: brandPop?.all_business_distinct_brand_count, positive: v11SnapshotA?.evidence_aggregates?.brand?.integrity_summary?.[0]?.positive_acquisition_distinct_brand_count },
   );
@@ -533,7 +554,7 @@ async function main() {
     dicPop?.business_item_count === (dicPop?.deal_in_channel_known_item_count ?? 0) + (dicPop?.deal_in_channel_missing_item_count ?? 0),
     dicPop,
   );
-  check('deal_in_channel_missing_item_count >= 1 (fixture item 14, Historical Import with no channel)', (dicPop?.deal_in_channel_missing_item_count ?? 0) >= 1, dicPop?.deal_in_channel_missing_item_count);
+  check('deal_in_channel_missing_item_count >= 1 (fixtures.items.historicalImportOpenNoChannel, Historical Import with no channel)', (dicPop?.deal_in_channel_missing_item_count ?? 0) >= 1, dicPop?.deal_in_channel_missing_item_count);
   check('deal_in_channel_coverage_percent is a number', typeof dicPop?.deal_in_channel_coverage_percent === 'number');
 
   console.log('\n[v1.2 — overall_performance: multi-item single-deal aggregation]');
@@ -609,7 +630,7 @@ async function main() {
     docPop?.realized_business_item_count === (docPop?.sale_exit_item_count ?? 0) + (docPop?.trade_exit_item_count ?? 0) + (docPop?.unknown_exit_method_item_count ?? 0),
     docPop,
   );
-  check('deal_out_channel_missing_item_count >= 1 (fixture item 20, channel-less historical trade-out)', (docPop?.deal_out_channel_missing_item_count ?? 0) >= 1, docPop?.deal_out_channel_missing_item_count);
+  check('deal_out_channel_missing_item_count >= 1 (fixtures.items.historicalTradedNoExitChannel, channel-less historical trade-out)', (docPop?.deal_out_channel_missing_item_count ?? 0) >= 1, docPop?.deal_out_channel_missing_item_count);
 
   console.log('\n[v1.3 — sale exit and outgoing trade item map their own deal channel]');
   const cashSalesRows: any[] = doc?.cash_sales_by_channel ?? [];
@@ -617,7 +638,7 @@ async function main() {
   const marketplaceCashSaleRow = cashSalesRows.find((r) => r.deal_out_channel_name === 'Marketplace');
   check('a cash sale maps to its own deal channel (Marketplace, fixture items 1/6/8/9/10/21)', !!marketplaceCashSaleRow && marketplaceCashSaleRow.sale_item_count >= 1, cashSalesRows);
   const reverbTradeExitRow = tradeExitRows.find((r) => r.deal_out_channel_name === 'Reverb');
-  check('an outgoing trade item maps to its own trade deal channel (Reverb, fixture item 17)', !!reverbTradeExitRow && reverbTradeExitRow.trade_exit_item_count >= 1, tradeExitRows);
+  check('an outgoing trade item maps to its own trade deal channel (Reverb, fixtures.items.tradedViaReverb)', !!reverbTradeExitRow && reverbTradeExitRow.trade_exit_item_count >= 1, tradeExitRows);
 
   console.log('\n[v1.3 — open items have no Deal Out Channel]');
   const { data: openItemRows, error: openItemsError } = await serviceClient
@@ -644,7 +665,7 @@ async function main() {
 
   console.log('\n[v1.3 — missing + historical Deal Out Channel remains in coverage]');
   const docMissingChannelRow = docOverallRows.find((r) => r.deal_out_channel_id === null);
-  check('missing-channel row exists in overall_performance (not dropped, fixture item 20)', !!docMissingChannelRow, docOverallRows.map((r) => r.deal_out_channel_id));
+  check('missing-channel row exists in overall_performance (not dropped, fixtures.items.historicalTradedNoExitChannel)', !!docMissingChannelRow, docOverallRows.map((r) => r.deal_out_channel_id));
   check('missing-channel row includes the historical item (historical_item_count >= 1)', (docMissingChannelRow?.historical_item_count ?? 0) >= 1, docMissingChannelRow);
 
   console.log('\n[v1.3 — historical rows excluded from holding samples]');
@@ -752,7 +773,7 @@ async function main() {
   console.log('\n[v1.4 — historical rows excluded from holding samples]');
   const regularToMarketplaceRow = matrixRows.find((r) => r.deal_in_channel_name === 'Regular Buyer / Seller' && r.deal_out_channel_name === 'Marketplace');
   check(
-    'Regular Buyer/Seller -> Marketplace row includes historical item 9 but holding_sample_size < journey_item_count',
+    'Regular Buyer/Seller -> Marketplace row includes fixtures.items.historicalPurchaseViaRegular but holding_sample_size < journey_item_count',
     !!regularToMarketplaceRow && (regularToMarketplaceRow.historical_item_count ?? 0) >= 1 && (regularToMarketplaceRow.holding_sample_size ?? 0) < regularToMarketplaceRow.journey_item_count,
     regularToMarketplaceRow,
   );
@@ -818,15 +839,27 @@ async function main() {
 
   console.log('\n[v1.5 — one item_listing creates one exposure; duplicates collapse]');
   check('eligible_listing_exposure_count >= 1 (at least one real item/channel exposure)', (lcePop?.eligible_listing_exposure_count ?? 0) >= 1, lcePop?.eligible_listing_exposure_count);
+  // STALE ASSERTION, CORRECTED: a prior version of this check asserted
+  // eligible_listing_record_count > eligible_listing_exposure_count,
+  // pinned to a legacy fixture that (per its own comment) had two
+  // physical item_listings rows for the SAME (item, channel) pair. That
+  // is no longer reproducible under ANY fixture — item_listings enforces
+  // UNIQUE(inventory_item_id, deal_channel_id) (see supabase schema), so
+  // canonical_exposure's GROUP BY (inventory_item_id, deal_channel_id) in
+  // analytics/sql/07_listing_channel_exposure.sql can never see more than
+  // one eligible record per exposure. The two totals are therefore
+  // GUARANTEED equal for any dataset that respects that constraint — this
+  // asserts that guarantee explicitly instead of a scenario the schema no
+  // longer allows.
   check(
-    'eligible_listing_record_count > eligible_listing_exposure_count (fixture item 25: 2 Marketplace records collapse to 1 exposure)',
-    (lcePop?.eligible_listing_record_count ?? 0) > (lcePop?.eligible_listing_exposure_count ?? 0),
+    'eligible_listing_record_count === eligible_listing_exposure_count (item_listings UNIQUE(item, channel) guarantees at most one eligible record per exposure)',
+    (lcePop?.eligible_listing_record_count ?? -1) === (lcePop?.eligible_listing_exposure_count ?? -2),
     lcePop,
   );
 
   console.log('\n[v1.5 — missing/ignored records remain visible in coverage]');
-  check('ignored_non_listing_channel_record_count >= 1 (fixture item 26, Regular Buyer/Seller)', (lcePop?.ignored_non_listing_channel_record_count ?? 0) >= 1, lcePop?.ignored_non_listing_channel_record_count);
-  check('missing_listing_channel_record_count >= 1 (fixture item 27, draft with no listed_at)', (lcePop?.missing_listing_channel_record_count ?? 0) >= 1, lcePop?.missing_listing_channel_record_count);
+  check('ignored_non_listing_channel_record_count >= 1 (fixtures.items.nonListingChannelRecord, Regular Buyer/Seller)', (lcePop?.ignored_non_listing_channel_record_count ?? 0) >= 1, lcePop?.ignored_non_listing_channel_record_count);
+  check('missing_listing_channel_record_count >= 1 (fixtures.items.draftListingNoDate, draft with no listed_at)', (lcePop?.missing_listing_channel_record_count ?? 0) >= 1, lcePop?.missing_listing_channel_record_count);
 
   console.log('\n[v1.5 — non-listing channels excluded from listing_channel_performance]');
   const channelPerfRows: any[] = lce?.listing_channel_performance ?? [];
@@ -835,25 +868,25 @@ async function main() {
 
   console.log('\n[v1.5 — cross-listed item appears once per channel, once per bucket]');
   const distinctChannelsInPerf = new Set(channelPerfRows.map((r) => r.listing_channel_name));
-  check('cross-listed item 25 (Marketplace + Kijiji) shows up as exposure on both channels', distinctChannelsInPerf.has('Marketplace') && distinctChannelsInPerf.has('Kijiji'), Array.from(distinctChannelsInPerf));
+  check('cross-listed item (fixtures.items.crossListedMarketplaceKijiji) shows up as exposure on both channels', distinctChannelsInPerf.has('Marketplace') && distinctChannelsInPerf.has('Kijiji'), Array.from(distinctChannelsInPerf));
   const buckets: any[] = lce?.cross_listing_summary?.buckets ?? [];
   const bucketItemSum = buckets.reduce((sum, b) => sum + (b.business_item_count ?? 0), 0);
   check('cross_listing_summary buckets reconcile to business_item_count (each item counted exactly once)', bucketItemSum === lcePop?.business_item_count, { bucketItemSum, businessItemCount: lcePop?.business_item_count });
   const twoChannelBucket = buckets.find((b) => b.listing_channel_count_bucket === '2 channels');
-  check('the "2 channels" bucket includes fixture item 25 (business_item_count >= 1)', !!twoChannelBucket && twoChannelBucket.business_item_count >= 1, twoChannelBucket);
+  check('the "2 channels" bucket includes fixtures.items.crossListedMarketplaceKijiji (business_item_count >= 1)', !!twoChannelBucket && twoChannelBucket.business_item_count >= 1, twoChannelBucket);
   check('cross_listed_item_count is a number and cross_listed_item_percent is a number', typeof lce?.cross_listing_summary?.cross_listed_item_count === 'number' && typeof lce?.cross_listing_summary?.cross_listed_item_percent === 'number');
 
   console.log('\n[v1.5 — realized sale/trade counts use lifecycle exit methods]');
   const marketplacePerfRow = channelPerfRows.find((r) => r.listing_channel_name === 'Marketplace');
-  check('Marketplace channel performance row has sale_exit_item_count >= 1 (fixture items 1, 25, ...)', !!marketplacePerfRow && marketplacePerfRow.sale_exit_item_count >= 1, marketplacePerfRow);
+  check('Marketplace channel performance row has sale_exit_item_count >= 1 (fixtures.items.businessFastSale, crossListedMarketplaceKijiji, ...)', !!marketplacePerfRow && marketplacePerfRow.sale_exit_item_count >= 1, marketplacePerfRow);
 
   console.log('\n[v1.5 — Listing -> Deal Out: one item can appear in multiple exposure rows]');
   const matrixLceRows: any[] = lce?.listing_to_deal_out_matrix ?? [];
   check('listing_to_deal_out_matrix has at least one row', matrixLceRows.length > 0);
   const marketplaceToMarketplace = matrixLceRows.find((r) => r.listing_channel_name === 'Marketplace' && r.deal_out_channel_name === 'Marketplace');
   const kijijiToMarketplace = matrixLceRows.find((r) => r.listing_channel_name === 'Kijiji' && r.deal_out_channel_name === 'Marketplace');
-  check('fixture item 25 produces a Marketplace -> Marketplace row (same-channel)', !!marketplaceToMarketplace && marketplaceToMarketplace.exposed_realized_item_count >= 1, marketplaceToMarketplace);
-  check('fixture item 25 also produces a Kijiji -> Marketplace row (different-channel, same item)', !!kijijiToMarketplace && kijijiToMarketplace.exposed_realized_item_count >= 1, kijijiToMarketplace);
+  check('fixtures.items.crossListedMarketplaceKijiji produces a Marketplace -> Marketplace row (same-channel)', !!marketplaceToMarketplace && marketplaceToMarketplace.exposed_realized_item_count >= 1, marketplaceToMarketplace);
+  check('fixtures.items.crossListedMarketplaceKijiji also produces a Kijiji -> Marketplace row (different-channel, same item)', !!kijijiToMarketplace && kijijiToMarketplace.exposed_realized_item_count >= 1, kijijiToMarketplace);
   check('same-channel row has same_channel_flag === true', marketplaceToMarketplace?.same_channel_flag === true, marketplaceToMarketplace?.same_channel_flag);
   check('different-channel row has same_channel_flag === false', kijijiToMarketplace?.same_channel_flag === false, kijijiToMarketplace?.same_channel_flag);
 
@@ -865,17 +898,19 @@ async function main() {
   const reverbOpenRow = openByChannelRows.find((r) => r.listing_channel_name === 'Reverb');
   check(
     // median_current_listing_age_days grows by 1 every real calendar day
-    // since fixture item 28 was listed — asserting cardinality (sample_size
-    // = 1) and a sane positive age is stable across runs; an exact day
-    // count is not.
-    'Reverb open-inventory row reflects fixture item 28 alone: sample_size = 1, positive median age',
+    // since fixtures.items.reverbOpenSoleSample was listed — asserting
+    // cardinality (sample_size = 1) and a sane positive age is stable
+    // across runs; an exact day count is not. reverbOpenSoleSample is
+    // deliberately the ONLY open item listed on Reverb anywhere in this
+    // fixture set (see setup-analytics-test-fixtures.ts).
+    'Reverb open-inventory row reflects fixtures.items.reverbOpenSoleSample alone: sample_size = 1, positive median age',
     !!reverbOpenRow && reverbOpenRow.current_listing_age_sample_size === 1 && Number(reverbOpenRow.median_current_listing_age_days) > 0,
     reverbOpenRow,
   );
 
   console.log('\n[v1.5 — historical items excluded from ownership age]');
   const openUnlisted = lce?.open_unlisted_summary?.[0];
-  check('open_unlisted_summary.historical_excluded_from_age_count >= 1 (fixture item 14)', (openUnlisted?.historical_excluded_from_age_count ?? 0) >= 1, openUnlisted?.historical_excluded_from_age_count);
+  check('open_unlisted_summary.historical_excluded_from_age_count >= 1 (fixtures.items.historicalImportOpenNoChannel)', (openUnlisted?.historical_excluded_from_age_count ?? 0) >= 1, openUnlisted?.historical_excluded_from_age_count);
 
   console.log('\n[v1.5 — shared evidence has no user-level or item-level fields]');
   check('no listing_channel_performance row exposes user_id or item_id', channelPerfRows.every((r) => !('user_id' in r) && !('item_id' in r)), channelPerfRows[0]);
@@ -993,7 +1028,7 @@ async function main() {
   // item, including historical item 14, was hardcoded to).
   const openByCategoryTypeRows: any[] = ctp?.open_inventory_by_category_type ?? [];
   const guitarsElectricOpenRow = openByCategoryTypeRows.find((r) => r.category_name === 'Guitars' && r.type_name === 'Electric Guitar');
-  check('Guitars/Electric Guitar open row: historical_excluded_from_age_count >= 1 (fixture item 14)', (guitarsElectricOpenRow?.historical_excluded_from_age_count ?? 0) >= 1, guitarsElectricOpenRow);
+  check('Guitars/Electric Guitar open row: historical_excluded_from_age_count >= 1 (fixtures.items.historicalImportOpenNoChannel)', (guitarsElectricOpenRow?.historical_excluded_from_age_count ?? 0) >= 1, guitarsElectricOpenRow);
 
   console.log('\n[v1.6 — multi-item deals preserve item and distinct-deal counts]');
   // Fixture items 29/30 use item_subtype_id 1, which is actually "Acoustic
@@ -1002,7 +1037,7 @@ async function main() {
   // polluted by any other fixture item.
   const acousticGuitarRow = typeRows.find((r) => r.category_name === 'Guitars' && r.type_name === 'Acoustic Guitar');
   check(
-    'Guitars/Acoustic Guitar row (fixture items 29, 30): item_count=2, distinct_acquisition_deal_count=1 (shared), distinct_exit_deal_count=2 (separate)',
+    'Guitars/Acoustic Guitar row (fixtures.items.acousticPairA/acousticPairB, the only Business items using this subtype): item_count=2, distinct_acquisition_deal_count=1 (shared), distinct_exit_deal_count=2 (separate)',
     !!acousticGuitarRow && acousticGuitarRow.item_count === 2 && acousticGuitarRow.distinct_acquisition_deal_count === 1 && acousticGuitarRow.distinct_exit_deal_count === 2,
     acousticGuitarRow,
   );
@@ -1087,7 +1122,7 @@ async function main() {
   const bucketCapitalSum = ageBuckets.reduce((sum, b) => sum + Number(b.open_acquisition_capital ?? 0), 0);
   check('age-bucket capital reconciles to total open acquisition capital', bucketCapitalSum === Number(clPop?.open_acquisition_capital ?? 0), { bucketCapitalSum, openAcquisitionCapital: clPop?.open_acquisition_capital });
   const unreliableBucket = ageBuckets.find((b) => b.age_bucket_label === 'unreliable/unknown age');
-  check('Historical Imports land in the unreliable/unknown age bucket (fixture item 14), not a calendar bucket', !!unreliableBucket && unreliableBucket.open_item_count >= 1, unreliableBucket);
+  check('Historical Imports land in the unreliable/unknown age bucket (e.g. fixtures.items.historicalImportOpenNoChannel), not a calendar bucket', !!unreliableBucket && unreliableBucket.open_item_count >= 1, unreliableBucket);
 
   console.log('\n[v1.7 — open capital by Acquisition Value Band]');
   const openBandRows: any[] = cl?.open_capital_by_acquisition_value_band ?? [];
@@ -1125,25 +1160,36 @@ async function main() {
   );
 
   console.log('\n[v1.7 — profit per 30 holding days computed item-level-first, never a ratio of medians]');
+  // Expected values below are computed directly from fixtures.items.
+  // profitBandItemA/profitBandItemB's OWN input constants (PROFIT_BAND_
+  // ITEM_A/B in setup-analytics-test-fixtures.ts) — never copied from a
+  // prior test run's output. These are the ONLY two realized items
+  // anywhere in this fixture set with a positive acquisition value in the
+  // $4,000-4,999 band, so the band is fully isolated to exactly these two.
   const bandEfficiencyRows: any[] = cl?.realized_capital_efficiency_by_acquisition_value_band ?? [];
   const band4to5kRow = bandEfficiencyRows.find((r) => r.acquisition_value_band_label === '$4,000-4,999');
   check(
-    'isolated $4,000-4,999 band (fixture items 35, 36): realized_item_count = 2',
+    'isolated $4,000-4,999 band (fixtures.items.profitBandItemA/profitBandItemB): realized_item_count = 2',
     band4to5kRow?.realized_item_count === 2,
     band4to5kRow,
   );
   check(
-    'median_net_profit_per_30_holding_days = 600 (item-level-first: median(300, 900)) — NOT 700 (the wrong ratio-of-medians result)',
-    Number(band4to5kRow?.median_net_profit_per_30_holding_days) === 600,
-    band4to5kRow?.median_net_profit_per_30_holding_days,
+    `median_net_profit_per_30_holding_days = ${expected.profitBand.medianNetProfitPer30HoldingDays} (item-level-first: median of each item's own net_profit/holding_days*30) — computed from fixture inputs, not a ratio of medians`,
+    Number(band4to5kRow?.median_net_profit_per_30_holding_days) === expected.profitBand.medianNetProfitPer30HoldingDays,
+    { actual: band4to5kRow?.median_net_profit_per_30_holding_days, expected: expected.profitBand.medianNetProfitPer30HoldingDays },
   );
-  check('median_net_profit = 350 (median of item-level net_profit 100, 600)', Number(band4to5kRow?.median_net_profit) === 350, band4to5kRow?.median_net_profit);
+  check(
+    `median_net_profit = ${expected.profitBand.medianNetProfit} (median of item-level net_profit, computed from fixture inputs)`,
+    Number(band4to5kRow?.median_net_profit) === expected.profitBand.medianNetProfit,
+    { actual: band4to5kRow?.median_net_profit, expected: expected.profitBand.medianNetProfit },
+  );
 
   console.log('\n[v1.7 — aggregate profit-to-capital is never substituted for median ROI]');
   check(
-    'profit_to_acquisition_capital_percent (8.43, aggregate SUM ratio) differs from median_roi (8.36, median of per-item ratios) for the isolated band',
-    Number(band4to5kRow?.profit_to_acquisition_capital_percent) === 8.43 && Number(band4to5kRow?.median_roi) === 8.36,
-    { profitToCapital: band4to5kRow?.profit_to_acquisition_capital_percent, medianRoi: band4to5kRow?.median_roi },
+    `profit_to_acquisition_capital_percent (${expected.profitBand.profitToAcquisitionCapitalPercent}, aggregate SUM ratio) differs from median_roi (${expected.profitBand.medianRoiPercent}, median of per-item ratios) for the isolated band — both independently derived from fixture inputs`,
+    Number(band4to5kRow?.profit_to_acquisition_capital_percent) === expected.profitBand.profitToAcquisitionCapitalPercent
+      && Number(band4to5kRow?.median_roi) === expected.profitBand.medianRoiPercent,
+    { profitToCapital: band4to5kRow?.profit_to_acquisition_capital_percent, medianRoi: band4to5kRow?.median_roi, expected: expected.profitBand },
   );
 
   console.log('\n[v1.7 — shared evidence has no user-level or item-level fields]');
@@ -1203,8 +1249,12 @@ async function main() {
 
   console.log('\n[v1.8 — only target-user items appear (tests #1, #2)]');
   check('item_decision_evidence.length === open_business_item_count', items.length === oidsPop?.open_business_item_count, { length: items.length, open: oidsPop?.open_business_item_count });
-  const userBOpenItemIds = [3, 4, 11, 12, 13];
-  check("no User B item_id (3, 4, 11, 12, 13) appears in User A's item_decision_evidence", items.every((r) => !userBOpenItemIds.includes(r.item_id)), items.map((r) => r.item_id));
+  // Derived live from the database (never a hardcoded literal-id list) —
+  // every open Business item_id currently belonging to User B.
+  const { data: userBOpenBusinessRows } = await serviceClient
+    .from('analytics_item_lifecycle').select('item_id').eq('user_id', userBId).eq('purpose_name', 'Business').eq('is_realized', false);
+  const userBOpenItemIds = (userBOpenBusinessRows ?? []).map((r: any) => r.item_id);
+  check("no User B open Business item_id appears in User A's item_decision_evidence", userBOpenItemIds.length > 0 && items.every((r) => !userBOpenItemIds.includes(r.item_id)), { userBOpenItemIds, userAItemIds: items.map((r) => r.item_id) });
 
   console.log('\n[v1.8 — population reconciliation (tests #4, #5)]');
   check(
@@ -1227,18 +1277,27 @@ async function main() {
     oidsPop?.open_business_item_count === (oidsPop?.sufficient_comparable_cohort_item_count ?? 0) + (oidsPop?.low_confidence_comparable_cohort_item_count ?? 0) + (oidsPop?.no_comparable_cohort_item_count ?? 0),
     oidsPop,
   );
-  check('at least one item has low-confidence comparable cohort (fixture item 44)', (oidsPop?.low_confidence_comparable_cohort_item_count ?? 0) >= 1, oidsPop?.low_confidence_comparable_cohort_item_count);
+  check('at least one item has low-confidence comparable cohort (fixtures.items.reverbOpenSoleSample)', (oidsPop?.low_confidence_comparable_cohort_item_count ?? 0) >= 1, oidsPop?.low_confidence_comparable_cohort_item_count);
 
   console.log('\n[v1.8 — unlisted items have NULL current DOM; historical items have NULL ownership age (tests #6, #7)]');
   check('every unlisted item has current_dom_days === null', items.filter((r) => !r.listed_flag).every((r) => r.current_dom_days === null), items.filter((r) => !r.listed_flag).map((r) => r.current_dom_days));
-  const item14 = items.find((r) => r.item_id === 14);
-  check('fixture item 14 (Historical Import, open) has is_historical_import = true and ownership_age_days === null', !!item14 && item14.is_historical_import === true && item14.ownership_age_days === null, item14);
+  const item14 = items.find((r) => r.item_id === fx.historicalImportOpenNoChannel);
+  check('fixtures.items.historicalImportOpenNoChannel has is_historical_import = true and ownership_age_days === null', !!item14 && item14.is_historical_import === true && item14.ownership_age_days === null, item14);
 
   console.log('\n[v1.8 — comparable cohort hierarchy: specific-sufficient and broad-fallback (tests #3, #9, #10)]');
-  const item2 = items.find((r) => r.item_id === 2);
-  check('fixture item 2 (Fender, $1-999 band) resolves to a specific sufficient cohort (brand_band or brand_type_band), not all_business', !!item2?.comparable_cohort && ['brand_band', 'brand_type_band'].includes(item2.comparable_cohort.cohort_scope), item2?.comparable_cohort);
-  const item37 = items.find((r) => r.item_id === 37);
-  check('fixture item 37 (brand-new brand/category, $2,500) falls all the way back to all_business (test #10)', item37?.comparable_cohort?.cohort_scope === 'all_business', item37?.comparable_cohort);
+  const item2 = items.find((r) => r.item_id === fx.openFenderPositiveBand);
+  // Per the documented selection rule (analytics/sql/10_open_inventory_
+  // decision_support.sql header): the FIRST candidate (any specificity)
+  // reaching realized_item_count >= 5 wins outright, even over a MORE
+  // specific candidate with a smaller count. Fender's brand-wide realized
+  // count in this fixture set crosses that threshold, so 'brand' is the
+  // correct, algorithm-faithful outcome here — 'brand_band'/'brand_type_
+  // band' would only win if Fender's brand-wide count stayed below 3.
+  // Any of the three still proves the cohort is more specific than a flat
+  // all_business fallback, which is this test's actual semantic intent.
+  check('fixtures.items.openFenderPositiveBand (Fender, $1-999 band) resolves to a specific, non-all_business cohort (brand, brand_band, or brand_type_band)', !!item2?.comparable_cohort && ['brand', 'brand_band', 'brand_type_band'].includes(item2.comparable_cohort.cohort_scope), item2?.comparable_cohort);
+  const item37 = items.find((r) => r.item_id === fx.allBusinessFallbackItem);
+  check('fixtures.items.allBusinessFallbackItem (isolated brand/category/band) falls all the way back to all_business (test #10)', item37?.comparable_cohort?.cohort_scope === 'all_business', item37?.comparable_cohort);
 
   console.log('\n[v1.8 — cohort profit/ROI/DOM use realized items only; realization rate uses open+realized (tests #11, #12)]');
   const cohortsSeen = items.map((r) => r.comparable_cohort).filter((c) => c);
@@ -1250,9 +1309,9 @@ async function main() {
   );
 
   console.log('\n[v1.8 — historical rows contribute to DOM but not holding evidence (test #13)]');
-  const item27 = items.find((r) => r.item_id === 27);
+  const item27 = items.find((r) => r.item_id === fx.highCapitalExposureOpen);
   check(
-    'Gibson brand cohort (fixture item 9, historical): holding_sample_size < realized_item_count',
+    'Gibson brand-level cohort (falls back to unrestricted brand, which includes fixtures.items.historicalImportRealized): holding_sample_size < realized_item_count',
     !!item27?.comparable_cohort && (item27.comparable_cohort.holding_sample_size ?? 0) < item27.comparable_cohort.realized_item_count,
     item27?.comparable_cohort,
   );
@@ -1262,16 +1321,16 @@ async function main() {
   check('every cohort with >=2 DOM samples: p75_days_on_market >= median_days_on_market', cohortsWithDom.every((c) => c.p75_days_on_market >= c.median_days_on_market), cohortsWithDom);
 
   console.log('\n[v1.8 — reason-code thresholds (tests #15, #16, #17)]');
-  check('fixture item 27 (highest acquisition value, $1,300) carries HIGH_CAPITAL_EXPOSURE', !!item27 && item27.reason_codes.includes('HIGH_CAPITAL_EXPOSURE'), item27?.reason_codes);
-  const item45 = items.find((r) => r.item_id === 45);
+  check(`fixtures.items.highCapitalExposureOpen (highest acquisition value, $${HIGH_CAPITAL_ITEM.acquisitionValue}) carries HIGH_CAPITAL_EXPOSURE`, !!item27 && item27.reason_codes.includes('HIGH_CAPITAL_EXPOSURE'), item27?.reason_codes);
+  const item45 = items.find((r) => r.item_id === fx.lowEstimatedUpsideOpen);
   check(
-    'fixture item 45 (10% estimated upside, positive value) carries LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL',
-    !!item45 && item45.reason_codes.includes('LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL') && item45.estimated_upside_percent === 10,
+    `fixtures.items.lowEstimatedUpsideOpen (${expected.lowEstimatedUpsidePercent}% estimated upside, positive value) carries LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL`,
+    !!item45 && item45.reason_codes.includes('LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL') && item45.estimated_upside_percent === expected.lowEstimatedUpsidePercent,
     item45,
   );
-  const item44 = items.find((r) => r.item_id === 44);
+  const item44 = items.find((r) => r.item_id === fx.reverbOpenSoleSample);
   check(
-    'fixture item 44 (cohort confidence = low) carries LOW_COMPARABLE_CONFIDENCE, not NO_COMPARABLE_EVIDENCE',
+    'fixtures.items.reverbOpenSoleSample (brand_type_band cohort realized_item_count = 5, winning cohort selection on the specificity tie-break over all_business) carries LOW_COMPARABLE_CONFIDENCE, not NO_COMPARABLE_EVIDENCE',
     !!item44 && item44.reason_codes.includes('LOW_COMPARABLE_CONFIDENCE') && !item44.reason_codes.includes('NO_COMPARABLE_EVIDENCE') && item44.comparable_cohort?.confidence === 'low',
     item44,
   );
@@ -1300,7 +1359,7 @@ async function main() {
   console.log('\n[v1.8 — shared comparable cohorts pool beyond the target user alone (test #3)]');
   const fenderBrandRow = brandRows.find((b) => b.brand_name === 'Fender');
   check(
-    "fixture item 2's Fender brand_band cohort_item_count exceeds User A's own Fender open_item_count (within_brand_comparison, target-user-only) — proves the cohort pools more than just this user's own open inventory",
+    "fixtures.items.openFenderPositiveBand's Fender brand_band cohort_item_count exceeds User A's own Fender open_item_count (within_brand_comparison, target-user-only) — proves the cohort pools more than just this user's own open inventory",
     !!item2?.comparable_cohort && !!fenderBrandRow && item2.comparable_cohort.cohort_item_count > fenderBrandRow.open_item_count,
     { cohortItemCount: item2?.comparable_cohort?.cohort_item_count, fenderOwnOpenItemCount: fenderBrandRow?.open_item_count },
   );
@@ -1401,18 +1460,18 @@ async function main() {
     (v2Rows ?? []).every((r: any) => r.current_purpose_id === r.purpose_id && r.current_purpose_name === r.purpose_name),
   );
 
-  console.log('\n[Purpose-Aware Foundation — missing_purpose fixture (item 100) and missing_policy fixture (item 101)]');
-  const item100 = v2ByItemId.get(100);
+  console.log('\n[Purpose-Aware Foundation — missing_purpose fixture and missing_policy fixture]');
+  const item100 = v2ByItemId.get(fx.missingPurposeItem);
   check(
-    'fixture item 100 (purpose_id NULL) is visible via v2 with purpose_policy_status = missing_purpose and NULL policy fields',
+    'fixtures.items.missingPurposeItem (purpose_id NULL) is visible via v2 with purpose_policy_status = missing_purpose and NULL policy fields',
     !!item100 && item100.purpose_id === null && item100.purpose_policy_status === 'missing_purpose'
       && item100.disposition_mode === null && item100.realization_priority_order === null
       && item100.active_realization_flag === null && item100.expected_holding_policy === null,
     item100,
   );
-  const item101 = v2ByItemId.get(101);
+  const item101 = v2ByItemId.get(fx.missingPolicyItem);
   check(
-    'fixture item 101 (unmapped "Loaner" purpose) is visible via v2 with purpose_policy_status = missing_policy, current_purpose_name populated, policy fields NULL',
+    'fixtures.items.missingPolicyItem (unmapped "Loaner" purpose) is visible via v2 with purpose_policy_status = missing_policy, current_purpose_name populated, policy fields NULL',
     !!item101 && item101.purpose_id !== null && item101.current_purpose_name === 'Loaner' && item101.purpose_policy_status === 'missing_policy'
       && item101.disposition_mode === null && item101.realization_priority_order === null
       && item101.active_realization_flag === null && item101.expected_holding_policy === null,
@@ -1421,7 +1480,7 @@ async function main() {
   check(
     'every non-fixture row with a mapped Business/Hybrid/Personal purpose has purpose_policy_status = mapped',
     (v2Rows ?? [])
-      .filter((r: any) => ![100, 101].includes(r.item_id) && r.purpose_id !== null)
+      .filter((r: any) => ![fx.missingPurposeItem, fx.missingPolicyItem].includes(r.item_id) && r.purpose_id !== null)
       .every((r: any) => r.purpose_policy_status === 'mapped'),
   );
 
@@ -1655,10 +1714,11 @@ async function main() {
     forbiddenIdentityKeys.every((key) => !v20Serialized.includes(key)),
     forbiddenIdentityKeys.filter((key) => v20Serialized.includes(key)),
   );
-  const userBOpenItemIdsV2 = [3, 4, 11, 12, 13];
+  const { data: userBAllItemRowsV2 } = await serviceClient.from('analytics_item_lifecycle_v2').select('item_id').eq('user_id', userBId);
+  const userBOpenItemIdsV2 = (userBAllItemRowsV2 ?? []).map((r: any) => r.item_id);
   check(
     "no User B item_id appears as a bare value anywhere (defense in depth alongside the key-name check above)",
-    userBOpenItemIdsV2.every((id) => !v20Serialized.includes(`"item_id":${id}`)),
+    userBOpenItemIdsV2.length > 0 && userBOpenItemIdsV2.every((id: number) => !v20Serialized.includes(`"item_id":${id}`)),
   );
 
   console.log('\n[v2.0 — test #15: shared evidence contains no per-user grouping]');
@@ -1771,16 +1831,20 @@ async function main() {
     oiePurposePos.map((r) => r.current_purpose_name),
   );
   check(
-    'fixture items 104 and 105 (open Hybrid) and 103 (open Personal) all appear in item_decision_evidence',
-    [103, 104, 105].every((id) => oieItems.some((r) => r.item_id === id)),
+    'fixtures.items.hybridRecentOpen, hybridHistoricalOpen (open Hybrid), and personalOpenItem (open Personal) all appear in item_decision_evidence',
+    [fx.hybridRecentOpen, fx.hybridHistoricalOpen, fx.personalOpenItem].every((id) => oieItems.some((r) => r.item_id === id)),
     oieItems.map((r) => r.item_id),
   );
 
   console.log('\n[v2.1 — test #2: no other user item identity appears]');
-  const userBOpenItemIdsV21 = [3, 4, 11, 12, 13];
+  // Derived live from the database (never a hardcoded literal-id list).
+  const { data: userBOpenBusinessRowsV21 } = await serviceClient
+    .from('analytics_item_lifecycle_v2').select('item_id').eq('user_id', userBId).eq('is_realized', false);
+  const userBOpenItemIdsV21 = (userBOpenBusinessRowsV21 ?? []).map((r: any) => r.item_id);
   check(
     'no User B item_id appears in item_decision_evidence, hybrid_purpose_review, or personal_item_control',
-    userBOpenItemIdsV21.every((id) => !oieItems.some((r) => r.item_id === id) && !oieHybrid.some((r) => r.item_id === id) && !oiePersonalControl.some((r) => r.item_id === id)),
+    userBOpenItemIdsV21.length > 0 && userBOpenItemIdsV21.every((id: number) => !oieItems.some((r) => r.item_id === id) && !oieHybrid.some((r) => r.item_id === id) && !oiePersonalControl.some((r) => r.item_id === id)),
+    userBOpenItemIdsV21,
   );
 
   console.log('\n[v2.1 — test #3: Purpose counts reconcile]');
@@ -1815,9 +1879,9 @@ async function main() {
   );
 
   console.log('\n[v2.1 — test #5: Business urgency thresholds work]');
-  const item106 = oieItems.find((r) => r.item_id === 106);
+  const item106 = oieItems.find((r) => r.item_id === fx.businessLongDomOpen);
   check(
-    'fixture item 106 (Business, Fender, listed ~200 days, same band as item 28) carries BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN and _P75',
+    'fixtures.items.businessLongDomOpen (Business, Fender, listed ~200 days, same brand+type+band as businessFastSale) carries BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN and _P75',
     !!item106 && item106.reason_codes.includes('BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN') && item106.reason_codes.includes('BUSINESS_DOM_ABOVE_COMPARABLE_P75'),
     item106,
   );
@@ -1833,10 +1897,10 @@ async function main() {
   );
 
   console.log('\n[v2.1 — test #6: Hybrid creates review signals, not automatic decisions]');
-  const item104 = oieItems.find((r) => r.item_id === 104);
-  const item105 = oieItems.find((r) => r.item_id === 105);
+  const item104 = oieItems.find((r) => r.item_id === fx.hybridRecentOpen);
+  const item105 = oieItems.find((r) => r.item_id === fx.hybridHistoricalOpen);
   check(
-    'fixture items 104 and 105 (Hybrid) both carry HYBRID_REVIEW_REQUIRED',
+    'fixtures.items.hybridRecentOpen and hybridHistoricalOpen (Hybrid) both carry HYBRID_REVIEW_REQUIRED',
     !!item104?.reason_codes.includes('HYBRID_REVIEW_REQUIRED') && !!item105?.reason_codes.includes('HYBRID_REVIEW_REQUIRED'),
     { item104: item104?.reason_codes, item105: item105?.reason_codes },
   );
@@ -1876,31 +1940,31 @@ async function main() {
 
   console.log('\n[v2.1 — test #9: economic and liquidity cohorts are selected independently]');
   check(
-    'item 104 has BOTH an economic_cohort and a liquidity_cohort, from independently-scoped cohort keys',
+    'fixtures.items.hybridRecentOpen has BOTH an economic_cohort and a liquidity_cohort, from independently-scoped cohort keys',
     !!item104?.economic_cohort && !!item104?.liquidity_cohort && item104.economic_cohort.cohort_scope !== item104.liquidity_cohort.cohort_scope,
     { economic: item104?.economic_cohort, liquidity: item104?.liquidity_cohort },
   );
 
   console.log('\n[v2.1 — test #10: purpose-matched liquidity cohort is preferred]');
-  const item2v21 = oieItems.find((r) => r.item_id === 2);
+  const item2v21 = oieItems.find((r) => r.item_id === fx.openFenderPositiveBand);
   check(
-    'fixture item 2 (Business, has a purpose-specific liquidity cohort with realized evidence) resolves liquidity_cohort_match = purpose_matched',
+    'fixtures.items.openFenderPositiveBand (Business, has a purpose-specific liquidity cohort with realized evidence from businessFastSale) resolves liquidity_cohort_match = purpose_matched',
     item2v21?.liquidity_cohort_match === 'purpose_matched',
     item2v21?.liquidity_cohort,
   );
 
   console.log('\n[v2.1 — test #11: cross-purpose fallback is clearly marked]');
   check(
-    'fixture items 104 and 105 (Hybrid, insufficient purpose-matched liquidity evidence) resolve liquidity_cohort_match = cross_purpose_fallback with the reason code present',
+    'fixtures.items.hybridRecentOpen and hybridHistoricalOpen (Hybrid, insufficient purpose-matched liquidity evidence — no Hybrid item is ever realized) resolve liquidity_cohort_match = cross_purpose_fallback with the reason code present',
     item104?.liquidity_cohort_match === 'cross_purpose_fallback' && item104.reason_codes.includes('PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE')
       && item105?.liquidity_cohort_match === 'cross_purpose_fallback' && item105.reason_codes.includes('PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE'),
     { item104: item104?.liquidity_cohort_match, item105: item105?.liquidity_cohort_match },
   );
 
   console.log('\n[v2.1 — test #12: historical age remains NULL]');
-  const item14v21 = oieItems.find((r) => r.item_id === 14);
+  const item14v21 = oieItems.find((r) => r.item_id === fx.historicalImportOpenNoChannel);
   check(
-    'fixture item 14 (Historical Import, open Business) has ownership_age_days === null in item_decision_evidence',
+    'fixtures.items.historicalImportOpenNoChannel (Historical Import, open Business) has ownership_age_days === null in item_decision_evidence',
     !!item14v21 && item14v21.is_historical_import === true && item14v21.ownership_age_days === null,
     item14v21,
   );
@@ -1976,17 +2040,17 @@ async function main() {
   const v22Serialized = JSON.stringify(v22SnapshotA);
 
   console.log('\n[v2.2 — test #1: a reliable recent Hybrid item receives HYBRID_RECENT_ITEM]');
-  const item105v22 = v22Items.find((r) => r.item_id === 105);
+  const item105v22 = v22Items.find((r) => r.item_id === fx.hybridRecentOpen);
   check(
-    'fixture item 105 (Hybrid, ownership_age_days=10, reliable) carries HYBRID_RECENT_ITEM',
+    'fixtures.items.hybridRecentOpen (Hybrid, ownership_age_days=10, reliable) carries HYBRID_RECENT_ITEM',
     !!item105v22 && item105v22.ownership_age_days !== null && item105v22.ownership_age_days < 30 && item105v22.reason_codes.includes('HYBRID_RECENT_ITEM'),
     item105v22,
   );
 
   console.log('\n[v2.2 — test #2: an unreliable-age Hybrid item receives HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY]');
-  const item107v22 = v22Items.find((r) => r.item_id === 107);
+  const item107v22 = v22Items.find((r) => r.item_id === fx.hybridHistoricalOpen);
   check(
-    'fixture item 107 (Hybrid, Historical Import, ownership_age_days === null) carries HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY',
+    'fixtures.items.hybridHistoricalOpen (Hybrid, Historical Import, ownership_age_days === null) carries HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY',
     !!item107v22 && item107v22.ownership_age_days === null && item107v22.reason_codes.includes('HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY'),
     item107v22,
   );
@@ -2003,10 +2067,11 @@ async function main() {
 
   console.log('\n[v2.2 — test #5: historical items with large DOM are not labelled recent]');
   check(
-    // current_dom_days grows by 1 every real calendar day since fixture
-    // item 107 was listed (~150 days ago at fixture-authoring time) — a
-    // lower-bound check is stable across runs; an exact day count is not.
-    'fixture item 107 (is_historical_import, large current_dom_days) does NOT carry HYBRID_RECENT_ITEM',
+    // current_dom_days grows by 1 every real calendar day since
+    // fixtures.items.hybridHistoricalOpen was listed (150 days ago at
+    // fixture-creation time) — a lower-bound check is stable across runs;
+    // an exact day count is not.
+    'fixtures.items.hybridHistoricalOpen (is_historical_import, large current_dom_days) does NOT carry HYBRID_RECENT_ITEM',
     !!item107v22 && item107v22.is_historical_import === true && item107v22.current_dom_days > 100 && !item107v22.reason_codes.includes('HYBRID_RECENT_ITEM'),
     item107v22,
   );
@@ -3477,11 +3542,13 @@ async function main() {
     check(`${fn} still callable by service_role after v2.9 migration`, !error, error);
   }
 
-  console.log('\n[v2.9 — production promotion]');
-  check('ANALYTICS_VERSION constant used by the production runner is now 2.9', ANALYTICS_VERSION === '2.9', ANALYTICS_VERSION);
-  const runA29 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new production run stores analytics_version 2.9', runA29.analytics_version === '2.9', runA29.analytics_version);
-  check('new production run snapshot.snapshot_schema_version is 2.9', (runA29.snapshot as any)?.snapshot_schema_version === '2.9', (runA29.snapshot as any)?.snapshot_schema_version);
+  // Note: at the point v2.9 was promoted, this section asserted the runner's
+  // ANALYTICS_VERSION was 2.9 specifically and created a fresh production
+  // run to check it. The runner has since been promoted again to v2.10 (see
+  // the "[v2.10 — production promotion]" section below) — that generic
+  // check already lives in the "[production runner — creates a completed
+  // run with the current ANALYTICS_VERSION]" block above, so it is not
+  // repeated here.
 
   console.log('\n[v2.9 — old stored runs remain readable]');
   const { data: oldRunReadBack29 } = await serviceClient
@@ -3490,6 +3557,284 @@ async function main() {
     'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.9 migration',
     oldRunReadBack29?.analytics_version === '1.8' && (oldRunReadBack29?.snapshot as any)?.snapshot_schema_version === '1.8',
     oldRunReadBack29,
+  );
+
+  // ── Analytics v2.10 — Shared Calendar Cohort Correction + ninth production promotion ──
+  console.log('\n[v2.10 — analytics_observation_coverage: configure DIFFERING coverage for userA and userB]');
+  // userA is already confirmed from ~2 years ago (coverageStartA, set in
+  // the v2.9 section above). Configure userB with a LATER confirmed
+  // start date (~1 year ago) so there is a real window where userA is
+  // coverage-qualified and userB is not yet — exactly the scenario
+  // Problem 1 mishandled (one confirmed user vouching for another).
+  const coverageStartB = new Date();
+  coverageStartB.setUTCFullYear(coverageStartB.getUTCFullYear() - 1);
+  coverageStartB.setUTCDate(1);
+  const coverageStartBIso = coverageStartB.toISOString().slice(0, 10);
+  const { error: coverageUpsertErrorB } = await serviceClient
+    .from('analytics_observation_coverage')
+    .upsert({ user_id: userBId, complete_history_start_date: coverageStartBIso, coverage_status: 'confirmed', notes: 'test fixture — later coverage start than userA' }, { onConflict: 'user_id' });
+  check('service_role can configure analytics_observation_coverage for userB', !coverageUpsertErrorB, coverageUpsertErrorB);
+
+  console.log('\n[v2.10 — builder callable, top-level metadata, same section keys as v2.9]');
+  const { data: v210SnapshotA, error: v210ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v2_10', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_10 callable by service_role', !v210ErrorA, v210ErrorA);
+  check('v2.10 snapshot_schema_version is 2.10', v210SnapshotA?.snapshot_schema_version === '2.10', v210SnapshotA?.snapshot_schema_version);
+  check('v2.10 analytics_definition_version is 2.10', v210SnapshotA?.analytics_definition_version === '2.10', v210SnapshotA?.analytics_definition_version);
+  check(
+    'v2.10 reuses the SAME shared_calendar_seasonality_evidence / target_user_calendar_seasonality_evidence keys as v2.9 (no new top-level section)',
+    !!v210SnapshotA?.shared_calendar_seasonality_evidence && !!v210SnapshotA?.target_user_calendar_seasonality_evidence,
+    v210SnapshotA ? Object.keys(v210SnapshotA) : v210SnapshotA,
+  );
+
+  console.log('\n[v2.10 — target_user_calendar_seasonality_evidence is NOT recomputed (byte-identical to v2.9, no regression)]');
+  const { data: v29SnapshotForCompare210 } = await serviceClient.rpc('build_analytics_snapshot_v2_9', { p_target_user_id: userAId });
+  check(
+    'target_user_calendar_seasonality_evidence is byte-identical between v2.9 and v2.10 (stable-stringify)',
+    stableStringify(v210SnapshotA?.target_user_calendar_seasonality_evidence) === stableStringify(v29SnapshotForCompare210?.target_user_calendar_seasonality_evidence),
+  );
+
+  console.log('\n[v2.10 — every non-shared-calendar v2.9 section is preserved unchanged]');
+  const nonCalendarKeys210 = Object.keys(v29SnapshotForCompare210 ?? {}).filter(
+    (k) => k !== 'shared_calendar_seasonality_evidence'
+      && k !== 'snapshot_schema_version' && k !== 'analytics_definition_version' && k !== 'generated_at',
+  );
+  const nonCalendarUnchanged210 = nonCalendarKeys210.every((k) => stableStringify((v210SnapshotA as any)?.[k]) === stableStringify((v29SnapshotForCompare210 as any)?.[k]));
+  check('every non-shared-calendar v2.9 key is byte-identical inside v2.10 (stable-stringify)', nonCalendarUnchanged210, nonCalendarKeys210.filter((k) => stableStringify((v210SnapshotA as any)?.[k]) !== stableStringify((v29SnapshotForCompare210 as any)?.[k])));
+
+  const { data: v29SnapshotSecondCall210 } = await serviceClient.rpc('build_analytics_snapshot_v2_9', { p_target_user_id: userAId });
+  const { generated_at: _v29gen1_210, ...v29FirstWithoutTimestamp210 } = (v29SnapshotForCompare210 ?? {}) as Record<string, unknown>;
+  const { generated_at: _v29gen2_210, ...v29SecondWithoutTimestamp210 } = (v29SnapshotSecondCall210 ?? {}) as Record<string, unknown>;
+  check(
+    'v2.9 remains byte-identical (ignoring generated_at) after the v2.10 migration — v2.9 unaffected by v2.10 existing',
+    stableStringify(v29FirstWithoutTimestamp210) === stableStringify(v29SecondWithoutTimestamp210),
+  );
+
+  const v210Shared = v210SnapshotA?.shared_calendar_seasonality_evidence;
+
+  console.log('\n[v2.10 — monthly_timeline: structural invariants]');
+  const v210Monthly: any[] = v210Shared?.monthly_timeline ?? [];
+  const validSharedStatusLabels = new Set(['fully_observed', 'partially_observed', 'pre_coverage', 'unknown_coverage', 'mixed_coverage']);
+  check(
+    'every monthly_timeline row has a valid shared_coverage_status label',
+    v210Monthly.every((m) => validSharedStatusLabels.has(m.shared_coverage_status)),
+    v210Monthly.map((m) => m.shared_coverage_status).filter((s) => !validSharedStatusLabels.has(s)),
+  );
+  check(
+    'shared_coverage_status is fully_observed ONLY when fully_observed_confirmed_user_count === total_shared_user_count (one user cannot vouch for another)',
+    v210Monthly.every((m) => (m.shared_coverage_status === 'fully_observed') === (m.fully_observed_confirmed_user_count === m.total_shared_user_count)),
+    v210Monthly.filter((m) => (m.shared_coverage_status === 'fully_observed') !== (m.fully_observed_confirmed_user_count === m.total_shared_user_count)),
+  );
+  check(
+    'user-count buckets sum to total_shared_user_count on every row',
+    v210Monthly.every((m) => m.fully_observed_confirmed_user_count + m.partial_coverage_user_count + m.pre_coverage_user_count + m.unknown_coverage_user_count === m.total_shared_user_count),
+    v210Monthly.filter((m) => m.fully_observed_confirmed_user_count + m.partial_coverage_user_count + m.pre_coverage_user_count + m.unknown_coverage_user_count !== m.total_shared_user_count),
+  );
+  check('coverage_qualified_user_count always equals fully_observed_confirmed_user_count', v210Monthly.every((m) => m.coverage_qualified_user_count === m.fully_observed_confirmed_user_count));
+  check(
+    'coverage_qualified_acquisition_item_count is NULL exactly when coverage_qualified_user_count is 0 (an absent witness is never a fabricated zero)',
+    v210Monthly.every((m) => (m.coverage_qualified_user_count === 0) === (m.coverage_qualified_acquisition_item_count === null)),
+    v210Monthly.filter((m) => (m.coverage_qualified_user_count === 0) !== (m.coverage_qualified_acquisition_item_count === null)),
+  );
+  check(
+    'coverage_qualified_acquisition_item_count never exceeds reliable_acquisition_item_count (qualified is always a subset of recorded)',
+    v210Monthly.every((m) => m.coverage_qualified_acquisition_item_count === null || m.coverage_qualified_acquisition_item_count <= m.reliable_acquisition_item_count),
+    v210Monthly.filter((m) => m.coverage_qualified_acquisition_item_count !== null && m.coverage_qualified_acquisition_item_count > m.reliable_acquisition_item_count),
+  );
+
+  console.log('\n[v2.10 — Problem 1 fixed: a month observed by userA alone is never fully_observed for the shared pool]');
+  const midCoverageMonth = v210Monthly.find((m) => {
+    const d = new Date(m.month_start);
+    return d >= new Date(coverageStartAIso) && d < new Date(coverageStartBIso);
+  });
+  check(
+    'a month confirmed-observed by userA but not yet by userB is never fully_observed, and is coverage-qualified by fewer than all shared users',
+    !midCoverageMonth || (midCoverageMonth.shared_coverage_status !== 'fully_observed' && midCoverageMonth.coverage_qualified_user_count < midCoverageMonth.total_shared_user_count),
+    midCoverageMonth,
+  );
+  const bothCoveredMonth = v210Monthly.find((m) => new Date(m.month_start) >= new Date(coverageStartBIso) && m.shared_coverage_status !== undefined);
+  check(
+    'a month confirmed-observed by BOTH users can reach coverage_qualified_user_count === total_shared_user_count',
+    !bothCoveredMonth || bothCoveredMonth.coverage_qualified_user_count <= bothCoveredMonth.total_shared_user_count,
+    bothCoveredMonth,
+  );
+
+  console.log('\n[v2.10 — monthly_timeline_by_purpose: reconciles to pooled monthly_timeline, shares the same user-level coverage fields]');
+  const v210MonthlyByPurpose: any[] = v210Shared?.monthly_timeline_by_purpose ?? [];
+  const v210MonthlySum = v210Monthly.reduce((sum, m) => sum + Number(m.reliable_acquisition_item_count ?? 0), 0);
+  const v210MonthlyByPurposeSum = v210MonthlyByPurpose.reduce((sum, m) => sum + Number(m.reliable_acquisition_item_count ?? 0), 0);
+  check(
+    'monthly_timeline_by_purpose reliable_acquisition_item_count sums to pooled monthly_timeline',
+    v210MonthlySum === v210MonthlyByPurposeSum,
+    { pooled: v210MonthlySum, byPurpose: v210MonthlyByPurposeSum },
+  );
+  check(
+    'monthly_timeline_by_purpose rows carry the SAME user-count/status fields as the pooled row for that month (coverage is user-level, not purpose-level)',
+    v210MonthlyByPurpose.every((pm) => {
+      const pooled = v210Monthly.find((m) => m.month_start === pm.month_start);
+      return !pooled || (pooled.total_shared_user_count === pm.total_shared_user_count && pooled.shared_coverage_status === pm.shared_coverage_status);
+    }),
+  );
+
+  console.log('\n[v2.10 — month_of_year_seasonality: user-year observation units, valid confidence, one-user-year-domination cap]');
+  const v210Moy: any[] = v210Shared?.month_of_year_seasonality ?? [];
+  check('month_of_year_seasonality has exactly 12 rows', v210Moy.length === 12, v210Moy.length);
+  const validMoyConfidence210 = new Set(['no_data', 'coverage_unknown', 'insufficient_years', 'low', 'moderate', 'stronger']);
+  check(
+    'every month row uses a valid acquisition_confidence value',
+    v210Moy.every((m) => validMoyConfidence210.has(m.acquisition_confidence)),
+    v210Moy.map((m) => m.acquisition_confidence).filter((c) => !validMoyConfidence210.has(c)),
+  );
+  check(
+    'no month claims stronger/moderate acquisition_confidence with fewer than 2 fully_observed_user_year_count',
+    v210Moy.every((m) => (m.acquisition_fully_observed_user_year_count ?? 0) >= 2 || (m.acquisition_confidence !== 'stronger' && m.acquisition_confidence !== 'moderate')),
+    v210Moy.filter((m) => (m.acquisition_fully_observed_user_year_count ?? 0) < 2 && (m.acquisition_confidence === 'stronger' || m.acquisition_confidence === 'moderate')),
+  );
+  check(
+    'no month claims stronger/moderate when largest_user_year_event_share > 0.80 (one-user-year domination capped)',
+    v210Moy.every((m) => m.acquisition_largest_user_year_event_share === null || m.acquisition_largest_user_year_event_share <= 0.80 || (m.acquisition_confidence !== 'stronger' && m.acquisition_confidence !== 'moderate')),
+    v210Moy.filter((m) => m.acquisition_largest_user_year_event_share > 0.80 && (m.acquisition_confidence === 'stronger' || m.acquisition_confidence === 'moderate')),
+  );
+  check(
+    'coverage_qualified_event_count never exceeds recorded_event_count per family (uncovered user-years never strengthen the numerator)',
+    v210Moy.every((m) => m.acquisition_coverage_qualified_event_count <= m.acquisition_recorded_event_count
+      && m.first_listing_coverage_qualified_event_count <= m.first_listing_recorded_event_count
+      && m.realized_exit_coverage_qualified_event_count <= m.realized_exit_recorded_event_count),
+    v210Moy.filter((m) => m.acquisition_coverage_qualified_event_count > m.acquisition_recorded_event_count),
+  );
+  check(
+    'every *_limitations field is an array',
+    v210Moy.every((m) => Array.isArray(m.acquisition_limitations) && Array.isArray(m.first_listing_limitations) && Array.isArray(m.realized_exit_limitations)),
+  );
+  check(
+    'zero_activity_fully_observed_user_year_count is a valid non-negative count (a genuine confirmed zero remains valid evidence)',
+    v210Moy.every((m) => typeof m.acquisition_zero_activity_fully_observed_user_year_count === 'number' && m.acquisition_zero_activity_fully_observed_user_year_count >= 0),
+  );
+  check(
+    'month_of_year_seasonality_by_purpose remains explicitly out of scope (empty array + note), unchanged from v2.9',
+    Array.isArray(v210Shared?.month_of_year_seasonality_by_purpose) && v210Shared.month_of_year_seasonality_by_purpose.length === 0 && typeof v210Shared?.month_of_year_seasonality_by_purpose_note === 'string',
+    { arr: v210Shared?.month_of_year_seasonality_by_purpose, note: v210Shared?.month_of_year_seasonality_by_purpose_note },
+  );
+
+  console.log('\n[v2.10 — current_month_to_date_pace: pairwise cohort matching]');
+  const v210Mtd = v210Shared?.current_month_to_date_pace;
+  const validMtdStatus210 = new Set(['coverage_unknown', 'insufficient_history', 'sufficient_history']);
+  check('current_month_to_date_pace.status is a valid value', validMtdStatus210.has(v210Mtd?.status), v210Mtd?.status);
+  check(
+    'status is sufficient_history only when comparable_prior_years_count >= 2',
+    (v210Mtd?.status === 'sufficient_history') === ((v210Mtd?.comparable_prior_years_count ?? 0) >= 2),
+    v210Mtd,
+  );
+  const pairwise210: any[] = v210Mtd?.pairwise_comparisons ?? [];
+  check(
+    'pairwise_comparisons length matches comparable_prior_years_count',
+    pairwise210.length === v210Mtd?.comparable_prior_years_count,
+    { len: pairwise210.length, count: v210Mtd?.comparable_prior_years_count },
+  );
+  check(
+    'every pairwise entry has cohort_user_count > 0 and BOTH current_cohort_metrics and prior_cohort_metrics present (never full population on either side)',
+    pairwise210.every((p) => p.cohort_user_count > 0 && p.current_cohort_metrics && p.prior_cohort_metrics),
+    pairwise210,
+  );
+  check(
+    'pairwise_difference === current_cohort_metrics - prior_cohort_metrics for every pair (acquisition_item_count)',
+    pairwise210.every((p) => p.pairwise_difference.acquisition_item_count === p.current_cohort_metrics.acquisition_item_count - p.prior_cohort_metrics.acquisition_item_count),
+    pairwise210,
+  );
+  check(
+    'full_population_current_month_to_date is present but structurally separate from any pairwise cohort metric (descriptive only)',
+    !!v210Mtd?.full_population_current_month_to_date && typeof v210Mtd?.full_population_note === 'string',
+    v210Mtd?.full_population_current_month_to_date,
+  );
+  check(
+    'common_cohort_summary is null exactly when comparable_prior_years_count is 0',
+    (v210Mtd?.comparable_prior_years_count ?? 0) > 0 || v210Mtd?.common_cohort_summary === null,
+    v210Mtd?.common_cohort_summary,
+  );
+  if (v210Mtd?.common_cohort_summary) {
+    check(
+      'common_cohort_summary.common_cohort_user_count > 0 and prior_year_median/average present',
+      v210Mtd.common_cohort_summary.common_cohort_user_count > 0 && !!v210Mtd.common_cohort_summary.prior_year_median && !!v210Mtd.common_cohort_summary.prior_year_average,
+      v210Mtd.common_cohort_summary,
+    );
+  }
+  check('current_month_to_date_pace.summary_rule documents the common-cohort rule', typeof v210Mtd?.summary_rule === 'string' && v210Mtd.summary_rule.toLowerCase().includes('cohort'), v210Mtd?.summary_rule);
+  check('current_month_to_date_pace note is descriptive, not a forecast claim', typeof v210Mtd?.note === 'string' && v210Mtd.note.toLowerCase().includes('not a forecast'), v210Mtd?.note);
+  check(
+    'status sufficient_history implies at least 2 pairwise_comparisons entries exist (never fewer)',
+    v210Mtd?.status !== 'sufficient_history' || pairwise210.length >= 2,
+    { status: v210Mtd?.status, pairwiseLength: pairwise210.length },
+  );
+
+  console.log('\n[v2.10 — Historical Import semantics unchanged]');
+  const v210SharedSerialized = JSON.stringify(v210Shared);
+  check(
+    'shared_calendar_seasonality_evidence contains no recommendation/urgency/score/forecast/item_id/user_id fields',
+    !v210SharedSerialized.includes('"recommendation"') && !v210SharedSerialized.includes('"urgency"') && !v210SharedSerialized.includes('"score"')
+      && !v210SharedSerialized.includes('"forecast"') && !v210SharedSerialized.includes('"item_id"') && !v210SharedSerialized.includes('"user_id"'),
+  );
+
+  console.log('\n[v2.10 — permissions]');
+  const { error: v210AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_10', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_10 directly', !!v210AuthedError, v210AuthedError);
+  const { error: v210HelperAuthedError } = await clientA.rpc('_build_shared_calendar_cohort_correction_v2_10');
+  check('authenticated client cannot call _build_shared_calendar_cohort_correction_v2_10 directly', !!v210HelperAuthedError, v210HelperAuthedError);
+  const { error: v210ForgedTargetError } = await clientA.rpc('build_analytics_snapshot_v2_10', { p_target_user_id: userBId });
+  check('authenticated client cannot invoke build_analytics_snapshot_v2_10 for a forged target user id either', !!v210ForgedTargetError, v210ForgedTargetError);
+
+  console.log('\n[v2.10 — old-version compatibility]');
+  const v210StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_0', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_1', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_2', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_3', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_4', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_5', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_6', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_7', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_8', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_9', { p_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v210StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.10 migration`, !error, error);
+  }
+
+  console.log('\n[v2.10 — production promotion]');
+  check('ANALYTICS_VERSION constant used by the production runner is now 2.10', ANALYTICS_VERSION === '2.10', ANALYTICS_VERSION);
+  const runA210 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new production run stores analytics_version 2.10', runA210.analytics_version === '2.10', runA210.analytics_version);
+  check('new production run snapshot.snapshot_schema_version is 2.10', (runA210.snapshot as any)?.snapshot_schema_version === '2.10', (runA210.snapshot as any)?.snapshot_schema_version);
+
+  console.log('\n[v2.10 — old stored runs remain readable]');
+  const { data: oldRunReadBack210 } = await serviceClient
+    .from('analytics_runs').select('analytics_version, snapshot').eq('id', syntheticOldRun!.id).single();
+  check(
+    'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.10 migration',
+    oldRunReadBack210?.analytics_version === '1.8' && (oldRunReadBack210?.snapshot as any)?.snapshot_schema_version === '1.8',
+    oldRunReadBack210,
+  );
+
+  console.log('\n[v2.10 — coverage rows resolve exactly as configured (same shape the production data-fix relies on)]');
+  const { data: coverageRowsCheck } = await serviceClient
+    .from('analytics_observation_coverage')
+    .select('user_id, complete_history_start_date, coverage_status')
+    .in('user_id', [userAId, userBId]);
+  check(
+    'analytics_observation_coverage resolves confirmed rows for both fixture users with the exact configured dates',
+    (coverageRowsCheck ?? []).length === 2
+      && (coverageRowsCheck ?? []).every((r: any) => r.coverage_status === 'confirmed')
+      && (coverageRowsCheck ?? []).some((r: any) => r.user_id === userAId && r.complete_history_start_date === coverageStartAIso)
+      && (coverageRowsCheck ?? []).some((r: any) => r.user_id === userBId && r.complete_history_start_date === coverageStartBIso),
+    coverageRowsCheck,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

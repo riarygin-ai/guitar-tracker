@@ -2318,3 +2318,188 @@ Analytics page's existing "Shared Calendar & Seasonality Evidence" and
 "Target User Calendar & Seasonality Evidence" collapsible sections
 automatically render the corrected content — no new section, no
 redesign, no charts.
+
+## 33. Shared Calendar Cohort Correction (v2.10) and ninth production promotion
+
+`public.build_analytics_snapshot_v2_10(p_target_user_id int)`
+(`supabase/migrations/20260821000000_build_analytics_snapshot_v2_10.sql`)
+calls `build_analytics_snapshot_v2_9` wholesale and MERGES a shared-scope
+cohort correction onto v2.9's OWN `shared_calendar_seasonality_evidence`
+object (same key names, never a new top-level snapshot key) — a narrow
+follow-up, not a new module. See `analytics/sql/25_shared_calendar_
+cohort_correction_v2_10.sql` for a standalone illustration of the two
+core corrections.
+
+**The two problems this corrects.** v2.9 correctly fixed TARGET-USER
+calendar coverage (a single user's own confirmed/estimated/unknown
+coverage governs their own evidence), but left two SHARED-scope cohort
+problems in place — both explicitly documented in v2.9's own header as
+deliberate scope decisions, not oversights:
+
+1. **One covered user vouched for the whole shared population.** v2.9's
+   shared `monthly_timeline` and `month_of_year_seasonality` called a
+   period `'fully_observed'` whenever ANY in-scope user's own coverage
+   fully observed it (`MAX(severity)` pooled across users for
+   `monthly_timeline`; `BOOL_OR` across users per `(month_number, year)`
+   for `month_of_year_seasonality`). If User 1 has confirmed coverage and
+   User 2 is pre-coverage or unknown, User 2's absent events were
+   effectively read as a confirmed zero — the absence of User 2's events
+   must never be interpreted as a confirmed zero for User 2.
+2. **Shared MTD compared different populations.** v2.9's shared
+   `current_month_to_date_pace` computed the CURRENT month-to-date side
+   over the FULL current population while restricting each PRIOR year to
+   that year's confirmed-cohort subset — comparing a full basket against
+   a narrower one and calling the difference a "pace." Every prior-year
+   comparison must use the exact same user cohort on both sides.
+
+**Corrected `monthly_timeline` / `monthly_timeline_by_purpose`.**
+Recorded event totals are UNCHANGED from v2.9 (every user, regardless of
+coverage — never hidden, never silently replaced with zero). New,
+explicitly separate `coverage_qualified_*` totals (item counts and value
+sums, mirroring the recorded fields) are computed ONLY from users with
+CONFIRMED full coverage for that specific month — `NULL`, never `0`,
+when no user in the pool qualifies, so an absent witness is never
+misread as a confirmed zero. Each row now also exposes
+`total_shared_user_count`, `fully_observed_confirmed_user_count`,
+`partial_coverage_user_count` (calendar-partial coverage, OR a
+fully-observed-but-only-`'estimated'` user — not confirmed enough to
+qualify, but not a calendar gap either), `pre_coverage_user_count`,
+`unknown_coverage_user_count`, and `coverage_qualified_user_count`
+(always equal to `fully_observed_confirmed_user_count`). `shared_
+coverage_status` replaces v2.9's single-witness `coverage_status` with a
+transparent vocabulary that cannot be satisfied by one user alone:
+`'fully_observed'` requires EVERY in-scope user to be confirmed-fully-
+observed; `'unknown_coverage'` requires EVERY user unknown;
+`'pre_coverage'` requires EVERY user pre-dating coverage;
+`'partially_observed'` when at least one (but not every) user qualifies;
+`'mixed_coverage'` otherwise (no qualified witness, but statuses are not
+uniform either). Purpose-breakdown rows use the identical, user-level
+(not purpose-specific) qualified cohort for a given month, filtered only
+by the row's own purpose for the event totals — coverage is a property
+of a user-period, not of a user-period-purpose triple.
+
+**Corrected `month_of_year_seasonality`.** Restructured from v2.9's
+pooled-then-classified `(month_number, year)` cells onto independent
+`(user, year, month_number)` OBSERVATION UNITS: a user-year-month
+contributes to a family's (acquisition/first-listing/realized-exit)
+denominator ONLY when that SPECIFIC user has CONFIRMED coverage fully
+observing that specific period — a genuine zero when confirmed fully
+observed with no events, events when confirmed fully observed with
+activity, and NOTHING when pre-coverage, partial, `'estimated'`, or
+unknown. One user's confirmed coverage never qualifies another user's
+cell. Each of the 12 rows now exposes, per event family: `*_recorded_
+event_count` (every user, unaffected by coverage — a recorded event from
+an uncovered period remains visible here, but never strengthens
+confidence), `*_coverage_qualified_event_count` (qualified user-years
+only), `*_fully_observed_user_year_count`, `*_active_fully_observed_
+user_year_count` (qualified AND `event_count > 0`), `*_zero_activity_
+fully_observed_user_year_count` (qualified AND `event_count = 0` — a
+genuine observed zero, valid evidence), `*_confirmed_covered_user_count`
+(distinct users contributing at least one qualified user-year to this
+month number), `*_largest_user_year_event_share` (the single largest
+qualified user-year's share of total qualified events — one user-year
+dominating caps confidence even with a large total), and `*_confidence`.
+Confidence reuses v2.9's exact conservative ladder, generalized from
+fully-observed-confirmed YEARS to fully-observed-confirmed USER-YEARS
+(`'no_data'`/`'coverage_unknown'`/`'insufficient_years'` (`< 2`
+fully-observed user-years)/`'low'`/`'moderate'` (`>= 2` fully-observed
+user-years, `coverage_qualified_event_count >= 6`, largest-user-year
+share `<= 80%`)/`'stronger'` (`>= 3` fully-observed user-years — already
+confirmed-only by construction, since qualification itself requires
+`'confirmed'` — `coverage_qualified_event_count >= 10`, `>= 2` active
+qualified user-years, largest-user-year share `<= 60%`)) — `'stronger'`
+still requires confirmed coverage and balanced evidence, exactly as
+v2.9's own rule required, just measured over the corrected unit. Each
+row also exposes `*_limitations`, a deterministic flag array
+(`NO_QUALIFIED_COVERAGE`, `SINGLE_USER_YEAR_DOMINATES`, `ONLY_ONE_
+CONFIRMED_USER_CONTRIBUTES`) — never counted, weighted, or folded into
+`*_confidence` itself, matching this contract's Business Coach principle
+(section 13.9) that a deterministic evidence flag is never turned into a
+score. `month_of_year_seasonality_by_purpose` remains explicitly out of
+scope (unchanged from v2.9 — still an empty array plus a `_note`, passed
+through, not recomputed).
+
+**Corrected `current_month_to_date_pace` — pairwise cohort matching.**
+For every candidate prior year, users are classified against THAT year's
+MTD window: `'included'` (`coverage_status = 'confirmed'` AND `complete_
+history_start_date <= window_start`), `'excluded_pre_coverage'`
+(confirmed but coverage starts after that window), or `'excluded_
+unknown_or_estimated'` (`coverage_status` `'unknown'` or `'estimated'`,
+regardless of any date — MTD keeps v2.9's `'confirmed'`-only evidentiary
+bar). The resulting `cohort_user_ids` computes BOTH the prior-year total
+AND the current-year total for that pair — never the current year's full
+population. `pairwise_comparisons` is an array, one entry per comparable
+prior year: `cohort_user_count`, `excluded_pre_coverage_user_count`,
+`excluded_unknown_or_estimated_user_count`, `current_cohort_metrics`,
+`prior_cohort_metrics`, `pairwise_difference`. A separately labeled
+`full_population_current_month_to_date` is retained for descriptive
+context only (this task's explicit allowance) — it is never used as a
+comparison side, and `full_population_note` says so explicitly.
+
+Because `complete_history_start_date` is a single fixed date per user
+and a later year's MTD window is always a later calendar date than an
+earlier year's, cohort membership is MONOTONIC in year: a user
+qualifying for an earlier comparable year automatically qualifies for
+every later comparable year, including the current year's own window.
+The cohort COMMON to every comparable year is therefore always exactly
+the EARLIEST comparable year's own cohort — `common_cohort_summary` uses
+this fact to compute one honest `prior_year_median`/`prior_year_average`:
+it recomputes EVERY comparable year's prior total, and the current
+total, using only that common cohort (a valid — sometimes narrower —
+subset of each year's own, possibly larger, cohort), so every value
+entering the summary reflects one identical population. `summary_rule`
+documents this choice in the payload itself. If no comparable prior year
+shares a nonempty common cohort, `common_cohort_summary` is `NULL` — a
+pooled median/average is never presented across populations that
+actually differ. `status` is unchanged from v2.9's rule:
+`'sufficient_history'` requires `comparable_prior_years_count >= 2`;
+`'coverage_unknown'` when no in-scope user has any confirmed coverage
+configured at all; otherwise `'insufficient_history'`. A comparable
+prior year with genuine zero activity remains valid and stays zero.
+Still descriptive only, never a forecast for the completed current
+month; still the same safe same-day cutoff and February/month-end
+handling as v2.8/v2.9.
+
+**`target_user_calendar_seasonality_evidence` is NOT recomputed.** A
+single-user scope cannot exhibit either problem above (there is only one
+user to vouch for, and only one population to compare against itself),
+so v2.9's target-user calendar logic is already correct and passes
+through unchanged — no regression, per this task's explicit requirement.
+
+**Historical Import semantics — unchanged.** Unreliable Historical
+Import acquisition dates remain excluded from acquisition calendar/
+holding metrics; reliable listing dates, reliable exit dates, and DOM
+remain eligible exactly as in v2.9. A reliable historical event before
+complete coverage began remains a valid recorded event — it does not
+prove the surrounding period was observed, and it never strengthens
+`*_coverage_qualified_event_count` or `*_confidence` for a period it
+does not qualify for.
+
+**Purpose-specific seasonality remains deferred.** `month_of_year_
+seasonality_by_purpose` continues to use v2.8's uncorrected logic and is
+emptied with a `_note`, exactly as v2.9 left it — not restored or
+extended with cohort-aware logic in this step. Current Purpose remains
+current disposition only, never proven historical intent at event time.
+
+**Production observation-coverage configuration.** The schema migration
+(`20260821000000_build_analytics_snapshot_v2_10.sql`) contains NO
+user-specific dates — it stays safe to apply to any environment,
+including a disposable local stack, without seeding real configuration
+into it. Production values are applied by a separate, explicit,
+idempotent data-fix script, `supabase/data-fixes/20260821_analytics_
+observation_coverage_v2_10.sql` (`INSERT ... ON CONFLICT (user_id) DO
+UPDATE`, run manually against the target database by a `service_role`/
+`postgres` connection — `analytics_observation_coverage` denies `anon`
+and `authenticated` all privileges, unchanged from v2.9): `app_users.id
+= 1` confirmed from `2025-11-01`; `app_users.id = 2` confirmed from
+`2026-03-01`.
+
+**`v2.10` is now the production analytics version.** `runAnalytics.ts`
+calls `build_analytics_snapshot_v2_10` for every new run (`ANALYTICS_
+VERSION = '2.10'`). `v1.0`-`v1.8` and `v2.0`-`v2.9` remain independently
+callable and every previously stored `analytics_runs.snapshot` row
+remains readable — a forward version bump, not a rewrite of history. The
+Analytics page's existing "Shared Calendar & Seasonality Evidence" and
+"Target User Calendar & Seasonality Evidence" collapsible sections
+automatically render the corrected content — no new section, no
+redesign, no charts.

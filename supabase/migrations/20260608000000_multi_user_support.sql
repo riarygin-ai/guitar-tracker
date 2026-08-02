@@ -92,15 +92,40 @@ ALTER TABLE public.inventory_expenses   ADD COLUMN IF NOT EXISTS user_id int REF
 ALTER TABLE public.deal_items           ADD COLUMN IF NOT EXISTS user_id int REFERENCES public.app_users(id);
 
 -- ─── 6. Backfill all existing rows to Roman ──────────────────────────────────
+-- A database with legacy (pre-multi-user) rows MUST assign them to a real,
+-- identified owner — that remains a hard failure if Roman's record can't be
+-- found (production safety net, unchanged: production already has legacy
+-- rows and an existing Roman signup, so this branch behaves exactly as
+-- before). A genuinely fresh/empty database (no legacy rows in any of the
+-- six tables below) has nothing to backfill and no reason to require
+-- Roman's auth signup to exist before migrations can finish — skipped with
+-- a NOTICE instead of raising, so a disposable local stack can bootstrap
+-- without a manual pre-migration signup step. No fake Roman user is ever
+-- created either way.
 
 DO $$
 DECLARE
-  v_roman_id int;
+  v_roman_id         int;
+  v_legacy_row_count bigint;
 BEGIN
   SELECT id INTO v_roman_id
   FROM public.app_users
   WHERE email = 'romzzzes@gmail.com'
   LIMIT 1;
+
+  SELECT
+      (SELECT COUNT(*) FROM public.inventory_items       WHERE user_id IS NULL)
+    + (SELECT COUNT(*) FROM public.deals                 WHERE user_id IS NULL)
+    + (SELECT COUNT(*) FROM public.cash_flow             WHERE user_id IS NULL)
+    + (SELECT COUNT(*) FROM public.inventory_item_photos WHERE user_id IS NULL)
+    + (SELECT COUNT(*) FROM public.inventory_expenses    WHERE user_id IS NULL)
+    + (SELECT COUNT(*) FROM public.deal_items            WHERE user_id IS NULL)
+  INTO v_legacy_row_count;
+
+  IF v_legacy_row_count = 0 THEN
+    RAISE NOTICE 'No legacy rows require ownership backfill — skipping Roman backfill (fresh database).';
+    RETURN;
+  END IF;
 
   IF v_roman_id IS NULL THEN
     RAISE EXCEPTION 'Roman app_user record not found — step 4 may have failed';
