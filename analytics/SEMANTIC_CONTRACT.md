@@ -1943,11 +1943,104 @@ channel_id = deal_out_channel_id`) remains descriptive exposure/path
 evidence only, never a conversion rate. `listing_to_deal_out` is
 explicitly NOT a mutually exclusive journey matrix.
 
-**`v2.6` is now the production analytics version.** `runAnalytics.ts`
-calls `build_analytics_snapshot_v2_6` for every new run (`ANALYTICS_
-VERSION = '2.6'`). `v1.0`-`v1.8` and `v2.0`-`v2.5` remain independently
+**`v2.6` was the production analytics version at this step.** `runAnalytics.ts`
+called `build_analytics_snapshot_v2_6` for every new run (`ANALYTICS_
+VERSION = '2.6'`). `v1.0`-`v1.8` and `v2.0`-`v2.5` remained independently
 callable and every previously stored `analytics_runs.snapshot` row
-remains readable — a forward version bump, not a rewrite of history. The
+remained readable — a forward version bump, not a rewrite of history. The
 Analytics page's "Shared Listing Channel Evidence" and "Target User
 Listing Channel Evidence" collapsible sections use the same JSON/Copy
-JSON pattern as every prior section.
+JSON pattern as every prior section. See section 30 for the next
+production promotion.
+
+## 30. Capital & Liquidity (v2.7) and sixth production promotion
+
+`public.build_analytics_snapshot_v2_7(p_target_user_id int)`
+(`supabase/migrations/20260818000000_build_analytics_snapshot_v2_7.sql`)
+calls `build_analytics_snapshot_v2_6` wholesale and adds two new
+top-level sections, `shared_capital_liquidity_evidence` and `target_
+user_capital_liquidity_evidence`, each containing `population_summary`,
+`open_capital_by_age_bucket`, `open_capital_by_acquisition_band`,
+`open_capital_by_acquisition_method`, `realized_capital_efficiency_by_
+acquisition_band`, and `realized_capital_efficiency_by_acquisition_
+method` — a Purpose-aware v2 port of `09_capital_liquidity.sql` (see its
+v2 port `analytics/sql/22_capital_liquidity_v2.sql`). Every prior v2.6
+section is preserved unchanged; `v2.6` itself, and every `v1.x`/
+`v2.0`-`v2.5` builder, are untouched and remain independently callable.
+Open Inventory Decision Support, Listing Channel Exposure, and the Deal
+Channel modules are not touched by this migration.
+
+**Every Purpose, not Business-only, with Purpose treated as a current
+disposition policy.** Same population rule as every prior v2 module —
+Business, Hybrid, Personal, `missing_purpose`, `missing_policy`, never
+filtered by Purpose. Purpose is a current disposition POLICY, not an
+economic eligibility filter and not proven historical intent — never
+presented as Purpose at acquisition, listing, or exit time. Every
+section is produced twice: pooled across all Purposes, and broken down
+by `(current_purpose_id, current_purpose_name, purpose_policy_status)`.
+
+**Purpose-aware interpretation — neutral buckets, policy fields, no
+universal urgency.** `09_capital_liquidity.sql`'s own bucket labels and
+interpretation safeguards were reviewed for judgmental/urgency language
+before porting: they were already neutral ("0-29 days" / "30-59 days" /
+"60-119 days" / "120+ days" / "unreliable/unknown age" — no "stale",
+"slow", or "trapped" label anywhere), and the file's own safeguard
+already warned "Old inventory is NOT automatically bad inventory." Those
+same neutral buckets and calculations are ported unchanged. The
+`purpose_population_summary` rows additionally LEFT JOIN
+`public.analytics_purpose_policy` — the ONLY source of Purpose-level
+interpretive framing this module surfaces (`disposition_mode`,
+`realization_priority_order`, `active_realization_flag`,
+`expected_holding_policy`, `description`), `NULL` for `missing_purpose`/
+`missing_policy` rows. No new judgmental label, score, or universal
+"stale"/"trapped"/urgency interpretation is invented: Business's policy
+row reads `'shorter_holding_preferred'`, Hybrid's `'extended_holding_
+acceptable'`, Personal's `'long_holding_acceptable'` — pre-existing,
+already-reviewed fields, not new rules this module invents. No
+operator's personal inventory-reduction goal for any Purpose is encoded
+as a universal application rule.
+
+**Scope decision — all six v1 queries are production evidence, none
+superseded by OIDS.** `09_capital_liquidity.sql`'s own "QUERY
+CLASSIFICATION INDEX" self-classifies every one of its six queries as
+shared aggregate evidence — none are developer-only diagnostics, and
+none are superseded by Purpose-aware OIDS (OIDS reports item-level
+decision evidence with reason codes for one target user; this module
+reports only AGGREGATE capital/liquidity totals — genuinely different
+scope, never duplicated here). All six are therefore ported in full:
+`population_summary`, `open_capital_by_age_bucket`, `open_capital_by_
+acquisition_band`, `open_capital_by_acquisition_method`, `realized_
+capital_efficiency_by_acquisition_band`, `realized_capital_efficiency_
+by_acquisition_method`.
+
+**Capital and denominator semantics preserved from v1.** This module
+reports CAPITAL (acquisition value assigned to inventory), never a
+cash_flow/cash-balance ledger. Positive acquisition value contributes to
+every capital total; zero-assigned remains visible and contributes
+exactly $0; unknown (`NULL`) remains visible in coverage but is excluded
+from SUMs by ordinary NULL propagation. Every `*_capital_percent` field
+divides by the SAME denominator within its scope — pooled rows use the
+scope-wide open-capital total; `_by_purpose` rows use that Purpose's own
+open-capital total, so percentages sum to ~100% within their own scope.
+`profit_to_acquisition_capital_percent` is an aggregate descriptive
+ratio, never a substitute for `median_roi`. `median_net_profit_per_30_
+holding_days` is computed PER ITEM FIRST, then medianed.
+
+**Time and reliability semantics preserved from v1.** Historical Imports
+are included in acquisition capital, realized profit, ROI, values,
+listing state, and estimated upside; excluded ONLY from acquisition-
+date-dependent metrics (ownership age, holding days, profit-per-30-
+holding-days) — DOM is NOT excluded for historical imports. Open capital
+age buckets are MUTUALLY EXCLUSIVE. Confidence is tiered from the row's
+own item count, unchanged from 09's own convention. This module never
+duplicates OIDS' item-level decision evidence — no item_id, item row,
+reason code, or recommendation is produced anywhere here.
+
+**`v2.7` is now the production analytics version.** `runAnalytics.ts`
+calls `build_analytics_snapshot_v2_7` for every new run (`ANALYTICS_
+VERSION = '2.7'`). `v1.0`-`v1.8` and `v2.0`-`v2.6` remain independently
+callable and every previously stored `analytics_runs.snapshot` row
+remains readable — a forward version bump, not a rewrite of history. The
+Analytics page's "Shared Capital & Liquidity Evidence" and "Target User
+Capital & Liquidity Evidence" collapsible sections use the same
+JSON/Copy JSON pattern as every prior section.

@@ -1069,7 +1069,7 @@ See `analytics/sql/18_deal_in_channel_performance_v2.sql`,
 `analytics/sql/20_channel_journey_v2.sql`, and
 `analytics/SEMANTIC_CONTRACT.md` section 28 for the full contract.
 
-## Analytics Snapshot v2.6 (Listing Channel Exposure) — PRODUCTION
+## Analytics Snapshot v2.6 (Listing Channel Exposure)
 
 `public.build_analytics_snapshot_v2_6(p_target_user_id int)`
 (`supabase/migrations/20260817000000_build_analytics_snapshot_v2_6.sql`)
@@ -1114,21 +1114,70 @@ not touched by this promotion.
   listing date is known; excluded only from holding/ownership-age
   metrics, unchanged from every prior module.
 
-**`v2.6` is now the production analytics version.** `src/lib/analytics/
-runAnalytics.ts` calls `build_analytics_snapshot_v2_6` for every new run
-(`ANALYTICS_VERSION = '2.6'`). `POST /api/analytics/runs` is unchanged in
+**`v2.6` was the production analytics version at this step.** As of v2.7
+(below), the production runner has been promoted again; `v2.6` itself
+remains unaffected and independently callable.
+
+See `analytics/sql/21_listing_channel_exposure_v2.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 29 for the full contract.
+
+## Analytics Snapshot v2.7 (Capital & Liquidity) — PRODUCTION
+
+`public.build_analytics_snapshot_v2_7(p_target_user_id int)`
+(`supabase/migrations/20260818000000_build_analytics_snapshot_v2_7.sql`)
+calls `build_analytics_snapshot_v2_6` wholesale (unchanged) and adds two
+new top-level sections, `shared_capital_liquidity_evidence` and
+`target_user_capital_liquidity_evidence`, a Purpose-aware v2 port of
+`analytics/sql/09_capital_liquidity.sql`, reading every Purpose instead
+of Business only. OIDS, Listing Channel Exposure, and the Deal Channel
+modules are not touched by this promotion.
+
+**What's new:**
+
+- **Every Purpose, produced twice**: each section is computed once
+  pooled across all Purposes, and once broken down by `(current_purpose_
+  id, current_purpose_name, purpose_policy_status)`. Purpose is a
+  current disposition policy, not an eligibility filter and not proven
+  historical intent.
+- **Capital & Liquidity**: `population_summary` / `purpose_population_
+  summary` (the purpose rows also carry `public.analytics_purpose_
+  policy` fields — `disposition_mode`, `realization_priority_order`,
+  `active_realization_flag`, `expected_holding_policy`, `description`),
+  `open_capital_by_age_bucket` / `*_by_purpose` (mutually exclusive
+  buckets), `open_capital_by_acquisition_band` / `*_by_purpose`,
+  `open_capital_by_acquisition_method` / `*_by_purpose`, `realized_
+  capital_efficiency_by_acquisition_band` / `*_by_purpose`, `realized_
+  capital_efficiency_by_acquisition_method` / `*_by_purpose`.
+- **All six v1 queries ported in full, none superseded by OIDS**: `09_
+  capital_liquidity.sql` self-classifies every query as production
+  evidence; OIDS reports item-level decision evidence for one user,
+  while this module reports only aggregate capital/liquidity totals —
+  different scope, so nothing here duplicates OIDS.
+- **Neutral buckets, no universal urgency**: the same age/holding/DOM
+  buckets are reported for every Purpose (no "stale"/"trapped" label
+  invented); Purpose-level interpretation comes only from the
+  pre-existing `analytics_purpose_policy` fields, never a new rule this
+  module invents.
+- Historical Imports remain included in acquisition capital, realized
+  profit, ROI, values, and estimated upside; excluded only from
+  acquisition-date-dependent duration metrics (DOM is not excluded).
+
+**`v2.7` is now the production analytics version.** `src/lib/analytics/
+runAnalytics.ts` calls `build_analytics_snapshot_v2_7` for every new run
+(`ANALYTICS_VERSION = '2.7'`). `POST /api/analytics/runs` is unchanged in
 every other respect: authenticates the request, resolves `app_users.id`
 from the session, uses a service-role client only server-side, always
 targets the authenticated caller's own resolved id, sanitizes errors,
 and follows the same `pending -> running -> completed/failed` lifecycle.
-The Analytics page's "Shared Listing Channel Evidence" and "Target User
-Listing Channel Evidence" collapsible sections use the same JSON/Copy
-JSON pattern as every earlier section. Previously stored v1.8/v2.0/v2.1/
-v2.2/v2.3/v2.4/v2.5 runs remain readable in run history unchanged;
-`v1.0`-`v1.8` and `v2.0`-`v2.5` all remain independently callable.
+The Analytics page's "Shared Capital & Liquidity Evidence" and "Target
+User Capital & Liquidity Evidence" collapsible sections use the same
+JSON/Copy JSON pattern as every earlier section. Previously stored
+v1.8/v2.0/v2.1/v2.2/v2.3/v2.4/v2.5/v2.6 runs remain readable in run
+history unchanged; `v1.0`-`v1.8` and `v2.0`-`v2.6` all remain
+independently callable.
 
-See `analytics/sql/21_listing_channel_exposure_v2.sql` and
-`analytics/SEMANTIC_CONTRACT.md` section 29 for the full contract.
+See `analytics/sql/22_capital_liquidity_v2.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 30 for the full contract.
 
 ## Conventions
 
