@@ -1121,7 +1121,7 @@ remains unaffected and independently callable.
 See `analytics/sql/21_listing_channel_exposure_v2.sql` and
 `analytics/SEMANTIC_CONTRACT.md` section 29 for the full contract.
 
-## Analytics Snapshot v2.7 (Capital & Liquidity) — PRODUCTION
+## Analytics Snapshot v2.7 (Capital & Liquidity)
 
 `public.build_analytics_snapshot_v2_7(p_target_user_id int)`
 (`supabase/migrations/20260818000000_build_analytics_snapshot_v2_7.sql`)
@@ -1162,22 +1162,84 @@ modules are not touched by this promotion.
   profit, ROI, values, and estimated upside; excluded only from
   acquisition-date-dependent duration metrics (DOM is not excluded).
 
-**`v2.7` is now the production analytics version.** `src/lib/analytics/
-runAnalytics.ts` calls `build_analytics_snapshot_v2_7` for every new run
-(`ANALYTICS_VERSION = '2.7'`). `POST /api/analytics/runs` is unchanged in
+**`v2.7` was the production analytics version at this step.** As of v2.8
+(below), the production runner has been promoted again; `v2.7` itself
+remains independently callable and every stored `v2.7` run remains
+readable unchanged.
+
+See `analytics/sql/22_capital_liquidity_v2.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 30 for the full contract.
+
+## Analytics Snapshot v2.8 (Calendar & Seasonality) — PRODUCTION
+
+`public.build_analytics_snapshot_v2_8(p_target_user_id int)`
+(`supabase/migrations/20260819000000_build_analytics_snapshot_v2_8.sql`)
+calls `build_analytics_snapshot_v2_7` wholesale (unchanged) and adds two
+new top-level sections, `shared_calendar_seasonality_evidence` and
+`target_user_calendar_seasonality_evidence` — a brand-NEW module, not a
+port of any v1 file. Reads exclusively from `public.analytics_item_
+lifecycle_v2` and `public.analytics_purpose_policy`; no parallel date/
+deal/profit definition is created.
+
+**Scope**: calendar activity, calendar trends, descriptive seasonality
+only. Explicitly excluded: Findings Selector, Pattern Discovery, Business
+Coach, forecasting, recommendations, external market data.
+
+**What's new:**
+
+- **`population_and_date_coverage`**: `population_summary` / `purpose_
+  population_summary` — total items, reliable/excluded acquisition,
+  first-listing, and realized-exit date counts, reliable holding/DOM
+  sample counts, Historical Import counts, earliest/latest eligible
+  event dates. Missing dates stay visible, never silently excluded.
+- **`monthly_timeline` / `monthly_timeline_by_purpose`**: chronological,
+  gap-filled from the earliest reliable event date through the current
+  `America/Toronto` month — a zero-activity month still appears as a row
+  with 0 counts. Item counts and distinct deal counts (`COUNT(DISTINCT
+  acquisition_deal_id)`/`exit_deal_id`) are kept separate, never
+  conflated; a multi-item deal's cash is never summed once per item.
+- **`month_of_year_seasonality` / `*_by_purpose`**: 12 rows (Jan-Dec),
+  all years pooled, each carrying its own distinct-contributing-year
+  count per event type and a `*_confidence` field that is
+  `'insufficient_years'` whenever fewer than 2 distinct years
+  contributed an observation — regardless of item count.
+- **`day_of_week_acquisition_activity` / `_first_listing_activity` /
+  `_realized_exit_activity`** (+ `_by_purpose`): three INDEPENDENT
+  Monday-Sunday (ISO weekday) arrays, never combined into one ambiguous
+  weekday metric.
+- **`current_month_to_date_pace`** (pooled only — a deliberate scope
+  decision, see `analytics/SEMANTIC_CONTRACT.md` section 31): compares
+  the current `America/Toronto` MTD window against the SAME calendar-day
+  cutoff in every prior year with reliable data (e.g. an August 12
+  snapshot compares August 1-12 of prior years, never a full prior
+  August), safely handling February/short months. Zero comparable prior
+  years yields `status: 'insufficient_history'`, never a fabricated
+  median/average/difference. Never presented as a forecast.
+- **Purpose is current disposition, not proven historical intent**: a
+  historical event grouped under Business/Hybrid/Personal reflects the
+  item's CURRENT purpose only, using the same missing-purpose/missing-
+  policy collapsing rule as every prior v2 module.
+- **Evidence only**: no "best month" recommendation, no buying/selling
+  advice, no urgency, no seasonality score without transparent sample-
+  size/contributing-year support, no forecast, no causal claim, no
+  item-level row, no AI-generated prose anywhere in this module.
+
+**`v2.8` is now the production analytics version.** `src/lib/analytics/
+runAnalytics.ts` calls `build_analytics_snapshot_v2_8` for every new run
+(`ANALYTICS_VERSION = '2.8'`). `POST /api/analytics/runs` is unchanged in
 every other respect: authenticates the request, resolves `app_users.id`
 from the session, uses a service-role client only server-side, always
 targets the authenticated caller's own resolved id, sanitizes errors,
 and follows the same `pending -> running -> completed/failed` lifecycle.
-The Analytics page's "Shared Capital & Liquidity Evidence" and "Target
-User Capital & Liquidity Evidence" collapsible sections use the same
-JSON/Copy JSON pattern as every earlier section. Previously stored
-v1.8/v2.0/v2.1/v2.2/v2.3/v2.4/v2.5/v2.6 runs remain readable in run
-history unchanged; `v1.0`-`v1.8` and `v2.0`-`v2.6` all remain
-independently callable.
+The Analytics page's "Shared Calendar & Seasonality Evidence" and
+"Target User Calendar & Seasonality Evidence" collapsible sections use
+the same JSON/Copy JSON pattern as every earlier section — this task
+does not redesign the Analytics page or add charts. Previously stored
+v1.8/v2.0-v2.7 runs remain readable in run history unchanged; `v1.0`-
+`v1.8` and `v2.0`-`v2.7` all remain independently callable.
 
-See `analytics/sql/22_capital_liquidity_v2.sql` and
-`analytics/SEMANTIC_CONTRACT.md` section 30 for the full contract.
+See `analytics/sql/23_calendar_seasonality_v2.sql` and
+`analytics/SEMANTIC_CONTRACT.md` section 31 for the full contract.
 
 ## Conventions
 

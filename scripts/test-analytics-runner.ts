@@ -86,7 +86,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_7
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_8
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -95,7 +95,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_7') {
+          if (name === 'build_analytics_snapshot_v2_8') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -115,7 +115,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_7') {
+          if (name === 'build_analytics_snapshot_v2_8') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -175,8 +175,8 @@ async function main() {
   // inside the JSON itself.
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '2.7',
-    analytics_definition_version: '2.7',
+    snapshot_schema_version: '2.8',
+    analytics_definition_version: '2.8',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     purpose_semantics: 'current_item_purpose',
@@ -193,6 +193,8 @@ async function main() {
     target_user_listing_channel_evidence: {},
     shared_capital_liquidity_evidence: {},
     target_user_capital_liquidity_evidence: {},
+    shared_calendar_seasonality_evidence: {},
+    target_user_calendar_seasonality_evidence: {},
   };
   check('valid snapshot passes', isValidAnalyticsSnapshot(validSnapshot));
   check('wrong schema version rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, snapshot_schema_version: '2.6' }));
@@ -249,7 +251,7 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_7', { p_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_8', { p_target_user_id: userAId });
   check(
     'persisted snapshot equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapA, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
@@ -3037,11 +3039,13 @@ async function main() {
     check(`${fn} still callable by service_role after v2.7 migration`, !error, error);
   }
 
-  console.log('\n[v2.7 — production promotion]');
-  check('ANALYTICS_VERSION constant used by the production runner is now 2.7', ANALYTICS_VERSION === '2.7', ANALYTICS_VERSION);
-  const runA27 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new production run stores analytics_version 2.7', runA27.analytics_version === '2.7', runA27.analytics_version);
-  check('new production run snapshot.snapshot_schema_version is 2.7', (runA27.snapshot as any)?.snapshot_schema_version === '2.7', (runA27.snapshot as any)?.snapshot_schema_version);
+  // Note: at the point v2.7 was promoted, this section asserted the runner's
+  // ANALYTICS_VERSION was 2.7 specifically and created a fresh production
+  // run to check it. The runner has since been promoted again to v2.8 (see
+  // the "[v2.8 — production promotion]" section below) — that generic
+  // check already lives in the "[production runner — creates a completed
+  // run with the current ANALYTICS_VERSION]" block above, so it is not
+  // repeated here.
 
   console.log('\n[v2.7 — old stored runs remain readable]');
   const { data: oldRunReadBack } = await serviceClient
@@ -3050,6 +3054,238 @@ async function main() {
     'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.7 migration',
     oldRunReadBack?.analytics_version === '1.8' && (oldRunReadBack?.snapshot as any)?.snapshot_schema_version === '1.8',
     oldRunReadBack,
+  );
+
+  // ── Analytics v2.8 — Calendar & Seasonality + seventh production promotion ──
+  console.log('\n[v2.8 — builder callable, top-level metadata]');
+  const { data: v28SnapshotA, error: v28ErrorA } = await serviceClient.rpc('build_analytics_snapshot_v2_8', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_8 callable by service_role', !v28ErrorA, v28ErrorA);
+  check('v2.8 snapshot_schema_version is 2.8', v28SnapshotA?.snapshot_schema_version === '2.8', v28SnapshotA?.snapshot_schema_version);
+  check('v2.8 analytics_definition_version is 2.8', v28SnapshotA?.analytics_definition_version === '2.8', v28SnapshotA?.analytics_definition_version);
+  check(
+    'v2.8 output includes shared_calendar_seasonality_evidence and target_user_calendar_seasonality_evidence',
+    !!v28SnapshotA?.shared_calendar_seasonality_evidence && !!v28SnapshotA?.target_user_calendar_seasonality_evidence,
+    v28SnapshotA ? Object.keys(v28SnapshotA) : v28SnapshotA,
+  );
+
+  console.log('\n[v2.8 — v2.7 sections remain unchanged inside v2.8]');
+  const { data: v27SnapshotForCompare } = await serviceClient.rpc('build_analytics_snapshot_v2_7', { p_target_user_id: userAId });
+  check(
+    'shared_capital_liquidity_evidence / target_user_capital_liquidity_evidence are stable-stringify identical between v2.7 and v2.8',
+    stableStringify(v28SnapshotA?.shared_capital_liquidity_evidence) === stableStringify(v27SnapshotForCompare?.shared_capital_liquidity_evidence)
+      && stableStringify(v28SnapshotA?.target_user_capital_liquidity_evidence) === stableStringify(v27SnapshotForCompare?.target_user_capital_liquidity_evidence),
+  );
+  const { data: v27SnapshotSecondCall } = await serviceClient.rpc('build_analytics_snapshot_v2_7', { p_target_user_id: userAId });
+  const { generated_at: _v27gen1, ...v27FirstWithoutTimestamp } = (v27SnapshotForCompare ?? {}) as Record<string, unknown>;
+  const { generated_at: _v27gen2, ...v27SecondWithoutTimestamp } = (v27SnapshotSecondCall ?? {}) as Record<string, unknown>;
+  check(
+    'v2.7 remains byte-identical (ignoring generated_at) after the v2.8 migration — v2.7 unaffected by v2.8 existing',
+    stableStringify(v27FirstWithoutTimestamp) === stableStringify(v27SecondWithoutTimestamp),
+  );
+
+  const v28Shared = v28SnapshotA?.shared_calendar_seasonality_evidence;
+  const v28Target = v28SnapshotA?.target_user_calendar_seasonality_evidence;
+  const v28Pop = v28Shared?.population_summary?.[0];
+  const v28TargetPop = v28Target?.population_summary?.[0];
+
+  console.log('\n[v2.8 — timezone / as_of_date presence]');
+  check('shared_calendar_seasonality_evidence carries timezone America/Toronto', v28Shared?.timezone === 'America/Toronto', v28Shared?.timezone);
+  check('shared_calendar_seasonality_evidence carries an as_of_date', typeof v28Shared?.as_of_date === 'string' && v28Shared.as_of_date.length > 0, v28Shared?.as_of_date);
+  check('target_user_calendar_seasonality_evidence carries the same timezone/as_of_date shape', v28Target?.timezone === 'America/Toronto' && typeof v28Target?.as_of_date === 'string', v28Target);
+
+  console.log('\n[v2.8 — population and date coverage reconciliation]');
+  check(
+    'population_summary: reliable + missing + historical-excluded + lifecycle-issue-excluded acquisition counts === total_item_count',
+    (v28Pop?.reliable_acquisition_date_count ?? 0) + (v28Pop?.missing_acquisition_date_count ?? 0)
+      + (v28Pop?.historical_import_excluded_acquisition_date_count ?? 0) + (v28Pop?.lifecycle_issue_excluded_acquisition_date_count ?? 0) === v28Pop?.total_item_count,
+    v28Pop,
+  );
+  check(
+    'population_summary: reliable + missing + lifecycle-issue-excluded first-listing counts === total_item_count',
+    (v28Pop?.reliable_first_listing_date_count ?? 0) + (v28Pop?.missing_first_listing_date_count ?? 0) + (v28Pop?.lifecycle_issue_excluded_listing_date_count ?? 0) === v28Pop?.total_item_count,
+    v28Pop,
+  );
+  const v28PurposeRows: any[] = v28Shared?.purpose_population_summary ?? [];
+  const v28PurposeTotalSum = v28PurposeRows.reduce((sum, r) => sum + Number(r.total_item_count ?? 0), 0);
+  check(
+    'sum of purpose_population_summary.total_item_count === population_summary.total_item_count',
+    v28PurposeTotalSum === v28Pop?.total_item_count,
+    { v28PurposeTotalSum, populationTotal: v28Pop?.total_item_count },
+  );
+  const v28BusinessPopRow = v28PurposeRows.find((r) => r.purpose_policy_status === 'mapped' && r.current_purpose_name === 'Business');
+  check(
+    'Business purpose_population_summary row (if present) carries analytics_purpose_policy fields',
+    !v28BusinessPopRow || (v28BusinessPopRow.expected_holding_policy === 'shorter_holding_preferred' && v28BusinessPopRow.disposition_mode === 'active_realization'),
+    v28BusinessPopRow,
+  );
+  check(
+    "target_user_calendar_seasonality_evidence total_item_count is <= shared's pooled total (User B's items are excluded)",
+    (v28TargetPop?.total_item_count ?? 0) <= (v28Pop?.total_item_count ?? 0),
+    { target: v28TargetPop?.total_item_count, shared: v28Pop?.total_item_count },
+  );
+
+  console.log('\n[v2.8 — monthly timeline: chronological order, gap-filling, deal/item separation]');
+  const v28Monthly: any[] = v28Shared?.monthly_timeline ?? [];
+  const v28MonthlySorted = [...v28Monthly].sort((a, b) => String(a.month_start).localeCompare(String(b.month_start)));
+  check('monthly_timeline is already in chronological order', JSON.stringify(v28Monthly) === JSON.stringify(v28MonthlySorted), v28Monthly.map((m) => m.month_start));
+  check(
+    'monthly_timeline contains no gaps (every month between the first and last row is present)',
+    v28Monthly.length === 0 || v28Monthly.every((m, i) => {
+      if (i === 0) return true;
+      const prev = new Date(v28Monthly[i - 1].month_start as string);
+      const expectedNext = new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth() + 1, 1));
+      return new Date(m.month_start as string).getTime() === expectedNext.getTime();
+    }),
+    v28Monthly.map((m) => m.month_start),
+  );
+  check(
+    'every monthly_timeline row reports reliable_acquisition_deal_count <= reliable_acquisition_item_count (deal count never exceeds item count)',
+    v28Monthly.every((m) => (m.reliable_acquisition_deal_count ?? 0) <= (m.reliable_acquisition_item_count ?? 0)),
+    v28Monthly.filter((m) => (m.reliable_acquisition_deal_count ?? 0) > (m.reliable_acquisition_item_count ?? 0)),
+  );
+  check(
+    'every monthly_timeline row reports realized_exit_deal_count <= realized_exit_item_count',
+    v28Monthly.every((m) => (m.realized_exit_deal_count ?? 0) <= (m.realized_exit_item_count ?? 0)),
+    v28Monthly.filter((m) => (m.realized_exit_deal_count ?? 0) > (m.realized_exit_item_count ?? 0)),
+  );
+  const v28MonthlyAcqSum = v28Monthly.reduce((sum, m) => sum + Number(m.reliable_acquisition_item_count ?? 0), 0);
+  check(
+    'monthly_timeline reliable_acquisition_item_count sums to population_summary.reliable_acquisition_date_count',
+    v28MonthlyAcqSum === (v28Pop?.reliable_acquisition_date_count ?? 0),
+    { v28MonthlyAcqSum, populationCount: v28Pop?.reliable_acquisition_date_count },
+  );
+
+  console.log('\n[v2.8 — month-of-year seasonality: 12 rows, distinct-year-aware confidence]');
+  const v28Moy: any[] = v28Shared?.month_of_year_seasonality ?? [];
+  check('month_of_year_seasonality has exactly 12 rows (Jan-Dec)', v28Moy.length === 12, v28Moy.length);
+  check(
+    'month_of_year_seasonality rows are numbered 1-12 in order',
+    JSON.stringify(v28Moy.map((m) => m.month_number)) === JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+    v28Moy.map((m) => m.month_number),
+  );
+  check(
+    'no month row claims acquisition_confidence better than insufficient_years when acquisition_distinct_year_count <= 1',
+    v28Moy.every((m) => (m.acquisition_distinct_year_count ?? 0) > 1 || m.acquisition_item_count === 0 || m.acquisition_confidence === 'insufficient_years'),
+    v28Moy.filter((m) => (m.acquisition_distinct_year_count ?? 0) <= 1 && m.acquisition_item_count > 0 && m.acquisition_confidence !== 'insufficient_years'),
+  );
+  check(
+    'no month row claims realized_exit_confidence better than insufficient_years when realized_exit_distinct_year_count <= 1',
+    v28Moy.every((m) => (m.realized_exit_distinct_year_count ?? 0) > 1 || m.realized_exit_item_count === 0 || m.realized_exit_confidence === 'insufficient_years'),
+    v28Moy.filter((m) => (m.realized_exit_distinct_year_count ?? 0) <= 1 && m.realized_exit_item_count > 0 && m.realized_exit_confidence !== 'insufficient_years'),
+  );
+  const v28MoyAcqSum = v28Moy.reduce((sum, m) => sum + Number(m.acquisition_item_count ?? 0), 0);
+  check(
+    'month_of_year_seasonality acquisition_item_count sums to population_summary.reliable_acquisition_date_count (all years pooled)',
+    v28MoyAcqSum === (v28Pop?.reliable_acquisition_date_count ?? 0),
+    { v28MoyAcqSum, populationCount: v28Pop?.reliable_acquisition_date_count },
+  );
+
+  console.log('\n[v2.8 — day-of-week patterns: three independent arrays, reconciliation]');
+  const v28DowAcq: any[] = v28Shared?.day_of_week_acquisition_activity ?? [];
+  const v28DowListing: any[] = v28Shared?.day_of_week_first_listing_activity ?? [];
+  const v28DowExit: any[] = v28Shared?.day_of_week_realized_exit_activity ?? [];
+  check('day_of_week_acquisition_activity has exactly 7 rows (Mon-Sun)', v28DowAcq.length === 7, v28DowAcq.length);
+  check('day_of_week_first_listing_activity has exactly 7 rows (Mon-Sun)', v28DowListing.length === 7, v28DowListing.length);
+  check('day_of_week_realized_exit_activity has exactly 7 rows (Mon-Sun)', v28DowExit.length === 7, v28DowExit.length);
+  check(
+    'day_of_week_acquisition_activity is a DISTINCT array from day_of_week_first_listing_activity (event types never combined)',
+    JSON.stringify(v28DowAcq.map((d) => d.event_count)) !== JSON.stringify(v28DowListing.map((d) => d.event_count)) || v28DowAcq.every((d) => d.event_count === 0),
+  );
+  const v28DowAcqSum = v28DowAcq.reduce((sum, d) => sum + Number(d.event_count ?? 0), 0);
+  check(
+    'day_of_week_acquisition_activity event counts sum to population_summary.reliable_acquisition_date_count',
+    v28DowAcqSum === (v28Pop?.reliable_acquisition_date_count ?? 0),
+    { v28DowAcqSum, populationCount: v28Pop?.reliable_acquisition_date_count },
+  );
+  const v28DowExitSum = v28DowExit.reduce((sum, d) => sum + Number(d.event_count ?? 0), 0);
+  check(
+    'day_of_week_realized_exit_activity event counts sum to population_summary.reliable_realized_exit_date_count',
+    v28DowExitSum === (v28Pop?.reliable_realized_exit_date_count ?? 0),
+    { v28DowExitSum, populationCount: v28Pop?.reliable_realized_exit_date_count },
+  );
+
+  console.log('\n[v2.8 — current month-to-date pace: same-day-cutoff comparison, insufficient-history handling]');
+  const v28Mtd = v28Shared?.current_month_to_date_pace;
+  check('current_month_to_date_pace carries timezone/as_of_date/status', v28Mtd?.timezone === 'America/Toronto' && typeof v28Mtd?.as_of_date === 'string' && typeof v28Mtd?.status === 'string', v28Mtd);
+  check(
+    'status is insufficient_history when comparable_prior_years_count is 0, sufficient_history otherwise',
+    (v28Mtd?.comparable_prior_years_count === 0) === (v28Mtd?.status === 'insufficient_history'),
+    v28Mtd,
+  );
+  check(
+    'prior_year_median/average/difference_vs_prior_median are null exactly when insufficient_history (never fabricated)',
+    v28Mtd?.status !== 'insufficient_history' || (v28Mtd?.prior_year_median === null && v28Mtd?.prior_year_average === null && v28Mtd?.difference_vs_prior_median === null),
+    v28Mtd,
+  );
+  check(
+    'comparable_prior_years length matches comparable_prior_years_count',
+    (v28Mtd?.comparable_prior_years ?? []).length === v28Mtd?.comparable_prior_years_count,
+    v28Mtd,
+  );
+  check(
+    'every comparable_prior_years row uses a day_cutoff_used <= current_day_of_month (February/short-month safe)',
+    (v28Mtd?.comparable_prior_years ?? []).every((r: any) => r.day_cutoff_used <= v28Mtd?.current_day_of_month),
+    v28Mtd?.comparable_prior_years,
+  );
+  check('current_month_to_date_pace note is descriptive, not a forecast claim', typeof v28Mtd?.note === 'string' && v28Mtd.note.toLowerCase().includes('not a forecast'), v28Mtd?.note);
+
+  console.log('\n[v2.8 — descriptive-only: no recommendation/urgency/score/forecast field anywhere]');
+  const v28SharedSerialized = JSON.stringify(v28Shared);
+  check(
+    'shared_calendar_seasonality_evidence contains no recommendation/urgency/score/forecast/item_id fields',
+    !v28SharedSerialized.includes('"recommendation"') && !v28SharedSerialized.includes('"urgency"') && !v28SharedSerialized.includes('"score"')
+      && !v28SharedSerialized.includes('"forecast"') && !v28SharedSerialized.includes('"item_id"'),
+  );
+
+  console.log('\n[v2.8 — privacy]');
+  check('shared_calendar_seasonality_evidence exposes no user_id field anywhere', !v28SharedSerialized.includes('"user_id"'));
+
+  console.log('\n[v2.8 — permissions]');
+  const { error: v28AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_8', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_8 directly', !!v28AuthedError, v28AuthedError);
+  const { error: v28HelperAuthedError } = await clientA.rpc('_build_calendar_seasonality_snapshot_v2', { p_target_user_id: userAId });
+  check('authenticated client cannot call _build_calendar_seasonality_snapshot_v2 directly', !!v28HelperAuthedError, v28HelperAuthedError);
+  const { error: v28ForgedTargetError } = await clientA.rpc('build_analytics_snapshot_v2_8', { p_target_user_id: userBId });
+  check('authenticated client cannot invoke build_analytics_snapshot_v2_8 for a forged target user id either', !!v28ForgedTargetError, v28ForgedTargetError);
+
+  console.log('\n[v2.8 — old-version compatibility]');
+  const v28StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_0', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_1', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_2', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_3', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_4', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_5', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_6', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_7', { p_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v28StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.8 migration`, !error, error);
+  }
+
+  console.log('\n[v2.8 — production promotion]');
+  check('ANALYTICS_VERSION constant used by the production runner is now 2.8', ANALYTICS_VERSION === '2.8', ANALYTICS_VERSION);
+  const runA28 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new production run stores analytics_version 2.8', runA28.analytics_version === '2.8', runA28.analytics_version);
+  check('new production run snapshot.snapshot_schema_version is 2.8', (runA28.snapshot as any)?.snapshot_schema_version === '2.8', (runA28.snapshot as any)?.snapshot_schema_version);
+
+  console.log('\n[v2.8 — old stored runs remain readable]');
+  const { data: oldRunReadBack28 } = await serviceClient
+    .from('analytics_runs').select('analytics_version, snapshot').eq('id', syntheticOldRun!.id).single();
+  check(
+    'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.8 migration',
+    oldRunReadBack28?.analytics_version === '1.8' && (oldRunReadBack28?.snapshot as any)?.snapshot_schema_version === '1.8',
+    oldRunReadBack28,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

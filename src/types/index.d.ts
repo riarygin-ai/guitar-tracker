@@ -350,13 +350,13 @@ export interface InventorySearchItem extends InventoryItem {
   item_subtype_name: string | null;
 }
 
-// ─── Analytics (Phase 2 Step 4, promoted to v2.7 — see analytics/README.md) ────
+// ─── Analytics (Phase 2 Step 4, promoted to v2.8 — see analytics/README.md) ────
 // Mirrors public.analytics_runs columns (supabase/migrations/20260727000000_
 // analytics_runs.sql). AnalyticsSnapshot covers BOTH shapes ever persisted
 // into analytics_runs.snapshot: the v1.0-v1.8 shape (evidence_aggregates/
 // recommendation_candidates/target_user_evidence) and the v2.0+ shape
 // (purpose_semantics/shared_purpose_evidence/target_user_purpose_evidence/
-// target_user_open_inventory_evidence) that build_analytics_snapshot_v2_7
+// target_user_open_inventory_evidence) that build_analytics_snapshot_v2_8
 // (the current production version) actually returns. Every version-specific
 // field is optional so old stored runs of EITHER shape remain readable —
 // see analytics/SEMANTIC_CONTRACT.md for the authoritative field-level
@@ -420,13 +420,14 @@ export interface AnalyticsSnapshot {
   // in a v2.x payload. shared_purpose_evidence / shared_acquisition_
   // evidence / shared_inventory_segmentation_evidence / shared_deal_
   // channel_evidence / shared_listing_channel_evidence / shared_capital_
-  // liquidity_evidence pool every user's items (aggregate only, no item
-  // identity); target_user_purpose_evidence / target_user_open_
-  // inventory_evidence / target_user_acquisition_evidence / target_user_
-  // inventory_segmentation_evidence / target_user_deal_channel_evidence /
-  // target_user_listing_channel_evidence / target_user_capital_
-  // liquidity_evidence are restricted to the snapshot's own target user —
-  // see analytics/SEMANTIC_CONTRACT.md sections 22-30.
+  // liquidity_evidence / shared_calendar_seasonality_evidence pool every
+  // user's items (aggregate only, no item identity); target_user_purpose_
+  // evidence / target_user_open_inventory_evidence / target_user_
+  // acquisition_evidence / target_user_inventory_segmentation_evidence /
+  // target_user_deal_channel_evidence / target_user_listing_channel_
+  // evidence / target_user_capital_liquidity_evidence / target_user_
+  // calendar_seasonality_evidence are restricted to the snapshot's own
+  // target user — see analytics/SEMANTIC_CONTRACT.md sections 22-31.
   purpose_semantics?:                    string;
   shared_purpose_evidence?:              Record<string, unknown>;
   target_user_purpose_evidence?:         Record<string, unknown>;
@@ -451,5 +452,9 @@ export interface AnalyticsSnapshot {
   // v2.0-v2.6 stored snapshots, so optional here.
   shared_capital_liquidity_evidence?:             Record<string, unknown>;
   target_user_capital_liquidity_evidence?:        Record<string, unknown>;
+  // Added in Snapshot v2.8 (Calendar & Seasonality) — absent on older
+  // v2.0-v2.7 stored snapshots, so optional here.
+  shared_calendar_seasonality_evidence?:          Record<string, unknown>;
+  target_user_calendar_seasonality_evidence?:     Record<string, unknown>;
   module_limitations?:                   string[];
 }

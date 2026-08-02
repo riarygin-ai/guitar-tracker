@@ -2036,11 +2036,131 @@ own item count, unchanged from 09's own convention. This module never
 duplicates OIDS' item-level decision evidence — no item_id, item row,
 reason code, or recommendation is produced anywhere here.
 
-**`v2.7` is now the production analytics version.** `runAnalytics.ts`
-calls `build_analytics_snapshot_v2_7` for every new run (`ANALYTICS_
-VERSION = '2.7'`). `v1.0`-`v1.8` and `v2.0`-`v2.6` remain independently
+**`v2.7` was the production analytics version before `v2.8` (see section
+31).** `v1.0`-`v1.8` and `v2.0`-`v2.6` remain independently callable and
+every previously stored `analytics_runs.snapshot` row remains readable —
+a forward version bump, not a rewrite of history. The Analytics page's
+"Shared Capital & Liquidity Evidence" and "Target User Capital &
+Liquidity Evidence" collapsible sections use the same JSON/Copy JSON
+pattern as every prior section.
+
+## 31. Calendar & Seasonality (v2.8) and seventh production promotion
+
+`public.build_analytics_snapshot_v2_8(p_target_user_id int)`
+(`supabase/migrations/20260819000000_build_analytics_snapshot_v2_8.sql`)
+calls `build_analytics_snapshot_v2_7` wholesale and adds two new
+top-level sections, `shared_calendar_seasonality_evidence` and `target_
+user_calendar_seasonality_evidence` — a brand-NEW module, not a port of
+any v1 file (see its manual reference, `analytics/sql/23_calendar_
+seasonality_v2.sql`). Every prior v2.7 section is preserved unchanged;
+`v2.7` itself, and every `v1.x`/`v2.0`-`v2.6` builder, are untouched and
+remain independently callable.
+
+**Scope — calendar activity, calendar trends, descriptive seasonality
+only.** Explicitly excluded: Findings Selector, Pattern Discovery,
+Business Coach, forecasting, recommendations, external market data. Every
+section is DESCRIPTIVE — no "best month" claim, no buying/selling advice,
+no urgency, no seasonality score, no forecast, no causal claim, no
+item-level row, no AI-generated prose.
+
+**Sources of truth — no parallel definitions.** Reads exclusively from
+`public.analytics_item_lifecycle_v2` (`acquisition_date`, `first_listed_
+at`, `exit_date`, `is_historical_import`, `has_lifecycle_date_issue`,
+`holding_days`, `global_days_on_market`, `acquisition_deal_id`,
+`exit_deal_id`, `acquisition_value`, `exit_value`, `net_profit`,
+`is_realized`) and `public.analytics_purpose_policy`. No new date/deal/
+profit definition is created.
+
+**Timezone.** All "current"/"as of" reasoning uses `America/Toronto`.
+Both the timezone string and the snapshot's `as_of_date` are stored
+directly at the top level of `shared_calendar_seasonality_evidence` and
+`target_user_calendar_seasonality_evidence`, and again nested inside
+`current_month_to_date_pace`.
+
+**Event-date reliability rules.** `acq_date_reliable` = `acquisition_
+date IS NOT NULL AND NOT is_historical_import AND NOT has_lifecycle_
+date_issue` — a Historical Import's acquisition date never contributes
+to acquisition calendar activity, month-of-year acquisition seasonality,
+acquisition weekday patterns, or acquisition-date-dependent MTD pace.
+`listing_date_reliable` = `first_listed_at IS NOT NULL AND NOT has_
+lifecycle_date_issue` — Historical Import status does NOT exclude a
+listing date. `exit_date_reliable` = `is_realized AND exit_date IS NOT
+NULL AND NOT has_lifecycle_date_issue` — Historical Import status does
+NOT exclude an exit date either. Missing/unreliable dates are never
+treated as zero-duration or an invented date — they remain visible in
+`population_and_date_coverage`'s explicit exclusion counters. Every
+date-based computation uses the event's own date column, never a
+record's `created_at`.
+
+**Purpose is current disposition, not proven historical intent.** A
+historical event grouped under Business, Hybrid, or Personal reflects
+the item's CURRENT `purpose_id` only — it does not prove the item had
+that Purpose when the acquisition/listing/exit event actually occurred
+(Purpose has no history table in this schema). Every section is produced
+twice: pooled across all Purposes, and broken down by `(current_purpose_
+id, current_purpose_name, purpose_policy_status)`, using the same
+missing-purpose/missing-policy collapsing rule established in `v2.0`.
+The purpose-breakdown rows additionally surface the existing `analytics_
+purpose_policy` fields — never a new judgmental label.
+
+**Deal-count / item-count separation — no double-counted cash.**
+`deal_items.total_value` is already the per-item allocated share of a
+deal's cash, not the deal's full total repeated on every item row, so
+`SUM(acquisition_value)`/`SUM(exit_value)` never double-counts a
+multi-item deal's cash. Distinct deal counts (`COUNT(DISTINCT
+acquisition_deal_id)`, `COUNT(DISTINCT exit_deal_id)`) are reported
+ALONGSIDE, never instead of, item counts — a 3-item single deal is
+visible as both "3 items" and "1 deal." Listing events have no `deal_id`
+(`item_listings` is not deal-based), so no deal count is reported for
+first-listing activity.
+
+**`monthly_timeline` — gap-filled, never silently sparse.** Generated
+from a `generate_series` over every calendar month from the earliest
+reliable event date through the current `America/Toronto` month, LEFT
+JOINed to observed activity — a month with zero reliable acquisitions/
+listings/exits still appears as a row with 0 counts, never omitted. If
+no reliable event date exists at all, the series (and therefore the
+timeline) is empty, never fabricated. `monthly_timeline_by_purpose`
+applies the same gap-filling per Purpose group.
+
+**`month_of_year_seasonality` — descriptive, year-count-aware.**
+Aggregates ALL years' observations into 12 rows (Jan-Dec). Every row
+reports its own distinct-year contributing count per event type
+(acquisition/first-listing/realized-exit) and a `*_confidence` field
+that is `'insufficient_years'` whenever fewer than 2 distinct years
+contributed an observation for that event type in that month —
+regardless of item count. No "best"/"worst" month label, score, or
+causal claim is produced anywhere.
+
+**`day_of_week_*_activity` — three separate arrays.**
+`day_of_week_acquisition_activity`, `day_of_week_first_listing_
+activity`, and `day_of_week_realized_exit_activity` are three
+INDEPENDENT Monday-Sunday (ISO weekday) arrays — never combined into one
+ambiguous weekday metric.
+
+**`current_month_to_date_pace` — pooled only (scope decision).**
+Compares the current `America/Toronto` month-to-date window against the
+SAME calendar-day cutoff in every prior year with reliable data (e.g. an
+August 12 snapshot compares August 1-12 of each prior year, never a full
+prior August) — computed pooled only, not broken down `_by_purpose`, a
+deliberate scope decision (a per-Purpose × per-prior-year matrix would
+multiply an already multi-dimensional computation for comparatively
+little evidentiary value at current inventory scale). February/short
+months are handled via `LEAST(current_day_of_month, days_in_that_prior_
+month)`. If zero comparable prior years exist, `status` is
+`'insufficient_history'` and no median/average/difference is fabricated.
+Never presented as a forecast for the completed current month.
+
+**Privacy.** `shared_calendar_seasonality_evidence` pools every user's
+items (aggregate only — no item identity, no row grouped by `user_id`).
+`target_user_calendar_seasonality_evidence` is filtered to `user_id =
+p_target_user_id` and is, like the shared section, aggregate only.
+
+**`v2.8` is now the production analytics version.** `runAnalytics.ts`
+calls `build_analytics_snapshot_v2_8` for every new run (`ANALYTICS_
+VERSION = '2.8'`). `v1.0`-`v1.8` and `v2.0`-`v2.7` remain independently
 callable and every previously stored `analytics_runs.snapshot` row
 remains readable — a forward version bump, not a rewrite of history. The
-Analytics page's "Shared Capital & Liquidity Evidence" and "Target User
-Capital & Liquidity Evidence" collapsible sections use the same
+Analytics page's "Shared Calendar & Seasonality Evidence" and "Target
+User Calendar & Seasonality Evidence" collapsible sections use the same
 JSON/Copy JSON pattern as every prior section.

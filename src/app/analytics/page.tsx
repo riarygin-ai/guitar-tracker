@@ -420,7 +420,7 @@ export default function AnalyticsPage() {
             ) : (
               <>
                 {/* v2.0+ sections — present on the current production shape
-                    (build_analytics_snapshot_v2_7 and its v2.0-v2.6 ancestors).
+                    (build_analytics_snapshot_v2_8 and its v2.0-v2.7 ancestors).
                     Absent on older stored v1.0-v1.8 runs. */}
                 {selectedSnapshot.shared_purpose_evidence && (
                   <CollapsibleSection title="Shared Purpose Evidence">
@@ -485,6 +485,16 @@ export default function AnalyticsPage() {
                 {selectedSnapshot.target_user_capital_liquidity_evidence && (
                   <CollapsibleSection title="Target User Capital & Liquidity Evidence">
                     <JsonBlock value={selectedSnapshot.target_user_capital_liquidity_evidence} />
+                  </CollapsibleSection>
+                )}
+                {selectedSnapshot.shared_calendar_seasonality_evidence && (
+                  <CollapsibleSection title="Shared Calendar & Seasonality Evidence">
+                    <JsonBlock value={selectedSnapshot.shared_calendar_seasonality_evidence} />
+                  </CollapsibleSection>
+                )}
+                {selectedSnapshot.target_user_calendar_seasonality_evidence && (
+                  <CollapsibleSection title="Target User Calendar & Seasonality Evidence">
+                    <JsonBlock value={selectedSnapshot.target_user_calendar_seasonality_evidence} />
                   </CollapsibleSection>
                 )}
 
