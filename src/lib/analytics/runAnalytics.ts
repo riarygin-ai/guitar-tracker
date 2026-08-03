@@ -11,6 +11,7 @@
 // only; no frontend trigger, no scheduled execution, no AI analysis).
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { selectFindings } from '@/lib/analytics/insights/selectFindings';
 
 // ── Constants — must match the current snapshot contract exactly ───────────
 // (analytics_runs' own DEFAULTs and build_analytics_snapshot_v2_3's own
@@ -283,6 +284,17 @@ export async function runAnalyticsForCurrentUser(
 
     const durationMs = Math.max(0, Math.round(performance.now() - startMark));
 
+    // ── 4b. Insights Engine v1.0 — Findings Selector ─────────────────────
+    // Application-layer enrichment on top of the already-validated v2.10
+    // snapshot, versioned independently (insights_engine_version /
+    // findings_selector_version) from snapshot_schema_version /
+    // analytics_definition_version. Never reads shared/pooled evidence —
+    // only this snapshot's own target_user_acquisition_evidence. Optional
+    // on the stored row: old snapshots without `insights` remain valid
+    // (isValidAnalyticsSnapshot never required this key).
+    const insights = selectFindings(snapshot.target_user_acquisition_evidence);
+    const snapshotWithInsights = { ...snapshot, insights };
+
     // ── 5. Persist completed run ─────────────────────────────────────────
     const { data: completedRun, error: completeError } = await serviceClient
       .from('analytics_runs')
@@ -290,7 +302,7 @@ export async function runAnalyticsForCurrentUser(
         status: 'completed',
         completed_at: new Date().toISOString(),
         duration_ms: durationMs,
-        snapshot,
+        snapshot: snapshotWithInsights,
         error_message: null,
       })
       .eq('id', runId)

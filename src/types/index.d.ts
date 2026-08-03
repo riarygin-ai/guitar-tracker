@@ -463,4 +463,18 @@ export interface AnalyticsSnapshot {
   shared_calendar_seasonality_evidence?:          Record<string, unknown>;
   target_user_calendar_seasonality_evidence?:     Record<string, unknown>;
   module_limitations?:                   string[];
+
+  // Insights Engine v1.0 (application layer, versioned independently of
+  // Analytics — insights_engine_version / findings_selector_version, not
+  // snapshot_schema_version / analytics_definition_version). Optional:
+  // absent on stored runs from before this was introduced, and on any run
+  // this layer skips. See src/lib/analytics/insights/.
+  insights?: {
+    insights_engine_version:   string;
+    findings_selector_version: string;
+    source_analytics_version:  string;
+    generated_at:               string;
+    selected_findings:          Record<string, unknown>[];
+    rule_evaluations:           Record<string, unknown>[];
+  };
 }

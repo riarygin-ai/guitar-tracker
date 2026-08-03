@@ -501,6 +501,11 @@ export default function AnalyticsPage() {
                     <JsonBlock value={selectedSnapshot.target_user_calendar_seasonality_evidence} />
                   </CollapsibleSection>
                 )}
+                {selectedSnapshot.insights && (
+                  <CollapsibleSection title="Insights" defaultOpen>
+                    <JsonBlock value={selectedSnapshot.insights} />
+                  </CollapsibleSection>
+                )}
 
                 {/* v1.0-v1.8 sections — present only on older stored runs from
                     before the v2.2 promotion. */}
