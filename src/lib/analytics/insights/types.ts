@@ -404,7 +404,8 @@ export type RuleEvaluationRow =
   | ChannelJourneyCandidateEvaluation
   | DealOutChannelCandidateEvaluation
   | DealInChannelCandidateEvaluation
-  | ListingPlatformCandidateEvaluation;
+  | ListingPlatformCandidateEvaluation
+  | BusinessOpenInventoryCandidateEvaluation;
 
 export type MethodAdvantage = 'Purchase' | 'Trade' | 'Neutral';
 
@@ -463,11 +464,121 @@ export interface AcquisitionMethodPerformanceProfileFinding {
   evidence_refs: string[];
 }
 
+// ── BUSINESS_OPEN_INVENTORY_PRIORITY (Insights Engine v1.7) ────────────────
+// One row per OPEN (not realized) item, read from Analytics v2.11's
+// target_user_open_inventory_evidence.item_decision_evidence[] — the
+// SAME array v2.1 introduced (v2.2's hybrid reason-code correction and
+// every later version pass it through unchanged for Business rows). This
+// is the first Insights rule scoped to a single Purpose (Business only —
+// current_purpose_name = 'Business') and the first to select an
+// item-level (not aggregate) finding. See extractBusinessOpenInventoryCandidates
+// in rules/businessOpenInventoryPriority.ts. reason_codes on this evidence
+// are the REAL SQL-generated strings (see supabase/migrations/
+// 20260812000000_build_analytics_snapshot_v2_1.sql, Query C) — three of
+// this rule's "actionable" signals carry a BUSINESS_ prefix at the source
+// (BUSINESS_DOM_ABOVE_COMPARABLE_P75, BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN,
+// BUSINESS_UNLISTED_OPEN_ITEM, BUSINESS_OWNERSHIP_AGE_120_PLUS); the other
+// two (HIGH_CAPITAL_EXPOSURE, LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL) are
+// unprefixed and shared with the 'unclassified' bucket (never reached here
+// since this rule's candidate pool is current_purpose_name = 'Business'
+// only). item_decision_evidence rows carry NO `limitations` array of their
+// own (unlike hybrid_purpose_review/personal_inventory_control) — only
+// reason_codes; this finding's own `limitations` array is synthesized from
+// applicable reason_codes plus fixed required strings.
+export interface BusinessOpenInventoryCandidate {
+  item_id: number;
+  item_display_name: string | null;
+  brand_name: string | null;
+  category_name: string | null;
+  type_name: string | null;
+  current_purpose_id: number | null;
+  current_purpose_name: string | null;
+  disposition_mode: string | null;
+  active_realization_flag: boolean | null;
+  realization_priority_order: number | null;
+  purpose_policy_status: string | null;
+  listed_flag: boolean;
+  first_listed_at: string | null;
+  current_dom_days: number | null;
+  ownership_age_days: number | null;
+  acquisition_value: number | null;
+  estimated_sold_value: number | null;
+  estimated_net_upside: number | null;
+  estimated_upside_percent: number | null;
+  open_capital_share_percent: number | null;
+  purpose_open_capital_share_percent: number | null;
+  listing_channel_count: number;
+  listing_channel_names: string[];
+  acquisition_value_band_label: string | null;
+  acquisition_value_band_order: number | null;
+  comparable_evidence_available: boolean;
+  liquidity_cohort_match: string | null;
+  reason_codes: string[];
+  is_historical_import: boolean;
+}
+
+export type BusinessOpenInventoryPriorityProfile =
+  | 'STALE_HIGH_CAPITAL_LOW_UPSIDE'
+  | 'UNLISTED_HIGH_CAPITAL_LOW_UPSIDE'
+  | 'STALE_HIGH_CAPITAL'
+  | 'UNLISTED_HIGH_CAPITAL_OR_AGED'
+  | 'STALE_LOW_UPSIDE'
+  | 'STALE_LISTING'
+  | 'AGED_BUSINESS_HOLD';
+
+export interface BusinessOpenInventoryRunnerUp {
+  item_id: number;
+  item_display_name: string | null;
+  priority_profile: BusinessOpenInventoryPriorityProfile;
+  recommended_action_code: string;
+  triggered_reason_codes: string[];
+  reason_not_selected: string;
+}
+
+// No baseline, no confidence tier — unlike every prior rule, this is a
+// single-item deterministic prioritizer, not a peer-comparison. segment
+// carries item identity/classification; metrics carries the quantitative
+// decision-support fields — same split convention as every other rule's
+// finding, just without a peer baseline to compare against.
+export interface BusinessOpenInventoryPriorityFinding {
+  finding_code: string;
+  family: 'open_inventory_action';
+  direction: 'action';
+  status: 'selected';
+  headline: string;
+  summary: string;
+  segment: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  priority_profile: BusinessOpenInventoryPriorityProfile;
+  recommended_action_code: string;
+  triggered_reason_codes: string[];
+  limitations: string[];
+  evidence_refs: string[];
+  runner_up?: BusinessOpenInventoryRunnerUp;
+}
+
+export type BusinessOpenInventoryRuleEvaluationResult =
+  | BusinessOpenInventoryPriorityFinding
+  | NoFindingResult;
+
+export interface BusinessOpenInventoryCandidateEvaluation {
+  finding_code: string;
+  item_id: number;
+  item_display_name: string | null;
+  eligible: boolean;
+  actionable: boolean;
+  selected: boolean;
+  priority_profile: BusinessOpenInventoryPriorityProfile | null;
+  recommended_action_code: string | null;
+  actionable_reason_codes: string[];
+  eligibility_failure_reasons: string[];
+}
+
 export interface InsightsSection {
   insights_engine_version: string;
   findings_selector_version: string;
   source_analytics_version: string;
   generated_at: string;
-  selected_findings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding | ListingPlatformFinding>;
+  selected_findings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding | ListingPlatformFinding | BusinessOpenInventoryPriorityFinding>;
   rule_evaluations: RuleEvaluationRow[];
 }

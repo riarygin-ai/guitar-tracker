@@ -305,22 +305,24 @@ export async function runAnalyticsForCurrentUser(
 
     const durationMs = Math.max(0, Math.round(performance.now() - startMark));
 
-    // ── 4b. Insights Engine v1.6 — Findings Selector ─────────────────────
+    // ── 4b. Insights Engine v1.7 — Findings Selector ─────────────────────
     // Application-layer enrichment on top of the already-validated v2.11
     // snapshot, versioned independently (insights_engine_version /
     // findings_selector_version) from snapshot_schema_version /
     // analytics_definition_version. Never reads shared/pooled evidence —
     // only this snapshot's own target_user_acquisition_evidence,
     // target_user_inventory_segmentation_evidence,
-    // target_user_deal_channel_evidence, and (new in v1.6, for
-    // STRONG_LISTING_PLATFORM only) target_user_listing_channel_evidence.
-    // Optional on the stored row: old snapshots without `insights` remain
-    // valid (isValidAnalyticsSnapshot never required this key).
+    // target_user_deal_channel_evidence, target_user_listing_channel_
+    // evidence, and (new in v1.7, for BUSINESS_OPEN_INVENTORY_PRIORITY
+    // only) target_user_open_inventory_evidence. Optional on the stored
+    // row: old snapshots without `insights` remain valid
+    // (isValidAnalyticsSnapshot never required this key).
     const insights = selectFindings({
       targetUserAcquisitionEvidence: snapshot.target_user_acquisition_evidence,
       targetUserInventorySegmentationEvidence: snapshot.target_user_inventory_segmentation_evidence,
       targetUserDealChannelEvidence: snapshot.target_user_deal_channel_evidence,
       targetUserListingChannelEvidence: snapshot.target_user_listing_channel_evidence,
+      targetUserOpenInventoryEvidence: snapshot.target_user_open_inventory_evidence,
     });
     const snapshotWithInsights = { ...snapshot, insights };
 

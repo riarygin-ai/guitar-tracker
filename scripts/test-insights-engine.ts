@@ -53,6 +53,11 @@ import {
   extractListingPlatformCandidates,
   FINDING_CODE as LISTING_PLATFORM_FINDING_CODE,
 } from '../src/lib/analytics/insights/rules/strongListingPlatform';
+import {
+  evaluateBusinessOpenInventoryPriority,
+  extractBusinessOpenInventoryCandidates,
+  FINDING_CODE as BUSINESS_OPEN_INVENTORY_PRIORITY_FINDING_CODE,
+} from '../src/lib/analytics/insights/rules/businessOpenInventoryPriority';
 import { selectFindings } from '../src/lib/analytics/insights/selectFindings';
 import { isValidAnalyticsSnapshot } from '../src/lib/analytics/runAnalytics';
 import type {
@@ -774,6 +779,7 @@ function main() {
         targetUserInventorySegmentationEvidence: baseSnapshot.target_user_inventory_segmentation_evidence,
         targetUserDealChannelEvidence: baseSnapshot.target_user_deal_channel_evidence,
         targetUserListingChannelEvidence: baseSnapshot.target_user_listing_channel_evidence,
+        targetUserOpenInventoryEvidence: baseSnapshot.target_user_open_inventory_evidence,
       }),
     };
     check('the same snapshot plus the new optional insights section still validates', isValidAnalyticsSnapshot(withInsights));
@@ -1100,6 +1106,7 @@ function main() {
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: {},
       targetUserListingChannelEvidence: {},
+      targetUserOpenInventoryEvidence: {},
     });
 
     check('both rules produced a selected finding', insights.selected_findings.length === 2, insights.selected_findings);
@@ -1136,11 +1143,12 @@ function main() {
       targetUserInventorySegmentationEvidence: makeCategoryEvidence([]),
       targetUserDealChannelEvidence: {},
       targetUserListingChannelEvidence: {},
+      targetUserOpenInventoryEvidence: {},
     });
     const viaOrchestrator = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
 
-    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
-    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
+    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
+    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
     check(
       'the broad finding produced via selectFindings is identical to calling the rule directly (aside from generated_at, which the broad rule does not even set)',
       JSON.stringify(viaOrchestrator) === JSON.stringify(directResult),
@@ -1553,6 +1561,7 @@ function main() {
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: {},
       targetUserListingChannelEvidence: {},
+      targetUserOpenInventoryEvidence: {},
     });
 
     check('all three rule families are present in one insights payload', insights.selected_findings.length === 3, insights.selected_findings.map((f) => f.finding_code));
@@ -1563,8 +1572,8 @@ function main() {
     check('the broad finding is numerically unchanged (median_net_profit 750)', broadFinding?.metrics.median_net_profit === 750, broadFinding?.metrics);
     check('the category finding is numerically unchanged (Guitars x $2,000-2,999)', categoryFinding?.segment.category_name === 'Guitars' && categoryFinding?.segment.acquisition_value_band_label === '$2,000-2,999', categoryFinding?.segment);
     check('the acquisition-method finding is also present (PURCHASE_ECONOMICS_TRADE_SPEED)', methodFinding?.profile_code === 'PURCHASE_ECONOMICS_TRADE_SPEED', methodFinding);
-    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
-    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
+    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
+    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
   }
 
   // ── M20: old Insights Engine 1.0 and 1.1 snapshots remain readable ──────
@@ -2023,6 +2032,7 @@ function main() {
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: journeyEvidence,
       targetUserListingChannelEvidence: {},
+      targetUserOpenInventoryEvidence: {},
     });
 
     check('all four rule families are present in one insights payload', insights.selected_findings.length === 4, insights.selected_findings.map((f) => f.finding_code));
@@ -2044,8 +2054,8 @@ function main() {
     check('the category finding (minus orchestrator relationship linking) is byte-identical to calling the rule directly', JSON.stringify(categoryWithoutRelationship) === JSON.stringify(directCategory), { categoryWithoutRelationship, directCategory });
     check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
     check('the journey finding is also present (Marketplace -> Marketplace)', (viaOrchestratorJourney as SelectedFindingForTest | undefined)?.segment.deal_in_channel_name === 'Marketplace', viaOrchestratorJourney);
-    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
-    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
+    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
+    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
   }
 
   // ── J21: old Insights Engine snapshots (1.0, 1.1, 1.2) remain readable ──
@@ -2440,6 +2450,7 @@ function main() {
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: combinedDealChannelEvidence,
       targetUserListingChannelEvidence: {},
+      targetUserOpenInventoryEvidence: {},
     });
 
     check('all five rule families are present in one insights payload', insights.selected_findings.length === 5, insights.selected_findings.map((f) => f.finding_code));
@@ -2458,8 +2469,8 @@ function main() {
     check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
     check('the channel-journey finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorJourney) === JSON.stringify(directJourney), { viaOrchestratorJourney, directJourney });
     check('the deal-out-channel finding is also present (Marketplace)', (viaOrchestratorDealOut as SelectedFindingForTest | undefined)?.segment.channel_name === 'Marketplace', viaOrchestratorDealOut);
-    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
-    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
+    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
+    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
   }
 
   // ── D19: old Insights Engine snapshots remain readable ───────────────────
@@ -2914,6 +2925,7 @@ function main() {
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: combinedDealChannelEvidence,
       targetUserListingChannelEvidence: {},
+      targetUserOpenInventoryEvidence: {},
     });
 
     check('all six rule families are present in one insights payload', insights.selected_findings.length === 6, insights.selected_findings.map((f) => f.finding_code));
@@ -2940,8 +2952,8 @@ function main() {
         && (viaOrchestratorDealIn as SelectedFindingForTest | undefined)?.segment.channel_id === (viaOrchestratorDealOut as SelectedFindingForTest | undefined)?.segment.channel_id,
       { viaOrchestratorDealIn, viaOrchestratorDealOut },
     );
-    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
-    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
+    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
+    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
   }
 
   // ── N21: previous Insights Engine snapshots remain readable ──────────────
@@ -3552,6 +3564,7 @@ function main() {
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: combinedDealChannelEvidence,
       targetUserListingChannelEvidence: listingPlatformEvidence,
+      targetUserOpenInventoryEvidence: {},
     });
 
     check('all seven rule families are present in one insights payload', insights.selected_findings.length === 7, insights.selected_findings.map((f) => f.finding_code));
@@ -3694,6 +3707,690 @@ function main() {
       const matched = forbiddenPatterns.filter((p) => p.test(serialized)).map((p) => p.source);
       check('serialized listing-platform finding contains no PII- or counterparty-shaped field names', matched.length === 0, matched);
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // BUSINESS_OPEN_INVENTORY_PRIORITY (Insights Engine v1.7)
+  // ══════════════════════════════════════════════════════════════════════
+  // Reads Analytics v2.1's (unchanged through v2.11) target_user_open_
+  // inventory_evidence.item_decision_evidence[] — the first Insights rule
+  // scoped to a single Purpose (Business only) and the first to select an
+  // item-level finding. reason_codes on this evidence are real, partially
+  // BUSINESS_-prefixed SQL-generated strings — see rules/
+  // businessOpenInventoryPriority.ts's own header for the full mapping.
+
+  // ── Fixture builder ───────────────────────────────────────────────────
+  // Fixtures set reason_codes directly (the rule treats them as controlled
+  // evidence, never re-derives them from thresholds) — this mirrors
+  // exactly how the rule itself consumes this evidence.
+
+  interface BusinessOpenItemFixture {
+    itemId: number;
+    itemDisplayName?: string | null;
+    currentPurposeName: string | null;
+    dispositionMode?: string | null;
+    activeRealizationFlag?: boolean | null;
+    purposePolicyStatus?: string | null;
+    listedFlag: boolean;
+    currentDomDays?: number | null;
+    ownershipAgeDays?: number | null;
+    acquisitionValue?: number | null;
+    estimatedSoldValue?: number | null;
+    estimatedNetUpside?: number | null;
+    estimatedUpsidePercent?: number | null;
+    openCapitalSharePercent?: number | null;
+    purposeOpenCapitalSharePercent?: number | null;
+    listingChannelNames?: string[];
+    isHistoricalImport?: boolean;
+    liquidityCohortMatch?: string | null;
+    reasonCodes: string[];
+  }
+
+  function purposeDefaults(purposeName: string | null): { dispositionMode: string | null; activeRealizationFlag: boolean | null } {
+    if (purposeName === 'Business') return { dispositionMode: 'active_realization', activeRealizationFlag: true };
+    if (purposeName === 'Hybrid') return { dispositionMode: 'selective_realization', activeRealizationFlag: true };
+    if (purposeName === 'Personal') return { dispositionMode: 'opportunistic_realization', activeRealizationFlag: false };
+    return { dispositionMode: null, activeRealizationFlag: null };
+  }
+
+  function makeItemDecisionEvidence(items: BusinessOpenItemFixture[]): unknown {
+    return {
+      item_decision_evidence: items.map((it) => {
+        const defaults = purposeDefaults(it.currentPurposeName);
+        return {
+          item_id: it.itemId,
+          item_display_name: it.itemDisplayName ?? `Test Item ${it.itemId}`,
+          brand_id: 1,
+          brand_name: 'TestBrand',
+          category_id: 1,
+          category_name: 'TestCategory',
+          type_id: 1,
+          type_name: 'TestType',
+          model: 'should-never-appear-in-any-finding',
+          current_purpose_id: it.currentPurposeName === 'Business' ? 1 : it.currentPurposeName === 'Hybrid' ? 2 : it.currentPurposeName === 'Personal' ? 3 : null,
+          current_purpose_name: it.currentPurposeName,
+          purpose_policy_status: it.purposePolicyStatus ?? (it.currentPurposeName ? 'mapped' : 'missing_purpose'),
+          disposition_mode: it.dispositionMode !== undefined ? it.dispositionMode : defaults.dispositionMode,
+          realization_priority_order: it.currentPurposeName === 'Business' ? 1 : it.currentPurposeName === 'Hybrid' ? 2 : it.currentPurposeName === 'Personal' ? 3 : null,
+          active_realization_flag: it.activeRealizationFlag !== undefined ? it.activeRealizationFlag : defaults.activeRealizationFlag,
+          expected_holding_policy: 'shorter_holding_preferred',
+          acquisition_method: 'purchase',
+          acquisition_value: it.acquisitionValue ?? null,
+          acquisition_value_band_order: 4,
+          acquisition_value_band_label: '$1,000-1,999',
+          estimated_sold_value: it.estimatedSoldValue ?? null,
+          estimated_net_upside: it.estimatedNetUpside ?? null,
+          estimated_upside_percent: it.estimatedUpsidePercent ?? null,
+          is_historical_import: it.isHistoricalImport ?? false,
+          ownership_age_days: it.ownershipAgeDays ?? null,
+          listed_flag: it.listedFlag,
+          listing_state_basis: 'open_item_with_listing_record',
+          listing_channel_count: (it.listingChannelNames ?? []).length,
+          listing_channel_names: it.listingChannelNames ?? [],
+          first_listed_at: it.listedFlag ? '2026-01-01T00:00:00Z' : null,
+          current_dom_days: it.currentDomDays ?? null,
+          open_capital_share_percent: it.openCapitalSharePercent ?? null,
+          purpose_open_capital_share_percent: it.purposeOpenCapitalSharePercent ?? null,
+          economic_cohort: null,
+          liquidity_cohort: null,
+          liquidity_cohort_match: it.liquidityCohortMatch ?? 'purpose_matched',
+          comparable_evidence_available: false,
+          reason_codes: it.reasonCodes,
+        };
+      }),
+    };
+  }
+
+  function businessEvalFor(
+    itemId: number,
+    evaluations: ReturnType<typeof evaluateBusinessOpenInventoryPriority>['candidateEvaluations'],
+  ) {
+    return evaluations.find((e) => e.item_id === itemId);
+  }
+
+  // ── B1/B2: correct evidence path is used; there is no shared OIDS
+  // evidence section to accidentally read ─────────────────────────────────
+  console.log('\n[B1/B2 — correct target-user OIDS evidence path is used; there is no shared OIDS evidence to ignore]');
+  {
+    const selectFindingsSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/selectFindings.ts'), 'utf8');
+    check(
+      'selectFindings.ts wires targetUserOpenInventoryEvidence into evaluateBusinessOpenInventoryPriority',
+      selectFindingsSource.includes('evaluateBusinessOpenInventoryPriority(input.targetUserOpenInventoryEvidence)'),
+    );
+    const runnerSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/runAnalytics.ts'), 'utf8');
+    check(
+      'runAnalytics.ts wires target_user_open_inventory_evidence into selectFindings',
+      runnerSource.includes('targetUserOpenInventoryEvidence: snapshot.target_user_open_inventory_evidence'),
+    );
+    // OIDS has no shared/pooled counterpart anywhere in the Analytics
+    // snapshot (confirmed by inspecting every v2.x migration) — the rule
+    // source never references any such key.
+    const ruleSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/rules/businessOpenInventoryPriority.ts'), 'utf8');
+    check(
+      'businessOpenInventoryPriority.ts reads item_decision_evidence and never accesses .shared_open_inventory_evidence in code (only mentions it in a comment explaining what does not exist)',
+      ruleSource.includes('evidence?.item_decision_evidence') && !ruleSource.toLowerCase().includes('.shared_open_inventory'),
+    );
+    check(
+      'runAnalytics.ts never wires a shared_open_inventory_evidence key (no such section exists in Analytics)',
+      !runnerSource.includes('shared_open_inventory_evidence'),
+    );
+  }
+
+  // ── B3/B30: another user's items are never considered — two separate
+  // evaluate() calls (mirroring how runAnalytics scopes evidence per
+  // target user) never mix item identities ────────────────────────────────
+  console.log('\n[B3/B30 — another user\'s items are never considered; two-user fixture proves no cross-user item leakage]');
+  {
+    const userAItems: BusinessOpenItemFixture[] = [
+      { itemId: 101, itemDisplayName: 'User A Item', currentPurposeName: 'Business', listedFlag: true, acquisitionValue: 2000, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] },
+    ];
+    const userBItems: BusinessOpenItemFixture[] = [
+      { itemId: 202, itemDisplayName: 'User B Item', currentPurposeName: 'Business', listedFlag: true, acquisitionValue: 2500, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] },
+    ];
+    const { result: resultA } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence(userAItems));
+    const { result: resultB } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence(userBItems));
+    check('user A\'s result selects only user A\'s own item', resultA.status === 'selected' && resultA.segment.item_id === 101, resultA);
+    check('user B\'s result selects only user B\'s own item', resultB.status === 'selected' && resultB.segment.item_id === 202, resultB);
+    check(
+      'user A\'s result never contains user B\'s item_id anywhere in its serialized form',
+      !JSON.stringify(resultA).includes('202'),
+      resultA,
+    );
+    check(
+      'user B\'s result never contains user A\'s item_id anywhere in its serialized form',
+      !JSON.stringify(resultB).includes('101'),
+      resultB,
+    );
+  }
+
+  // ── B4/B5/B6/B7: only Business active_realization items are eligible;
+  // Hybrid and Personal are excluded entirely; missing/unmapped Purpose
+  // is ineligible (but still evaluated, since it is text-labeled Business) ─
+  console.log('\n[B4/B5/B6/B7 — only Business active_realization items are eligible; Hybrid/Personal excluded; unmapped purpose policy is ineligible]');
+  {
+    const items: BusinessOpenItemFixture[] = [
+      { itemId: 1, currentPurposeName: 'Business', listedFlag: true, reasonCodes: [] },
+      { itemId: 2, currentPurposeName: 'Hybrid', listedFlag: true, reasonCodes: [] },
+      { itemId: 3, currentPurposeName: 'Personal', listedFlag: false, reasonCodes: [] },
+      { itemId: 4, currentPurposeName: 'Business', purposePolicyStatus: 'missing_policy', listedFlag: true, reasonCodes: [] },
+    ];
+    const { candidateEvaluations } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence(items));
+    check('the Business item (1) is eligible', businessEvalFor(1, candidateEvaluations)?.eligible === true, businessEvalFor(1, candidateEvaluations));
+    check('the Hybrid item (2) receives no evaluation row at all — never a candidate for this rule', businessEvalFor(2, candidateEvaluations) === undefined, candidateEvaluations);
+    check('the Personal item (3) receives no evaluation row at all — never a candidate for this rule', businessEvalFor(3, candidateEvaluations) === undefined, candidateEvaluations);
+    const unmapped = businessEvalFor(4, candidateEvaluations);
+    check('the Business item with an unmapped purpose policy (4) still receives an evaluation row (it is a Business candidate)', unmapped !== undefined, unmapped);
+    check('item 4 is ineligible', unmapped?.eligible === false, unmapped);
+    check('item 4 reason includes PURPOSE_POLICY_STATUS_NOT_MAPPED', !!unmapped?.eligibility_failure_reasons.includes('PURPOSE_POLICY_STATUS_NOT_MAPPED'), unmapped);
+    check('exactly 2 evaluation rows exist (items 1 and 4 only — Hybrid/Personal never considered)', candidateEvaluations.length === 2, candidateEvaluations);
+  }
+
+  // ── B8/B23: each priority profile is recognized correctly, with the
+  // correct recommended action code ────────────────────────────────────────
+  console.log('\n[B8/B23 — each of the seven priority profiles is recognized correctly, with the correct recommended action code]');
+  {
+    const profileFixtures: Array<{ item: BusinessOpenItemFixture; expectedProfile: string; expectedAction: string }> = [
+      {
+        item: { itemId: 1, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+        expectedProfile: 'STALE_HIGH_CAPITAL_LOW_UPSIDE',
+        expectedAction: 'REVIEW_PRICE_LISTING_AND_EXIT_PLAN',
+      },
+      {
+        item: { itemId: 2, currentPurposeName: 'Business', listedFlag: false, reasonCodes: ['BUSINESS_UNLISTED_OPEN_ITEM', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+        expectedProfile: 'UNLISTED_HIGH_CAPITAL_LOW_UPSIDE',
+        expectedAction: 'LIST_OR_RECLASSIFY',
+      },
+      {
+        item: { itemId: 3, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE'] },
+        expectedProfile: 'STALE_HIGH_CAPITAL',
+        expectedAction: 'REFRESH_LISTING_AND_REVIEW_EXIT_PLAN',
+      },
+      {
+        item: { itemId: 4, currentPurposeName: 'Business', listedFlag: false, reasonCodes: ['BUSINESS_UNLISTED_OPEN_ITEM', 'HIGH_CAPITAL_EXPOSURE'] },
+        expectedProfile: 'UNLISTED_HIGH_CAPITAL_OR_AGED',
+        expectedAction: 'LIST_OR_RECLASSIFY',
+      },
+      {
+        item: { itemId: 5, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+        expectedProfile: 'STALE_LOW_UPSIDE',
+        expectedAction: 'REVIEW_PRICE_AND_EXIT_PLAN',
+      },
+      {
+        item: { itemId: 6, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] },
+        expectedProfile: 'STALE_LISTING',
+        expectedAction: 'REFRESH_LISTING',
+      },
+      {
+        item: { itemId: 7, currentPurposeName: 'Business', listedFlag: true, ownershipAgeDays: 150, reasonCodes: ['BUSINESS_OWNERSHIP_AGE_120_PLUS'] },
+        expectedProfile: 'AGED_BUSINESS_HOLD',
+        expectedAction: 'REVIEW_HOLD_OR_EXIT_DECISION',
+      },
+    ];
+    for (const { item, expectedProfile, expectedAction } of profileFixtures) {
+      const { candidateEvaluations } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([item]));
+      const evalRow = businessEvalFor(item.itemId, candidateEvaluations);
+      check(`item ${item.itemId} is assigned profile ${expectedProfile}`, evalRow?.priority_profile === expectedProfile, evalRow);
+      check(`item ${item.itemId} maps to action code ${expectedAction}`, evalRow?.recommended_action_code === expectedAction, evalRow);
+      check(`item ${item.itemId} is actionable and selected (sole candidate)`, evalRow?.actionable === true && evalRow?.selected === true, evalRow);
+    }
+  }
+
+  // ── B9: highest matching profile is assigned when multiple profiles
+  // match (profile order wins, not the last or a random match) ────────────
+  console.log('\n[B9 — the highest (first-in-order) matching profile is assigned when an item matches more than one]');
+  {
+    // Unlisted + reliable 120+ day age matches BOTH profile 4 (UNLISTED_
+    // HIGH_CAPITAL_OR_AGED, via the age branch) and profile 7 (AGED_
+    // BUSINESS_HOLD) — profile 4 is checked first and must win.
+    const item: BusinessOpenItemFixture = {
+      itemId: 1, currentPurposeName: 'Business', listedFlag: false, ownershipAgeDays: 150,
+      reasonCodes: ['BUSINESS_UNLISTED_OPEN_ITEM', 'BUSINESS_OWNERSHIP_AGE_120_PLUS'],
+    };
+    const { candidateEvaluations } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([item]));
+    const evalRow = businessEvalFor(1, candidateEvaluations);
+    check('the item matches profile 4 (UNLISTED_HIGH_CAPITAL_OR_AGED), not profile 7', evalRow?.priority_profile === 'UNLISTED_HIGH_CAPITAL_OR_AGED', evalRow);
+  }
+
+  // ── B10: no weighted score exists anywhere in the rule ───────────────────
+  console.log('\n[B10 — no weighted score exists]');
+  {
+    const ruleSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/rules/businessOpenInventoryPriority.ts'), 'utf8');
+    // Scan CODE lines only (strip full-line comments) — the header/inline
+    // comments legitimately say "never a weighted score" in prose; what
+    // must never exist is an actual scoring variable or multiplicative
+    // accumulation in code.
+    const codeOnly = ruleSource
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+    const weightedScorePatterns = [/\bscore\s*[:=+]/i, /\bweight(ed)?\s*[:=]/i, /\*\s*0\.\d/, /\+=.*\*/];
+    const matched = weightedScorePatterns.filter((p) => p.test(codeOnly)).map((p) => p.source);
+    check('no scoring variable or multiplicative accumulation pattern appears in the rule\'s actual code (comments aside)', matched.length === 0, matched);
+  }
+
+  // ── B11/B12/B13/B14: single actionable signals alone are correctly
+  // insufficient (or, for P75, correctly sufficient) ──────────────────────
+  console.log('\n[B11/B12/B13/B14 — UNLISTED_OPEN_ITEM/LOW_ESTIMATED_UPSIDE/DOM_ABOVE_MEDIAN alone never qualify; DOM_ABOVE_P75 alone can qualify a listed item]');
+  {
+    const unlistedAlone: BusinessOpenItemFixture = { itemId: 1, currentPurposeName: 'Business', listedFlag: false, reasonCodes: ['BUSINESS_UNLISTED_OPEN_ITEM'] };
+    const lowUpsideAlone: BusinessOpenItemFixture = { itemId: 2, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] };
+    const domMedianAlone: BusinessOpenItemFixture = { itemId: 3, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN'] };
+    const domP75Alone: BusinessOpenItemFixture = { itemId: 4, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+
+    const { candidateEvaluations } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([unlistedAlone, lowUpsideAlone, domMedianAlone, domP75Alone]));
+    check('UNLISTED_OPEN_ITEM alone does not qualify (newly acquired Business inventory may legitimately be unlisted)', businessEvalFor(1, candidateEvaluations)?.actionable === false, businessEvalFor(1, candidateEvaluations));
+    check('LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL alone does not qualify', businessEvalFor(2, candidateEvaluations)?.actionable === false, businessEvalFor(2, candidateEvaluations));
+    check('DOM_ABOVE_COMPARABLE_MEDIAN alone does not qualify (supporting evidence only, never independently actionable)', businessEvalFor(3, candidateEvaluations)?.actionable === false, businessEvalFor(3, candidateEvaluations));
+    check('DOM_ABOVE_COMPARABLE_P75 alone CAN qualify a listed item (STALE_LISTING)', businessEvalFor(4, candidateEvaluations)?.actionable === true && businessEvalFor(4, candidateEvaluations)?.priority_profile === 'STALE_LISTING', businessEvalFor(4, candidateEvaluations));
+  }
+
+  // ── B15/B16/B17: historical listing DOM may be used; historical or
+  // null ownership age is never used ───────────────────────────────────────
+  console.log('\n[B15/B16/B17 — historical listing DOM may be used; historical and null ownership age are never used for AGED_BUSINESS_HOLD]');
+  {
+    const historicalStale: BusinessOpenItemFixture = {
+      itemId: 1, currentPurposeName: 'Business', listedFlag: true, isHistoricalImport: true,
+      reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'],
+    };
+    // Synthetic edge case: reason_codes erroneously carries the age code
+    // despite is_historical_import — the rule must not trust it blindly.
+    const historicalAged: BusinessOpenItemFixture = {
+      itemId: 2, currentPurposeName: 'Business', listedFlag: true, isHistoricalImport: true, ownershipAgeDays: 150,
+      reasonCodes: ['BUSINESS_OWNERSHIP_AGE_120_PLUS'],
+    };
+    // Synthetic edge case: reason_codes erroneously carries the age code
+    // despite a null ownership_age_days.
+    const nullAgeAged: BusinessOpenItemFixture = {
+      itemId: 3, currentPurposeName: 'Business', listedFlag: true, ownershipAgeDays: null,
+      reasonCodes: ['BUSINESS_OWNERSHIP_AGE_120_PLUS'],
+    };
+    const { candidateEvaluations } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([historicalStale, historicalAged, nullAgeAged]));
+    check('a Historical Import listed item with stale DOM still qualifies for STALE_LISTING', businessEvalFor(1, candidateEvaluations)?.actionable === true && businessEvalFor(1, candidateEvaluations)?.priority_profile === 'STALE_LISTING', businessEvalFor(1, candidateEvaluations));
+    check('a Historical Import item never qualifies for AGED_BUSINESS_HOLD, even with a present age reason code', businessEvalFor(2, candidateEvaluations)?.actionable === false, businessEvalFor(2, candidateEvaluations));
+    check('a null-ownership-age item never qualifies for AGED_BUSINESS_HOLD, even with a present age reason code', businessEvalFor(3, candidateEvaluations)?.actionable === false, businessEvalFor(3, candidateEvaluations));
+  }
+
+  // ── B18: a high-capital stale low-upside candidate outranks weaker
+  // profiles regardless of secondary metrics ───────────────────────────────
+  console.log('\n[B18 — a STALE_HIGH_CAPITAL_LOW_UPSIDE candidate outranks a STALE_LISTING candidate even when the latter has stronger secondary metrics]');
+  {
+    const strongProfileWeakSecondary: BusinessOpenItemFixture = {
+      itemId: 1, currentPurposeName: 'Business', listedFlag: true,
+      openCapitalSharePercent: 5, purposeOpenCapitalSharePercent: 5, acquisitionValue: 100,
+      reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'],
+    };
+    const weakProfileStrongSecondary: BusinessOpenItemFixture = {
+      itemId: 2, currentPurposeName: 'Business', listedFlag: true,
+      openCapitalSharePercent: 90, purposeOpenCapitalSharePercent: 90, acquisitionValue: 999999,
+      reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'],
+    };
+    const { result } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([strongProfileWeakSecondary, weakProfileStrongSecondary]));
+    check('item 1 (STALE_HIGH_CAPITAL_LOW_UPSIDE) wins despite far weaker secondary metrics', result.status === 'selected' && result.segment.item_id === 1, result);
+  }
+
+  // ── B19/B20: deterministic tie-breakers, including null-last handling ───
+  console.log('\n[B19/B20 — deterministic tie-breakers, including null numeric values sorting last]');
+  {
+    const higherCapitalShare: BusinessOpenItemFixture = { itemId: 1, currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 30, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const lowerCapitalShare: BusinessOpenItemFixture = { itemId: 2, currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 10, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: capitalShareResult } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([lowerCapitalShare, higherCapitalShare]));
+    check('the item with the larger open_capital_share_percent wins (30 beats 10)', capitalShareResult.status === 'selected' && capitalShareResult.segment.item_id === 1, capitalShareResult);
+
+    const nullCapitalShare: BusinessOpenItemFixture = { itemId: 3, currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: null, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const smallRealCapitalShare: BusinessOpenItemFixture = { itemId: 4, currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 1, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: nullLastResult } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([nullCapitalShare, smallRealCapitalShare]));
+    check('a null open_capital_share_percent sorts after even a small real value (null last, never treated as highest)', nullLastResult.status === 'selected' && nullLastResult.segment.item_id === 4, nullLastResult);
+
+    const fullyTiedA: BusinessOpenItemFixture = { itemId: 20, currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 15, purposeOpenCapitalSharePercent: 15, currentDomDays: 40, acquisitionValue: 700, estimatedUpsidePercent: 5, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const fullyTiedB: BusinessOpenItemFixture = { itemId: 21, currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 15, purposeOpenCapitalSharePercent: 15, currentDomDays: 40, acquisitionValue: 700, estimatedUpsidePercent: 5, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: idTieResult } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([fullyTiedB, fullyTiedA]));
+    check('fully tied candidates break on ascending item_id — item 20 beats item 21', idTieResult.status === 'selected' && idTieResult.segment.item_id === 20, idTieResult);
+  }
+
+  // ── B21: the winner is not hardcoded ──────────────────────────────────────
+  console.log('\n[B21 — the winner is not hardcoded — relabeling the winning signals onto a different item changes the winner]');
+  {
+    const itemA: BusinessOpenItemFixture = { itemId: 1, itemDisplayName: 'Strong Item', currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 30, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] };
+    const itemB: BusinessOpenItemFixture = { itemId: 2, itemDisplayName: 'Weak Item', currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 5, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: originalResult } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([itemA, itemB]));
+    check('item 1 (the strong signals) wins originally', originalResult.status === 'selected' && originalResult.segment.item_id === 1, originalResult);
+
+    const swappedA: BusinessOpenItemFixture = { ...itemA, itemId: 2, itemDisplayName: 'Now Strong' };
+    const swappedB: BusinessOpenItemFixture = { ...itemB, itemId: 1, itemDisplayName: 'Now Weak' };
+    const { result: swappedResult } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([swappedA, swappedB]));
+    check('when the strong signals move to item 2, item 2 wins instead — proving no hardcoded winner', swappedResult.status === 'selected' && swappedResult.segment.item_id === 2, swappedResult);
+  }
+
+  // ── B22: a runner-up is emitted only when another ACTIONABLE candidate
+  // exists (an eligible-but-non-actionable peer never becomes a runner-up) ─
+  console.log('\n[B22 — a runner-up is emitted only when another actionable Business candidate exists]');
+  {
+    const soleActionable: BusinessOpenItemFixture = { itemId: 1, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const eligibleNotActionable: BusinessOpenItemFixture = { itemId: 2, currentPurposeName: 'Business', listedFlag: true, reasonCodes: [] };
+    const { result: soleResult } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([soleActionable, eligibleNotActionable]));
+    check('no runner-up appears when only one actionable candidate exists, even alongside an eligible-but-non-actionable peer', soleResult.status === 'selected' && soleResult.runner_up === undefined, soleResult.status === 'selected' ? soleResult.runner_up : soleResult);
+
+    // item 3's real (if small) open_capital_share_percent outranks item
+    // 1's null (null sorts last) — item 3 wins, item 1 is the runner-up.
+    const secondActionable: BusinessOpenItemFixture = { itemId: 3, currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 1, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: twoActionableResult } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([soleActionable, secondActionable]));
+    check('a runner-up appears when a second actionable candidate exists', twoActionableResult.status === 'selected' && twoActionableResult.runner_up !== undefined, twoActionableResult.status === 'selected' ? twoActionableResult.runner_up : twoActionableResult);
+    check(
+      'the runner-up carries item_id, item_display_name, priority_profile, recommended_action_code, triggered_reason_codes, and reason_not_selected',
+      twoActionableResult.status === 'selected' && twoActionableResult.runner_up?.item_id === 1
+        && twoActionableResult.runner_up?.reason_not_selected === 'LOWER_RANKED_BY_DETERMINISTIC_PRIORITY',
+      twoActionableResult.status === 'selected' ? twoActionableResult.runner_up : twoActionableResult,
+    );
+  }
+
+  // ── B24: no exact price recommendation or overreaching claim is ever
+  // generated — every profile's summary text is scanned for forbidden
+  // phrasing ─────────────────────────────────────────────────────────────
+  console.log('\n[B24 — no exact price recommendation, overpriced claim, sale guarantee, or Personal-item mention is ever generated]');
+  {
+    const allProfileItems: BusinessOpenItemFixture[] = [
+      { itemId: 1, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+      { itemId: 2, currentPurposeName: 'Business', listedFlag: false, reasonCodes: ['BUSINESS_UNLISTED_OPEN_ITEM', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+      { itemId: 3, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE'] },
+      { itemId: 4, currentPurposeName: 'Business', listedFlag: false, reasonCodes: ['BUSINESS_UNLISTED_OPEN_ITEM', 'HIGH_CAPITAL_EXPOSURE'] },
+      { itemId: 5, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+      { itemId: 6, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] },
+      { itemId: 7, currentPurposeName: 'Business', listedFlag: true, ownershipAgeDays: 150, reasonCodes: ['BUSINESS_OWNERSHIP_AGE_120_PLUS'] },
+    ];
+    const forbidden = [/\$\d/, /lower the price/i, /overpriced/i, /will sell/i, /market does not want/i, /personal item/i];
+    for (const item of allProfileItems) {
+      const { result } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([item]));
+      if (result.status !== 'selected') {
+        check(`item ${item.itemId} produced a selected finding to check its summary`, false, result);
+        continue;
+      }
+      const matched = forbidden.filter((p) => p.test(result.summary)).map((p) => p.source);
+      check(`item ${item.itemId}'s summary (profile ${result.priority_profile}) contains no forbidden phrasing`, matched.length === 0, { summary: result.summary, matched });
+    }
+  }
+
+  // ── B25/B26: existing evidence limitations are preserved and translated;
+  // required rule limitations are always present ───────────────────────────
+  console.log('\n[B25/B26 — existing evidence limitations are preserved and translated; required rule limitations are always present]');
+  {
+    const richLimitationsItem: BusinessOpenItemFixture = {
+      itemId: 1, currentPurposeName: 'Business', listedFlag: true, isHistoricalImport: true,
+      liquidityCohortMatch: 'cross_purpose_fallback',
+      reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'LOW_COMPARABLE_CONFIDENCE', 'PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE', 'ZERO_ASSIGNED_ACQUISITION_VALUE'],
+    };
+    const { result } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([richLimitationsItem]));
+    check('result is selected', result.status === 'selected', result);
+    if (result.status === 'selected') {
+      const requiredAlways = [
+        'TARGET_USER_ITEM_LEVEL_EVIDENCE',
+        'OPEN_INVENTORY_PRIORITY_IS_DECISION_SUPPORT_NOT_AUTOMATION',
+        'ESTIMATED_VALUE_IS_USER_ESTIMATE',
+        'LISTING_ACTIVE_STATE_INFERRED',
+        'CURRENT_PURPOSE_IS_NOT_HISTORICAL_PURPOSE',
+        'ITEM_SELECTION_ASSOCIATION_NOT_CAUSATION',
+      ];
+      check('all six always-required limitations are present', requiredAlways.every((l) => result.limitations.includes(l)), result.limitations);
+      check('HISTORICAL_ACQUISITION_DATE_UNRELIABLE is added for a Historical Import', result.limitations.includes('HISTORICAL_ACQUISITION_DATE_UNRELIABLE'), result.limitations);
+      check('LOW_COMPARABLE_CONFIDENCE is preserved from evidence', result.limitations.includes('LOW_COMPARABLE_CONFIDENCE'), result.limitations);
+      check('PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE is preserved from evidence', result.limitations.includes('PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE'), result.limitations);
+      check('ZERO_ASSIGNED_ACQUISITION_VALUE_LIMITS_ECONOMIC_INTERPRETATION is translated from evidence', result.limitations.includes('ZERO_ASSIGNED_ACQUISITION_VALUE_LIMITS_ECONOMIC_INTERPRETATION'), result.limitations);
+    }
+
+    const plainItem: BusinessOpenItemFixture = { itemId: 2, currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: plainResult } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([plainItem]));
+    check(
+      'a plain item (no data-quality signals) still carries exactly the six required limitations, nothing conditional',
+      plainResult.status === 'selected' && plainResult.limitations.length === 6,
+      plainResult.status === 'selected' ? plainResult.limitations : plainResult,
+    );
+  }
+
+  // ── B27/B28: no-finding behavior — NO_ACTIONABLE_BUSINESS_OPEN_ITEM and
+  // EVIDENCE_UNAVAILABLE ───────────────────────────────────────────────────
+  console.log('\n[B27/B28 — no actionable candidate yields NO_ACTIONABLE_BUSINESS_OPEN_ITEM; missing evidence yields EVIDENCE_UNAVAILABLE]');
+  {
+    const noSignalItem: BusinessOpenItemFixture = { itemId: 1, currentPurposeName: 'Business', listedFlag: true, reasonCodes: [] };
+    const { result: noActionableResult } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([noSignalItem]));
+    check('result is no_eligible_finding', noActionableResult.status === 'no_eligible_finding', noActionableResult);
+    check('reason_codes includes NO_ACTIONABLE_BUSINESS_OPEN_ITEM', noActionableResult.status === 'no_eligible_finding' && noActionableResult.reason_codes.includes('NO_ACTIONABLE_BUSINESS_OPEN_ITEM'), noActionableResult);
+
+    const { result: missingEvidenceResult } = evaluateBusinessOpenInventoryPriority({});
+    check('missing item_decision_evidence yields EVIDENCE_UNAVAILABLE', missingEvidenceResult.status === 'no_eligible_finding' && missingEvidenceResult.reason_codes.includes('EVIDENCE_UNAVAILABLE'), missingEvidenceResult);
+    const { result: undefinedEvidenceResult } = evaluateBusinessOpenInventoryPriority(undefined);
+    check('undefined evidence yields EVIDENCE_UNAVAILABLE', undefinedEvidenceResult.status === 'no_eligible_finding' && undefinedEvidenceResult.reason_codes.includes('EVIDENCE_UNAVAILABLE'), undefinedEvidenceResult);
+  }
+
+  // ── B29: a representative, production-shaped fixture (multiple Business
+  // items with realistic combinations, plus Hybrid/Personal noise) selects
+  // exactly one Business item ──────────────────────────────────────────────
+  console.log('\n[B29 — representative production-shaped fixture (multiple Business items, varied signal combinations, Hybrid/Personal noise) selects one Business item]');
+  {
+    const productionShaped: BusinessOpenItemFixture[] = [
+      // Stale, high-capital, low-upside — should be the strongest candidate.
+      { itemId: 501, itemDisplayName: 'Gibson Custom Murphy Lab', currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 27.3, purposeOpenCapitalSharePercent: 33.55, currentDomDays: 60, acquisitionValue: 5200, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+      // Unlisted, high capital, no upside signal — weaker profile (4).
+      { itemId: 502, itemDisplayName: 'Fender Custom Shop', currentPurposeName: 'Business', listedFlag: false, openCapitalSharePercent: 15, purposeOpenCapitalSharePercent: 18, acquisitionValue: 3000, reasonCodes: ['BUSINESS_UNLISTED_OPEN_ITEM', 'HIGH_CAPITAL_EXPOSURE'] },
+      // Reliably aged hold, nothing else.
+      { itemId: 503, itemDisplayName: 'Vintage Amp', currentPurposeName: 'Business', listedFlag: true, ownershipAgeDays: 200, acquisitionValue: 900, reasonCodes: ['BUSINESS_OWNERSHIP_AGE_120_PLUS'] },
+      // Eligible but not actionable (no signals at all).
+      { itemId: 504, itemDisplayName: 'New Pedal', currentPurposeName: 'Business', listedFlag: false, acquisitionValue: 200, reasonCodes: [] },
+      // Ineligible — unmapped purpose policy.
+      { itemId: 505, itemDisplayName: 'Odd Item', currentPurposeName: 'Business', purposePolicyStatus: 'missing_policy', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+      // Noise — Hybrid and Personal items, never candidates for this rule.
+      { itemId: 601, itemDisplayName: 'Hybrid Guitar', currentPurposeName: 'Hybrid', listedFlag: false, reasonCodes: ['HYBRID_REVIEW_REQUIRED'] },
+      { itemId: 701, itemDisplayName: 'Personal Guitar', currentPurposeName: 'Personal', listedFlag: true, reasonCodes: ['PERSONAL_LISTED_FOR_OPPORTUNISTIC_EXIT'] },
+    ];
+    const { result, candidateEvaluations } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence(productionShaped));
+    check('exactly one finding is selected', result.status === 'selected', result);
+    check('the winner is item 501 (STALE_HIGH_CAPITAL_LOW_UPSIDE — the highest-priority profile present)', result.status === 'selected' && result.segment.item_id === 501, result);
+    check('the runner-up is item 502 (the next-highest profile among the remaining actionable items)', result.status === 'selected' && result.runner_up?.item_id === 502, result.status === 'selected' ? result.runner_up : result);
+    check('exactly 5 evaluation rows exist (Business items only — items 601/701 never considered)', candidateEvaluations.length === 5, candidateEvaluations.map((e) => e.item_id));
+    check('item 504 (eligible, no signals) is eligible but not actionable', businessEvalFor(504, candidateEvaluations)?.eligible === true && businessEvalFor(504, candidateEvaluations)?.actionable === false, businessEvalFor(504, candidateEvaluations));
+    check('item 505 (unmapped policy) is ineligible', businessEvalFor(505, candidateEvaluations)?.eligible === false, businessEvalFor(505, candidateEvaluations));
+  }
+
+  // ── B31/B33: the previous seven aggregate rule families remain
+  // identifier-free and byte-identical when the eighth (item-level) rule
+  // also fires ──────────────────────────────────────────────────────────
+  console.log('\n[B31/B33 — the previous seven rule families remain identifier-free and byte-identical when BUSINESS_OPEN_INVENTORY_PRIORITY also fires]');
+  {
+    const broadEvidence = makeEvidence([
+      { order: 2, label: '$1,000-1,999', total: 15, realized: 8, domSample: 8, realizationRate: 55, profit: 550, roi: 45, dom: 15, confidence: 'moderate' },
+      { order: 3, label: '$2,000-2,999', total: 28, realized: 19, domSample: 19, realizationRate: 67.86, profit: 750, roi: 33.33, dom: 10.5, confidence: 'stronger' },
+      { order: 4, label: '$3,000-3,999', total: 12, realized: 6, domSample: 6, realizationRate: 60, profit: 600, roi: 20, dom: 20, confidence: 'moderate' },
+      { order: 5, label: '$4,000-4,999', total: 10, realized: 5, domSample: 5, realizationRate: 58, profit: 650, roi: 25, dom: 25, confidence: 'low' },
+    ]) as Record<string, unknown>;
+    const methodEvidence = makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS) as Record<string, unknown>;
+    const combinedAcquisitionEvidence = {
+      ...broadEvidence,
+      acquisition_to_exit_analysis: {
+        ...(broadEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+        ...(methodEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+      },
+    };
+    const categoryEvidence = makeCategoryEvidence([...GUITARS_BANDS, ...PEDALS_NO_QUALIFIER_BANDS]);
+    const journeyEvidence = makeJourneyEvidence(MARKETPLACE_JOURNEY_FIXTURES) as Record<string, unknown>;
+    const dealOutEvidence = makeDealOutChannelEvidence(DEAL_OUT_CHANNEL_FIXTURES) as Record<string, unknown>;
+    const dealInEvidence = makeDealInChannelEvidence(DEAL_IN_CHANNEL_FIXTURES) as Record<string, unknown>;
+    const combinedDealChannelEvidence = {
+      ...journeyEvidence,
+      ...dealOutEvidence,
+      ...dealInEvidence,
+    };
+    const listingPlatformEvidence = makeListingPlatformEvidence(LISTING_PLATFORM_FIXTURES);
+    const businessOpenInventoryEvidence = makeItemDecisionEvidence([
+      { itemId: 901, itemDisplayName: 'Priority Item', currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+    ]);
+
+    const { result: directBroad } = evaluateStrongBalancedAcquisitionBand(combinedAcquisitionEvidence);
+    const { result: directCategory } = evaluateStrongCategoryAcquisitionBand(categoryEvidence);
+    const { result: directMethod } = evaluateAcquisitionMethodPerformanceProfile(combinedAcquisitionEvidence);
+    const { result: directJourney } = evaluateStrongDealInToDealOutJourney(combinedDealChannelEvidence);
+    const { result: directDealOut } = evaluateStrongDealOutChannel(combinedDealChannelEvidence);
+    const { result: directDealIn } = evaluateStrongDealInChannel(combinedDealChannelEvidence);
+    const { result: directListingPlatform } = evaluateStrongListingPlatform(listingPlatformEvidence);
+    const { result: directBusinessOpenInventory } = evaluateBusinessOpenInventoryPriority(businessOpenInventoryEvidence);
+
+    const insights = selectFindings({
+      targetUserAcquisitionEvidence: combinedAcquisitionEvidence,
+      targetUserInventorySegmentationEvidence: categoryEvidence,
+      targetUserDealChannelEvidence: combinedDealChannelEvidence,
+      targetUserListingChannelEvidence: listingPlatformEvidence,
+      targetUserOpenInventoryEvidence: businessOpenInventoryEvidence,
+    });
+
+    check('all eight rule families are present in one insights payload', insights.selected_findings.length === 8, insights.selected_findings.map((f) => f.finding_code));
+
+    const viaOrchestratorBroad = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
+    const viaOrchestratorCategory = insights.selected_findings.find((f) => f.finding_code === CATEGORY_FINDING_CODE);
+    const viaOrchestratorMethod = insights.selected_findings.find((f) => f.finding_code === METHOD_PROFILE_FINDING_CODE);
+    const viaOrchestratorJourney = insights.selected_findings.find((f) => f.finding_code === JOURNEY_FINDING_CODE);
+    const viaOrchestratorDealOut = insights.selected_findings.find((f) => f.finding_code === DEAL_OUT_CHANNEL_FINDING_CODE);
+    const viaOrchestratorDealIn = insights.selected_findings.find((f) => f.finding_code === DEAL_IN_CHANNEL_FINDING_CODE);
+    const viaOrchestratorListingPlatform = insights.selected_findings.find((f) => f.finding_code === LISTING_PLATFORM_FINDING_CODE);
+    const viaOrchestratorBusinessOpenInventory = insights.selected_findings.find((f) => f.finding_code === BUSINESS_OPEN_INVENTORY_PRIORITY_FINDING_CODE);
+
+    const categoryWithoutRelationship = viaOrchestratorCategory
+      ? { ...(viaOrchestratorCategory as SelectedFindingForTest), relationship: undefined, summary: (directCategory as SelectedFindingForTest).summary }
+      : viaOrchestratorCategory;
+
+    check('the broad finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorBroad) === JSON.stringify(directBroad), { viaOrchestratorBroad, directBroad });
+    check('the category finding (minus orchestrator relationship linking) is byte-identical to calling the rule directly', JSON.stringify(categoryWithoutRelationship) === JSON.stringify(directCategory), { categoryWithoutRelationship, directCategory });
+    check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
+    check('the channel-journey finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorJourney) === JSON.stringify(directJourney), { viaOrchestratorJourney, directJourney });
+    check('the deal-out-channel finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorDealOut) === JSON.stringify(directDealOut), { viaOrchestratorDealOut, directDealOut });
+    check('the deal-in-channel finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorDealIn) === JSON.stringify(directDealIn), { viaOrchestratorDealIn, directDealIn });
+    check('the listing-platform finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorListingPlatform) === JSON.stringify(directListingPlatform), { viaOrchestratorListingPlatform, directListingPlatform });
+    check('the business-open-inventory-priority finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorBusinessOpenInventory) === JSON.stringify(directBusinessOpenInventory), { viaOrchestratorBusinessOpenInventory, directBusinessOpenInventory });
+
+    const sevenAggregateFindings = [viaOrchestratorBroad, viaOrchestratorCategory, viaOrchestratorMethod, viaOrchestratorJourney, viaOrchestratorDealOut, viaOrchestratorDealIn, viaOrchestratorListingPlatform];
+    const aggregateSerialized = JSON.stringify(sevenAggregateFindings);
+    check(
+      'none of the previous seven (aggregate) findings contain an item_id field anywhere',
+      !/"item_id"/i.test(aggregateSerialized),
+      sevenAggregateFindings,
+    );
+
+    const sevenCodesWithoutTheEighth = insights.selected_findings
+      .filter((f) => f.finding_code !== BUSINESS_OPEN_INVENTORY_PRIORITY_FINDING_CODE)
+      .map((f) => f.finding_code)
+      .sort();
+    const expectedSevenCodes = [BROAD_FINDING_CODE, CATEGORY_FINDING_CODE, METHOD_PROFILE_FINDING_CODE, JOURNEY_FINDING_CODE, DEAL_OUT_CHANNEL_FINDING_CODE, DEAL_IN_CHANNEL_FINDING_CODE, LISTING_PLATFORM_FINDING_CODE].sort();
+    check(
+      'filtering BUSINESS_OPEN_INVENTORY_PRIORITY back out reproduces exactly the previous seven finding_codes',
+      JSON.stringify(sevenCodesWithoutTheEighth) === JSON.stringify(expectedSevenCodes),
+      sevenCodesWithoutTheEighth,
+    );
+  }
+
+  // ── B32: the new item-level finding contains only the allowed
+  // target-item identity — nothing else ─────────────────────────────────
+  console.log('\n[B32 — the business-open-inventory-priority finding contains only the allowed target-item identity fields]');
+  {
+    const item: BusinessOpenItemFixture = {
+      itemId: 1, currentPurposeName: 'Business', listedFlag: true,
+      listingChannelNames: ['Marketplace'],
+      reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'],
+    };
+    const secondItem: BusinessOpenItemFixture = { itemId: 2, currentPurposeName: 'Business', listedFlag: true, openCapitalSharePercent: 1, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result } = evaluateBusinessOpenInventoryPriority(makeItemDecisionEvidence([item, secondItem]));
+    if (result.status !== 'selected') {
+      check('B32 setup produced a selected finding', false, result);
+    } else {
+      const allowedKeysByPath: Record<string, string[]> = {
+        root: ['finding_code', 'family', 'direction', 'status', 'headline', 'summary', 'segment', 'metrics', 'priority_profile', 'recommended_action_code', 'triggered_reason_codes', 'limitations', 'evidence_refs', 'runner_up'],
+        segment: ['item_id', 'item_display_name', 'brand_name', 'category_name', 'type_name', 'current_purpose_name', 'disposition_mode'],
+        metrics: [
+          'listed_flag', 'listing_channel_names', 'acquisition_value', 'estimated_sold_value', 'estimated_net_upside',
+          'estimated_upside_percent', 'current_dom_days', 'reliable_ownership_age_days', 'open_capital_share_percent', 'purpose_open_capital_share_percent',
+        ],
+        runner_up: ['item_id', 'item_display_name', 'priority_profile', 'recommended_action_code', 'triggered_reason_codes', 'reason_not_selected'],
+      };
+
+      const unexpectedKeys: string[] = [];
+      const walk = (value: unknown, pathKey: string): void => {
+        if (Array.isArray(value)) return;
+        if (typeof value !== 'object' || value === null) return;
+        const allowed = allowedKeysByPath[pathKey];
+        for (const key of Object.keys(value as Record<string, unknown>)) {
+          if (allowed && !allowed.includes(key)) unexpectedKeys.push(`${pathKey}.${key}`);
+          const nextPathKey = key === 'segment' ? 'segment' : key === 'metrics' ? 'metrics' : key === 'runner_up' ? 'runner_up' : key;
+          walk((value as Record<string, unknown>)[key], nextPathKey);
+        }
+      };
+      walk(result, 'root');
+
+      check('no unexpected keys appear anywhere in the finding (only the explicitly allowed target-item identity fields)', unexpectedKeys.length === 0, unexpectedKeys);
+
+      const serialized = JSON.stringify(result);
+      const forbiddenPatterns = [/"user_id"/i, /"email"/i, /"notes"/i, /"model"/i, /"serial/i, /"counterparty/i, /"contact/i, /"listing_text"/i, /"photo/i, /"storage_path/i, /"brand_id"/i, /"category_id"/i, /"type_id"/i];
+      const matched = forbiddenPatterns.filter((p) => p.test(serialized)).map((p) => p.source);
+      check('the finding contains no user_id, email, notes, model, serial number, counterparty, listing text, photo/storage path, or classification IDs', matched.length === 0, matched);
+      check('item_id and item_display_name ARE present (the deliberate exception for this item-level rule)', typeof result.segment.item_id === 'number' && typeof result.segment.item_display_name === 'string', result.segment);
+    }
+  }
+
+  // ── B34: previous Insights Engine snapshots (no business-open-inventory
+  // rule) remain readable ──────────────────────────────────────────────────
+  console.log('\n[B34 — previous Insights Engine v1.6-shaped snapshot (no business-open-inventory-priority finding) remains readable]');
+  {
+    const baseSnapshot: Record<string, unknown> = {
+      snapshot_schema_version: '2.11',
+      analytics_definition_version: '2.11',
+      generated_at: new Date().toISOString(),
+      evidence_scope: 'shared_inventory_population',
+      purpose_semantics: 'v2',
+      shared_purpose_evidence: {},
+      target_user_purpose_evidence: {},
+      target_user_open_inventory_evidence: {},
+      shared_acquisition_evidence: {},
+      target_user_acquisition_evidence: {},
+      shared_inventory_segmentation_evidence: {},
+      target_user_inventory_segmentation_evidence: {},
+      shared_deal_channel_evidence: {},
+      target_user_deal_channel_evidence: {},
+      shared_listing_channel_evidence: {},
+      target_user_listing_channel_evidence: {},
+      shared_capital_liquidity_evidence: {},
+      target_user_capital_liquidity_evidence: {},
+      shared_calendar_seasonality_evidence: {},
+      target_user_calendar_seasonality_evidence: {},
+    };
+
+    const v16ShapedInsights = {
+      insights_engine_version: '1.6',
+      findings_selector_version: '1.6',
+      source_analytics_version: '2.11',
+      generated_at: new Date().toISOString(),
+      selected_findings: [
+        {
+          finding_code: LISTING_PLATFORM_FINDING_CODE,
+          family: 'listing_platform_performance',
+          direction: 'strength',
+          status: 'selected',
+          headline: 'Marketplace is a strong, balanced listing platform',
+          summary: 'placeholder v1.6-shaped summary',
+          segment: { listing_channel_id: 1, listing_channel_name: 'Marketplace' },
+          metrics: {
+            exposed_item_count: 20, realized_exposed_item_count: 16, realization_rate_percent: 80,
+            median_net_profit: 700, median_roi: 30, channel_listing_to_exit_sample_size: 16,
+            median_channel_listing_to_exit_days: 10, channel_listing_to_exit_coverage_percent: 100,
+            invalid_channel_listing_after_exit_count: 0, missing_channel_listing_to_exit_count: 0,
+          },
+          baseline: { type: 'peer_listing_platform_median_baseline', median_net_profit: 500, median_roi: 20, median_channel_listing_to_exit_days: 20, realization_rate_percent: 60 },
+          triggered_rules: ['PROFIT_ABOVE_PEER_BASELINE', 'ROI_ABOVE_PEER_BASELINE', 'LISTING_TO_EXIT_FASTER_THAN_PEER_BASELINE', 'REALIZATION_ABOVE_PEER_BASELINE', 'NO_MATERIAL_WEAKNESS'],
+          confidence: 'stronger',
+          limitations: ['PEER_BASELINE_USES_MEDIAN_OF_PLATFORM_METRICS'],
+          evidence_refs: ['target_user_listing_channel_evidence.performance_by_listing_channel'],
+          // No business-open-inventory-priority finding at all — this is
+          // the v1.6 shape.
+        },
+      ],
+      rule_evaluations: [],
+    };
+    const v16Snapshot = { ...baseSnapshot, insights: v16ShapedInsights };
+
+    check('a stored v2.11 snapshot carrying an Insights Engine v1.6-shaped insights section still validates', isValidAnalyticsSnapshot(v16Snapshot));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

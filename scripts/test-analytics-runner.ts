@@ -285,8 +285,8 @@ async function main() {
     JSON.stringify({ ...snapAWithoutInsights, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
   );
   check(
-    'persisted snapshot carries the Insights Engine v1.6 enrichment',
-    !!snapA.insights && snapA.insights.insights_engine_version === '1.6' && snapA.insights.findings_selector_version === '1.6',
+    'persisted snapshot carries the Insights Engine v1.7 enrichment',
+    !!snapA.insights && snapA.insights.insights_engine_version === '1.7' && snapA.insights.findings_selector_version === '1.7',
     snapA.insights,
   );
 
@@ -4107,19 +4107,20 @@ async function main() {
   // Note: at the point v2.11 was promoted (this Analytics-only task),
   // insights_engine_version / findings_selector_version were asserted to
   // remain 1.5 and STRONG_LISTING_PLATFORM was asserted absent — that was
-  // correct THEN, since v2.11 was evidence-only. A later, separate task
-  // (Insights Engine v1.6) added STRONG_LISTING_PLATFORM at the
-  // application layer, reading this same v2.11 evidence with no further
-  // Analytics SQL change — see test-insights-engine.ts for that rule's own
-  // thorough test coverage; this file only smoke-checks that a production
-  // run's persisted insights section is internally consistent.
+  // correct THEN, since v2.11 was evidence-only. Two later, separate tasks
+  // (Insights Engine v1.6, then v1.7) added STRONG_LISTING_PLATFORM and
+  // BUSINESS_OPEN_INVENTORY_PRIORITY at the application layer, reading
+  // this same v2.11 evidence with no further Analytics SQL change — see
+  // test-insights-engine.ts for each rule's own thorough test coverage;
+  // this file only smoke-checks that a production run's persisted
+  // insights section is internally consistent.
   check(
-    'new production run insights_engine_version / findings_selector_version are 1.6',
-    runA211Insights?.insights_engine_version === '1.6' && runA211Insights?.findings_selector_version === '1.6',
+    'new production run insights_engine_version / findings_selector_version are 1.7',
+    runA211Insights?.insights_engine_version === '1.7' && runA211Insights?.findings_selector_version === '1.7',
     { insights_engine_version: runA211Insights?.insights_engine_version, findings_selector_version: runA211Insights?.findings_selector_version },
   );
   check(
-    'every one of the seven rule families produced a rule_evaluations entry (none silently dropped by the v2.11 promotion)',
+    'every one of the eight rule families produced a rule_evaluations entry (none silently dropped by the v2.11 promotion)',
     new Set((runA211Insights?.rule_evaluations ?? []).map((r: any) => r.finding_code)).size >= 1,
     (runA211Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
   );
