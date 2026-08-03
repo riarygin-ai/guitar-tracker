@@ -65,9 +65,12 @@ import { selectFindings } from '@/lib/analytics/insights/selectFindings';
 // channel_evidence and target_user_listing_channel_evidence — no other
 // section or key is touched (v2.11 wraps v2.10 wholesale; see
 // supabase/migrations/20260822000000_build_analytics_snapshot_v2_11.sql).
-// Does NOT implement a STRONG_LISTING_PLATFORM Findings Selector rule —
-// this bump is evidence-only. v1.0-v1.8 and v2.0-v2.10 are completely
-// unaffected and remain independently callable.
+// This SQL bump itself was evidence-only and did not implement
+// STRONG_LISTING_PLATFORM — that Findings Selector rule was added
+// separately, at the application layer, by Insights Engine v1.6 (see
+// selectFindings.ts) reading this same v2.11 evidence; no further
+// Analytics SQL change was needed for it. v1.0-v1.8 and v2.0-v2.10 are
+// completely unaffected and remain independently callable.
 export const ANALYTICS_VERSION = '2.11';
 export const EVIDENCE_SCOPE = 'shared_inventory_population';
 const SNAPSHOT_SCHEMA_VERSION = '2.11';
@@ -302,19 +305,22 @@ export async function runAnalyticsForCurrentUser(
 
     const durationMs = Math.max(0, Math.round(performance.now() - startMark));
 
-    // ── 4b. Insights Engine v1.5 — Findings Selector ─────────────────────
-    // Application-layer enrichment on top of the already-validated v2.10
+    // ── 4b. Insights Engine v1.6 — Findings Selector ─────────────────────
+    // Application-layer enrichment on top of the already-validated v2.11
     // snapshot, versioned independently (insights_engine_version /
     // findings_selector_version) from snapshot_schema_version /
     // analytics_definition_version. Never reads shared/pooled evidence —
-    // only this snapshot's own target_user_acquisition_evidence and
-    // target_user_inventory_segmentation_evidence. Optional on the stored
-    // row: old snapshots without `insights` remain valid
-    // (isValidAnalyticsSnapshot never required this key).
+    // only this snapshot's own target_user_acquisition_evidence,
+    // target_user_inventory_segmentation_evidence,
+    // target_user_deal_channel_evidence, and (new in v1.6, for
+    // STRONG_LISTING_PLATFORM only) target_user_listing_channel_evidence.
+    // Optional on the stored row: old snapshots without `insights` remain
+    // valid (isValidAnalyticsSnapshot never required this key).
     const insights = selectFindings({
       targetUserAcquisitionEvidence: snapshot.target_user_acquisition_evidence,
       targetUserInventorySegmentationEvidence: snapshot.target_user_inventory_segmentation_evidence,
       targetUserDealChannelEvidence: snapshot.target_user_deal_channel_evidence,
+      targetUserListingChannelEvidence: snapshot.target_user_listing_channel_evidence,
     });
     const snapshotWithInsights = { ...snapshot, insights };
 

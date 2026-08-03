@@ -48,6 +48,11 @@ import {
   evaluateStrongDealInChannel,
   FINDING_CODE as DEAL_IN_CHANNEL_FINDING_CODE,
 } from '../src/lib/analytics/insights/rules/strongDealInChannel';
+import {
+  evaluateStrongListingPlatform,
+  extractListingPlatformCandidates,
+  FINDING_CODE as LISTING_PLATFORM_FINDING_CODE,
+} from '../src/lib/analytics/insights/rules/strongListingPlatform';
 import { selectFindings } from '../src/lib/analytics/insights/selectFindings';
 import { isValidAnalyticsSnapshot } from '../src/lib/analytics/runAnalytics';
 import type {
@@ -768,6 +773,7 @@ function main() {
         targetUserAcquisitionEvidence: baseSnapshot.target_user_acquisition_evidence,
         targetUserInventorySegmentationEvidence: baseSnapshot.target_user_inventory_segmentation_evidence,
         targetUserDealChannelEvidence: baseSnapshot.target_user_deal_channel_evidence,
+        targetUserListingChannelEvidence: baseSnapshot.target_user_listing_channel_evidence,
       }),
     };
     check('the same snapshot plus the new optional insights section still validates', isValidAnalyticsSnapshot(withInsights));
@@ -1093,6 +1099,7 @@ function main() {
       targetUserAcquisitionEvidence: broadEvidence,
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: {},
+      targetUserListingChannelEvidence: {},
     });
 
     check('both rules produced a selected finding', insights.selected_findings.length === 2, insights.selected_findings);
@@ -1128,11 +1135,12 @@ function main() {
       targetUserAcquisitionEvidence: broadEvidence,
       targetUserInventorySegmentationEvidence: makeCategoryEvidence([]),
       targetUserDealChannelEvidence: {},
+      targetUserListingChannelEvidence: {},
     });
     const viaOrchestrator = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
 
-    check('insights_engine_version is 1.5', insights.insights_engine_version === '1.5', insights.insights_engine_version);
-    check('findings_selector_version is 1.5', insights.findings_selector_version === '1.5', insights.findings_selector_version);
+    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
+    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
     check(
       'the broad finding produced via selectFindings is identical to calling the rule directly (aside from generated_at, which the broad rule does not even set)',
       JSON.stringify(viaOrchestrator) === JSON.stringify(directResult),
@@ -1544,6 +1552,7 @@ function main() {
       targetUserAcquisitionEvidence: combinedAcquisitionEvidence,
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: {},
+      targetUserListingChannelEvidence: {},
     });
 
     check('all three rule families are present in one insights payload', insights.selected_findings.length === 3, insights.selected_findings.map((f) => f.finding_code));
@@ -1554,8 +1563,8 @@ function main() {
     check('the broad finding is numerically unchanged (median_net_profit 750)', broadFinding?.metrics.median_net_profit === 750, broadFinding?.metrics);
     check('the category finding is numerically unchanged (Guitars x $2,000-2,999)', categoryFinding?.segment.category_name === 'Guitars' && categoryFinding?.segment.acquisition_value_band_label === '$2,000-2,999', categoryFinding?.segment);
     check('the acquisition-method finding is also present (PURCHASE_ECONOMICS_TRADE_SPEED)', methodFinding?.profile_code === 'PURCHASE_ECONOMICS_TRADE_SPEED', methodFinding);
-    check('insights_engine_version is 1.5', insights.insights_engine_version === '1.5', insights.insights_engine_version);
-    check('findings_selector_version is 1.5', insights.findings_selector_version === '1.5', insights.findings_selector_version);
+    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
+    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
   }
 
   // ── M20: old Insights Engine 1.0 and 1.1 snapshots remain readable ──────
@@ -2013,6 +2022,7 @@ function main() {
       targetUserAcquisitionEvidence: combinedAcquisitionEvidence,
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: journeyEvidence,
+      targetUserListingChannelEvidence: {},
     });
 
     check('all four rule families are present in one insights payload', insights.selected_findings.length === 4, insights.selected_findings.map((f) => f.finding_code));
@@ -2034,8 +2044,8 @@ function main() {
     check('the category finding (minus orchestrator relationship linking) is byte-identical to calling the rule directly', JSON.stringify(categoryWithoutRelationship) === JSON.stringify(directCategory), { categoryWithoutRelationship, directCategory });
     check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
     check('the journey finding is also present (Marketplace -> Marketplace)', (viaOrchestratorJourney as SelectedFindingForTest | undefined)?.segment.deal_in_channel_name === 'Marketplace', viaOrchestratorJourney);
-    check('insights_engine_version is 1.5', insights.insights_engine_version === '1.5', insights.insights_engine_version);
-    check('findings_selector_version is 1.5', insights.findings_selector_version === '1.5', insights.findings_selector_version);
+    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
+    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
   }
 
   // ── J21: old Insights Engine snapshots (1.0, 1.1, 1.2) remain readable ──
@@ -2429,6 +2439,7 @@ function main() {
       targetUserAcquisitionEvidence: combinedAcquisitionEvidence,
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: combinedDealChannelEvidence,
+      targetUserListingChannelEvidence: {},
     });
 
     check('all five rule families are present in one insights payload', insights.selected_findings.length === 5, insights.selected_findings.map((f) => f.finding_code));
@@ -2447,8 +2458,8 @@ function main() {
     check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
     check('the channel-journey finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorJourney) === JSON.stringify(directJourney), { viaOrchestratorJourney, directJourney });
     check('the deal-out-channel finding is also present (Marketplace)', (viaOrchestratorDealOut as SelectedFindingForTest | undefined)?.segment.channel_name === 'Marketplace', viaOrchestratorDealOut);
-    check('insights_engine_version is 1.5', insights.insights_engine_version === '1.5', insights.insights_engine_version);
-    check('findings_selector_version is 1.5', insights.findings_selector_version === '1.5', insights.findings_selector_version);
+    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
+    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
   }
 
   // ── D19: old Insights Engine snapshots remain readable ───────────────────
@@ -2902,6 +2913,7 @@ function main() {
       targetUserAcquisitionEvidence: combinedAcquisitionEvidence,
       targetUserInventorySegmentationEvidence: categoryEvidence,
       targetUserDealChannelEvidence: combinedDealChannelEvidence,
+      targetUserListingChannelEvidence: {},
     });
 
     check('all six rule families are present in one insights payload', insights.selected_findings.length === 6, insights.selected_findings.map((f) => f.finding_code));
@@ -2928,8 +2940,8 @@ function main() {
         && (viaOrchestratorDealIn as SelectedFindingForTest | undefined)?.segment.channel_id === (viaOrchestratorDealOut as SelectedFindingForTest | undefined)?.segment.channel_id,
       { viaOrchestratorDealIn, viaOrchestratorDealOut },
     );
-    check('insights_engine_version is 1.5', insights.insights_engine_version === '1.5', insights.insights_engine_version);
-    check('findings_selector_version is 1.5', insights.findings_selector_version === '1.5', insights.findings_selector_version);
+    check('insights_engine_version is 1.6', insights.insights_engine_version === '1.6', insights.insights_engine_version);
+    check('findings_selector_version is 1.6', insights.findings_selector_version === '1.6', insights.findings_selector_version);
   }
 
   // ── N21: previous Insights Engine snapshots remain readable ──────────────
@@ -3023,6 +3035,664 @@ function main() {
       const forbiddenPatterns = [/"user_id"/i, /"item_id"/i, /"email"/i, /"model"/i, /"notes"/i, /"counterparty/i, /"contact/i, /"deal_id"/i];
       const matched = forbiddenPatterns.filter((p) => p.test(serialized)).map((p) => p.source);
       check('serialized deal-in-channel finding contains no PII- or counterparty-shaped field names', matched.length === 0, matched);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // STRONG_LISTING_PLATFORM (Insights Engine v1.6)
+  // ══════════════════════════════════════════════════════════════════════
+  // Reads Analytics v2.11's target_user_listing_channel_evidence.
+  // performance_by_listing_channel[] — the SAME array v2.6 already exposed
+  // (v2.11 only added fields to each existing row). Listing Platform means
+  // where an item was ADVERTISED — never where the buyer was found, never
+  // which Deal Out channel completed the exit.
+
+  // ── Listing Platform fixture builder ─────────────────────────────────────
+
+  interface ListingPlatformFixture {
+    channelId: number | null;
+    channelName: string | null;
+    exposedItemCount: number;
+    realizedExposedItemCount: number;
+    timingSampleSize: number;
+    medianTimingDays: number | null;
+    timingCoveragePercent: number | null;
+    invalidTimingCount: number;
+    missingTimingCount: number;
+    profit: number | null;
+    roi: number | null;
+    confidence: ConfidenceTier | null;
+  }
+
+  function makeListingPlatformEvidence(
+    platforms: ListingPlatformFixture[],
+    options?: { includeByPurposeDecoy?: boolean },
+  ): unknown {
+    const evidence: Record<string, unknown> = {
+      performance_by_listing_channel: platforms.map((p) => ({
+        listing_channel_id: p.channelId,
+        listing_channel_name: p.channelName,
+        exposed_item_count: p.exposedItemCount,
+        listing_record_count: p.exposedItemCount,
+        realized_exposed_item_count: p.realizedExposedItemCount,
+        open_exposed_item_count: Math.max(0, p.exposedItemCount - p.realizedExposedItemCount),
+        sale_exit_item_count: p.realizedExposedItemCount,
+        trade_exit_item_count: 0,
+        realized_exposed_item_with_known_deal_out_count: p.realizedExposedItemCount,
+        same_channel_exit_item_count: p.realizedExposedItemCount,
+        different_channel_exit_item_count: 0,
+        same_channel_exit_percent: p.realizedExposedItemCount > 0 ? 100 : null,
+        total_acquisition_capital: null,
+        realized_acquisition_capital: null,
+        total_realized_net_profit: null,
+        median_net_profit: p.profit,
+        median_roi: p.roi,
+        // Deliberately absurd GLOBAL DOM decoy values, unrelated to the
+        // platform-specific timing fields below — proves the rule never
+        // reads these (see L8).
+        dom_sample_size: 9999,
+        median_days_on_market: 9999,
+        holding_sample_size: 0,
+        median_holding_days: null,
+        channel_listing_to_exit_sample_size: p.timingSampleSize,
+        median_channel_listing_to_exit_days: p.medianTimingDays,
+        channel_listing_to_exit_coverage_percent: p.timingCoveragePercent,
+        invalid_channel_listing_after_exit_count: p.invalidTimingCount,
+        missing_channel_listing_to_exit_count: p.missingTimingCount,
+        confidence: p.confidence,
+      })),
+    };
+
+    if (options?.includeByPurposeDecoy) {
+      // Deliberately worse, tiny-sample decoy under a DIFFERENT key
+      // (performance_by_listing_channel_by_purpose) — the rule must never
+      // read this key (see L3).
+      evidence.performance_by_listing_channel_by_purpose = platforms.map((p) => ({
+        current_purpose_id: 1,
+        current_purpose_name: 'Business',
+        purpose_policy_status: 'mapped',
+        listing_channel_id: p.channelId,
+        listing_channel_name: p.channelName,
+        exposed_item_count: 1,
+        realized_exposed_item_count: 1,
+        median_net_profit: -99999,
+        median_roi: -99999,
+        dom_sample_size: 1,
+        median_days_on_market: 9999,
+        channel_listing_to_exit_sample_size: 1,
+        median_channel_listing_to_exit_days: 9999,
+        channel_listing_to_exit_coverage_percent: 100,
+        invalid_channel_listing_after_exit_count: 0,
+        missing_channel_listing_to_exit_count: 0,
+        confidence: 'insufficient',
+      }));
+    }
+
+    return evidence;
+  }
+
+  function listingPlatformEvalFor(
+    channelId: number | null,
+    evaluations: ReturnType<typeof evaluateStrongListingPlatform>['candidateEvaluations'],
+  ) {
+    return evaluations.find((e) => e.listing_channel_id === channelId);
+  }
+
+  // Representative fixture: three eligible platforms, Marketplace clearly
+  // best on all four metrics (profit, ROI, timing, realization) against a
+  // Kijiji/Reverb baseline — used by L15/L16/L23/L24/L25/L26/L28/L29.
+  const LISTING_PLATFORM_FIXTURES: ListingPlatformFixture[] = [
+    { channelId: 1, channelName: 'Marketplace', exposedItemCount: 20, realizedExposedItemCount: 16, timingSampleSize: 16, medianTimingDays: 10, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'stronger' },
+    { channelId: 2, channelName: 'Kijiji', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+    { channelId: 3, channelName: 'Reverb', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+  ];
+
+  // ── L1/L2: correct evidence path is used; shared evidence is ignored ────
+  console.log('\n[L1/L2 — correct Analytics v2.11 target evidence path is used; shared evidence is ignored]');
+  {
+    const selectFindingsSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/selectFindings.ts'), 'utf8');
+    check(
+      'selectFindings.ts wires targetUserListingChannelEvidence into evaluateStrongListingPlatform',
+      selectFindingsSource.includes('evaluateStrongListingPlatform(input.targetUserListingChannelEvidence)'),
+    );
+    const runnerSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/runAnalytics.ts'), 'utf8');
+    check(
+      'runAnalytics.ts wires target_user_listing_channel_evidence into selectFindings',
+      runnerSource.includes('targetUserListingChannelEvidence: snapshot.target_user_listing_channel_evidence'),
+    );
+    check(
+      'runAnalytics.ts does not feed shared_listing_channel_evidence into selectFindings',
+      !/targetUserListingChannelEvidence:\s*snapshot\.shared_listing_channel_evidence/.test(runnerSource),
+    );
+    const ruleSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/rules/strongListingPlatform.ts'), 'utf8');
+    check(
+      'strongListingPlatform.ts reads performance_by_listing_channel and never accesses .shared_listing_channel_evidence in code (only mentions it in a comment explaining what it deliberately does not read)',
+      ruleSource.includes('evidence?.performance_by_listing_channel') && !ruleSource.includes('.shared_listing_channel_evidence'),
+    );
+  }
+
+  // ── L3/L4: the _by_purpose array is ignored; Business/Hybrid/Personal
+  // remain pooled in one array ──────────────────────────────────────────
+  console.log('\n[L3/L4 — the _by_purpose array is ignored; Business/Hybrid/Personal remain pooled]');
+  {
+    const pooled: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'Marketplace', exposedItemCount: 20, realizedExposedItemCount: 16, timingSampleSize: 16, medianTimingDays: 10, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'stronger' },
+    ];
+    const candidatesWithoutDecoy = extractListingPlatformCandidates(makeListingPlatformEvidence(pooled));
+    const candidatesWithDecoy = extractListingPlatformCandidates(makeListingPlatformEvidence(pooled, { includeByPurposeDecoy: true }));
+    check('extraction reads exactly one candidate row regardless of the (deliberately worse) _by_purpose decoy', candidatesWithDecoy.length === 1, candidatesWithDecoy);
+    check("the candidate's own values are unaffected by the _by_purpose decoy", candidatesWithDecoy[0]?.median_net_profit === 700 && candidatesWithDecoy[0]?.median_roi === 30, candidatesWithDecoy);
+    check('with or without the decoy, extraction produces identical candidates (the decoy key is never read)', JSON.stringify(candidatesWithoutDecoy) === JSON.stringify(candidatesWithDecoy), { candidatesWithoutDecoy, candidatesWithDecoy });
+
+    // The main array is already pooled across every Purpose at the source
+    // (no purpose_name filter) — confirm a stray purpose-shaped field on a
+    // pooled row changes nothing (the extractor never reads it).
+    const rowsWithStrayPurposeField = (makeListingPlatformEvidence(pooled) as any).performance_by_listing_channel
+      .map((r: any) => ({ ...r, current_purpose_id: 1, current_purpose_name: 'Hybrid', purpose_policy_status: 'mapped' }));
+    const candidatesWithStrayField = extractListingPlatformCandidates({ performance_by_listing_channel: rowsWithStrayPurposeField });
+    check('a stray purpose-shaped field on the pooled row does not change extraction', JSON.stringify(candidatesWithStrayField) === JSON.stringify(candidatesWithoutDecoy), candidatesWithStrayField);
+  }
+
+  // ── L5/L6: realization rate is computed correctly; zero exposed is null ──
+  console.log('\n[L5/L6 — realization rate is calculated correctly from realized/exposed counts; zero exposed count yields null safely]');
+  {
+    const rows: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'Marketplace', exposedItemCount: 20, realizedExposedItemCount: 15, timingSampleSize: 15, medianTimingDays: 12, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'stronger' },
+      { channelId: 2, channelName: 'ZeroExposure', exposedItemCount: 0, realizedExposedItemCount: 0, timingSampleSize: 0, medianTimingDays: null, timingCoveragePercent: null, invalidTimingCount: 0, missingTimingCount: 0, profit: null, roi: null, confidence: null },
+    ];
+    const candidates = extractListingPlatformCandidates(makeListingPlatformEvidence(rows));
+    const marketplace = candidates.find((c) => c.listing_channel_id === 1);
+    const zero = candidates.find((c) => c.listing_channel_id === 2);
+    check('realization_rate_percent is 15/20*100 = 75', marketplace?.realization_rate_percent === 75, marketplace);
+    check('zero exposed_item_count yields a null realization rate, never a division error or a fabricated 0', zero?.realization_rate_percent === null, zero);
+  }
+
+  // ── L7/L8: platform-specific timing is used; global DOM is never read ───
+  console.log('\n[L7/L8 — platform-specific median_channel_listing_to_exit_days is used; global median_days_on_market is never read]');
+  {
+    const rows: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'Marketplace', exposedItemCount: 20, realizedExposedItemCount: 15, timingSampleSize: 15, medianTimingDays: 12, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'stronger' },
+    ];
+    const candidates = extractListingPlatformCandidates(makeListingPlatformEvidence(rows));
+    const marketplace = candidates.find((c) => c.listing_channel_id === 1) as unknown as Record<string, unknown>;
+    check('median_channel_listing_to_exit_days is the platform-specific 12, not the decoy global 9999', marketplace?.median_channel_listing_to_exit_days === 12, marketplace);
+    check('the extracted candidate never carries a dom_sample_size or median_days_on_market key', !('dom_sample_size' in (marketplace ?? {})) && !('median_days_on_market' in (marketplace ?? {})), marketplace);
+    const ruleSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/rules/strongListingPlatform.ts'), 'utf8');
+    check('strongListingPlatform.ts never reads r.dom_sample_size or r.median_days_on_market from the evidence row', !ruleSource.includes('r.dom_sample_size') && !ruleSource.includes('r.median_days_on_market'));
+  }
+
+  // ── L9: exposed, realized, and timing sample minimums are checked
+  // independently ─────────────────────────────────────────────────────────
+  console.log('\n[L9 — exposed, realized, and timing sample minimums are checked independently]');
+  {
+    const rows: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'ThinExposure', exposedItemCount: 7, realizedExposedItemCount: 6, timingSampleSize: 6, medianTimingDays: 15, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+      { channelId: 2, channelName: 'ThinRealized', exposedItemCount: 10, realizedExposedItemCount: 4, timingSampleSize: 5, medianTimingDays: 15, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+      { channelId: 3, channelName: 'ThinTiming', exposedItemCount: 10, realizedExposedItemCount: 6, timingSampleSize: 4, medianTimingDays: 15, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+    ];
+    const { candidateEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(rows));
+    const thinExposure = listingPlatformEvalFor(1, candidateEvaluations);
+    const thinRealized = listingPlatformEvalFor(2, candidateEvaluations);
+    const thinTiming = listingPlatformEvalFor(3, candidateEvaluations);
+    check(
+      'ThinExposure fails only on EXPOSED_ITEM_COUNT_BELOW_MINIMUM',
+      !!thinExposure?.eligibility_failure_reasons.includes('EXPOSED_ITEM_COUNT_BELOW_MINIMUM')
+        && !thinExposure?.eligibility_failure_reasons.includes('REALIZED_EXPOSED_ITEM_COUNT_BELOW_MINIMUM')
+        && !thinExposure?.eligibility_failure_reasons.includes('CHANNEL_LISTING_TO_EXIT_SAMPLE_SIZE_BELOW_MINIMUM'),
+      thinExposure,
+    );
+    check(
+      'ThinRealized fails only on REALIZED_EXPOSED_ITEM_COUNT_BELOW_MINIMUM',
+      !!thinRealized?.eligibility_failure_reasons.includes('REALIZED_EXPOSED_ITEM_COUNT_BELOW_MINIMUM')
+        && !thinRealized?.eligibility_failure_reasons.includes('EXPOSED_ITEM_COUNT_BELOW_MINIMUM')
+        && !thinRealized?.eligibility_failure_reasons.includes('CHANNEL_LISTING_TO_EXIT_SAMPLE_SIZE_BELOW_MINIMUM'),
+      thinRealized,
+    );
+    check(
+      'ThinTiming fails only on CHANNEL_LISTING_TO_EXIT_SAMPLE_SIZE_BELOW_MINIMUM',
+      !!thinTiming?.eligibility_failure_reasons.includes('CHANNEL_LISTING_TO_EXIT_SAMPLE_SIZE_BELOW_MINIMUM')
+        && !thinTiming?.eligibility_failure_reasons.includes('EXPOSED_ITEM_COUNT_BELOW_MINIMUM')
+        && !thinTiming?.eligibility_failure_reasons.includes('REALIZED_EXPOSED_ITEM_COUNT_BELOW_MINIMUM'),
+      thinTiming,
+    );
+  }
+
+  // ── L10: null platform identity is excluded ──────────────────────────────
+  console.log('\n[L10 — null platform identity is excluded]');
+  {
+    const rows: ListingPlatformFixture[] = [
+      { channelId: null, channelName: null, exposedItemCount: 20, realizedExposedItemCount: 15, timingSampleSize: 15, medianTimingDays: 12, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'stronger' },
+    ];
+    const { candidateEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(rows));
+    const nullIdentity = listingPlatformEvalFor(null, candidateEvaluations);
+    check('a null channel identity row is ineligible', nullIdentity?.eligible === false, nullIdentity);
+    check('reason is LISTING_CHANNEL_IDENTITY_MISSING', !!nullIdentity?.eligibility_failure_reasons.includes('LISTING_CHANNEL_IDENTITY_MISSING'), nullIdentity);
+  }
+
+  // ── L11/L12: null metrics and insufficient confidence are handled
+  // honestly, never crash, never fabricate a value ─────────────────────────
+  console.log('\n[L11/L12 — null profit, ROI, timing, realization, or confidence is handled honestly; insufficient confidence is ineligible]');
+  {
+    const rows: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'NullProfit', exposedItemCount: 20, realizedExposedItemCount: 15, timingSampleSize: 15, medianTimingDays: 12, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: null, roi: 30, confidence: 'stronger' },
+      { channelId: 2, channelName: 'NullRoi', exposedItemCount: 20, realizedExposedItemCount: 15, timingSampleSize: 15, medianTimingDays: 12, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: null, confidence: 'stronger' },
+      { channelId: 3, channelName: 'NullTiming', exposedItemCount: 20, realizedExposedItemCount: 15, timingSampleSize: 15, medianTimingDays: null, timingCoveragePercent: null, invalidTimingCount: 0, missingTimingCount: 15, profit: 700, roi: 30, confidence: 'stronger' },
+      { channelId: 4, channelName: 'NullConfidence', exposedItemCount: 20, realizedExposedItemCount: 15, timingSampleSize: 15, medianTimingDays: 12, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: null },
+      { channelId: 5, channelName: 'InsufficientConfidence', exposedItemCount: 20, realizedExposedItemCount: 15, timingSampleSize: 15, medianTimingDays: 12, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'insufficient' },
+    ];
+    const { candidateEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(rows));
+    check('NullProfit reason is MEDIAN_NET_PROFIT_MISSING', !!listingPlatformEvalFor(1, candidateEvaluations)?.eligibility_failure_reasons.includes('MEDIAN_NET_PROFIT_MISSING'));
+    check('NullRoi reason is MEDIAN_ROI_MISSING', !!listingPlatformEvalFor(2, candidateEvaluations)?.eligibility_failure_reasons.includes('MEDIAN_ROI_MISSING'));
+    check('NullTiming reason is MEDIAN_CHANNEL_LISTING_TO_EXIT_DAYS_MISSING', !!listingPlatformEvalFor(3, candidateEvaluations)?.eligibility_failure_reasons.includes('MEDIAN_CHANNEL_LISTING_TO_EXIT_DAYS_MISSING'));
+    check('NullConfidence reason is CONFIDENCE_UNAVAILABLE', !!listingPlatformEvalFor(4, candidateEvaluations)?.eligibility_failure_reasons.includes('CONFIDENCE_UNAVAILABLE'));
+    const insufficientRow = listingPlatformEvalFor(5, candidateEvaluations);
+    check('InsufficientConfidence is ineligible', insufficientRow?.eligible === false, insufficientRow);
+    check('InsufficientConfidence reason is CONFIDENCE_INSUFFICIENT', !!insufficientRow?.eligibility_failure_reasons.includes('CONFIDENCE_INSUFFICIENT'), insufficientRow);
+
+    const zeroExposureRow: ListingPlatformFixture = { channelId: 6, channelName: 'ZeroExposure', exposedItemCount: 0, realizedExposedItemCount: 0, timingSampleSize: 0, medianTimingDays: null, timingCoveragePercent: null, invalidTimingCount: 0, missingTimingCount: 0, profit: null, roi: null, confidence: null };
+    const { candidateEvaluations: zeroEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence([zeroExposureRow]));
+    check('a zero-exposure row reason includes REALIZATION_RATE_MISSING', !!listingPlatformEvalFor(6, zeroEvaluations)?.eligibility_failure_reasons.includes('REALIZATION_RATE_MISSING'));
+  }
+
+  // ── L13/L14: fewer than three eligible platforms produces no finding;
+  // diagnostics still distinguish eligible from insufficient ──────────────
+  console.log('\n[L13/L14 — fewer than three eligible platforms produces no finding; diagnostics still distinguish eligible from insufficient peers]');
+  {
+    const rows: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'Eligible', exposedItemCount: 20, realizedExposedItemCount: 15, timingSampleSize: 15, medianTimingDays: 12, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'stronger' },
+      { channelId: 2, channelName: 'Insufficient', exposedItemCount: 3, realizedExposedItemCount: 1, timingSampleSize: 1, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 100, roi: 5, confidence: 'insufficient' },
+    ];
+    const { result, candidateEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(rows));
+    check('result is no_eligible_finding', result.status === 'no_eligible_finding', result);
+    check('reason_codes includes INSUFFICIENT_ELIGIBLE_LISTING_PLATFORMS', result.status === 'no_eligible_finding' && result.reason_codes.includes('INSUFFICIENT_ELIGIBLE_LISTING_PLATFORMS'), result);
+    const eligibleRow = listingPlatformEvalFor(1, candidateEvaluations);
+    const insufficientRow = listingPlatformEvalFor(2, candidateEvaluations);
+    check('the eligible platform is still marked eligible in diagnostics, even though no finding is selected', eligibleRow?.eligible === true && eligibleRow?.eligibility_failure_reasons.length === 0, eligibleRow);
+    check('the insufficient platform is distinguishably marked ineligible with reasons', insufficientRow?.eligible === false && insufficientRow?.eligibility_failure_reasons.length > 0, insufficientRow);
+  }
+
+  // ── L15/L16: baseline excludes the candidate; baseline uses only
+  // eligible peer platforms ────────────────────────────────────────────────
+  console.log('\n[L15/L16 — baseline excludes the candidate itself; baseline uses only eligible peer platforms]');
+  {
+    const { result } = evaluateStrongListingPlatform(makeListingPlatformEvidence(LISTING_PLATFORM_FIXTURES));
+    check('winner is Marketplace', result.status === 'selected' && result.segment.listing_channel_name === 'Marketplace', result);
+    if (result.status === 'selected') {
+      check('baseline.median_net_profit is the Kijiji/Reverb-only peer median (500), not pulled toward Marketplace\'s own 700', result.baseline.median_net_profit === 500, result.baseline);
+      check('baseline.median_roi is the peer median (20)', result.baseline.median_roi === 20, result.baseline);
+      check('baseline.median_channel_listing_to_exit_days is the peer median (20)', result.baseline.median_channel_listing_to_exit_days === 20, result.baseline);
+      check('baseline.realization_rate_percent is the peer median (60)', result.baseline.realization_rate_percent === 60, result.baseline);
+    }
+
+    const withIneligibleOutlier = [
+      ...LISTING_PLATFORM_FIXTURES,
+      { channelId: 9, channelName: 'TinyOutlier', exposedItemCount: 3, realizedExposedItemCount: 1, timingSampleSize: 1, medianTimingDays: 1, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 999999, roi: 999999, confidence: 'insufficient' } as ListingPlatformFixture,
+    ];
+    const { result: resultWithOutlier } = evaluateStrongListingPlatform(makeListingPlatformEvidence(withIneligibleOutlier));
+    check(
+      'an ineligible outlier (absurd metrics, insufficient confidence) never pollutes the baseline',
+      resultWithOutlier.status === 'selected'
+        && resultWithOutlier.baseline.median_net_profit === 500
+        && resultWithOutlier.baseline.median_roi === 20
+        && resultWithOutlier.baseline.median_channel_listing_to_exit_days === 20
+        && resultWithOutlier.baseline.realization_rate_percent === 60,
+      resultWithOutlier,
+    );
+  }
+
+  // ── L17/L18/L19: a single strong metric alone never qualifies — at
+  // least two material improvements are required ──────────────────────────
+  console.log('\n[L17/L18/L19 — highest ROI or profit alone does not qualify; at least two material improvements are required]');
+  {
+    const highRoiOnly: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'HighRoiOnly', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 80, confidence: 'moderate' },
+      { channelId: 2, channelName: 'Peer2', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+      { channelId: 3, channelName: 'Peer3', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+    ];
+    const { candidateEvaluations: roiEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(highRoiOnly));
+    const roiRow = listingPlatformEvalFor(1, roiEvaluations);
+    check('HighRoiOnly gets exactly one improvement trigger (ROI)', roiRow?.material_improvement_triggers.length === 1 && roiRow?.material_improvement_triggers[0] === 'ROI_ABOVE_PEER_BASELINE', roiRow);
+    check('HighRoiOnly does not qualify despite the highest ROI', roiRow?.qualifies === false, roiRow);
+
+    const highProfitOnly: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'HighProfitOnly', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 5000, roi: 20, confidence: 'moderate' },
+      { channelId: 2, channelName: 'Peer2', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+      { channelId: 3, channelName: 'Peer3', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+    ];
+    const { candidateEvaluations: profitEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(highProfitOnly));
+    const profitRow = listingPlatformEvalFor(1, profitEvaluations);
+    check('HighProfitOnly gets exactly one improvement trigger (profit)', profitRow?.material_improvement_triggers.length === 1 && profitRow?.material_improvement_triggers[0] === 'PROFIT_ABOVE_PEER_BASELINE', profitRow);
+    check('HighProfitOnly does not qualify despite the highest profit', profitRow?.qualifies === false, profitRow);
+
+    const exactlyTwoTriggers: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'TwoTriggers', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 25, confidence: 'moderate' },
+      { channelId: 2, channelName: 'Peer2', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+      { channelId: 3, channelName: 'Peer3', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+    ];
+    const { candidateEvaluations: twoTriggerEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(exactlyTwoTriggers));
+    const twoTriggerRow = listingPlatformEvalFor(1, twoTriggerEvaluations);
+    check('exactly two improvement triggers (profit + ROI) is sufficient to qualify', twoTriggerRow?.material_improvement_triggers.length === 2 && twoTriggerRow?.qualifies === true, twoTriggerRow);
+  }
+
+  // ── L20/L21: any material weakness prevents qualification; faster
+  // platform timing is interpreted as better (slower is a weakness) ───────
+  console.log('\n[L20/L21 — a material weakness prevents qualification even with two improvements; faster listing-to-exit timing is better, slower is a weakness]');
+  {
+    const rows: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'WeaknessDespiteImprovements', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 40, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 25, confidence: 'moderate' },
+      { channelId: 2, channelName: 'Peer2', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+      { channelId: 3, channelName: 'Peer3', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+    ];
+    const { candidateEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(rows));
+    const row = listingPlatformEvalFor(1, candidateEvaluations);
+    check('the slower-timing candidate has 2 improvement triggers (profit, ROI)', row?.material_improvement_triggers.length === 2, row);
+    check('the slower-timing candidate also carries a timing weakness trigger', !!row?.material_weakness_triggers.includes('LISTING_TO_EXIT_SLOWER_THAN_PEER_BASELINE'), row);
+    check('the timing weakness trigger is never named with "DOM"', !row?.material_weakness_triggers.some((t) => t.includes('DOM')), row);
+    check('the candidate does not qualify despite 2 improvements, because of the material weakness', row?.qualifies === false, row);
+
+    // Marketplace (from the representative fixture) is faster than its
+    // peers and gets the improvement trigger, never the weakness one.
+    const { candidateEvaluations: representativeEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(LISTING_PLATFORM_FIXTURES));
+    const marketplaceRow = listingPlatformEvalFor(1, representativeEvaluations);
+    check('faster platform timing triggers LISTING_TO_EXIT_FASTER_THAN_PEER_BASELINE, not a DOM-named code', !!marketplaceRow?.material_improvement_triggers.includes('LISTING_TO_EXIT_FASTER_THAN_PEER_BASELINE') && !marketplaceRow?.material_improvement_triggers.some((t) => t.includes('DOM')), marketplaceRow);
+  }
+
+  // ── L22: deterministic tie-breakers ──────────────────────────────────────
+  console.log('\n[L22 — deterministic tie-breakers]');
+  {
+    const confidenceTieRows: ListingPlatformFixture[] = [
+      { channelId: 10, channelName: 'TieStrong', exposedItemCount: 20, realizedExposedItemCount: 16, timingSampleSize: 16, medianTimingDays: 10, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'stronger' },
+      { channelId: 11, channelName: 'TieModerate', exposedItemCount: 20, realizedExposedItemCount: 16, timingSampleSize: 16, medianTimingDays: 10, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'moderate' },
+      { channelId: 12, channelName: 'TieFiller', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+    ];
+    const { result: confResult } = evaluateStrongListingPlatform(makeListingPlatformEvidence(confidenceTieRows));
+    check('equal trigger counts break on confidence — TieStrong beats TieModerate', confResult.status === 'selected' && confResult.segment.listing_channel_id === 10, confResult);
+    check('the loser of the confidence tie-break appears as runner-up', confResult.status === 'selected' && confResult.runner_up?.segment.listing_channel_id === 11, confResult.status === 'selected' ? confResult.runner_up : confResult);
+
+    const idTieRows: ListingPlatformFixture[] = [
+      { channelId: 20, channelName: 'TieIdLow', exposedItemCount: 20, realizedExposedItemCount: 16, timingSampleSize: 16, medianTimingDays: 10, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'stronger' },
+      { channelId: 21, channelName: 'TieIdHigh', exposedItemCount: 20, realizedExposedItemCount: 16, timingSampleSize: 16, medianTimingDays: 10, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 700, roi: 30, confidence: 'stronger' },
+      { channelId: 22, channelName: 'TieFiller', exposedItemCount: 20, realizedExposedItemCount: 12, timingSampleSize: 12, medianTimingDays: 20, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 500, roi: 20, confidence: 'moderate' },
+    ];
+    const { result: idResult } = evaluateStrongListingPlatform(makeListingPlatformEvidence(idTieRows));
+    check('fully tied candidates break on ascending listing_channel_id — TieIdLow (20) beats TieIdHigh (21)', idResult.status === 'selected' && idResult.segment.listing_channel_id === 20, idResult);
+  }
+
+  // ── L23/L24: required limitations are always present; incomplete
+  // timing coverage adds the dynamic limitation ────────────────────────────
+  console.log('\n[L23/L24 — required limitations are always present; incomplete timing coverage adds the dynamic limitation]');
+  {
+    const { result } = evaluateStrongListingPlatform(makeListingPlatformEvidence(LISTING_PLATFORM_FIXTURES));
+    const requiredLimitations = [
+      'PEER_BASELINE_USES_MEDIAN_OF_PLATFORM_METRICS',
+      'LISTING_EXPOSURE_ASSOCIATION_NOT_CAUSATION',
+      'CROSS_LISTED_ITEM_COHORTS_OVERLAP',
+      'EXIT_CHANNEL_NOT_ATTRIBUTABLE_TO_LISTING_PLATFORM',
+      'CATEGORY_AND_VALUE_BAND_MIX_NOT_CONTROLLED',
+      'HISTORICAL_AND_APP_TRACKED_ITEMS_POOLED',
+      'CURRENT_PURPOSE_IS_NOT_HISTORICAL_PURPOSE',
+    ];
+    check(
+      'all seven required limitations are present (full timing coverage)',
+      result.status === 'selected' && requiredLimitations.every((l) => result.limitations.includes(l)),
+      result.status === 'selected' ? result.limitations : result,
+    );
+    check(
+      'CHANNEL_LISTING_TO_EXIT_COVERAGE_INCOMPLETE is absent at 100% coverage',
+      result.status === 'selected' && !result.limitations.includes('CHANNEL_LISTING_TO_EXIT_COVERAGE_INCOMPLETE'),
+      result.status === 'selected' ? result.limitations : result,
+    );
+
+    const incompleteCoverageFixtures = LISTING_PLATFORM_FIXTURES.map((f) =>
+      f.channelId === 1 ? { ...f, timingCoveragePercent: 90 } : f,
+    );
+    const { result: incompleteResult } = evaluateStrongListingPlatform(makeListingPlatformEvidence(incompleteCoverageFixtures));
+    check(
+      'CHANNEL_LISTING_TO_EXIT_COVERAGE_INCOMPLETE is present when coverage is below 100%',
+      incompleteResult.status === 'selected' && incompleteResult.limitations.includes('CHANNEL_LISTING_TO_EXIT_COVERAGE_INCOMPLETE'),
+      incompleteResult.status === 'selected' ? incompleteResult.limitations : incompleteResult,
+    );
+  }
+
+  // ── L26/L28: representative fixture selects the correct, non-hardcoded
+  // winner ─────────────────────────────────────────────────────────────────
+  console.log('\n[L26/L28 — representative fixture with three eligible platforms selects the correct winner; the winner is not hardcoded]');
+  {
+    const { result } = evaluateStrongListingPlatform(makeListingPlatformEvidence(LISTING_PLATFORM_FIXTURES));
+    check('Marketplace wins (best on profit, ROI, timing, and realization)', result.status === 'selected' && result.segment.listing_channel_name === 'Marketplace', result);
+    check('Marketplace is explicitly NOT named "Reverb" — proving the winner is not hardcoded', result.status === 'selected' && result.segment.listing_channel_name !== 'Reverb', result);
+    if (result.status === 'selected') {
+      check('metrics.median_net_profit is 700', result.metrics.median_net_profit === 700, result.metrics);
+      check('metrics.median_roi is 30', result.metrics.median_roi === 30, result.metrics);
+      check('metrics.median_channel_listing_to_exit_days is 10', result.metrics.median_channel_listing_to_exit_days === 10, result.metrics);
+      check('metrics.realization_rate_percent is 80', result.metrics.realization_rate_percent === 80, result.metrics);
+      check('confidence is stronger', result.confidence === 'stronger', result.confidence);
+      check('no runner-up appears (Kijiji and Reverb both carry a material weakness, so neither qualifies)', result.runner_up === undefined, result.runner_up);
+    }
+
+    // Swap the winning numbers onto a DIFFERENT channel id/name (Reverb) —
+    // the winner must follow, proving selection is driven by comparative
+    // metrics, never a fixed platform name.
+    const swapped = LISTING_PLATFORM_FIXTURES.map((f) => {
+      if (f.channelId === 1) return { ...f, channelId: 3, channelName: 'Reverb' };
+      if (f.channelId === 3) return { ...f, channelId: 1, channelName: 'Marketplace' };
+      return f;
+    });
+    const { result: swappedResult } = evaluateStrongListingPlatform(makeListingPlatformEvidence(swapped));
+    check('when the winning metrics are relabeled onto Reverb, Reverb wins instead', swappedResult.status === 'selected' && swappedResult.segment.listing_channel_name === 'Reverb', swappedResult);
+  }
+
+  // ── L27: current-production-shaped fixture returns
+  // INSUFFICIENT_ELIGIBLE_LISTING_PLATFORMS ────────────────────────────────
+  console.log('\n[L27 — current-production-shaped fixture (Reverb eligible; Marketplace/Kijiji not) returns INSUFFICIENT_ELIGIBLE_LISTING_PLATFORMS]');
+  {
+    // Shaped after the real current production numbers (not hardcoded as a
+    // rule behavior — this is a fixture value, exercised through the same
+    // generic eligibility/comparison logic every other test uses): Reverb
+    // 79 exposed / 55 realized / 55 timing samples / 17-day median / 100%
+    // coverage / stronger confidence; Marketplace and Kijiji 4 exposed / 0
+    // realized each.
+    const productionShaped: ListingPlatformFixture[] = [
+      { channelId: 1, channelName: 'Marketplace', exposedItemCount: 4, realizedExposedItemCount: 0, timingSampleSize: 0, medianTimingDays: null, timingCoveragePercent: null, invalidTimingCount: 0, missingTimingCount: 0, profit: null, roi: null, confidence: 'low' },
+      { channelId: 2, channelName: 'Kijiji', exposedItemCount: 4, realizedExposedItemCount: 0, timingSampleSize: 0, medianTimingDays: null, timingCoveragePercent: null, invalidTimingCount: 0, missingTimingCount: 0, profit: null, roi: null, confidence: 'low' },
+      { channelId: 3, channelName: 'Reverb', exposedItemCount: 79, realizedExposedItemCount: 55, timingSampleSize: 55, medianTimingDays: 17, timingCoveragePercent: 100, invalidTimingCount: 0, missingTimingCount: 0, profit: 600, roi: 25, confidence: 'stronger' },
+    ];
+    const { result, candidateEvaluations } = evaluateStrongListingPlatform(makeListingPlatformEvidence(productionShaped));
+    check('result is no_eligible_finding (STRONG_LISTING_PLATFORM is not selected)', result.status === 'no_eligible_finding', result);
+    check('reason_codes includes INSUFFICIENT_ELIGIBLE_LISTING_PLATFORMS', result.status === 'no_eligible_finding' && result.reason_codes.includes('INSUFFICIENT_ELIGIBLE_LISTING_PLATFORMS'), result);
+    check('Reverb is individually eligible', listingPlatformEvalFor(3, candidateEvaluations)?.eligible === true, listingPlatformEvalFor(3, candidateEvaluations));
+    check('Marketplace is not individually eligible (insufficient realized exposures)', listingPlatformEvalFor(1, candidateEvaluations)?.eligible === false, listingPlatformEvalFor(1, candidateEvaluations));
+    check('Kijiji is not individually eligible (insufficient realized exposures)', listingPlatformEvalFor(2, candidateEvaluations)?.eligible === false, listingPlatformEvalFor(2, candidateEvaluations));
+  }
+
+  // ── L25/L29: Listing Platform coexists with Deal Out; the previous six
+  // rules remain byte-identical after filtering the seventh back out ──────
+  console.log('\n[L25/L29 — Listing Platform coexists with Deal Out (same channel identity, neither suppressed); previous six rules stay byte-identical when the seventh also fires]');
+  {
+    const broadEvidence = makeEvidence([
+      { order: 2, label: '$1,000-1,999', total: 15, realized: 8, domSample: 8, realizationRate: 55, profit: 550, roi: 45, dom: 15, confidence: 'moderate' },
+      { order: 3, label: '$2,000-2,999', total: 28, realized: 19, domSample: 19, realizationRate: 67.86, profit: 750, roi: 33.33, dom: 10.5, confidence: 'stronger' },
+      { order: 4, label: '$3,000-3,999', total: 12, realized: 6, domSample: 6, realizationRate: 60, profit: 600, roi: 20, dom: 20, confidence: 'moderate' },
+      { order: 5, label: '$4,000-4,999', total: 10, realized: 5, domSample: 5, realizationRate: 58, profit: 650, roi: 25, dom: 25, confidence: 'low' },
+    ]) as Record<string, unknown>;
+    const methodEvidence = makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS) as Record<string, unknown>;
+    const combinedAcquisitionEvidence = {
+      ...broadEvidence,
+      acquisition_to_exit_analysis: {
+        ...(broadEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+        ...(methodEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+      },
+    };
+    const categoryEvidence = makeCategoryEvidence([...GUITARS_BANDS, ...PEDALS_NO_QUALIFIER_BANDS]);
+    const journeyEvidence = makeJourneyEvidence(MARKETPLACE_JOURNEY_FIXTURES) as Record<string, unknown>;
+    const dealOutEvidence = makeDealOutChannelEvidence(DEAL_OUT_CHANNEL_FIXTURES) as Record<string, unknown>;
+    const dealInEvidence = makeDealInChannelEvidence(DEAL_IN_CHANNEL_FIXTURES) as Record<string, unknown>;
+    const combinedDealChannelEvidence = {
+      ...journeyEvidence,
+      ...dealOutEvidence,
+      ...dealInEvidence,
+    };
+    // Deal Out's own fixtures already use channel_id 1 = 'Marketplace' —
+    // the representative Listing Platform fixture also selects channel_id
+    // 1 = 'Marketplace', deliberately overlapping so this scenario proves
+    // the two rules are never deduplicated or suppressed against each
+    // other, even though they reference the exact same channel.
+    const listingPlatformEvidence = makeListingPlatformEvidence(LISTING_PLATFORM_FIXTURES);
+
+    const { result: directBroad } = evaluateStrongBalancedAcquisitionBand(combinedAcquisitionEvidence);
+    const { result: directCategory } = evaluateStrongCategoryAcquisitionBand(categoryEvidence);
+    const { result: directMethod } = evaluateAcquisitionMethodPerformanceProfile(combinedAcquisitionEvidence);
+    const { result: directJourney } = evaluateStrongDealInToDealOutJourney(combinedDealChannelEvidence);
+    const { result: directDealOut } = evaluateStrongDealOutChannel(combinedDealChannelEvidence);
+    const { result: directDealIn } = evaluateStrongDealInChannel(combinedDealChannelEvidence);
+    const { result: directListingPlatform } = evaluateStrongListingPlatform(listingPlatformEvidence);
+
+    const insights = selectFindings({
+      targetUserAcquisitionEvidence: combinedAcquisitionEvidence,
+      targetUserInventorySegmentationEvidence: categoryEvidence,
+      targetUserDealChannelEvidence: combinedDealChannelEvidence,
+      targetUserListingChannelEvidence: listingPlatformEvidence,
+    });
+
+    check('all seven rule families are present in one insights payload', insights.selected_findings.length === 7, insights.selected_findings.map((f) => f.finding_code));
+
+    const viaOrchestratorBroad = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
+    const viaOrchestratorCategory = insights.selected_findings.find((f) => f.finding_code === CATEGORY_FINDING_CODE);
+    const viaOrchestratorMethod = insights.selected_findings.find((f) => f.finding_code === METHOD_PROFILE_FINDING_CODE);
+    const viaOrchestratorJourney = insights.selected_findings.find((f) => f.finding_code === JOURNEY_FINDING_CODE);
+    const viaOrchestratorDealOut = insights.selected_findings.find((f) => f.finding_code === DEAL_OUT_CHANNEL_FINDING_CODE);
+    const viaOrchestratorDealIn = insights.selected_findings.find((f) => f.finding_code === DEAL_IN_CHANNEL_FINDING_CODE);
+    const viaOrchestratorListingPlatform = insights.selected_findings.find((f) => f.finding_code === LISTING_PLATFORM_FINDING_CODE);
+
+    const categoryWithoutRelationship = viaOrchestratorCategory
+      ? { ...(viaOrchestratorCategory as SelectedFindingForTest), relationship: undefined, summary: (directCategory as SelectedFindingForTest).summary }
+      : viaOrchestratorCategory;
+
+    check('the broad finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorBroad) === JSON.stringify(directBroad), { viaOrchestratorBroad, directBroad });
+    check('the category finding (minus orchestrator relationship linking) is byte-identical to calling the rule directly', JSON.stringify(categoryWithoutRelationship) === JSON.stringify(directCategory), { categoryWithoutRelationship, directCategory });
+    check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
+    check('the channel-journey finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorJourney) === JSON.stringify(directJourney), { viaOrchestratorJourney, directJourney });
+    check('the deal-out-channel finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorDealOut) === JSON.stringify(directDealOut), { viaOrchestratorDealOut, directDealOut });
+    check('the deal-in-channel finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorDealIn) === JSON.stringify(directDealIn), { viaOrchestratorDealIn, directDealIn });
+    check('the listing-platform finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorListingPlatform) === JSON.stringify(directListingPlatform), { viaOrchestratorListingPlatform, directListingPlatform });
+
+    check(
+      'Listing Platform and Deal Out both select Marketplace / channel_id 1 — neither is suppressed or deduplicated',
+      (viaOrchestratorListingPlatform as SelectedFindingForTest | undefined)?.segment.listing_channel_name === 'Marketplace'
+        && (viaOrchestratorDealOut as SelectedFindingForTest | undefined)?.segment.channel_name === 'Marketplace'
+        && (viaOrchestratorListingPlatform as SelectedFindingForTest | undefined)?.segment.listing_channel_id === (viaOrchestratorDealOut as SelectedFindingForTest | undefined)?.segment.channel_id,
+      { viaOrchestratorListingPlatform, viaOrchestratorDealOut },
+    );
+
+    const sixCodesWithoutTheSeventh = insights.selected_findings
+      .filter((f) => f.finding_code !== LISTING_PLATFORM_FINDING_CODE)
+      .map((f) => f.finding_code)
+      .sort();
+    const expectedSixCodes = [BROAD_FINDING_CODE, CATEGORY_FINDING_CODE, METHOD_PROFILE_FINDING_CODE, JOURNEY_FINDING_CODE, DEAL_OUT_CHANNEL_FINDING_CODE, DEAL_IN_CHANNEL_FINDING_CODE].sort();
+    check(
+      'filtering STRONG_LISTING_PLATFORM back out reproduces exactly the previous six finding_codes',
+      JSON.stringify(sixCodesWithoutTheSeventh) === JSON.stringify(expectedSixCodes),
+      sixCodesWithoutTheSeventh,
+    );
+  }
+
+  // ── L30: previous Insights Engine snapshots (no listing-platform rule)
+  // remain readable ────────────────────────────────────────────────────────
+  console.log('\n[L30 — previous Insights Engine v1.5-shaped snapshot (no listing-platform finding) remains readable]');
+  {
+    const baseSnapshot: Record<string, unknown> = {
+      snapshot_schema_version: '2.11',
+      analytics_definition_version: '2.11',
+      generated_at: new Date().toISOString(),
+      evidence_scope: 'shared_inventory_population',
+      purpose_semantics: 'v2',
+      shared_purpose_evidence: {},
+      target_user_purpose_evidence: {},
+      target_user_open_inventory_evidence: {},
+      shared_acquisition_evidence: {},
+      target_user_acquisition_evidence: {},
+      shared_inventory_segmentation_evidence: {},
+      target_user_inventory_segmentation_evidence: {},
+      shared_deal_channel_evidence: {},
+      target_user_deal_channel_evidence: {},
+      shared_listing_channel_evidence: {},
+      target_user_listing_channel_evidence: {},
+      shared_capital_liquidity_evidence: {},
+      target_user_capital_liquidity_evidence: {},
+      shared_calendar_seasonality_evidence: {},
+      target_user_calendar_seasonality_evidence: {},
+    };
+
+    const v15ShapedInsights = {
+      insights_engine_version: '1.5',
+      findings_selector_version: '1.5',
+      source_analytics_version: '2.11',
+      generated_at: new Date().toISOString(),
+      selected_findings: [
+        {
+          finding_code: DEAL_IN_CHANNEL_FINDING_CODE,
+          family: 'deal_in_channel_performance',
+          direction: 'strength',
+          status: 'selected',
+          headline: 'Marketplace is a strong, balanced Deal In Channel',
+          summary: 'placeholder v1.5-shaped summary',
+          segment: { channel_id: 1, channel_name: 'Marketplace' },
+          metrics: { item_count: 20, distinct_deal_count: 18, realized_item_count: 16, realization_rate_percent: 80, median_net_profit: 700, median_roi: 30, median_days_on_market: 10, dom_sample_size: 16 },
+          baseline: { type: 'peer_deal_in_channel_median_baseline', median_net_profit: 500, median_roi: 20, median_days_on_market: 20, realization_rate_percent: 60 },
+          triggered_rules: ['PROFIT_ABOVE_PEER_BASELINE', 'ROI_ABOVE_PEER_BASELINE', 'DOM_FASTER_THAN_PEER_BASELINE', 'REALIZATION_ABOVE_PEER_BASELINE', 'NO_MATERIAL_WEAKNESS'],
+          confidence: 'stronger',
+          limitations: ['PEER_BASELINE_USES_MEDIAN_OF_CHANNEL_METRICS'],
+          evidence_refs: ['target_user_deal_channel_evidence.deal_in_channel_performance.performance_by_deal_in_channel'],
+          // No listing-platform finding at all — this is the v1.5 shape.
+        },
+      ],
+      rule_evaluations: [],
+    };
+    const v15Snapshot = { ...baseSnapshot, insights: v15ShapedInsights };
+
+    check('a stored v2.11 snapshot carrying an Insights Engine v1.5-shaped insights section still validates', isValidAnalyticsSnapshot(v15Snapshot));
+  }
+
+  // ── L31: findings carry no user IDs, item IDs, item names, models,
+  // notes, emails, listing text, or counterparty information ──────────────
+  console.log('\n[L31 — listing-platform findings carry no user IDs, item IDs, names, models, notes, emails, listing text, or counterparties]');
+  {
+    const { result } = evaluateStrongListingPlatform(makeListingPlatformEvidence(LISTING_PLATFORM_FIXTURES));
+    if (result.status !== 'selected') {
+      check('L31 setup produced a selected finding', false, result);
+    } else {
+      const allowedKeysByPath: Record<string, string[]> = {
+        root: ['finding_code', 'family', 'direction', 'status', 'headline', 'summary', 'segment', 'metrics', 'baseline', 'triggered_rules', 'confidence', 'limitations', 'evidence_refs', 'runner_up'],
+        segment: ['listing_channel_id', 'listing_channel_name'],
+        metrics: [
+          'exposed_item_count', 'realized_exposed_item_count', 'realization_rate_percent', 'median_net_profit', 'median_roi',
+          'channel_listing_to_exit_sample_size', 'median_channel_listing_to_exit_days', 'channel_listing_to_exit_coverage_percent',
+          'invalid_channel_listing_after_exit_count', 'missing_channel_listing_to_exit_count',
+          'listing_record_count', 'sale_exit_item_count', 'trade_exit_item_count', 'same_channel_exit_item_count', 'different_channel_exit_item_count',
+        ],
+        baseline: ['type', 'median_net_profit', 'median_roi', 'median_channel_listing_to_exit_days', 'realization_rate_percent'],
+        runner_up: ['segment', 'metrics', 'triggered_rules', 'reason_not_selected'],
+      };
+
+      const unexpectedKeys: string[] = [];
+      const walk = (value: unknown, pathKey: string): void => {
+        if (Array.isArray(value)) return;
+        if (typeof value !== 'object' || value === null) return;
+        const allowed = allowedKeysByPath[pathKey];
+        for (const key of Object.keys(value as Record<string, unknown>)) {
+          if (allowed && !allowed.includes(key)) unexpectedKeys.push(`${pathKey}.${key}`);
+          const nextPathKey = key === 'segment' ? 'segment' : key === 'metrics' ? 'metrics' : key === 'baseline' ? 'baseline' : key === 'runner_up' ? 'runner_up' : key;
+          walk((value as Record<string, unknown>)[key], nextPathKey);
+        }
+      };
+      walk(result, 'root');
+
+      check('no unexpected keys (no item/user identity or counterparty fields) appear anywhere in the listing-platform finding', unexpectedKeys.length === 0, unexpectedKeys);
+
+      const serialized = JSON.stringify(result);
+      const forbiddenPatterns = [/"user_id"/i, /"item_id"/i, /"email"/i, /"model"/i, /"notes"/i, /"listing_text"/i, /"item_name"/i, /"counterparty/i, /"contact/i];
+      const matched = forbiddenPatterns.filter((p) => p.test(serialized)).map((p) => p.source);
+      check('serialized listing-platform finding contains no PII- or counterparty-shaped field names', matched.length === 0, matched);
     }
   }
 

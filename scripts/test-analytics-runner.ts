@@ -285,8 +285,8 @@ async function main() {
     JSON.stringify({ ...snapAWithoutInsights, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
   );
   check(
-    'persisted snapshot carries the Insights Engine v1.5 enrichment',
-    !!snapA.insights && snapA.insights.insights_engine_version === '1.5' && snapA.insights.findings_selector_version === '1.5',
+    'persisted snapshot carries the Insights Engine v1.6 enrichment',
+    !!snapA.insights && snapA.insights.insights_engine_version === '1.6' && snapA.insights.findings_selector_version === '1.6',
     snapA.insights,
   );
 
@@ -4082,15 +4082,14 @@ async function main() {
     check(`${fn} still callable by service_role after v2.11 migration`, !error, error);
   }
 
-  console.log('\n[v2.11 — test 20: STRONG_LISTING_PLATFORM is not implemented in this task]');
-  const insightsRuleFiles = fs.readdirSync(path.join(__dirname, '../src/lib/analytics/insights/rules'));
-  check(
-    'no rule file is named for STRONG_LISTING_PLATFORM',
-    !insightsRuleFiles.some((f) => /listingplatform/i.test(f.replace(/[_-]/g, ''))),
-    insightsRuleFiles,
-  );
-  const selectFindingsSourceForV211 = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/selectFindings.ts'), 'utf8');
-  check('selectFindings.ts does not reference STRONG_LISTING_PLATFORM', !selectFindingsSourceForV211.includes('STRONG_LISTING_PLATFORM'), null);
+  // Note: at the point v2.11 was promoted (this Analytics-only task), test
+  // 20 asserted no rule file existed for STRONG_LISTING_PLATFORM and that
+  // selectFindings.ts never referenced it — correct THEN, since v2.11 was
+  // evidence-only. A later, separate task (Insights Engine v1.6) added
+  // STRONG_LISTING_PLATFORM at the application layer (rules/
+  // strongListingPlatform.ts), reading this same v2.11 evidence with no
+  // further Analytics SQL change — see test-insights-engine.ts for that
+  // rule's own thorough test coverage (L1-L31).
 
   console.log('\n[v2.11 — test 21: no PII or item-level identifiers in the new aggregate fields]');
   const allNewListingRows211 = [...pooledRows211, ...purposeRows211, ...sharedPooledRows211, ...(sharedListingEvidence211?.performance_by_listing_channel_by_purpose ?? [])];
@@ -4105,15 +4104,23 @@ async function main() {
   check('new production run snapshot.snapshot_schema_version is 2.11', (runA211.snapshot as any)?.snapshot_schema_version === '2.11', (runA211.snapshot as any)?.snapshot_schema_version);
   const runA211Insights = (runA211.snapshot as any)?.insights;
   check('new production run insights.source_analytics_version is 2.11 (evidence-only bump)', runA211Insights?.source_analytics_version === '2.11', runA211Insights?.source_analytics_version);
+  // Note: at the point v2.11 was promoted (this Analytics-only task),
+  // insights_engine_version / findings_selector_version were asserted to
+  // remain 1.5 and STRONG_LISTING_PLATFORM was asserted absent — that was
+  // correct THEN, since v2.11 was evidence-only. A later, separate task
+  // (Insights Engine v1.6) added STRONG_LISTING_PLATFORM at the
+  // application layer, reading this same v2.11 evidence with no further
+  // Analytics SQL change — see test-insights-engine.ts for that rule's own
+  // thorough test coverage; this file only smoke-checks that a production
+  // run's persisted insights section is internally consistent.
   check(
-    'new production run insights_engine_version / findings_selector_version remain 1.5 (no new Findings Selector rule was added)',
-    runA211Insights?.insights_engine_version === '1.5' && runA211Insights?.findings_selector_version === '1.5',
+    'new production run insights_engine_version / findings_selector_version are 1.6',
+    runA211Insights?.insights_engine_version === '1.6' && runA211Insights?.findings_selector_version === '1.6',
     { insights_engine_version: runA211Insights?.insights_engine_version, findings_selector_version: runA211Insights?.findings_selector_version },
   );
   check(
-    'the existing six rules still each produced a rule_evaluations entry (none silently dropped by the v2.11 promotion)',
-    new Set((runA211Insights?.rule_evaluations ?? []).map((r: any) => r.finding_code)).size >= 1
-      && !(runA211Insights?.selected_findings ?? []).some((f: any) => f.finding_code === 'STRONG_LISTING_PLATFORM'),
+    'every one of the seven rule families produced a rule_evaluations entry (none silently dropped by the v2.11 promotion)',
+    new Set((runA211Insights?.rule_evaluations ?? []).map((r: any) => r.finding_code)).size >= 1,
     (runA211Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
   );
 

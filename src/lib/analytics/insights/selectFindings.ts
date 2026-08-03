@@ -1,16 +1,15 @@
-// Insights Engine v1.5 — orchestrator. Runs the Findings Selector rule set
+// Insights Engine v1.6 — orchestrator. Runs the Findings Selector rule set
 // against Analytics target-user evidence sections and assembles the
 // `insights` section merged into analytics_runs.snapshot by runAnalytics.ts.
 // Does not read or write Analytics data itself — the caller supplies the
 // already-validated snapshot sections as plain evidence.
 //
-// SOURCE_ANALYTICS_VERSION moved from 2.10 to 2.11 (Analytics v2.11 —
-// Per-Platform Listing-to-Exit Timing) purely to reflect which Analytics
-// snapshot version now feeds this engine — none of the six rules below
-// read target_user_listing_channel_evidence / shared_listing_channel_
-// evidence (the only sections v2.11 touches), so this bump changes no
-// rule's behavior. insights_engine_version / findings_selector_version
-// deliberately stay at 1.5 — no new Findings Selector rule was added.
+// v1.6 adds STRONG_LISTING_PLATFORM, reading target_user_listing_channel_
+// evidence.performance_by_listing_channel (Analytics v2.11's per-platform
+// listing-to-exit timing fields) — the ONLY rule that reads this evidence
+// section. SOURCE_ANALYTICS_VERSION stays 2.11 (this task adds no new
+// Analytics SQL — v2.11 already carried the evidence this rule needed).
+// The other six rules are unchanged in behavior.
 //
 // Rules implemented:
 //   STRONG_BALANCED_ACQUISITION_BAND       (v1.0, unchanged in behavior)
@@ -18,7 +17,8 @@
 //   ACQUISITION_METHOD_PERFORMANCE_PROFILE (v1.2, unchanged in behavior)
 //   STRONG_DEAL_IN_TO_DEAL_OUT_JOURNEY      (v1.3, unchanged in behavior)
 //   STRONG_DEAL_OUT_CHANNEL                 (v1.4, unchanged in behavior)
-//   STRONG_DEAL_IN_CHANNEL                  (new in v1.5)
+//   STRONG_DEAL_IN_CHANNEL                  (v1.5, unchanged in behavior)
+//   STRONG_LISTING_PLATFORM                 (new in v1.6)
 // No category x type, brand, inventory, Purpose, Change Detection, Pattern
 // Discovery, or AI Coach findings. See analytics/README.md for where those
 // may land later.
@@ -29,11 +29,13 @@
 // `relationship` metadata pointing at the broad-band finding it refines,
 // and its summary gains one explanatory sentence. This is a narrow, ad hoc
 // check — not a general deduplication framework. The acquisition-method,
-// channel-journey, deal-out-channel, and deal-in-channel rules have no
-// relationship to that pair, or to each other — Deal In and Deal Out
-// evaluate different questions (where inventory was sourced vs. where it
-// exited) and are never deduplicated or suppressed against each other,
-// even when they happen to select the same channel_id.
+// channel-journey, deal-out-channel, deal-in-channel, and listing-platform
+// rules have no relationship to that pair, or to each other — Deal In and
+// Deal Out evaluate different questions (where inventory was sourced vs.
+// where it exited), and Listing Platform answers yet another one (where an
+// item was advertised) — none of these three are ever deduplicated or
+// suppressed against each other, even when they happen to select the same
+// channel_id or reference the same channel name.
 
 import { evaluateStrongBalancedAcquisitionBand } from './rules/strongBalancedAcquisitionBand';
 import { evaluateStrongCategoryAcquisitionBand } from './rules/strongCategoryAcquisitionBand';
@@ -42,16 +44,18 @@ import { evaluateAcquisitionMethodPerformanceProfile } from './rules/acquisition
 import { evaluateStrongDealInToDealOutJourney } from './rules/strongDealInToDealOutJourney';
 import { evaluateStrongDealOutChannel } from './rules/strongDealOutChannel';
 import { evaluateStrongDealInChannel } from './rules/strongDealInChannel';
-import type { AcquisitionMethodPerformanceProfileFinding, InsightsSection, SelectedFinding } from './types';
+import { evaluateStrongListingPlatform } from './rules/strongListingPlatform';
+import type { AcquisitionMethodPerformanceProfileFinding, InsightsSection, ListingPlatformFinding, SelectedFinding } from './types';
 
-export const INSIGHTS_ENGINE_VERSION = '1.5';
-export const FINDINGS_SELECTOR_VERSION = '1.5';
+export const INSIGHTS_ENGINE_VERSION = '1.6';
+export const FINDINGS_SELECTOR_VERSION = '1.6';
 export const SOURCE_ANALYTICS_VERSION = '2.11';
 
 export interface SelectFindingsInput {
   targetUserAcquisitionEvidence: unknown;
   targetUserInventorySegmentationEvidence: unknown;
   targetUserDealChannelEvidence: unknown;
+  targetUserListingChannelEvidence: unknown;
 }
 
 function acquisitionBandOrderOf(finding: SelectedFinding): unknown {
@@ -70,14 +74,16 @@ export function selectFindings(input: SelectFindingsInput): InsightsSection {
   const channelJourney = evaluateStrongDealInToDealOutJourney(input.targetUserDealChannelEvidence);
   const dealOutChannel = evaluateStrongDealOutChannel(input.targetUserDealChannelEvidence);
   const dealInChannel = evaluateStrongDealInChannel(input.targetUserDealChannelEvidence);
+  const listingPlatform = evaluateStrongListingPlatform(input.targetUserListingChannelEvidence);
 
-  const selectedFindings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding> = [];
+  const selectedFindings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding | ListingPlatformFinding> = [];
   if (broad.result.status === 'selected') selectedFindings.push(broad.result);
   if (category.result.status === 'selected') selectedFindings.push(category.result);
   if (methodProfile.result.status === 'selected') selectedFindings.push(methodProfile.result);
   if (channelJourney.result.status === 'selected') selectedFindings.push(channelJourney.result);
   if (dealOutChannel.result.status === 'selected') selectedFindings.push(dealOutChannel.result);
   if (dealInChannel.result.status === 'selected') selectedFindings.push(dealInChannel.result);
+  if (listingPlatform.result.status === 'selected') selectedFindings.push(listingPlatform.result);
 
   if (
     broad.result.status === 'selected' &&
@@ -108,6 +114,7 @@ export function selectFindings(input: SelectFindingsInput): InsightsSection {
       ...channelJourney.candidateEvaluations,
       ...dealOutChannel.candidateEvaluations,
       ...dealInChannel.candidateEvaluations,
+      ...listingPlatform.candidateEvaluations,
     ],
   };
 }

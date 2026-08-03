@@ -62,7 +62,8 @@ export type FindingFamily =
   | 'acquisition_method_performance'
   | 'channel_journey_performance'
   | 'deal_out_channel_performance'
-  | 'deal_in_channel_performance';
+  | 'deal_in_channel_performance'
+  | 'listing_platform_performance';
 
 export interface RunnerUpContext {
   segment: Record<string, unknown>;
@@ -306,6 +307,95 @@ export interface DealInChannelCandidateEvaluation {
   selected: boolean;
 }
 
+// ── STRONG_LISTING_PLATFORM (Insights Engine v1.6) ─────────────────────────
+// One row per listing_channel_id, read from Analytics v2.11's target_user_
+// listing_channel_evidence.performance_by_listing_channel[] — pooled ALL-
+// PURPOSE target-user exposure evidence (Business, Hybrid, Personal never
+// filtered), the SAME array v2.6 already exposed (v2.11 only added fields
+// to each existing row, no new array). Listing Platform means where an
+// item was ADVERTISED — not where the buyer was found and not which Deal
+// Out channel completed the exit; see extractListingPlatformCandidates in
+// rules/strongListingPlatform.ts. realization_rate_percent is computed in
+// TypeScript (realized_exposed_item_count / exposed_item_count * 100) —
+// Analytics does not expose this ratio directly for this section.
+// median_channel_listing_to_exit_days/channel_listing_to_exit_sample_size/
+// channel_listing_to_exit_coverage_percent/invalid_channel_listing_after_
+// exit_count/missing_channel_listing_to_exit_count are v2.11's genuinely
+// PER-PLATFORM timing fields — this rule never reads dom_sample_size or
+// median_days_on_market (those remain the GLOBAL lifecycle DOM fields,
+// unrelated to any one platform).
+export interface ListingPlatformCandidate {
+  listing_channel_id: number | null;
+  listing_channel_name: string | null;
+  exposed_item_count: number;
+  realized_exposed_item_count: number;
+  realization_rate_percent: number | null;
+  median_net_profit: number | null;
+  median_roi: number | null;
+  channel_listing_to_exit_sample_size: number;
+  median_channel_listing_to_exit_days: number | null;
+  channel_listing_to_exit_coverage_percent: number | null;
+  invalid_channel_listing_after_exit_count: number;
+  missing_channel_listing_to_exit_count: number;
+  confidence: ConfidenceTier | null;
+  // Optional reporting fields — carried through when present, never
+  // required for eligibility or comparison.
+  listing_record_count: number | null;
+  sale_exit_item_count: number | null;
+  trade_exit_item_count: number | null;
+  same_channel_exit_item_count: number | null;
+  different_channel_exit_item_count: number | null;
+}
+
+// STRONG_LISTING_PLATFORM's baseline: median of the OTHER eligible listing
+// platforms, pooled across the target user's whole portfolio. Deliberately
+// does NOT extend PeerMedianBaseline — its timing field is named
+// median_channel_listing_to_exit_days, never median_days_on_market.
+export interface PeerListingPlatformMedianBaseline {
+  type: 'peer_listing_platform_median_baseline';
+  median_net_profit: number | null;
+  median_roi: number | null;
+  median_channel_listing_to_exit_days: number | null;
+  realization_rate_percent: number | null;
+}
+
+// STRONG_LISTING_PLATFORM's finding does not use the shared SelectedFinding
+// shape — like AcquisitionMethodPerformanceProfileFinding below, its
+// baseline shape genuinely differs (PeerListingPlatformMedianBaseline, not
+// PeerMedianBaseline — no median_days_on_market field), so it gets its own
+// finding type rather than being forced into one that doesn't structurally
+// fit.
+export interface ListingPlatformFinding {
+  finding_code: string;
+  family: 'listing_platform_performance';
+  direction: 'strength';
+  status: 'selected';
+  headline: string;
+  summary: string;
+  segment: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  baseline: PeerListingPlatformMedianBaseline;
+  triggered_rules: string[];
+  confidence: ConfidenceTier;
+  limitations: string[];
+  evidence_refs: string[];
+  runner_up?: RunnerUpContext;
+}
+
+export type ListingPlatformRuleEvaluationResult = ListingPlatformFinding | NoFindingResult;
+
+export interface ListingPlatformCandidateEvaluation {
+  finding_code: string;
+  listing_channel_id: number | null;
+  listing_channel_name: string | null;
+  eligible: boolean;
+  eligibility_failure_reasons: string[];
+  material_improvement_triggers: string[];
+  material_weakness_triggers: string[];
+  qualifies: boolean;
+  selected: boolean;
+}
+
 // rule_evaluations is a heterogeneous debug array — each row's own
 // finding_code says which rule produced it.
 export type RuleEvaluationRow =
@@ -313,7 +403,8 @@ export type RuleEvaluationRow =
   | AcquisitionMethodCandidateEvaluation
   | ChannelJourneyCandidateEvaluation
   | DealOutChannelCandidateEvaluation
-  | DealInChannelCandidateEvaluation;
+  | DealInChannelCandidateEvaluation
+  | ListingPlatformCandidateEvaluation;
 
 export type MethodAdvantage = 'Purchase' | 'Trade' | 'Neutral';
 
@@ -377,6 +468,6 @@ export interface InsightsSection {
   findings_selector_version: string;
   source_analytics_version: string;
   generated_at: string;
-  selected_findings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding>;
+  selected_findings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding | ListingPlatformFinding>;
   rule_evaluations: RuleEvaluationRow[];
 }
