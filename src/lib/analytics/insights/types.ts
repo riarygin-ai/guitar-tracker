@@ -61,7 +61,8 @@ export type FindingFamily =
   | 'category_acquisition_performance'
   | 'acquisition_method_performance'
   | 'channel_journey_performance'
-  | 'deal_out_channel_performance';
+  | 'deal_out_channel_performance'
+  | 'deal_in_channel_performance';
 
 export interface RunnerUpContext {
   segment: Record<string, unknown>;
@@ -263,13 +264,56 @@ export interface DealOutChannelCandidateEvaluation {
   selected: boolean;
 }
 
+// ── STRONG_DEAL_IN_CHANNEL (Insights Engine v1.5) ──────────────────────────
+// One row per deal_in_channel_id, read from v2.10's target_user_deal_
+// channel_evidence.deal_in_channel_performance.performance_by_deal_in_
+// channel — pooled across every Purpose, ALL acquired items (open +
+// realized, unlike deal_out/channel_journey which are realized-only). See
+// extractDealInChannelCandidates in rules/strongDealInChannel.ts.
+export interface DealInChannelCandidate {
+  channel_id: number | null;
+  channel_name: string | null;
+  item_count: number;
+  distinct_deal_count: number;
+  realized_item_count: number;
+  realization_rate_percent: number | null;
+  median_net_profit: number | null;
+  median_roi: number | null;
+  median_days_on_market: number | null;
+  dom_sample_size: number;
+  confidence: ConfidenceTier | null;
+}
+
+// STRONG_DEAL_IN_CHANNEL's baseline: median of the OTHER eligible Deal In
+// Channels, pooled across the target user's whole portfolio. Unlike the
+// Deal Out / channel-journey baselines, this one DOES use realization rate
+// — Deal In evidence covers open AND realized items, so realization rate
+// is a valid signal here (not the realized-exits-only case those rules
+// exclude it for).
+export interface PeerDealInChannelMedianBaseline extends PeerMedianBaseline {
+  type: 'peer_deal_in_channel_median_baseline';
+}
+
+export interface DealInChannelCandidateEvaluation {
+  finding_code: string;
+  channel_id: number | null;
+  channel_name: string | null;
+  eligible: boolean;
+  eligibility_failure_reasons: string[];
+  material_improvement_triggers: string[];
+  material_weakness_triggers: string[];
+  qualifies: boolean;
+  selected: boolean;
+}
+
 // rule_evaluations is a heterogeneous debug array — each row's own
 // finding_code says which rule produced it.
 export type RuleEvaluationRow =
   | CandidateEvaluation
   | AcquisitionMethodCandidateEvaluation
   | ChannelJourneyCandidateEvaluation
-  | DealOutChannelCandidateEvaluation;
+  | DealOutChannelCandidateEvaluation
+  | DealInChannelCandidateEvaluation;
 
 export type MethodAdvantage = 'Purchase' | 'Trade' | 'Neutral';
 

@@ -1,4 +1,4 @@
-// Insights Engine v1.4 — orchestrator. Runs the Findings Selector rule set
+// Insights Engine v1.5 — orchestrator. Runs the Findings Selector rule set
 // against Analytics v2.10's target-user evidence sections and assembles the
 // `insights` section merged into analytics_runs.snapshot by runAnalytics.ts.
 // Does not read or write Analytics v2.10 data itself — the caller supplies
@@ -9,7 +9,8 @@
 //   STRONG_CATEGORY_ACQUISITION_BAND       (v1.1, unchanged in behavior)
 //   ACQUISITION_METHOD_PERFORMANCE_PROFILE (v1.2, unchanged in behavior)
 //   STRONG_DEAL_IN_TO_DEAL_OUT_JOURNEY      (v1.3, unchanged in behavior)
-//   STRONG_DEAL_OUT_CHANNEL                 (new in v1.4)
+//   STRONG_DEAL_OUT_CHANNEL                 (v1.4, unchanged in behavior)
+//   STRONG_DEAL_IN_CHANNEL                  (new in v1.5)
 // No category x type, brand, inventory, Purpose, Change Detection, Pattern
 // Discovery, or AI Coach findings. See analytics/README.md for where those
 // may land later.
@@ -20,10 +21,11 @@
 // `relationship` metadata pointing at the broad-band finding it refines,
 // and its summary gains one explanatory sentence. This is a narrow, ad hoc
 // check — not a general deduplication framework. The acquisition-method,
-// channel-journey, and deal-out-channel rules have no relationship to
-// either — they compare Purchase vs. Trade, Deal In vs. Deal Out channel,
-// and Deal Out Channel alone, all orthogonal dimensions to acquisition
-// value band / category.
+// channel-journey, deal-out-channel, and deal-in-channel rules have no
+// relationship to that pair, or to each other — Deal In and Deal Out
+// evaluate different questions (where inventory was sourced vs. where it
+// exited) and are never deduplicated or suppressed against each other,
+// even when they happen to select the same channel_id.
 
 import { evaluateStrongBalancedAcquisitionBand } from './rules/strongBalancedAcquisitionBand';
 import { evaluateStrongCategoryAcquisitionBand } from './rules/strongCategoryAcquisitionBand';
@@ -31,10 +33,11 @@ import { FINDING_CODE as STRONG_BALANCED_ACQUISITION_BAND_CODE } from './rules/s
 import { evaluateAcquisitionMethodPerformanceProfile } from './rules/acquisitionMethodPerformanceProfile';
 import { evaluateStrongDealInToDealOutJourney } from './rules/strongDealInToDealOutJourney';
 import { evaluateStrongDealOutChannel } from './rules/strongDealOutChannel';
+import { evaluateStrongDealInChannel } from './rules/strongDealInChannel';
 import type { AcquisitionMethodPerformanceProfileFinding, InsightsSection, SelectedFinding } from './types';
 
-export const INSIGHTS_ENGINE_VERSION = '1.4';
-export const FINDINGS_SELECTOR_VERSION = '1.4';
+export const INSIGHTS_ENGINE_VERSION = '1.5';
+export const FINDINGS_SELECTOR_VERSION = '1.5';
 export const SOURCE_ANALYTICS_VERSION = '2.10';
 
 export interface SelectFindingsInput {
@@ -58,6 +61,7 @@ export function selectFindings(input: SelectFindingsInput): InsightsSection {
   const methodProfile = evaluateAcquisitionMethodPerformanceProfile(input.targetUserAcquisitionEvidence);
   const channelJourney = evaluateStrongDealInToDealOutJourney(input.targetUserDealChannelEvidence);
   const dealOutChannel = evaluateStrongDealOutChannel(input.targetUserDealChannelEvidence);
+  const dealInChannel = evaluateStrongDealInChannel(input.targetUserDealChannelEvidence);
 
   const selectedFindings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding> = [];
   if (broad.result.status === 'selected') selectedFindings.push(broad.result);
@@ -65,6 +69,7 @@ export function selectFindings(input: SelectFindingsInput): InsightsSection {
   if (methodProfile.result.status === 'selected') selectedFindings.push(methodProfile.result);
   if (channelJourney.result.status === 'selected') selectedFindings.push(channelJourney.result);
   if (dealOutChannel.result.status === 'selected') selectedFindings.push(dealOutChannel.result);
+  if (dealInChannel.result.status === 'selected') selectedFindings.push(dealInChannel.result);
 
   if (
     broad.result.status === 'selected' &&
@@ -94,6 +99,7 @@ export function selectFindings(input: SelectFindingsInput): InsightsSection {
       ...methodProfile.candidateEvaluations,
       ...channelJourney.candidateEvaluations,
       ...dealOutChannel.candidateEvaluations,
+      ...dealInChannel.candidateEvaluations,
     ],
   };
 }
