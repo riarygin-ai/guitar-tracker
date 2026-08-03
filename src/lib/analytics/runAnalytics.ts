@@ -284,7 +284,7 @@ export async function runAnalyticsForCurrentUser(
 
     const durationMs = Math.max(0, Math.round(performance.now() - startMark));
 
-    // ── 4b. Insights Engine v1.2 — Findings Selector ─────────────────────
+    // ── 4b. Insights Engine v1.3 — Findings Selector ─────────────────────
     // Application-layer enrichment on top of the already-validated v2.10
     // snapshot, versioned independently (insights_engine_version /
     // findings_selector_version) from snapshot_schema_version /
@@ -296,6 +296,7 @@ export async function runAnalyticsForCurrentUser(
     const insights = selectFindings({
       targetUserAcquisitionEvidence: snapshot.target_user_acquisition_evidence,
       targetUserInventorySegmentationEvidence: snapshot.target_user_inventory_segmentation_evidence,
+      targetUserDealChannelEvidence: snapshot.target_user_deal_channel_evidence,
     });
     const snapshotWithInsights = { ...snapshot, insights };
 

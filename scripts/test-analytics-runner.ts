@@ -285,8 +285,8 @@ async function main() {
     JSON.stringify({ ...snapAWithoutInsights, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
   );
   check(
-    'persisted snapshot carries the Insights Engine v1.2 enrichment',
-    !!snapA.insights && snapA.insights.insights_engine_version === '1.2' && snapA.insights.findings_selector_version === '1.2',
+    'persisted snapshot carries the Insights Engine v1.3 enrichment',
+    !!snapA.insights && snapA.insights.insights_engine_version === '1.3' && snapA.insights.findings_selector_version === '1.3',
     snapA.insights,
   );
 

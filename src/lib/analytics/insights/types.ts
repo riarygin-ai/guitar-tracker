@@ -59,7 +59,8 @@ export interface SameCategoryPeerBandMedianBaseline extends PeerMedianBaseline {
 export type FindingFamily =
   | 'acquisition_performance'
   | 'category_acquisition_performance'
-  | 'acquisition_method_performance';
+  | 'acquisition_method_performance'
+  | 'channel_journey_performance';
 
 export interface RunnerUpContext {
   segment: Record<string, unknown>;
@@ -172,9 +173,60 @@ export interface AcquisitionMethodCandidateEvaluation {
   confidence: ConfidenceTier | null;
 }
 
+// ── STRONG_DEAL_IN_TO_DEAL_OUT_JOURNEY (Insights Engine v1.3) ──────────────
+// One row per (deal_in_channel_id, deal_out_channel_id) pair, read from
+// v2.10's target_user_deal_channel_evidence.channel_journey.deal_in_to_
+// deal_out_matrix — pooled across every Purpose, realized items only. See
+// extractDealChannelJourneyCandidates in
+// rules/strongDealInToDealOutJourney.ts.
+export interface DealChannelJourneyCandidate {
+  deal_in_channel_id: number | null;
+  deal_in_channel_name: string | null;
+  deal_out_channel_id: number | null;
+  deal_out_channel_name: string | null;
+  item_count: number;
+  distinct_acquisition_deal_count: number;
+  distinct_exit_deal_count: number;
+  // min(distinct_acquisition_deal_count, distinct_exit_deal_count) — a
+  // journey is only "repeatable" if BOTH its sourcing leg and its exit leg
+  // recur across multiple distinct deals; the weaker leg is the bottleneck.
+  distinct_deal_count: number;
+  median_net_profit: number | null;
+  median_roi: number | null;
+  median_days_on_market: number | null;
+  dom_sample_size: number;
+  confidence: ConfidenceTier | null;
+}
+
+// STRONG_DEAL_IN_TO_DEAL_OUT_JOURNEY's baseline: median of the OTHER
+// eligible channel journeys, pooled across the target user's whole
+// portfolio. realization_rate_percent is always null here — channel-journey
+// evidence is realized-exits-only and has no valid open-vs-realized
+// denominator, so realization rate is never compared for this rule (kept
+// as an explicit null, not omitted, so the shared PeerMedianBaseline shape
+// stays uniform across every rule).
+export interface PeerChannelJourneyMedianBaseline extends PeerMedianBaseline {
+  type: 'peer_channel_journey_median_baseline';
+  realization_rate_percent: null;
+}
+
+export interface ChannelJourneyCandidateEvaluation {
+  finding_code: string;
+  deal_in_channel_id: number | null;
+  deal_in_channel_name: string | null;
+  deal_out_channel_id: number | null;
+  deal_out_channel_name: string | null;
+  eligible: boolean;
+  eligibility_failure_reasons: string[];
+  material_improvement_triggers: string[];
+  material_weakness_triggers: string[];
+  qualifies: boolean;
+  selected: boolean;
+}
+
 // rule_evaluations is a heterogeneous debug array — each row's own
 // finding_code says which rule produced it.
-export type RuleEvaluationRow = CandidateEvaluation | AcquisitionMethodCandidateEvaluation;
+export type RuleEvaluationRow = CandidateEvaluation | AcquisitionMethodCandidateEvaluation | ChannelJourneyCandidateEvaluation;
 
 export type MethodAdvantage = 'Purchase' | 'Trade' | 'Neutral';
 
