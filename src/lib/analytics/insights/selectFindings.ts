@@ -1,30 +1,34 @@
-// Insights Engine v1.1 — orchestrator. Runs the Findings Selector rule set
+// Insights Engine v1.2 — orchestrator. Runs the Findings Selector rule set
 // against Analytics v2.10's target-user evidence sections and assembles the
 // `insights` section merged into analytics_runs.snapshot by runAnalytics.ts.
 // Does not read or write Analytics v2.10 data itself — the caller supplies
 // the already-validated snapshot sections as plain evidence.
 //
 // Rules implemented:
-//   STRONG_BALANCED_ACQUISITION_BAND  (v1.0, unchanged in behavior)
-//   STRONG_CATEGORY_ACQUISITION_BAND  (new in v1.1)
+//   STRONG_BALANCED_ACQUISITION_BAND     (v1.0, unchanged in behavior)
+//   STRONG_CATEGORY_ACQUISITION_BAND     (v1.1, unchanged in behavior)
+//   ACQUISITION_METHOD_PERFORMANCE_PROFILE (new in v1.2)
 // No category x type, channel, brand, inventory, Purpose, Change Detection,
 // Pattern Discovery, or AI Coach findings. See analytics/README.md for
 // where those may land later.
 //
-// Cross-rule relationship: when both rules select the same acquisition
-// band, both findings are kept (never deduped away), but the category
-// finding is additionally stamped with structured `relationship` metadata
-// pointing at the broad-band finding it refines, and its summary gains one
-// explanatory sentence. This is a narrow, ad hoc check — not a general
-// deduplication framework.
+// Cross-rule relationship: when the broad-band and category rules select
+// the same acquisition band, both findings are kept (never deduped away),
+// but the category finding is additionally stamped with structured
+// `relationship` metadata pointing at the broad-band finding it refines,
+// and its summary gains one explanatory sentence. This is a narrow, ad hoc
+// check — not a general deduplication framework. The acquisition-method
+// rule has no relationship to either (it compares Purchase vs. Trade, an
+// orthogonal dimension to acquisition value band / category).
 
 import { evaluateStrongBalancedAcquisitionBand } from './rules/strongBalancedAcquisitionBand';
 import { evaluateStrongCategoryAcquisitionBand } from './rules/strongCategoryAcquisitionBand';
 import { FINDING_CODE as STRONG_BALANCED_ACQUISITION_BAND_CODE } from './rules/strongBalancedAcquisitionBand';
-import type { InsightsSection, SelectedFinding } from './types';
+import { evaluateAcquisitionMethodPerformanceProfile } from './rules/acquisitionMethodPerformanceProfile';
+import type { AcquisitionMethodPerformanceProfileFinding, InsightsSection, SelectedFinding } from './types';
 
-export const INSIGHTS_ENGINE_VERSION = '1.1';
-export const FINDINGS_SELECTOR_VERSION = '1.1';
+export const INSIGHTS_ENGINE_VERSION = '1.2';
+export const FINDINGS_SELECTOR_VERSION = '1.2';
 export const SOURCE_ANALYTICS_VERSION = '2.10';
 
 export interface SelectFindingsInput {
@@ -44,10 +48,12 @@ function acquisitionBandOrderOf(finding: SelectedFinding): unknown {
 export function selectFindings(input: SelectFindingsInput): InsightsSection {
   const broad = evaluateStrongBalancedAcquisitionBand(input.targetUserAcquisitionEvidence);
   const category = evaluateStrongCategoryAcquisitionBand(input.targetUserInventorySegmentationEvidence);
+  const methodProfile = evaluateAcquisitionMethodPerformanceProfile(input.targetUserAcquisitionEvidence);
 
-  const selectedFindings: SelectedFinding[] = [];
+  const selectedFindings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding> = [];
   if (broad.result.status === 'selected') selectedFindings.push(broad.result);
   if (category.result.status === 'selected') selectedFindings.push(category.result);
+  if (methodProfile.result.status === 'selected') selectedFindings.push(methodProfile.result);
 
   if (
     broad.result.status === 'selected' &&
@@ -71,6 +77,6 @@ export function selectFindings(input: SelectFindingsInput): InsightsSection {
     source_analytics_version: SOURCE_ANALYTICS_VERSION,
     generated_at: new Date().toISOString(),
     selected_findings: selectedFindings,
-    rule_evaluations: [...broad.candidateEvaluations, ...category.candidateEvaluations],
+    rule_evaluations: [...broad.candidateEvaluations, ...category.candidateEvaluations, ...methodProfile.candidateEvaluations],
   };
 }

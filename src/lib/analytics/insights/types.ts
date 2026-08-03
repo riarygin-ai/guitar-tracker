@@ -56,7 +56,10 @@ export interface SameCategoryPeerBandMedianBaseline extends PeerMedianBaseline {
   type: 'same_category_peer_band_median_baseline';
 }
 
-export type FindingFamily = 'acquisition_performance' | 'category_acquisition_performance';
+export type FindingFamily =
+  | 'acquisition_performance'
+  | 'category_acquisition_performance'
+  | 'acquisition_method_performance';
 
 export interface RunnerUpContext {
   segment: Record<string, unknown>;
@@ -78,7 +81,12 @@ export interface FindingRelationship {
 export interface SelectedFinding {
   finding_code: string;
   family: FindingFamily;
-  direction: 'strength';
+  // Both current users of this shape (STRONG_BALANCED_ACQUISITION_BAND,
+  // STRONG_CATEGORY_ACQUISITION_BAND) are always 'strength'. 'tradeoff'
+  // exists on this union for forward compatibility; the current tradeoff
+  // rule (ACQUISITION_METHOD_PERFORMANCE_PROFILE) uses a different finding
+  // shape entirely — see AcquisitionMethodPerformanceProfileFinding below.
+  direction: 'strength' | 'tradeoff';
   status: 'selected';
   headline: string;
   summary: string;
@@ -143,11 +151,93 @@ export interface CategoryAcquisitionBandCandidate {
   confidence: ConfidenceTier | null;
 }
 
+// ── ACQUISITION_METHOD_PERFORMANCE_PROFILE (Insights Engine v1.2) ──────────
+// One row per (acquisition_method, exit_method) pair, read from v2.10's
+// target_user_acquisition_evidence.acquisition_to_exit_analysis.
+// method_paths — pooled across every Purpose, realized items only (this
+// section only ever contains realized-and-exited items to begin with). See
+// extractAcquisitionMethodExitRows in
+// rules/acquisitionMethodPerformanceProfile.ts.
+export interface AcquisitionMethodCandidateEvaluation {
+  finding_code: string;
+  acquisition_method: string;
+  exit_method: string;
+  eligible: boolean;
+  eligibility_failure_reasons: string[];
+  item_count: number;
+  median_net_profit: number | null;
+  median_roi: number | null;
+  median_days_on_market: number | null;
+  dom_sample_size: number;
+  confidence: ConfidenceTier | null;
+}
+
+// rule_evaluations is a heterogeneous debug array — each row's own
+// finding_code says which rule produced it.
+export type RuleEvaluationRow = CandidateEvaluation | AcquisitionMethodCandidateEvaluation;
+
+export type MethodAdvantage = 'Purchase' | 'Trade' | 'Neutral';
+
+export interface AcquisitionMethodExitMetrics {
+  item_count: number;
+  median_net_profit: number | null;
+  median_roi: number | null;
+  median_days_on_market: number | null;
+  dom_sample_size: number;
+  confidence: ConfidenceTier;
+}
+
+// Like-for-like: Purchase and Trade rows sharing the SAME exit_method.
+// Purchase -> Sale is never compared against Trade -> Trade.
+export interface ExitMethodComparison {
+  exit_method: 'sale' | 'trade';
+  purchase: AcquisitionMethodExitMetrics;
+  trade: AcquisitionMethodExitMetrics;
+  deltas: {
+    median_net_profit: number;
+    median_roi: number;
+    median_days_on_market: number;
+  };
+  profit_advantage: MethodAdvantage;
+  roi_advantage: MethodAdvantage;
+  dom_advantage: MethodAdvantage;
+  triggered_rules: string[];
+}
+
+export type AcquisitionMethodProfileCode =
+  | 'PURCHASE_ECONOMICS_TRADE_SPEED'
+  | 'TRADE_ECONOMICS_PURCHASE_SPEED'
+  | 'PURCHASE_BROAD_ADVANTAGE'
+  | 'TRADE_BROAD_ADVANTAGE'
+  | 'MIXED_BY_EXIT_METHOD';
+
+// This rule's finding never fits the segment/metrics/single-baseline shape
+// of SelectedFinding above — it is inherently a multi-comparison structure
+// (one entry per eligible exit method), so it gets its own shape rather
+// than being forced into one that doesn't semantically apply (no single
+// "segment", no single peer baseline, no runner-up).
+export interface AcquisitionMethodPerformanceProfileFinding {
+  finding_code: string;
+  family: 'acquisition_method_performance';
+  // 'tradeoff' for the two economics-vs-speed profiles and MIXED_BY_
+  // EXIT_METHOD; 'strength' only for a broad, uncontested advantage.
+  direction: 'strength' | 'tradeoff';
+  status: 'selected';
+  headline: string;
+  summary: string;
+  profile_code: AcquisitionMethodProfileCode;
+  eligible_exit_method_comparison_count: number;
+  comparisons: ExitMethodComparison[];
+  confidence: ConfidenceTier;
+  limitations: string[];
+  evidence_refs: string[];
+}
+
 export interface InsightsSection {
   insights_engine_version: string;
   findings_selector_version: string;
   source_analytics_version: string;
   generated_at: string;
-  selected_findings: SelectedFinding[];
-  rule_evaluations: CandidateEvaluation[];
+  selected_findings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding>;
+  rule_evaluations: RuleEvaluationRow[];
 }

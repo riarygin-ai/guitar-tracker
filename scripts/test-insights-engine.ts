@@ -2,15 +2,16 @@
  * test-insights-engine.ts
  *
  * Focused, framework-free tests for Insights Engine's Findings Selector
- * rules — STRONG_BALANCED_ACQUISITION_BAND (v1.0) and STRONG_CATEGORY_
- * ACQUISITION_BAND (new in v1.1) — same "tsx script, no jest/vitest"
- * convention as scripts/test-analytics-runner.ts, but this one needs no
- * Supabase instance at all: every rule under test is a pure function of
- * hand-built evidence fixtures shaped exactly like Analytics v2.10's
- * target_user_acquisition_evidence (see
+ * rules — STRONG_BALANCED_ACQUISITION_BAND (v1.0), STRONG_CATEGORY_
+ * ACQUISITION_BAND (v1.1), and ACQUISITION_METHOD_PERFORMANCE_PROFILE (new
+ * in v1.2) — same "tsx script, no jest/vitest" convention as
+ * scripts/test-analytics-runner.ts, but this one needs no Supabase instance
+ * at all: every rule under test is a pure function of hand-built evidence
+ * fixtures shaped exactly like Analytics v2.10's target_user_acquisition_
+ * evidence (see
  * supabase/migrations/20260814000000_build_analytics_snapshot_v2_3.sql,
- * CTEs m1t_band_rows / m2t_band_rows) and target_user_inventory_
- * segmentation_evidence (see
+ * CTEs m1t_band_rows / m2t_band_rows / m2t_method_rows) and target_user_
+ * inventory_segmentation_evidence (see
  * supabase/migrations/20260815000000_build_analytics_snapshot_v2_4.sql,
  * CTE cx_catband_rows). No production data, no database connection,
  * nothing destructive.
@@ -29,9 +30,17 @@ import {
   evaluateStrongCategoryAcquisitionBand,
   FINDING_CODE as CATEGORY_FINDING_CODE,
 } from '../src/lib/analytics/insights/rules/strongCategoryAcquisitionBand';
+import {
+  evaluateAcquisitionMethodPerformanceProfile,
+  FINDING_CODE as METHOD_PROFILE_FINDING_CODE,
+} from '../src/lib/analytics/insights/rules/acquisitionMethodPerformanceProfile';
 import { selectFindings } from '../src/lib/analytics/insights/selectFindings';
 import { isValidAnalyticsSnapshot } from '../src/lib/analytics/runAnalytics';
-import type { ConfidenceTier } from '../src/lib/analytics/insights/types';
+import type {
+  AcquisitionMethodPerformanceProfileFinding,
+  ConfidenceTier,
+  SelectedFinding as SelectedFindingForTest,
+} from '../src/lib/analytics/insights/types';
 
 let passed = 0;
 let failed = 0;
@@ -190,6 +199,76 @@ function categoryEvalFor(
   evaluations: ReturnType<typeof evaluateStrongCategoryAcquisitionBand>['candidateEvaluations'],
 ) {
   return evaluations.find((e) => e.category_id === (categoryId ?? undefined) && e.acquisition_value_band_order === order);
+}
+
+// ── Acquisition-method fixture builder ───────────────────────────────────
+// Mirrors target_user_acquisition_evidence.acquisition_to_exit_analysis.
+// method_paths (m2t_method_rows) — one row per (acquisition_method,
+// exit_method) pair, pooled across every Purpose.
+
+interface MethodRowFixture {
+  acquisitionMethod: string;
+  exitMethod: string;
+  itemCount: number;
+  domSample: number;
+  profit: number | null;
+  roi: number | null;
+  dom: number | null;
+  confidence: ConfidenceTier | null;
+}
+
+function makeMethodExitEvidence(rows: MethodRowFixture[], options?: { includeByPurposeDecoy?: boolean }): unknown {
+  const acquisitionToExitAnalysis: Record<string, unknown> = {
+    method_paths: rows.map((r) => ({
+      acquisition_method: r.acquisitionMethod,
+      exit_method: r.exitMethod,
+      sample_size: r.itemCount,
+      median_acquisition_value: null,
+      median_exit_value: null,
+      median_value_increase: null,
+      median_net_profit: r.profit,
+      median_roi: r.roi,
+      dom_sample_size: r.domSample,
+      median_days_on_market: r.dom,
+      historical_item_count: 0,
+      app_tracked_item_count: r.itemCount,
+      confidence: r.confidence,
+    })),
+  };
+
+  if (options?.includeByPurposeDecoy) {
+    // Deliberately worse, tiny-sample decoy under a DIFFERENT key
+    // (method_paths_by_purpose) — the rule must never read this key.
+    acquisitionToExitAnalysis.method_paths_by_purpose = rows.map((r) => ({
+      current_purpose_id: 1,
+      current_purpose_name: 'Business',
+      acquisition_method: r.acquisitionMethod,
+      exit_method: r.exitMethod,
+      sample_size: 1,
+      median_net_profit: -99999,
+      median_roi: -99999,
+      dom_sample_size: 0,
+      median_days_on_market: 9999,
+      confidence: 'insufficient',
+    }));
+  }
+
+  return { acquisition_to_exit_analysis: acquisitionToExitAnalysis };
+}
+
+function methodEvalFor(
+  acquisitionMethod: string,
+  exitMethod: string,
+  evaluations: ReturnType<typeof evaluateAcquisitionMethodPerformanceProfile>['candidateEvaluations'],
+) {
+  return evaluations.find((e) => e.acquisition_method === acquisitionMethod && e.exit_method === exitMethod);
+}
+
+function comparisonFor(
+  exitMethod: 'sale' | 'trade',
+  finding: AcquisitionMethodPerformanceProfileFinding,
+) {
+  return finding.comparisons.find((c) => c.exit_method === exitMethod);
 }
 
 function main() {
@@ -753,7 +832,7 @@ function main() {
   // ── C15: relationship metadata is added when both rules select the same
   // band ────────────────────────────────────────────────────────────────
   console.log('\n[C15 — relationship metadata added when both rules select the same band]');
-  let c15CategoryFinding: ReturnType<typeof selectFindings>['selected_findings'][number] | null = null;
+  let c15CategoryFinding: SelectedFindingForTest | null = null;
   {
     const broadEvidence = makeEvidence([
       { order: 2, label: '$1,000-1,999', total: 15, realized: 8, domSample: 8, realizationRate: 55, profit: 550, roi: 45, dom: 15, confidence: 'moderate' },
@@ -769,8 +848,11 @@ function main() {
     });
 
     check('both rules produced a selected finding', insights.selected_findings.length === 2, insights.selected_findings);
-    const broadFinding = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
-    const categoryFinding = insights.selected_findings.find((f) => f.finding_code === CATEGORY_FINDING_CODE);
+    // Both are known (by finding_code) to be SelectedFinding, not
+    // AcquisitionMethodPerformanceProfileFinding — cast to access
+    // .relationship, which only the former has.
+    const broadFinding = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE) as SelectedFindingForTest | undefined;
+    const categoryFinding = insights.selected_findings.find((f) => f.finding_code === CATEGORY_FINDING_CODE) as SelectedFindingForTest | undefined;
     c15CategoryFinding = categoryFinding ?? null;
 
     check('the category finding carries relationship metadata', categoryFinding?.relationship?.relationship === 'refines', categoryFinding?.relationship);
@@ -800,8 +882,8 @@ function main() {
     });
     const viaOrchestrator = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
 
-    check('insights_engine_version is 1.1', insights.insights_engine_version === '1.1', insights.insights_engine_version);
-    check('findings_selector_version is 1.1', insights.findings_selector_version === '1.1', insights.findings_selector_version);
+    check('insights_engine_version is 1.2', insights.insights_engine_version === '1.2', insights.insights_engine_version);
+    check('findings_selector_version is 1.2', insights.findings_selector_version === '1.2', insights.findings_selector_version);
     check(
       'the broad finding produced via selectFindings is identical to calling the rule directly (aside from generated_at, which the broad rule does not even set)',
       JSON.stringify(viaOrchestrator) === JSON.stringify(directResult),
@@ -901,6 +983,438 @@ function main() {
       const forbiddenPatterns = [/"user_id"/i, /"item_id"/i, /"email"/i, /"model"/i, /"notes"/i];
       const matched = forbiddenPatterns.filter((p) => p.test(serialized)).map((p) => p.source);
       check('serialized category finding contains no PII-shaped field names', matched.length === 0, matched);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ACQUISITION_METHOD_PERFORMANCE_PROFILE (Insights Engine v1.2)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Reused across several fixtures below — the exact representative
+  // acceptance numbers from the task (Purchase produces stronger realized
+  // economics; Trade exits faster).
+  const ACCEPTANCE_METHOD_ROWS: MethodRowFixture[] = [
+    { acquisitionMethod: 'purchase', exitMethod: 'sale', itemCount: 9, domSample: 9, profit: 1800, roi: 115, dom: 47, confidence: 'moderate' },
+    { acquisitionMethod: 'trade', exitMethod: 'sale', itemCount: 14, domSample: 14, profit: 0, roi: 0, dom: 15.5, confidence: 'stronger' },
+    { acquisitionMethod: 'purchase', exitMethod: 'trade', itemCount: 9, domSample: 9, profit: 1700, roi: 75, dom: 25, confidence: 'moderate' },
+    { acquisitionMethod: 'trade', exitMethod: 'trade', itemCount: 23, domSample: 23, profit: 500, roi: 25, dom: 16.5, confidence: 'stronger' },
+  ];
+
+  // ── M1: representative evidence returns PURCHASE_ECONOMICS_TRADE_SPEED ──
+  console.log('\n[M1 — acceptance check: representative evidence returns PURCHASE_ECONOMICS_TRADE_SPEED]');
+  {
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS));
+    check('result status is selected', result.status === 'selected', result);
+    if (result.status === 'selected') {
+      check('profile_code is PURCHASE_ECONOMICS_TRADE_SPEED', result.profile_code === 'PURCHASE_ECONOMICS_TRADE_SPEED', result.profile_code);
+      check('direction is tradeoff', result.direction === 'tradeoff', result.direction);
+      check('eligible_exit_method_comparison_count is 2', result.eligible_exit_method_comparison_count === 2, result);
+      const sale = comparisonFor('sale', result);
+      const trade = comparisonFor('trade', result);
+      check('Sale comparison: Purchase has the profit advantage', sale?.profit_advantage === 'Purchase', sale);
+      check('Sale comparison: Purchase has the ROI advantage', sale?.roi_advantage === 'Purchase', sale);
+      check('Sale comparison: Trade has the DOM (speed) advantage', sale?.dom_advantage === 'Trade', sale);
+      check('Trade comparison: Purchase has the profit advantage', trade?.profit_advantage === 'Purchase', trade);
+      check('Trade comparison: Purchase has the ROI advantage', trade?.roi_advantage === 'Purchase', trade);
+      check('Trade comparison: Trade has the DOM (speed) advantage', trade?.dom_advantage === 'Trade', trade);
+      check('summary explains stronger Purchase economics and faster Trade exits', result.summary.toLowerCase().includes('economics') || result.summary.toLowerCase().includes('profit'), result.summary);
+    }
+  }
+
+  // ── M2: the result is not hardcoded ──────────────────────────────────────
+  console.log('\n[M2 — result is not hardcoded]');
+  {
+    const rows: MethodRowFixture[] = [
+      { acquisitionMethod: 'purchase', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 1000, roi: 60, dom: 10, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 200, roi: 20, dom: 30, confidence: 'moderate' },
+      { acquisitionMethod: 'purchase', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 900, roi: 55, dom: 12, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 250, roi: 22, dom: 28, confidence: 'moderate' },
+    ];
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows));
+    check(
+      'a different fixture (Purchase wins profit+ROI+DOM everywhere) returns PURCHASE_BROAD_ADVANTAGE, not PURCHASE_ECONOMICS_TRADE_SPEED',
+      result.status === 'selected' && result.profile_code === 'PURCHASE_BROAD_ADVANTAGE',
+      result,
+    );
+  }
+
+  // ── M3: Purchase and Trade are compared within the same exit method ─────
+  console.log('\n[M3 — Purchase and Trade are compared within the same exit method]');
+  {
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS));
+    if (result.status === 'selected') {
+      const sale = comparisonFor('sale', result);
+      check('Sale comparison pairs Purchase->Sale (profit 1800) with Trade->Sale (profit 0)', sale?.purchase.median_net_profit === 1800 && sale?.trade.median_net_profit === 0, sale);
+    } else {
+      check('M3 setup produced a selected finding', false, result);
+    }
+  }
+
+  // ── M4: Purchase -> Sale is never directly compared with Trade -> Trade ──
+  console.log('\n[M4 — Purchase -> Sale is never compared with Trade -> Trade]');
+  {
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS));
+    if (result.status === 'selected') {
+      const sale = comparisonFor('sale', result);
+      const trade = comparisonFor('trade', result);
+      check('Sale comparison\'s Trade side is Trade->Sale (n=14), not Trade->Trade (n=23)', sale?.trade.item_count === 14, sale);
+      check('Trade comparison\'s Purchase side is Purchase->Trade (profit 1700), not Purchase->Sale (profit 1800)', trade?.purchase.median_net_profit === 1700, trade);
+    } else {
+      check('M4 setup produced a selected finding', false, result);
+    }
+  }
+
+  // ── M5: medians from multiple exit methods are not combined ─────────────
+  console.log('\n[M5 — medians are not combined into a synthetic overall median]');
+  {
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS));
+    if (result.status === 'selected') {
+      const sale = comparisonFor('sale', result);
+      const trade = comparisonFor('trade', result);
+      check('Sale comparison retains its own raw Purchase profit (1800), not an average with Purchase->Trade (1700)', sale?.purchase.median_net_profit === 1800, sale);
+      check('Trade comparison retains its own raw Purchase profit (1700), not an average with Purchase->Sale (1800)', trade?.purchase.median_net_profit === 1700, trade);
+      check('no top-level combined median field exists on the finding itself', !('median_net_profit' in result) && !('median_roi' in result) && !('median_days_on_market' in result), Object.keys(result));
+    } else {
+      check('M5 setup produced a selected finding', false, result);
+    }
+  }
+
+  // ── M6/M8: pooled all-purpose evidence used; Hybrid/Personal included ───
+  console.log('\n[M6/M8 — pooled all-purpose evidence used (Hybrid/Personal remain included)]');
+  {
+    const evidence = makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS, { includeByPurposeDecoy: true });
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(evidence);
+    check(
+      'the Business-only-shaped method_paths_by_purpose decoy is ignored — result is unaffected',
+      result.status === 'selected' && result.profile_code === 'PURCHASE_ECONOMICS_TRADE_SPEED',
+      result,
+    );
+    if (result.status === 'selected') {
+      const sale = comparisonFor('sale', result);
+      check('pooled metrics (n=9, not the decoy\'s n=1) drive the result', sale?.purchase.item_count === 9, sale);
+    }
+  }
+
+  // ── M7: shared and Purpose-specific evidence are ignored ─────────────────
+  console.log('\n[M7 — shared and Purpose-specific evidence are ignored (wiring check)]');
+  {
+    const selectFindingsSource = fs.readFileSync(
+      path.join(__dirname, '../src/lib/analytics/insights/selectFindings.ts'),
+      'utf8',
+    );
+    check(
+      'selectFindings.ts wires target_user_acquisition_evidence into the acquisition-method rule',
+      selectFindingsSource.includes('evaluateAcquisitionMethodPerformanceProfile(input.targetUserAcquisitionEvidence)'),
+    );
+  }
+
+  // ── M9: fewer than two eligible exit-method comparisons returns no finding
+  console.log('\n[M9 — fewer than two eligible exit-method comparisons returns no finding]');
+  {
+    const rows: MethodRowFixture[] = [
+      { acquisitionMethod: 'purchase', exitMethod: 'sale', itemCount: 9, domSample: 9, profit: 1800, roi: 115, dom: 47, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'sale', itemCount: 14, domSample: 14, profit: 0, roi: 0, dom: 15.5, confidence: 'stronger' },
+    ];
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows));
+    check(
+      'result is no_eligible_finding with INSUFFICIENT_COMPARABLE_EXIT_METHODS',
+      result.status === 'no_eligible_finding' && result.reason_codes.includes('INSUFFICIENT_COMPARABLE_EXIT_METHODS'),
+      result,
+    );
+  }
+
+  // ── M10: insufficient rows are excluded, not labelled weak ──────────────
+  console.log('\n[M10 — insufficient rows are excluded, not labelled weak]');
+  {
+    const rows: MethodRowFixture[] = ACCEPTANCE_METHOD_ROWS.map((r) =>
+      r.acquisitionMethod === 'purchase' && r.exitMethod === 'sale' ? { ...r, itemCount: 3 } : r,
+    );
+    const { candidateEvaluations } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows));
+    const thin = methodEvalFor('purchase', 'sale', candidateEvaluations);
+    check('the thin-sample row is ineligible', thin?.eligible === false, thin);
+    check('the thin-sample row reason is ITEM_COUNT_BELOW_MINIMUM', !!thin?.eligibility_failure_reasons.includes('ITEM_COUNT_BELOW_MINIMUM'), thin);
+  }
+
+  // ── M11: profit difference alone does not create the full tradeoff profile
+  console.log('\n[M11 — profit difference alone does not create the full economics/speed tradeoff profile]');
+  {
+    const rows: MethodRowFixture[] = [
+      { acquisitionMethod: 'purchase', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 1000, roi: 50, dom: 20, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 700, roi: 50, dom: 20, confidence: 'moderate' },
+      { acquisitionMethod: 'purchase', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 950, roi: 48, dom: 19, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 680, roi: 48, dom: 19, confidence: 'moderate' },
+    ];
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows));
+    check(
+      'profit-only advantage (ROI and DOM neutral) produces PURCHASE_BROAD_ADVANTAGE, not PURCHASE_ECONOMICS_TRADE_SPEED',
+      result.status === 'selected' && result.profile_code === 'PURCHASE_BROAD_ADVANTAGE',
+      result,
+    );
+  }
+
+  // ── M12: ROI and DOM thresholds are applied correctly ────────────────────
+  console.log('\n[M12 — ROI and DOM thresholds applied at their exact boundaries]');
+  {
+    const rows: MethodRowFixture[] = [
+      { acquisitionMethod: 'purchase', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 1000, roi: 55, dom: 107, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 1000, roi: 50, dom: 100, confidence: 'moderate' },
+      { acquisitionMethod: 'purchase', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 1000, roi: 54.9, dom: 24, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 1000, roi: 50, dom: 20, confidence: 'moderate' },
+    ];
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows));
+    if (result.status === 'selected') {
+      const sale = comparisonFor('sale', result);
+      const trade = comparisonFor('trade', result);
+      check('ROI diff of exactly 5pp triggers ROI_FAVORS_PURCHASE', sale?.roi_advantage === 'Purchase', sale);
+      check('DOM diff of exactly 7 days (but <20%) still triggers via the absolute leg', sale?.dom_advantage === 'Trade', sale);
+      check('ROI diff of 4.9pp (just under 5pp) does not trigger', trade?.roi_advantage === 'Neutral', trade);
+      check('DOM diff of exactly 20% (but <7 days) still triggers via the relative leg', trade?.dom_advantage === 'Trade', trade);
+    } else {
+      check('M12 setup produced a selected finding', false, result);
+    }
+  }
+
+  // ── M13: reverse data can produce TRADE_ECONOMICS_PURCHASE_SPEED ────────
+  console.log('\n[M13 — reverse data produces TRADE_ECONOMICS_PURCHASE_SPEED]');
+  {
+    const rows: MethodRowFixture[] = [
+      { acquisitionMethod: 'trade', exitMethod: 'sale', itemCount: 9, domSample: 9, profit: 1800, roi: 115, dom: 47, confidence: 'moderate' },
+      { acquisitionMethod: 'purchase', exitMethod: 'sale', itemCount: 14, domSample: 14, profit: 0, roi: 0, dom: 15.5, confidence: 'stronger' },
+      { acquisitionMethod: 'trade', exitMethod: 'trade', itemCount: 9, domSample: 9, profit: 1700, roi: 75, dom: 25, confidence: 'moderate' },
+      { acquisitionMethod: 'purchase', exitMethod: 'trade', itemCount: 23, domSample: 23, profit: 500, roi: 25, dom: 16.5, confidence: 'stronger' },
+    ];
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows));
+    check(
+      'profile_code is TRADE_ECONOMICS_PURCHASE_SPEED',
+      result.status === 'selected' && result.profile_code === 'TRADE_ECONOMICS_PURCHASE_SPEED',
+      result,
+    );
+  }
+
+  // ── M14: a consistent one-method advantage can produce a broad-advantage
+  // profile ────────────────────────────────────────────────────────────────
+  console.log('\n[M14 — a consistent one-method advantage produces a broad-advantage profile]');
+  {
+    const rows: MethodRowFixture[] = [
+      { acquisitionMethod: 'purchase', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 200, roi: 20, dom: 30, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 1000, roi: 60, dom: 10, confidence: 'moderate' },
+      { acquisitionMethod: 'purchase', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 250, roi: 22, dom: 28, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 900, roi: 55, dom: 12, confidence: 'moderate' },
+    ];
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows));
+    check(
+      'Trade winning profit+ROI+DOM in both comparisons produces TRADE_BROAD_ADVANTAGE with direction strength',
+      result.status === 'selected' && result.profile_code === 'TRADE_BROAD_ADVANTAGE' && result.direction === 'strength',
+      result,
+    );
+  }
+
+  // ── M15: conflicting directions produce MIXED_BY_EXIT_METHOD ────────────
+  console.log('\n[M15 — conflicting directions produce MIXED_BY_EXIT_METHOD]');
+  {
+    const rows: MethodRowFixture[] = [
+      { acquisitionMethod: 'purchase', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 1000, roi: 60, dom: 10, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 200, roi: 20, dom: 30, confidence: 'moderate' },
+      { acquisitionMethod: 'purchase', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 250, roi: 22, dom: 28, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 900, roi: 55, dom: 12, confidence: 'moderate' },
+    ];
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows));
+    check(
+      'Purchase winning Sale broadly and Trade winning Trade broadly produces MIXED_BY_EXIT_METHOD',
+      result.status === 'selected' && result.profile_code === 'MIXED_BY_EXIT_METHOD',
+      result,
+    );
+  }
+
+  // ── M16: small differences produce NO_MATERIAL_DIFFERENCE ───────────────
+  console.log('\n[M16 — small differences produce NO_MATERIAL_DIFFERENCE]');
+  {
+    const rows: MethodRowFixture[] = [
+      { acquisitionMethod: 'purchase', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 1000, roi: 50, dom: 20, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'sale', itemCount: 10, domSample: 10, profit: 1010, roi: 50.5, dom: 19.5, confidence: 'moderate' },
+      { acquisitionMethod: 'purchase', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 990, roi: 49, dom: 20.5, confidence: 'moderate' },
+      { acquisitionMethod: 'trade', exitMethod: 'trade', itemCount: 10, domSample: 10, profit: 1000, roi: 49.5, dom: 20, confidence: 'moderate' },
+    ];
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows));
+    check(
+      'result is no_eligible_finding with NO_MATERIAL_DIFFERENCE',
+      result.status === 'no_eligible_finding' && result.reason_codes.includes('NO_MATERIAL_DIFFERENCE'),
+      result,
+    );
+  }
+
+  // ── M17: null metrics are handled safely ─────────────────────────────────
+  console.log('\n[M17 — null metrics handled safely, no throw]');
+  {
+    const rows: MethodRowFixture[] = ACCEPTANCE_METHOD_ROWS.map((r) =>
+      r.acquisitionMethod === 'purchase' && r.exitMethod === 'sale' ? { ...r, profit: null } : r,
+    );
+    let threw = false;
+    let candidateEvaluations: ReturnType<typeof evaluateAcquisitionMethodPerformanceProfile>['candidateEvaluations'] = [];
+    try {
+      candidateEvaluations = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(rows)).candidateEvaluations;
+    } catch {
+      threw = true;
+    }
+    check('evaluating a null-profit row does not throw', !threw);
+    const nullRow = methodEvalFor('purchase', 'sale', candidateEvaluations);
+    check('the null-profit row is ineligible with the correct reason', nullRow?.eligible === false && nullRow.eligibility_failure_reasons.includes('MEDIAN_NET_PROFIT_MISSING'), nullRow);
+  }
+
+  // ── M18: confidence is capped at the weakest evidence row used ──────────
+  console.log('\n[M18 — confidence is capped at the weakest evidence row used]');
+  {
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS));
+    check(
+      'confidence is moderate (the weaker of the two moderate/stronger rows used), not stronger',
+      result.status === 'selected' && result.confidence === 'moderate',
+      result,
+    );
+  }
+
+  // ── M19: existing two findings remain unchanged ──────────────────────────
+  console.log('\n[M19 — existing STRONG_BALANCED_ACQUISITION_BAND / STRONG_CATEGORY_ACQUISITION_BAND findings remain unchanged]');
+  {
+    const broadEvidence = makeEvidence([
+      { order: 2, label: '$1,000-1,999', total: 15, realized: 8, domSample: 8, realizationRate: 55, profit: 550, roi: 45, dom: 15, confidence: 'moderate' },
+      { order: 3, label: '$2,000-2,999', total: 28, realized: 19, domSample: 19, realizationRate: 67.86, profit: 750, roi: 33.33, dom: 10.5, confidence: 'stronger' },
+      { order: 4, label: '$3,000-3,999', total: 12, realized: 6, domSample: 6, realizationRate: 60, profit: 600, roi: 20, dom: 20, confidence: 'moderate' },
+      { order: 5, label: '$4,000-4,999', total: 10, realized: 5, domSample: 5, realizationRate: 58, profit: 650, roi: 25, dom: 25, confidence: 'low' },
+    ]) as Record<string, unknown>;
+    const methodEvidence = makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS) as Record<string, unknown>;
+    const combinedAcquisitionEvidence = {
+      ...broadEvidence,
+      acquisition_to_exit_analysis: {
+        ...(broadEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+        ...(methodEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+      },
+    };
+    const categoryEvidence = makeCategoryEvidence([...GUITARS_BANDS, ...PEDALS_NO_QUALIFIER_BANDS]);
+
+    const insights = selectFindings({
+      targetUserAcquisitionEvidence: combinedAcquisitionEvidence,
+      targetUserInventorySegmentationEvidence: categoryEvidence,
+    });
+
+    check('all three rule families are present in one insights payload', insights.selected_findings.length === 3, insights.selected_findings.map((f) => f.finding_code));
+    const broadFinding = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE) as SelectedFindingForTest | undefined;
+    const categoryFinding = insights.selected_findings.find((f) => f.finding_code === CATEGORY_FINDING_CODE) as SelectedFindingForTest | undefined;
+    const methodFinding = insights.selected_findings.find((f) => f.finding_code === METHOD_PROFILE_FINDING_CODE) as AcquisitionMethodPerformanceProfileFinding | undefined;
+
+    check('the broad finding is numerically unchanged (median_net_profit 750)', broadFinding?.metrics.median_net_profit === 750, broadFinding?.metrics);
+    check('the category finding is numerically unchanged (Guitars x $2,000-2,999)', categoryFinding?.segment.category_name === 'Guitars' && categoryFinding?.segment.acquisition_value_band_label === '$2,000-2,999', categoryFinding?.segment);
+    check('the acquisition-method finding is also present (PURCHASE_ECONOMICS_TRADE_SPEED)', methodFinding?.profile_code === 'PURCHASE_ECONOMICS_TRADE_SPEED', methodFinding);
+    check('insights_engine_version is 1.2', insights.insights_engine_version === '1.2', insights.insights_engine_version);
+    check('findings_selector_version is 1.2', insights.findings_selector_version === '1.2', insights.findings_selector_version);
+  }
+
+  // ── M20: old Insights Engine 1.0 and 1.1 snapshots remain readable ──────
+  console.log('\n[M20 — old Insights Engine v1.0 and v1.1 snapshots remain readable]');
+  {
+    const baseSnapshot: Record<string, unknown> = {
+      snapshot_schema_version: '2.10',
+      analytics_definition_version: '2.10',
+      generated_at: new Date().toISOString(),
+      evidence_scope: 'shared_inventory_population',
+      purpose_semantics: 'v2',
+      shared_purpose_evidence: {},
+      target_user_purpose_evidence: {},
+      target_user_open_inventory_evidence: {},
+      shared_acquisition_evidence: {},
+      target_user_acquisition_evidence: {},
+      shared_inventory_segmentation_evidence: {},
+      target_user_inventory_segmentation_evidence: {},
+      shared_deal_channel_evidence: {},
+      target_user_deal_channel_evidence: {},
+      shared_listing_channel_evidence: {},
+      target_user_listing_channel_evidence: {},
+      shared_capital_liquidity_evidence: {},
+      target_user_capital_liquidity_evidence: {},
+      shared_calendar_seasonality_evidence: {},
+      target_user_calendar_seasonality_evidence: {},
+    };
+
+    const v11ShapedInsights = {
+      insights_engine_version: '1.1',
+      findings_selector_version: '1.1',
+      source_analytics_version: '2.10',
+      generated_at: new Date().toISOString(),
+      selected_findings: [
+        {
+          finding_code: CATEGORY_FINDING_CODE,
+          family: 'category_acquisition_performance',
+          direction: 'strength',
+          status: 'selected',
+          headline: 'Guitars × $2,000-2,999 is a strong, balanced segment',
+          summary: 'placeholder v1.1-shaped summary',
+          segment: { category_id: 1, category_name: 'Guitars', acquisition_value_band_label: '$2,000-2,999', acquisition_value_band_order: 3 },
+          metrics: { total_item_count: 25, realized_item_count: 17, median_net_profit: 800, median_roi: 35.71, median_days_on_market: 9, dom_sample_size: 17, realization_rate_percent: 68 },
+          baseline: { type: 'same_category_peer_band_median_baseline', median_net_profit: 742.5, median_roi: 31.44, median_days_on_market: 18.25, realization_rate_percent: 57.43 },
+          triggered_rules: ['DOM_FASTER_THAN_PEER_BASELINE', 'REALIZATION_ABOVE_PEER_BASELINE', 'NO_MATERIAL_WEAKNESS'],
+          confidence: 'stronger',
+          limitations: ['PEER_BASELINE_USES_MEDIAN_OF_SEGMENT_METRICS'],
+          evidence_refs: ['target_user_inventory_segmentation_evidence.category_type_performance.performance_by_category_and_acquisition_band'],
+          relationship: { relationship: 'refines', related_finding_code: BROAD_FINDING_CODE, dedupe_group: 'ACQUISITION_BAND_3' },
+        },
+      ],
+      rule_evaluations: [
+        { finding_code: CATEGORY_FINDING_CODE, category_id: 1, category_name: 'Guitars', acquisition_value_band_order: 3, acquisition_value_band_label: '$2,000-2,999', eligible: true, eligibility_failure_reasons: [], material_improvement_triggers: ['DOM_FASTER_THAN_PEER_BASELINE', 'REALIZATION_ABOVE_PEER_BASELINE'], material_weakness_triggers: [], qualifies: true, selected: true },
+      ],
+    };
+
+    const v10Snapshot = { ...baseSnapshot, insights: {
+      insights_engine_version: '1.0',
+      findings_selector_version: '1.0',
+      source_analytics_version: '2.10',
+      generated_at: new Date().toISOString(),
+      selected_findings: [],
+      rule_evaluations: [],
+    } };
+    const v11Snapshot = { ...baseSnapshot, insights: v11ShapedInsights };
+
+    check('a stored v2.10 snapshot carrying an Insights Engine v1.0-shaped insights section still validates', isValidAnalyticsSnapshot(v10Snapshot));
+    check('a stored v2.10 snapshot carrying an Insights Engine v1.1-shaped insights section (no acquisition-method finding) still validates', isValidAnalyticsSnapshot(v11Snapshot));
+  }
+
+  // ── M21: findings carry no user IDs, item IDs, names, models, notes, or
+  // emails ─────────────────────────────────────────────────────────────────
+  console.log('\n[M21 — acquisition-method findings carry no user IDs, item IDs, names, models, notes, or emails]');
+  {
+    const { result } = evaluateAcquisitionMethodPerformanceProfile(makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS));
+    if (result.status !== 'selected') {
+      check('M21 setup produced a selected finding', false, result);
+    } else {
+      const allowedKeysByPath: Record<string, string[]> = {
+        root: ['finding_code', 'family', 'direction', 'status', 'headline', 'summary', 'profile_code', 'eligible_exit_method_comparison_count', 'comparisons', 'confidence', 'limitations', 'evidence_refs'],
+        comparisons: ['exit_method', 'purchase', 'trade', 'deltas', 'profit_advantage', 'roi_advantage', 'dom_advantage', 'triggered_rules'],
+        purchase: ['item_count', 'median_net_profit', 'median_roi', 'median_days_on_market', 'dom_sample_size', 'confidence'],
+        trade: ['item_count', 'median_net_profit', 'median_roi', 'median_days_on_market', 'dom_sample_size', 'confidence'],
+        deltas: ['median_net_profit', 'median_roi', 'median_days_on_market'],
+      };
+
+      const unexpectedKeys: string[] = [];
+      const walk = (value: unknown, pathKey: string): void => {
+        if (Array.isArray(value)) {
+          for (const item of value) walk(item, pathKey === 'comparisons' ? 'comparisons-entry' : pathKey);
+          return;
+        }
+        if (typeof value !== 'object' || value === null) return;
+        const effectivePathKey = pathKey === 'comparisons-entry' ? 'comparisons' : pathKey;
+        const allowed = allowedKeysByPath[effectivePathKey];
+        for (const key of Object.keys(value as Record<string, unknown>)) {
+          if (allowed && !allowed.includes(key)) unexpectedKeys.push(`${effectivePathKey}.${key}`);
+          const nextPathKey = ['purchase', 'trade', 'deltas', 'comparisons'].includes(key) ? key : key;
+          walk((value as Record<string, unknown>)[key], nextPathKey);
+        }
+      };
+      walk(result, 'root');
+
+      check('no unexpected keys (no item/user identity fields) appear anywhere in the acquisition-method finding', unexpectedKeys.length === 0, unexpectedKeys);
+
+      const serialized = JSON.stringify(result);
+      const forbiddenPatterns = [/"user_id"/i, /"item_id"/i, /"email"/i, /"model"/i, /"notes"/i, /"name"\s*:/i];
+      const matched = forbiddenPatterns.filter((p) => p.test(serialized)).map((p) => p.source);
+      check('serialized acquisition-method finding contains no PII-shaped field names', matched.length === 0, matched);
     }
   }
 
