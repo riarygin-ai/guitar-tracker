@@ -40,6 +40,10 @@ import {
   evaluateStrongDealInToDealOutJourney,
   FINDING_CODE as JOURNEY_FINDING_CODE,
 } from '../src/lib/analytics/insights/rules/strongDealInToDealOutJourney';
+import {
+  evaluateStrongDealOutChannel,
+  FINDING_CODE as DEAL_OUT_CHANNEL_FINDING_CODE,
+} from '../src/lib/analytics/insights/rules/strongDealOutChannel';
 import { selectFindings } from '../src/lib/analytics/insights/selectFindings';
 import { isValidAnalyticsSnapshot } from '../src/lib/analytics/runAnalytics';
 import type {
@@ -356,6 +360,78 @@ function journeyEvalFor(
   evaluations: ReturnType<typeof evaluateStrongDealInToDealOutJourney>['candidateEvaluations'],
 ) {
   return evaluations.find((e) => e.deal_in_channel_id === dealInChannelId && e.deal_out_channel_id === dealOutChannelId);
+}
+
+// ── Deal Out Channel fixture builder ─────────────────────────────────────
+// Mirrors target_user_deal_channel_evidence.deal_out_channel_performance.
+// performance_by_deal_out_channel (dot_perf_rows) — one row per
+// deal_out_channel_id, pooled across every Purpose.
+
+interface DealOutChannelFixture {
+  channelId: number | null;
+  channelName: string | null;
+  itemCount: number;
+  distinctDealCount: number;
+  domSample: number;
+  profit: number | null;
+  roi: number | null;
+  dom: number | null;
+  confidence: ConfidenceTier | null;
+}
+
+function makeDealOutChannelEvidence(channels: DealOutChannelFixture[], options?: { includeByPurposeDecoy?: boolean }): unknown {
+  const dealOutChannelPerformance: Record<string, unknown> = {
+    performance_by_deal_out_channel: channels.map((c) => ({
+      deal_out_channel_id: c.channelId,
+      deal_out_channel_name: c.channelName,
+      deal_out_channel_requires_listing: false,
+      deal_out_item_count: c.itemCount,
+      deal_out_distinct_deal_count: c.distinctDealCount,
+      sale_exit_item_count: c.itemCount,
+      trade_exit_item_count: 0,
+      historical_item_count: 0,
+      app_tracked_item_count: c.itemCount,
+      total_exit_value: null,
+      total_acquisition_capital: null,
+      total_realized_net_profit: null,
+      median_exit_value: null,
+      median_net_profit: c.profit,
+      median_roi: c.roi,
+      dom_sample_size: c.domSample,
+      median_days_on_market: c.dom,
+      holding_sample_size: c.itemCount,
+      median_holding_days: c.dom,
+      confidence: c.confidence,
+    })),
+  };
+
+  if (options?.includeByPurposeDecoy) {
+    // Deliberately worse, tiny-sample decoy under a DIFFERENT key
+    // (performance_by_deal_out_channel_by_purpose) — the rule must never
+    // read this key.
+    dealOutChannelPerformance.performance_by_deal_out_channel_by_purpose = channels.map((c) => ({
+      current_purpose_id: 1,
+      current_purpose_name: 'Business',
+      deal_out_channel_id: c.channelId,
+      deal_out_channel_name: c.channelName,
+      deal_out_item_count: 1,
+      deal_out_distinct_deal_count: 1,
+      median_net_profit: -99999,
+      median_roi: -99999,
+      dom_sample_size: 0,
+      median_days_on_market: 9999,
+      confidence: 'insufficient',
+    }));
+  }
+
+  return { deal_out_channel_performance: dealOutChannelPerformance };
+}
+
+function dealOutChannelEvalFor(
+  channelId: number | null,
+  evaluations: ReturnType<typeof evaluateStrongDealOutChannel>['candidateEvaluations'],
+) {
+  return evaluations.find((e) => e.channel_id === channelId);
 }
 
 function main() {
@@ -972,8 +1048,8 @@ function main() {
     });
     const viaOrchestrator = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
 
-    check('insights_engine_version is 1.3', insights.insights_engine_version === '1.3', insights.insights_engine_version);
-    check('findings_selector_version is 1.3', insights.findings_selector_version === '1.3', insights.findings_selector_version);
+    check('insights_engine_version is 1.4', insights.insights_engine_version === '1.4', insights.insights_engine_version);
+    check('findings_selector_version is 1.4', insights.findings_selector_version === '1.4', insights.findings_selector_version);
     check(
       'the broad finding produced via selectFindings is identical to calling the rule directly (aside from generated_at, which the broad rule does not even set)',
       JSON.stringify(viaOrchestrator) === JSON.stringify(directResult),
@@ -1395,8 +1471,8 @@ function main() {
     check('the broad finding is numerically unchanged (median_net_profit 750)', broadFinding?.metrics.median_net_profit === 750, broadFinding?.metrics);
     check('the category finding is numerically unchanged (Guitars x $2,000-2,999)', categoryFinding?.segment.category_name === 'Guitars' && categoryFinding?.segment.acquisition_value_band_label === '$2,000-2,999', categoryFinding?.segment);
     check('the acquisition-method finding is also present (PURCHASE_ECONOMICS_TRADE_SPEED)', methodFinding?.profile_code === 'PURCHASE_ECONOMICS_TRADE_SPEED', methodFinding);
-    check('insights_engine_version is 1.3', insights.insights_engine_version === '1.3', insights.insights_engine_version);
-    check('findings_selector_version is 1.3', insights.findings_selector_version === '1.3', insights.findings_selector_version);
+    check('insights_engine_version is 1.4', insights.insights_engine_version === '1.4', insights.insights_engine_version);
+    check('findings_selector_version is 1.4', insights.findings_selector_version === '1.4', insights.findings_selector_version);
   }
 
   // ── M20: old Insights Engine 1.0 and 1.1 snapshots remain readable ──────
@@ -1875,8 +1951,8 @@ function main() {
     check('the category finding (minus orchestrator relationship linking) is byte-identical to calling the rule directly', JSON.stringify(categoryWithoutRelationship) === JSON.stringify(directCategory), { categoryWithoutRelationship, directCategory });
     check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
     check('the journey finding is also present (Marketplace -> Marketplace)', (viaOrchestratorJourney as SelectedFindingForTest | undefined)?.segment.deal_in_channel_name === 'Marketplace', viaOrchestratorJourney);
-    check('insights_engine_version is 1.3', insights.insights_engine_version === '1.3', insights.insights_engine_version);
-    check('findings_selector_version is 1.3', insights.findings_selector_version === '1.3', insights.findings_selector_version);
+    check('insights_engine_version is 1.4', insights.insights_engine_version === '1.4', insights.insights_engine_version);
+    check('findings_selector_version is 1.4', insights.findings_selector_version === '1.4', insights.findings_selector_version);
   }
 
   // ── J21: old Insights Engine snapshots (1.0, 1.1, 1.2) remain readable ──
@@ -1969,6 +2045,420 @@ function main() {
       const forbiddenPatterns = [/"user_id"/i, /"item_id"/i, /"email"/i, /"model"/i, /"notes"/i, /"counterparty/i, /"contact/i, /"deal_id"/i];
       const matched = forbiddenPatterns.filter((p) => p.test(serialized)).map((p) => p.source);
       check('serialized journey finding contains no PII- or counterparty-shaped field names', matched.length === 0, matched);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // STRONG_DEAL_OUT_CHANNEL (Insights Engine v1.4)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Reused across several fixtures below — representative numbers close to
+  // the task's acceptance expectation (Marketplace wins; Kijiji has similar
+  // profit but slower DOM; Reverb has competitive ROI but materially lower
+  // profit — both disqualified by their own weakness, not selected).
+  const DEAL_OUT_CHANNEL_FIXTURES: DealOutChannelFixture[] = [
+    { channelId: 1, channelName: 'Marketplace', itemCount: 20, distinctDealCount: 18, domSample: 20, profit: 700, roi: 33, dom: 14, confidence: 'stronger' },
+    { channelId: 2, channelName: 'Kijiji', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 690, roi: 30, dom: 25, confidence: 'stronger' },
+    { channelId: 3, channelName: 'Reverb', itemCount: 8, distinctDealCount: 6, domSample: 8, profit: 300, roi: 32, dom: 16, confidence: 'moderate' },
+  ];
+
+  // ── D1: representative evidence selects Marketplace ─────────────────────
+  console.log('\n[D1 — acceptance check: Marketplace can be selected]');
+  {
+    const { result } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(DEAL_OUT_CHANNEL_FIXTURES));
+    check('result status is selected', result.status === 'selected', result);
+    if (result.status === 'selected') {
+      check('winner channel is Marketplace', result.segment.channel_name === 'Marketplace', result.segment);
+      check('metrics.item_count is 20', result.metrics.item_count === 20, result.metrics);
+      check('metrics.median_net_profit is 700', result.metrics.median_net_profit === 700, result.metrics);
+      check('metrics.median_roi is 33', result.metrics.median_roi === 33, result.metrics);
+      check('metrics.median_days_on_market is 14', result.metrics.median_days_on_market === 14, result.metrics);
+      check('confidence is stronger', result.confidence === 'stronger', result.confidence);
+      check('Kijiji (similar profit, slower DOM) does not appear as a qualifying runner-up here', result.runner_up === undefined, result.runner_up);
+    }
+  }
+
+  // ── D2: the winner is not hardcoded ──────────────────────────────────────
+  console.log('\n[D2 — winner is not hardcoded]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      { channelId: 40, channelName: 'P', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 300, roi: 15, dom: 30, confidence: 'stronger' },
+      { channelId: 41, channelName: 'Q', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 320, roi: 18, dom: 28, confidence: 'stronger' },
+      { channelId: 42, channelName: 'R', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 900, roi: 50, dom: 8, confidence: 'stronger' },
+      { channelId: 43, channelName: 'S', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 310, roi: 16, dom: 29, confidence: 'stronger' },
+    ];
+    const { result } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    check(
+      'a different fixture selects R, not Marketplace',
+      result.status === 'selected' && result.segment.channel_name === 'R',
+      result,
+    );
+  }
+
+  // ── D3/D4/D5: correct pooled evidence used; shared/purpose ignored;
+  // Hybrid/Personal remain included ────────────────────────────────────────
+  console.log('\n[D3/D4/D5 — pooled all-purpose evidence used; shared/_by_purpose evidence ignored]');
+  {
+    const evidence = makeDealOutChannelEvidence(DEAL_OUT_CHANNEL_FIXTURES, { includeByPurposeDecoy: true });
+    const { result } = evaluateStrongDealOutChannel(evidence);
+    check(
+      'the Business-only-shaped _by_purpose decoy is ignored — result is unaffected',
+      result.status === 'selected' && result.segment.channel_name === 'Marketplace',
+      result,
+    );
+    if (result.status === 'selected') {
+      check('pooled metrics (n=20, not the decoy\'s n=1) drive the result', result.metrics.item_count === 20, result.metrics);
+    }
+    const selectFindingsSource = fs.readFileSync(
+      path.join(__dirname, '../src/lib/analytics/insights/selectFindings.ts'),
+      'utf8',
+    );
+    check(
+      'selectFindings.ts wires target_user_deal_channel_evidence into the deal-out-channel rule',
+      selectFindingsSource.includes('evaluateStrongDealOutChannel(input.targetUserDealChannelEvidence)'),
+    );
+  }
+
+  // ── D6: null and unknown channels are excluded ───────────────────────────
+  console.log('\n[D6 — null and unknown channels are excluded]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      ...DEAL_OUT_CHANNEL_FIXTURES,
+      { channelId: null, channelName: null, itemCount: 25, distinctDealCount: 20, domSample: 25, profit: 2000, roi: 80, dom: 3, confidence: 'stronger' },
+    ];
+    const { result, candidateEvaluations } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    const unknownRow = dealOutChannelEvalFor(null, candidateEvaluations);
+    check('the null-channel row is ineligible', unknownRow?.eligible === false, unknownRow);
+    check('the null-channel row reason is CHANNEL_IDENTITY_MISSING', !!unknownRow?.eligibility_failure_reasons.includes('CHANNEL_IDENTITY_MISSING'), unknownRow);
+    check(
+      'the null-channel row is never selected despite its attractive (fabricated) metrics',
+      !(result.status === 'selected' && result.metrics.median_net_profit === 2000),
+      result,
+    );
+  }
+
+  // ── D7: distinct deal count is required independently from item count ───
+  console.log('\n[D7 — distinct deal count is required independently from item count]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      ...DEAL_OUT_CHANNEL_FIXTURES,
+      { channelId: 5, channelName: 'BulkLot', itemCount: 20, distinctDealCount: 2, domSample: 20, profit: 1000, roi: 50, dom: 5, confidence: 'stronger' },
+    ];
+    const { candidateEvaluations } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    const bulkLot = dealOutChannelEvalFor(5, candidateEvaluations);
+    check('a 20-item channel backed by only 2 distinct exit deals is ineligible', bulkLot?.eligible === false, bulkLot);
+    check('the reason is DISTINCT_DEAL_COUNT_BELOW_MINIMUM', !!bulkLot?.eligibility_failure_reasons.includes('DISTINCT_DEAL_COUNT_BELOW_MINIMUM'), bulkLot);
+  }
+
+  // ── D8: fewer than three eligible channels returns no finding ────────────
+  console.log('\n[D8 — fewer than three eligible channels returns no finding]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      { channelId: 1, channelName: 'Marketplace', itemCount: 20, distinctDealCount: 18, domSample: 20, profit: 700, roi: 33, dom: 14, confidence: 'stronger' },
+      { channelId: 2, channelName: 'Kijiji', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 690, roi: 30, dom: 25, confidence: 'stronger' },
+    ];
+    const { result } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    check(
+      'result is no_eligible_finding with INSUFFICIENT_ELIGIBLE_DEAL_OUT_CHANNELS',
+      result.status === 'no_eligible_finding' && result.reason_codes.includes('INSUFFICIENT_ELIGIBLE_DEAL_OUT_CHANNELS'),
+      result,
+    );
+  }
+
+  // ── D9: ineligible channels are not marked weak ──────────────────────────
+  console.log('\n[D9 — ineligible channels are not marked weak]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      ...DEAL_OUT_CHANNEL_FIXTURES,
+      { channelId: 6, channelName: 'Thin', itemCount: 3, distinctDealCount: 3, domSample: 3, profit: 500, roi: 25, dom: 15, confidence: 'low' },
+    ];
+    const { candidateEvaluations } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    const thin = dealOutChannelEvalFor(6, candidateEvaluations);
+    check('the thin channel is ineligible', thin?.eligible === false, thin);
+    check('the thin channel reason is ITEM_COUNT_BELOW_MINIMUM', !!thin?.eligibility_failure_reasons.includes('ITEM_COUNT_BELOW_MINIMUM'), thin);
+    check('the thin channel carries no improvement or weakness trigger (never evaluated)', thin?.material_improvement_triggers.length === 0 && thin?.material_weakness_triggers.length === 0, thin);
+  }
+
+  // ── D10: highest ROI alone does not win ──────────────────────────────────
+  console.log('\n[D10 — highest ROI alone does not win]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      { channelId: 50, channelName: 'W', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 280, roi: 17, dom: 27, confidence: 'stronger' },
+      { channelId: 51, channelName: 'X-high-roi', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 200, roi: 80, dom: 40, confidence: 'stronger' },
+      { channelId: 52, channelName: 'Y-balanced', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 500, roi: 22, dom: 15, confidence: 'stronger' },
+      { channelId: 53, channelName: 'Z', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 300, roi: 18, dom: 25, confidence: 'stronger' },
+    ];
+    const { result, candidateEvaluations } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    check('the highest-ROI channel does not qualify', dealOutChannelEvalFor(51, candidateEvaluations)?.qualifies === false);
+    check('the balanced channel is selected instead', result.status === 'selected' && result.segment.channel_name === 'Y-balanced', result);
+  }
+
+  // ── D11: highest profit alone does not win ───────────────────────────────
+  console.log('\n[D11 — highest profit alone does not win]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      { channelId: 54, channelName: 'W2', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 280, roi: 17, dom: 27, confidence: 'stronger' },
+      { channelId: 55, channelName: 'X2-high-profit', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 2000, roi: 15, dom: 45, confidence: 'stronger' },
+      { channelId: 56, channelName: 'Y2-balanced', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 500, roi: 30, dom: 12, confidence: 'stronger' },
+      { channelId: 57, channelName: 'Z2', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 300, roi: 18, dom: 25, confidence: 'stronger' },
+    ];
+    const { result, candidateEvaluations } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    check('the highest-profit channel does not qualify', dealOutChannelEvalFor(55, candidateEvaluations)?.qualifies === false);
+    check('the balanced channel is selected instead', result.status === 'selected' && result.segment.channel_name === 'Y2-balanced', result);
+  }
+
+  // ── D12: material DOM weakness prevents qualification ────────────────────
+  console.log('\n[D12 — material DOM weakness prevents qualification]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      { channelId: 58, channelName: 'G1', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 500, roi: 20, dom: 20, confidence: 'stronger' },
+      { channelId: 59, channelName: 'G2-profitable-slow', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 900, roi: 30, dom: 60, confidence: 'stronger' },
+      { channelId: 60, channelName: 'G3', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 480, roi: 18, dom: 18, confidence: 'stronger' },
+    ];
+    const { candidateEvaluations } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    const g2 = dealOutChannelEvalFor(59, candidateEvaluations);
+    check('the profitable channel has at least 2 improvement triggers', (g2?.material_improvement_triggers.length ?? 0) >= 2, g2);
+    check('the profitable channel also carries a DOM weakness trigger', !!g2?.material_weakness_triggers.includes('DOM_WORSE_THAN_PEER_BASELINE'), g2);
+    check('the profitable channel does not qualify', g2?.qualifies === false, g2);
+  }
+
+  // ── D13: fast but materially unprofitable channel does not qualify ──────
+  console.log('\n[D13 — fast but materially unprofitable channel does not qualify]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      { channelId: 61, channelName: 'F1', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 500, roi: 20, dom: 25, confidence: 'stronger' },
+      { channelId: 62, channelName: 'F2-fast-poor-profit', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 100, roi: 35, dom: 8, confidence: 'stronger' },
+      { channelId: 63, channelName: 'F3', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 520, roi: 19, dom: 27, confidence: 'stronger' },
+    ];
+    const { candidateEvaluations } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    const f2 = dealOutChannelEvalFor(62, candidateEvaluations);
+    check('the fast channel has at least 2 improvement triggers', (f2?.material_improvement_triggers.length ?? 0) >= 2, f2);
+    check('the fast channel also carries a profit weakness trigger', !!f2?.material_weakness_triggers.includes('PROFIT_BELOW_PEER_BASELINE'), f2);
+    check('the fast channel does not qualify', f2?.qualifies === false, f2);
+  }
+
+  // ── D14: baseline excludes the candidate ─────────────────────────────────
+  console.log('\n[D14 — baseline excludes the candidate itself]');
+  {
+    const { result } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(DEAL_OUT_CHANNEL_FIXTURES));
+    check(
+      'baseline.median_net_profit is the median of Kijiji+Reverb only (495), not pulled in by Marketplace\'s own 700',
+      result.status === 'selected' && result.baseline.median_net_profit === 495,
+      result.status === 'selected' ? result.baseline : result,
+    );
+  }
+
+  // ── D15: baseline uses only eligible channels ────────────────────────────
+  console.log('\n[D15 — baseline uses only eligible channels]');
+  {
+    const channels: DealOutChannelFixture[] = [
+      ...DEAL_OUT_CHANNEL_FIXTURES,
+      { channelId: 7, channelName: 'Outlier', itemCount: 3, distinctDealCount: 3, domSample: 3, profit: 999999, roi: 999, dom: 1, confidence: 'low' },
+    ];
+    const { result } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(channels));
+    check(
+      'an ineligible outlier (item_count 3, absurd metrics) never pollutes the baseline — still 495',
+      result.status === 'selected' && result.baseline.median_net_profit === 495,
+      result.status === 'selected' ? result.baseline : result,
+    );
+  }
+
+  // ── D16: tie-breakers are deterministic ──────────────────────────────────
+  console.log('\n[D16 — deterministic tie-breakers]');
+  {
+    // 16a: identical metrics, differing confidence — higher confidence wins.
+    const confidenceChannels: DealOutChannelFixture[] = [
+      { channelId: 70, channelName: 'T1-stronger', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 600, roi: 30, dom: 15, confidence: 'stronger' },
+      { channelId: 71, channelName: 'T2-low', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 600, roi: 30, dom: 15, confidence: 'low' },
+      { channelId: 72, channelName: 'T3-filler', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 300, roi: 15, dom: 25, confidence: 'moderate' },
+    ];
+    const { result: confResult } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(confidenceChannels));
+    check(
+      'equal trigger counts break on confidence — T1 (stronger) beats T2 (low)',
+      confResult.status === 'selected' && confResult.segment.channel_name === 'T1-stronger',
+      confResult,
+    );
+    check(
+      'the loser of the confidence tie-break appears as runner-up',
+      confResult.status === 'selected' && confResult.runner_up?.segment.channel_name === 'T2-low',
+      confResult,
+    );
+
+    // 16b: fully tied candidates (including confidence) — falls through to
+    // ascending channel id.
+    const idTieChannels: DealOutChannelFixture[] = [
+      { channelId: 80, channelName: 'U1-lower-id', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 600, roi: 30, dom: 15, confidence: 'moderate' },
+      { channelId: 85, channelName: 'U2-higher-id', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 600, roi: 30, dom: 15, confidence: 'moderate' },
+      { channelId: 82, channelName: 'U3-filler', itemCount: 10, distinctDealCount: 8, domSample: 10, profit: 300, roi: 15, dom: 25, confidence: 'moderate' },
+    ];
+    const { result: idResult } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(idTieChannels));
+    check(
+      'fully tied candidates break on ascending channel id — U1 (80) beats U2 (85)',
+      idResult.status === 'selected' && idResult.segment.channel_id === 80,
+      idResult,
+    );
+  }
+
+  // ── D17: Deal Out Channel is not confused with listing platform ─────────
+  console.log('\n[D17 — Deal Out Channel is not confused with listing platform]');
+  {
+    const { result } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(DEAL_OUT_CHANNEL_FIXTURES));
+    check('result is present', result.status === 'selected', result);
+    if (result.status === 'selected') {
+      check('headline does not describe the channel as a listing platform', !result.headline.toLowerCase().includes('listing platform'), result.headline);
+      check('summary does not describe the channel as a listing platform', !result.summary.toLowerCase().includes('listing platform'), result.summary);
+      check('limitations include DEAL_CHANNEL_IS_CONTACT_SOURCE_NOT_PAYMENT_LOCATION', result.limitations.includes('DEAL_CHANNEL_IS_CONTACT_SOURCE_NOT_PAYMENT_LOCATION'), result.limitations);
+      check('evidence_refs point at deal_out_channel_performance, not listing_channel_evidence', result.evidence_refs.every((ref) => !ref.includes('listing_channel')), result.evidence_refs);
+    }
+  }
+
+  // ── D18: existing four rules remain unchanged ────────────────────────────
+  console.log('\n[D18 — existing four rules (broad, category, acquisition-method, channel-journey) remain unchanged]');
+  {
+    const broadEvidence = makeEvidence([
+      { order: 2, label: '$1,000-1,999', total: 15, realized: 8, domSample: 8, realizationRate: 55, profit: 550, roi: 45, dom: 15, confidence: 'moderate' },
+      { order: 3, label: '$2,000-2,999', total: 28, realized: 19, domSample: 19, realizationRate: 67.86, profit: 750, roi: 33.33, dom: 10.5, confidence: 'stronger' },
+      { order: 4, label: '$3,000-3,999', total: 12, realized: 6, domSample: 6, realizationRate: 60, profit: 600, roi: 20, dom: 20, confidence: 'moderate' },
+      { order: 5, label: '$4,000-4,999', total: 10, realized: 5, domSample: 5, realizationRate: 58, profit: 650, roi: 25, dom: 25, confidence: 'low' },
+    ]) as Record<string, unknown>;
+    const methodEvidence = makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS) as Record<string, unknown>;
+    const combinedAcquisitionEvidence = {
+      ...broadEvidence,
+      acquisition_to_exit_analysis: {
+        ...(broadEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+        ...(methodEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+      },
+    };
+    const categoryEvidence = makeCategoryEvidence([...GUITARS_BANDS, ...PEDALS_NO_QUALIFIER_BANDS]);
+    const journeyEvidence = makeJourneyEvidence(MARKETPLACE_JOURNEY_FIXTURES) as Record<string, unknown>;
+    const dealOutEvidence = makeDealOutChannelEvidence(DEAL_OUT_CHANNEL_FIXTURES) as Record<string, unknown>;
+    const combinedDealChannelEvidence = {
+      ...journeyEvidence,
+      ...dealOutEvidence,
+    };
+
+    const { result: directBroad } = evaluateStrongBalancedAcquisitionBand(combinedAcquisitionEvidence);
+    const { result: directCategory } = evaluateStrongCategoryAcquisitionBand(categoryEvidence);
+    const { result: directMethod } = evaluateAcquisitionMethodPerformanceProfile(combinedAcquisitionEvidence);
+    const { result: directJourney } = evaluateStrongDealInToDealOutJourney(combinedDealChannelEvidence);
+
+    const insights = selectFindings({
+      targetUserAcquisitionEvidence: combinedAcquisitionEvidence,
+      targetUserInventorySegmentationEvidence: categoryEvidence,
+      targetUserDealChannelEvidence: combinedDealChannelEvidence,
+    });
+
+    check('all five rule families are present in one insights payload', insights.selected_findings.length === 5, insights.selected_findings.map((f) => f.finding_code));
+    const viaOrchestratorBroad = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
+    const viaOrchestratorCategory = insights.selected_findings.find((f) => f.finding_code === CATEGORY_FINDING_CODE);
+    const viaOrchestratorMethod = insights.selected_findings.find((f) => f.finding_code === METHOD_PROFILE_FINDING_CODE);
+    const viaOrchestratorJourney = insights.selected_findings.find((f) => f.finding_code === JOURNEY_FINDING_CODE);
+    const viaOrchestratorDealOut = insights.selected_findings.find((f) => f.finding_code === DEAL_OUT_CHANNEL_FINDING_CODE);
+
+    const categoryWithoutRelationship = viaOrchestratorCategory
+      ? { ...(viaOrchestratorCategory as SelectedFindingForTest), relationship: undefined, summary: (directCategory as SelectedFindingForTest).summary }
+      : viaOrchestratorCategory;
+
+    check('the broad finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorBroad) === JSON.stringify(directBroad), { viaOrchestratorBroad, directBroad });
+    check('the category finding (minus orchestrator relationship linking) is byte-identical to calling the rule directly', JSON.stringify(categoryWithoutRelationship) === JSON.stringify(directCategory), { categoryWithoutRelationship, directCategory });
+    check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
+    check('the channel-journey finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorJourney) === JSON.stringify(directJourney), { viaOrchestratorJourney, directJourney });
+    check('the deal-out-channel finding is also present (Marketplace)', (viaOrchestratorDealOut as SelectedFindingForTest | undefined)?.segment.channel_name === 'Marketplace', viaOrchestratorDealOut);
+    check('insights_engine_version is 1.4', insights.insights_engine_version === '1.4', insights.insights_engine_version);
+    check('findings_selector_version is 1.4', insights.findings_selector_version === '1.4', insights.findings_selector_version);
+  }
+
+  // ── D19: old Insights Engine snapshots remain readable ───────────────────
+  console.log('\n[D19 — old Insights Engine v1.3-shaped snapshot (channel-journey finding, no deal-out-channel finding) remains readable]');
+  {
+    const baseSnapshot: Record<string, unknown> = {
+      snapshot_schema_version: '2.10',
+      analytics_definition_version: '2.10',
+      generated_at: new Date().toISOString(),
+      evidence_scope: 'shared_inventory_population',
+      purpose_semantics: 'v2',
+      shared_purpose_evidence: {},
+      target_user_purpose_evidence: {},
+      target_user_open_inventory_evidence: {},
+      shared_acquisition_evidence: {},
+      target_user_acquisition_evidence: {},
+      shared_inventory_segmentation_evidence: {},
+      target_user_inventory_segmentation_evidence: {},
+      shared_deal_channel_evidence: {},
+      target_user_deal_channel_evidence: {},
+      shared_listing_channel_evidence: {},
+      target_user_listing_channel_evidence: {},
+      shared_capital_liquidity_evidence: {},
+      target_user_capital_liquidity_evidence: {},
+      shared_calendar_seasonality_evidence: {},
+      target_user_calendar_seasonality_evidence: {},
+    };
+
+    const v13ShapedInsights = {
+      insights_engine_version: '1.3',
+      findings_selector_version: '1.3',
+      source_analytics_version: '2.10',
+      generated_at: new Date().toISOString(),
+      selected_findings: [
+        {
+          finding_code: JOURNEY_FINDING_CODE,
+          family: 'channel_journey_performance',
+          direction: 'strength',
+          status: 'selected',
+          headline: 'Marketplace → Marketplace is a strong, balanced channel journey',
+          summary: 'placeholder v1.3-shaped summary',
+          segment: { deal_in_channel_id: 1, deal_in_channel_name: 'Marketplace', deal_out_channel_id: 1, deal_out_channel_name: 'Marketplace', same_channel: true },
+          metrics: { item_count: 16, distinct_deal_count: 16, distinct_acquisition_deal_count: 16, distinct_exit_deal_count: 16, median_net_profit: 625, median_roi: 28, median_days_on_market: 11, dom_sample_size: 16 },
+          baseline: { type: 'peer_channel_journey_median_baseline', median_net_profit: 437.5, median_roi: 12.5, median_days_on_market: 27, realization_rate_percent: null },
+          triggered_rules: ['PROFIT_ABOVE_PEER_BASELINE', 'ROI_ABOVE_PEER_BASELINE', 'DOM_FASTER_THAN_PEER_BASELINE', 'NO_MATERIAL_WEAKNESS'],
+          confidence: 'stronger',
+          limitations: ['PEER_BASELINE_USES_MEDIAN_OF_JOURNEY_METRICS'],
+          evidence_refs: ['target_user_deal_channel_evidence.channel_journey.deal_in_to_deal_out_matrix'],
+          // No deal-out-channel finding at all — this is the v1.3 shape.
+        },
+      ],
+      rule_evaluations: [],
+    };
+    const v13Snapshot = { ...baseSnapshot, insights: v13ShapedInsights };
+
+    check('a stored v2.10 snapshot carrying an Insights Engine v1.3-shaped insights section still validates', isValidAnalyticsSnapshot(v13Snapshot));
+  }
+
+  // ── D20: findings contain no user IDs, item IDs, item names, models,
+  // notes, emails, or counterparty information ─────────────────────────────
+  console.log('\n[D20 — deal-out-channel findings carry no user IDs, item IDs, names, models, notes, emails, or counterparty information]');
+  {
+    const { result } = evaluateStrongDealOutChannel(makeDealOutChannelEvidence(DEAL_OUT_CHANNEL_FIXTURES));
+    if (result.status !== 'selected') {
+      check('D20 setup produced a selected finding', false, result);
+    } else {
+      const allowedKeysByPath: Record<string, string[]> = {
+        root: ['finding_code', 'family', 'direction', 'status', 'headline', 'summary', 'segment', 'metrics', 'baseline', 'triggered_rules', 'confidence', 'limitations', 'evidence_refs', 'runner_up'],
+        segment: ['channel_id', 'channel_name'],
+        metrics: ['item_count', 'distinct_deal_count', 'median_net_profit', 'median_roi', 'median_days_on_market', 'dom_sample_size'],
+        baseline: ['type', 'median_net_profit', 'median_roi', 'median_days_on_market', 'realization_rate_percent'],
+        runner_up: ['segment', 'metrics', 'triggered_rules', 'reason_not_selected'],
+      };
+
+      const unexpectedKeys: string[] = [];
+      const walk = (value: unknown, pathKey: string): void => {
+        if (Array.isArray(value)) return;
+        if (typeof value !== 'object' || value === null) return;
+        const allowed = allowedKeysByPath[pathKey];
+        for (const key of Object.keys(value as Record<string, unknown>)) {
+          if (allowed && !allowed.includes(key)) unexpectedKeys.push(`${pathKey}.${key}`);
+          const nextPathKey = key === 'segment' ? 'segment' : key === 'metrics' ? 'metrics' : key === 'baseline' ? 'baseline' : key === 'runner_up' ? 'runner_up' : key;
+          walk((value as Record<string, unknown>)[key], nextPathKey);
+        }
+      };
+      walk(result, 'root');
+
+      check('no unexpected keys (no item/user identity or counterparty fields) appear anywhere in the deal-out-channel finding', unexpectedKeys.length === 0, unexpectedKeys);
+
+      const serialized = JSON.stringify(result);
+      const forbiddenPatterns = [/"user_id"/i, /"item_id"/i, /"email"/i, /"model"/i, /"notes"/i, /"counterparty/i, /"contact/i, /"deal_id"/i];
+      const matched = forbiddenPatterns.filter((p) => p.test(serialized)).map((p) => p.source);
+      check('serialized deal-out-channel finding contains no PII- or counterparty-shaped field names', matched.length === 0, matched);
     }
   }
 

@@ -60,7 +60,8 @@ export type FindingFamily =
   | 'acquisition_performance'
   | 'category_acquisition_performance'
   | 'acquisition_method_performance'
-  | 'channel_journey_performance';
+  | 'channel_journey_performance'
+  | 'deal_out_channel_performance';
 
 export interface RunnerUpContext {
   segment: Record<string, unknown>;
@@ -224,9 +225,51 @@ export interface ChannelJourneyCandidateEvaluation {
   selected: boolean;
 }
 
+// ── STRONG_DEAL_OUT_CHANNEL (Insights Engine v1.4) ─────────────────────────
+// One row per deal_out_channel_id, read from v2.10's target_user_deal_
+// channel_evidence.deal_out_channel_performance.performance_by_deal_out_
+// channel — pooled across every Purpose, realized items only. See
+// extractDealOutChannelCandidates in rules/strongDealOutChannel.ts.
+export interface DealOutChannelCandidate {
+  channel_id: number | null;
+  channel_name: string | null;
+  item_count: number;
+  distinct_deal_count: number;
+  median_net_profit: number | null;
+  median_roi: number | null;
+  median_days_on_market: number | null;
+  dom_sample_size: number;
+  confidence: ConfidenceTier | null;
+}
+
+// STRONG_DEAL_OUT_CHANNEL's baseline: median of the OTHER eligible Deal Out
+// Channels, pooled across the target user's whole portfolio.
+// realization_rate_percent is always null — see PeerChannelJourneyMedianBaseline
+// above for the same reasoning (realized-exits-only evidence).
+export interface PeerDealOutChannelMedianBaseline extends PeerMedianBaseline {
+  type: 'peer_deal_out_channel_median_baseline';
+  realization_rate_percent: null;
+}
+
+export interface DealOutChannelCandidateEvaluation {
+  finding_code: string;
+  channel_id: number | null;
+  channel_name: string | null;
+  eligible: boolean;
+  eligibility_failure_reasons: string[];
+  material_improvement_triggers: string[];
+  material_weakness_triggers: string[];
+  qualifies: boolean;
+  selected: boolean;
+}
+
 // rule_evaluations is a heterogeneous debug array — each row's own
 // finding_code says which rule produced it.
-export type RuleEvaluationRow = CandidateEvaluation | AcquisitionMethodCandidateEvaluation | ChannelJourneyCandidateEvaluation;
+export type RuleEvaluationRow =
+  | CandidateEvaluation
+  | AcquisitionMethodCandidateEvaluation
+  | ChannelJourneyCandidateEvaluation
+  | DealOutChannelCandidateEvaluation;
 
 export type MethodAdvantage = 'Purchase' | 'Trade' | 'Neutral';
 
