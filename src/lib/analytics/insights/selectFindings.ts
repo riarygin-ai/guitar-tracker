@@ -9,9 +9,17 @@
 // Inventory Decision Support module, unchanged through v2.11) — the ONLY
 // rule that reads this evidence section, and the first rule scoped to a
 // single Purpose (Business) and the first to select an item-level (not
-// aggregate) finding. SOURCE_ANALYTICS_VERSION stays 2.11 (this task adds
-// no new Analytics SQL — v2.1's evidence already carried what this rule
-// needed). The other seven rules are unchanged in behavior.
+// aggregate) finding. The other seven rules are unchanged in behavior.
+//
+// SOURCE_ANALYTICS_VERSION moved from 2.11 to 2.12 (Analytics v2.12 —
+// Hybrid Comparable-DOM Signals) purely to reflect which Analytics
+// snapshot version now feeds this engine — v2.12 only adds HYBRID_DOM_
+// ABOVE_COMPARABLE_MEDIAN/P75 to item_decision_evidence for Hybrid rows;
+// no rule here reads those new codes (BUSINESS_OPEN_INVENTORY_PRIORITY is
+// Business-scoped only), so this bump changes no rule's behavior.
+// insights_engine_version/findings_selector_version deliberately stay at
+// 1.7 — HYBRID_PURPOSE_REVIEW_PRIORITY, the rule this evidence unblocks,
+// is still not implemented (a separate, later task).
 //
 // Rules implemented:
 //   STRONG_BALANCED_ACQUISITION_BAND       (v1.0, unchanged in behavior)
@@ -60,7 +68,7 @@ import type {
 
 export const INSIGHTS_ENGINE_VERSION = '1.7';
 export const FINDINGS_SELECTOR_VERSION = '1.7';
-export const SOURCE_ANALYTICS_VERSION = '2.11';
+export const SOURCE_ANALYTICS_VERSION = '2.12';
 
 export interface SelectFindingsInput {
   targetUserAcquisitionEvidence: unknown;

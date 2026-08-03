@@ -750,8 +750,8 @@ function main() {
   console.log('\n[Test 12 — old snapshots without insights still validate; new optional section accepted]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.11',
-      analytics_definition_version: '2.11',
+      snapshot_schema_version: '2.12',
+      analytics_definition_version: '2.12',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -771,7 +771,7 @@ function main() {
       shared_calendar_seasonality_evidence: {},
       target_user_calendar_seasonality_evidence: {},
     };
-    check('a v2.11 snapshot with no insights key still validates', isValidAnalyticsSnapshot(baseSnapshot));
+    check('a v2.12 snapshot with no insights key still validates', isValidAnalyticsSnapshot(baseSnapshot));
     const withInsights = {
       ...baseSnapshot,
       insights: selectFindings({
@@ -1188,8 +1188,8 @@ function main() {
       ],
     };
     const fullSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.11',
-      analytics_definition_version: '2.11',
+      snapshot_schema_version: '2.12',
+      analytics_definition_version: '2.12',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -1210,7 +1210,7 @@ function main() {
       target_user_calendar_seasonality_evidence: {},
       insights: v10ShapedInsights,
     };
-    check('a stored v2.11 snapshot carrying an Insights Engine v1.0-shaped insights section still validates', isValidAnalyticsSnapshot(fullSnapshot));
+    check('a stored v2.12 snapshot carrying an Insights Engine v1.0-shaped insights section still validates', isValidAnalyticsSnapshot(fullSnapshot));
   }
 
   // ── C18: findings carry no user IDs, item IDs, names, models, notes, or
@@ -1580,8 +1580,8 @@ function main() {
   console.log('\n[M20 — old Insights Engine v1.0 and v1.1 snapshots remain readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.11',
-      analytics_definition_version: '2.11',
+      snapshot_schema_version: '2.12',
+      analytics_definition_version: '2.12',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -1640,8 +1640,8 @@ function main() {
     } };
     const v11Snapshot = { ...baseSnapshot, insights: v11ShapedInsights };
 
-    check('a stored v2.11 snapshot carrying an Insights Engine v1.0-shaped insights section still validates', isValidAnalyticsSnapshot(v10Snapshot));
-    check('a stored v2.11 snapshot carrying an Insights Engine v1.1-shaped insights section (no acquisition-method finding) still validates', isValidAnalyticsSnapshot(v11Snapshot));
+    check('a stored v2.12 snapshot carrying an Insights Engine v1.0-shaped insights section still validates', isValidAnalyticsSnapshot(v10Snapshot));
+    check('a stored v2.12 snapshot carrying an Insights Engine v1.1-shaped insights section (no acquisition-method finding) still validates', isValidAnalyticsSnapshot(v11Snapshot));
   }
 
   // ── M21: findings carry no user IDs, item IDs, names, models, notes, or
@@ -2062,8 +2062,8 @@ function main() {
   console.log('\n[J21 — old Insights Engine v1.0/v1.1/v1.2 snapshots (no channel-journey finding) remain readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.11',
-      analytics_definition_version: '2.11',
+      snapshot_schema_version: '2.12',
+      analytics_definition_version: '2.12',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -2110,7 +2110,7 @@ function main() {
     };
     const v12Snapshot = { ...baseSnapshot, insights: v12ShapedInsights };
 
-    check('a stored v2.11 snapshot carrying an Insights Engine v1.2-shaped insights section still validates', isValidAnalyticsSnapshot(v12Snapshot));
+    check('a stored v2.12 snapshot carrying an Insights Engine v1.2-shaped insights section still validates', isValidAnalyticsSnapshot(v12Snapshot));
   }
 
   // ── J22: findings contain no user IDs, item IDs, item names, models,
@@ -2477,8 +2477,8 @@ function main() {
   console.log('\n[D19 — old Insights Engine v1.3-shaped snapshot (channel-journey finding, no deal-out-channel finding) remains readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.11',
-      analytics_definition_version: '2.11',
+      snapshot_schema_version: '2.12',
+      analytics_definition_version: '2.12',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -2526,7 +2526,7 @@ function main() {
     };
     const v13Snapshot = { ...baseSnapshot, insights: v13ShapedInsights };
 
-    check('a stored v2.11 snapshot carrying an Insights Engine v1.3-shaped insights section still validates', isValidAnalyticsSnapshot(v13Snapshot));
+    check('a stored v2.12 snapshot carrying an Insights Engine v1.3-shaped insights section still validates', isValidAnalyticsSnapshot(v13Snapshot));
   }
 
   // ── D20: findings contain no user IDs, item IDs, item names, models,
@@ -2960,8 +2960,8 @@ function main() {
   console.log('\n[N21 — previous Insights Engine v1.4-shaped snapshot (deal-out-channel finding, no deal-in-channel finding) remains readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.11',
-      analytics_definition_version: '2.11',
+      snapshot_schema_version: '2.12',
+      analytics_definition_version: '2.12',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -3009,7 +3009,7 @@ function main() {
     };
     const v14Snapshot = { ...baseSnapshot, insights: v14ShapedInsights };
 
-    check('a stored v2.11 snapshot carrying an Insights Engine v1.4-shaped insights section still validates', isValidAnalyticsSnapshot(v14Snapshot));
+    check('a stored v2.12 snapshot carrying an Insights Engine v1.4-shaped insights section still validates', isValidAnalyticsSnapshot(v14Snapshot));
   }
 
   // ── N22: findings contain no user IDs, item IDs, item names, models,
@@ -3614,8 +3614,8 @@ function main() {
   console.log('\n[L30 — previous Insights Engine v1.5-shaped snapshot (no listing-platform finding) remains readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.11',
-      analytics_definition_version: '2.11',
+      snapshot_schema_version: '2.12',
+      analytics_definition_version: '2.12',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -3663,7 +3663,7 @@ function main() {
     };
     const v15Snapshot = { ...baseSnapshot, insights: v15ShapedInsights };
 
-    check('a stored v2.11 snapshot carrying an Insights Engine v1.5-shaped insights section still validates', isValidAnalyticsSnapshot(v15Snapshot));
+    check('a stored v2.12 snapshot carrying an Insights Engine v1.5-shaped insights section still validates', isValidAnalyticsSnapshot(v15Snapshot));
   }
 
   // ── L31: findings carry no user IDs, item IDs, item names, models,
@@ -4335,8 +4335,8 @@ function main() {
   console.log('\n[B34 — previous Insights Engine v1.6-shaped snapshot (no business-open-inventory-priority finding) remains readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.11',
-      analytics_definition_version: '2.11',
+      snapshot_schema_version: '2.12',
+      analytics_definition_version: '2.12',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -4390,7 +4390,7 @@ function main() {
     };
     const v16Snapshot = { ...baseSnapshot, insights: v16ShapedInsights };
 
-    check('a stored v2.11 snapshot carrying an Insights Engine v1.6-shaped insights section still validates', isValidAnalyticsSnapshot(v16Snapshot));
+    check('a stored v2.12 snapshot carrying an Insights Engine v1.6-shaped insights section still validates', isValidAnalyticsSnapshot(v16Snapshot));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

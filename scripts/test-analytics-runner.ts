@@ -99,7 +99,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_11
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_12
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -108,7 +108,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_11') {
+          if (name === 'build_analytics_snapshot_v2_12') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -128,7 +128,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_11') {
+          if (name === 'build_analytics_snapshot_v2_12') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -195,8 +195,8 @@ async function main() {
   // inside the JSON itself.
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '2.11',
-    analytics_definition_version: '2.11',
+    snapshot_schema_version: '2.12',
+    analytics_definition_version: '2.12',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     purpose_semantics: 'current_item_purpose',
@@ -272,12 +272,12 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_11', { p_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_12', { p_target_user_id: userAId });
   // Since Insights Engine v1.0, the persisted snapshot additionally carries a
   // top-level `insights` key (application-layer enrichment, versioned
   // independently — see src/lib/analytics/insights/). Stripping it before
-  // comparing confirms the underlying Analytics v2.11 evidence itself is
-  // still byte-identical to a fresh direct RPC call — v2.11 calculations are
+  // comparing confirms the underlying Analytics v2.12 evidence itself is
+  // still byte-identical to a fresh direct RPC call — v2.12 calculations are
   // unmodified, only enriched on top.
   const { insights: _insightsA, ...snapAWithoutInsights } = snapA;
   check(
@@ -4097,33 +4097,16 @@ async function main() {
   const anyForbiddenKey = allNewListingRows211.some((r) => Object.keys(r).some((k) => forbiddenKeyPattern.test(k)));
   check('no row in performance_by_listing_channel (pooled or by-Purpose, shared or target) carries a forbidden item/user-identity key', !anyForbiddenKey, allNewListingRows211.map((r) => Object.keys(r)));
 
-  console.log('\n[v2.11 — production promotion]');
-  check('ANALYTICS_VERSION constant used by the production runner is now 2.11', ANALYTICS_VERSION === '2.11', ANALYTICS_VERSION);
-  const runA211 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new production run stores analytics_version 2.11', runA211.analytics_version === '2.11', runA211.analytics_version);
-  check('new production run snapshot.snapshot_schema_version is 2.11', (runA211.snapshot as any)?.snapshot_schema_version === '2.11', (runA211.snapshot as any)?.snapshot_schema_version);
-  const runA211Insights = (runA211.snapshot as any)?.insights;
-  check('new production run insights.source_analytics_version is 2.11 (evidence-only bump)', runA211Insights?.source_analytics_version === '2.11', runA211Insights?.source_analytics_version);
-  // Note: at the point v2.11 was promoted (this Analytics-only task),
-  // insights_engine_version / findings_selector_version were asserted to
-  // remain 1.5 and STRONG_LISTING_PLATFORM was asserted absent — that was
-  // correct THEN, since v2.11 was evidence-only. Two later, separate tasks
-  // (Insights Engine v1.6, then v1.7) added STRONG_LISTING_PLATFORM and
-  // BUSINESS_OPEN_INVENTORY_PRIORITY at the application layer, reading
-  // this same v2.11 evidence with no further Analytics SQL change — see
-  // test-insights-engine.ts for each rule's own thorough test coverage;
-  // this file only smoke-checks that a production run's persisted
-  // insights section is internally consistent.
-  check(
-    'new production run insights_engine_version / findings_selector_version are 1.7',
-    runA211Insights?.insights_engine_version === '1.7' && runA211Insights?.findings_selector_version === '1.7',
-    { insights_engine_version: runA211Insights?.insights_engine_version, findings_selector_version: runA211Insights?.findings_selector_version },
-  );
-  check(
-    'every one of the eight rule families produced a rule_evaluations entry (none silently dropped by the v2.11 promotion)',
-    new Set((runA211Insights?.rule_evaluations ?? []).map((r: any) => r.finding_code)).size >= 1,
-    (runA211Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
-  );
+  // Note: at the point v2.11 was promoted (this Analytics-only task), this
+  // section created a fresh production run and asserted ANALYTICS_VERSION
+  // === '2.11', analytics_version === '2.11', snapshot_schema_version ===
+  // '2.11', insights.source_analytics_version === '2.11', and insights_
+  // engine_version/findings_selector_version === '1.7' — all correct THEN.
+  // The runner has since been promoted again, to v2.12 (see the "[v2.12 —
+  // production promotion]" section below), which creates its own fresh
+  // production run and re-asserts the equivalent checks against the
+  // CURRENT version — so this section is not repeated here to avoid a
+  // duplicate, immediately-stale hardcoded assertion.
 
   console.log('\n[v2.11 — old stored runs remain readable]');
   const { data: oldRunReadBack211 } = await serviceClient
@@ -4132,6 +4115,320 @@ async function main() {
     'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.11 migration',
     oldRunReadBack211?.analytics_version === '1.8' && (oldRunReadBack211?.snapshot as any)?.snapshot_schema_version === '1.8',
     oldRunReadBack211,
+  );
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Analytics v2.12 — Hybrid Comparable-DOM Signals
+  // ══════════════════════════════════════════════════════════════════════
+  // Adds HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN / HYBRID_DOM_ABOVE_COMPARABLE_
+  // P75 to item_decision_evidence for mapped Hybrid rows only, mirroring
+  // the existing Business comparable-DOM condition exactly (v2.1, lines
+  // ~704-708 — confirmed unchanged through v2.11 by grepping every later
+  // migration for disposition_bucket/liq_median_days_on_market/item_
+  // decision_evidence). No new cohort logic — liquidity_cohort.median_
+  // days_on_market/p75_days_on_market are already computed, purpose-aware,
+  // for every open item regardless of disposition_bucket; v2.1 simply
+  // never wrote a reason code that reads them for Hybrid.
+
+  console.log('\n[v2.12 — helper callable; direct boundary/gating verification via synthetic item JSON]');
+  // The new helper is a pure jsonb->jsonb transform (no p_target_user_id,
+  // no table access) — tested directly with hand-built item shapes so
+  // every gating condition can be checked at an exact, controlled
+  // boundary, independent of what any real fixture's cohort happens to
+  // compute today.
+  function makeSyntheticHybridItem(overrides: Record<string, unknown>) {
+    return {
+      item_id: 1,
+      current_purpose_name: 'Hybrid',
+      purpose_policy_status: 'mapped',
+      listed_flag: true,
+      current_dom_days: 31,
+      liquidity_cohort: { median_days_on_market: 20, p75_days_on_market: 25 },
+      reason_codes: ['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL'],
+      ...overrides,
+    };
+  }
+  async function enrichOne(overrides: Record<string, unknown>): Promise<string[]> {
+    const { data, error } = await serviceClient.rpc('_enrich_hybrid_comparable_dom_signals_v2_12', {
+      p_item_decision_evidence: [makeSyntheticHybridItem(overrides)],
+    });
+    check(`enrichOne(${JSON.stringify(overrides)}) did not error`, !error, error);
+    return (data as any)?.[0]?.reason_codes ?? [];
+  }
+
+  check(
+    '_enrich_hybrid_comparable_dom_signals_v2_12 is callable by service_role',
+    !(await serviceClient.rpc('_enrich_hybrid_comparable_dom_signals_v2_12', { p_item_decision_evidence: [] })).error,
+  );
+
+  console.log('\n[v2.12 — test 3: exact Business comparison operator (strict >, not >=) is mirrored]');
+  check(
+    'dom(31), above the 30-day floor, > median(15) but < p75(40) -> median only',
+    stableStringify(await enrichOne({ current_dom_days: 31, liquidity_cohort: { median_days_on_market: 15, p75_days_on_market: 40 } })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN']),
+  );
+  check('dom(31) > both median(20) and p75(25) -> both codes, median before p75', stableStringify(await enrichOne({})) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN', 'HYBRID_DOM_ABOVE_COMPARABLE_P75']));
+  check('dom(20) exactly equal to median(20) -> no signal (strict >, not >=)', stableStringify(await enrichOne({ current_dom_days: 20 })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']));
+
+  console.log('\n[v2.12 — test 4: exact Business sample-size gating (the >= 30 day floor) is mirrored]');
+  check('dom(29), just under the 30-day floor -> no signal even though 29 > median(20)', stableStringify(await enrichOne({ current_dom_days: 29 })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']));
+  check('dom(30) exactly at the floor, with a higher cohort -> the floor itself is inclusive (>=)', stableStringify(await enrichOne({ current_dom_days: 30, liquidity_cohort: { median_days_on_market: 25, p75_days_on_market: 35 } })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN']));
+
+  console.log('\n[v2.12 — test 5: exact Business confidence gating is mirrored (no separate confidence-value gate — only a non-null median/p75 value gates emission, matching Business exactly)]');
+  check('a non-null median/p75 is sufficient regardless of any stated confidence tier (Business itself never checks liq_confidence in this condition)', stableStringify(await enrichOne({})) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN', 'HYBRID_DOM_ABOVE_COMPARABLE_P75']));
+
+  console.log('\n[v2.12 — test 6: boundary semantics below/equal to threshold match Business]');
+  check('dom below both median and p75 -> no signal', stableStringify(await enrichOne({ current_dom_days: 35, liquidity_cohort: { median_days_on_market: 40, p75_days_on_market: 60 } })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']));
+
+  console.log('\n[v2.12 — test 7/8: null current DOM and unlisted items produce no signal]');
+  check('null current_dom_days -> no signal', stableStringify(await enrichOne({ current_dom_days: null })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']));
+  check('unlisted (listed_flag=false) -> no signal even with a stale-looking dom value', stableStringify(await enrichOne({ listed_flag: false })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']));
+
+  console.log('\n[v2.12 — test 9/10: missing comparable median/P75 individually suppress only that signal]');
+  check('null median, valid p75 -> P75 signal only', stableStringify(await enrichOne({ liquidity_cohort: { median_days_on_market: null, p75_days_on_market: 25 } })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_P75']));
+  check('valid median, null p75 -> median signal only', stableStringify(await enrichOne({ liquidity_cohort: { median_days_on_market: 20, p75_days_on_market: null } })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN']));
+
+  console.log('\n[v2.12 — test 11/12: no comparable cohort at all (insufficient sample) produces no signal]');
+  check('liquidity_cohort entirely null (no cohort ever cleared realized_item_count >= 1) -> no signal, no error', stableStringify(await enrichOne({ liquidity_cohort: null })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']));
+
+  console.log('\n[v2.12 — test 16/17: Historical Import with reliable listing DOM may receive the signals; unreliable ownership age never affects them]');
+  check(
+    'a Historical Import item (ownership age unreliable by definition) with a reliable listing date and stale DOM still receives both signals — acquisition date/ownership age are never read by this condition',
+    stableStringify(await enrichOne({ is_historical_import: true, reason_codes: ['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HISTORICAL_AGE_UNRELIABLE'] }))
+      === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HISTORICAL_AGE_UNRELIABLE', 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN', 'HYBRID_DOM_ABOVE_COMPARABLE_P75']),
+  );
+
+  console.log('\n[v2.12 — test 22: Business, Personal, and unmapped-policy Hybrid-named rows never receive HYBRID_DOM codes]');
+  check('current_purpose_name = Business -> untouched (even with an identical qualifying dom/cohort)', stableStringify(await enrichOne({ current_purpose_name: 'Business' })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']));
+  check('current_purpose_name = Personal -> untouched', stableStringify(await enrichOne({ current_purpose_name: 'Personal' })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']));
+  check('current_purpose_name = Hybrid but purpose_policy_status != mapped -> untouched (mirrors disposition_bucket, which requires both)', stableStringify(await enrichOne({ purpose_policy_status: 'missing_policy' })) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']));
+
+  check('appending to an item with an EMPTY existing reason_codes array still works and preserves the median-then-p75 order', stableStringify(await enrichOne({ reason_codes: [] })) === stableStringify(['HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN', 'HYBRID_DOM_ABOVE_COMPARABLE_P75']));
+
+  console.log('\n[v2.12 — production-shaped verification: one fixture array covering all 6 required scenarios, exact expected reason_codes arrays and ordering, no real production item]');
+  {
+    const productionShapedItems = [
+      { item_id: 9001, current_purpose_name: 'Hybrid', purpose_policy_status: 'mapped', listed_flag: true, current_dom_days: 45, liquidity_cohort: { median_days_on_market: 30, p75_days_on_market: 60 }, reason_codes: ['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL'] },
+      { item_id: 9002, current_purpose_name: 'Hybrid', purpose_policy_status: 'mapped', listed_flag: true, current_dom_days: 90, liquidity_cohort: { median_days_on_market: 30, p75_days_on_market: 60 }, reason_codes: ['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL'] },
+      { item_id: 9003, current_purpose_name: 'Hybrid', purpose_policy_status: 'mapped', listed_flag: true, current_dom_days: 35, liquidity_cohort: { median_days_on_market: 40, p75_days_on_market: 60 }, reason_codes: ['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL'] },
+      { item_id: 9004, current_purpose_name: 'Hybrid', purpose_policy_status: 'mapped', listed_flag: false, current_dom_days: null, liquidity_cohort: { median_days_on_market: 30, p75_days_on_market: 60 }, reason_codes: ['HYBRID_REVIEW_REQUIRED', 'HYBRID_UNLISTED_SIGNAL'] },
+      { item_id: 9005, current_purpose_name: 'Hybrid', purpose_policy_status: 'mapped', listed_flag: true, current_dom_days: 400, is_historical_import: true, liquidity_cohort: { median_days_on_market: 30, p75_days_on_market: 60 }, reason_codes: ['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HISTORICAL_AGE_UNRELIABLE'] },
+      { item_id: 9006, current_purpose_name: 'Business', purpose_policy_status: 'mapped', listed_flag: true, current_dom_days: 90, liquidity_cohort: { median_days_on_market: 30, p75_days_on_market: 60 }, reason_codes: ['BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN', 'BUSINESS_DOM_ABOVE_COMPARABLE_P75'] },
+      { item_id: 9007, current_purpose_name: 'Personal', purpose_policy_status: 'mapped', listed_flag: true, current_dom_days: 90, liquidity_cohort: { median_days_on_market: 30, p75_days_on_market: 60 }, reason_codes: ['PERSONAL_LISTED_FOR_OPPORTUNISTIC_EXIT'] },
+    ];
+    const { data: enrichedProduction, error: productionError } = await serviceClient.rpc('_enrich_hybrid_comparable_dom_signals_v2_12', { p_item_decision_evidence: productionShapedItems });
+    check('production-shaped fixture enrichment did not error', !productionError, productionError);
+    const byId = (id: number) => (enrichedProduction as any[] ?? []).find((r) => r.item_id === id);
+
+    check('9001 (listed, above median, below P75) -> median only', stableStringify(byId(9001)?.reason_codes) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN']), byId(9001));
+    check('9002 (listed, above P75) -> both, median before p75, existing HYBRID_HIGH_CAPITAL_SIGNAL preserved in place', stableStringify(byId(9002)?.reason_codes) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN', 'HYBRID_DOM_ABOVE_COMPARABLE_P75']), byId(9002));
+    check('9003 (listed, below median) -> no new signal', stableStringify(byId(9003)?.reason_codes) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL']), byId(9003));
+    check('9004 (unlisted) -> no new signal', stableStringify(byId(9004)?.reason_codes) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_UNLISTED_SIGNAL']), byId(9004));
+    check('9005 (Historical Import, reliable listing DOM) -> both signals, historical limitation preserved in place', stableStringify(byId(9005)?.reason_codes) === stableStringify(['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HISTORICAL_AGE_UNRELIABLE', 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN', 'HYBRID_DOM_ABOVE_COMPARABLE_P75']), byId(9005));
+    check('9006 (Business control) -> byte-identical, untouched', stableStringify(byId(9006)?.reason_codes) === stableStringify(['BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN', 'BUSINESS_DOM_ABOVE_COMPARABLE_P75']), byId(9006));
+    check('9007 (Personal control) -> byte-identical, untouched', stableStringify(byId(9007)?.reason_codes) === stableStringify(['PERSONAL_LISTED_FOR_OPPORTUNISTIC_EXIT']), byId(9007));
+  }
+
+  console.log('\n[v2.12 — full-snapshot verification against real fixture data]');
+  const { data: v212SnapshotA, error: v212Error } = await serviceClient.rpc('build_analytics_snapshot_v2_12', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_12 callable by service_role', !v212Error, v212Error);
+  check('v2.12 snapshot_schema_version is 2.12', (v212SnapshotA as any)?.snapshot_schema_version === '2.12', (v212SnapshotA as any)?.snapshot_schema_version);
+  check('v2.12 analytics_definition_version is 2.12', (v212SnapshotA as any)?.analytics_definition_version === '2.12', (v212SnapshotA as any)?.analytics_definition_version);
+
+  const itemsV212A: any[] = (v212SnapshotA as any)?.target_user_open_inventory_evidence?.item_decision_evidence ?? [];
+  const hybridHistoricalRow212 = itemsV212A.find((i) => i.item_id === fx.hybridHistoricalOpen);
+  const hybridRecentRow212 = itemsV212A.find((i) => i.item_id === fx.hybridRecentOpen);
+  const businessLongDomRow212 = itemsV212A.find((i) => i.item_id === fx.businessLongDomOpen);
+  const personalRow212 = itemsV212A.find((i) => i.item_id === fx.personalOpenItem);
+
+  console.log('\n[v2.12 — test 1/2/15/16: real fixture — hybridHistoricalOpen (listed 150d ago, Historical Import) receives both signals from its already-computed, purpose-aware liquidity cohort]');
+  check(
+    'hybridHistoricalOpen carries both new codes, appended after its existing codes',
+    hybridHistoricalRow212?.reason_codes.includes('HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN') && hybridHistoricalRow212?.reason_codes.includes('HYBRID_DOM_ABOVE_COMPARABLE_P75'),
+    hybridHistoricalRow212?.reason_codes,
+  );
+  check(
+    'the two new codes are the LAST two entries, in median-then-p75 order — every pre-existing code keeps its prior position',
+    hybridHistoricalRow212?.reason_codes.slice(-2).join(',') === 'HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN,HYBRID_DOM_ABOVE_COMPARABLE_P75',
+    hybridHistoricalRow212?.reason_codes,
+  );
+  check('hybridHistoricalOpen remains a Historical Import (this migration never touches is_historical_import)', hybridHistoricalRow212?.is_historical_import === true, hybridHistoricalRow212);
+
+  console.log('\n[v2.12 — test 8: real fixture — hybridRecentOpen (unlisted) receives no comparable-DOM signal]');
+  check(
+    'hybridRecentOpen (unlisted, listed_flag=false) never receives either new code',
+    hybridRecentRow212?.listed_flag === false
+      && !hybridRecentRow212?.reason_codes.includes('HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN')
+      && !hybridRecentRow212?.reason_codes.includes('HYBRID_DOM_ABOVE_COMPARABLE_P75'),
+    hybridRecentRow212,
+  );
+
+  console.log('\n[v2.12 — test 13/14/15: same-Purpose cohort preference and fallback are untouched — liquidity_cohort/liquidity_cohort_match/economic_cohort are IDENTICAL to v2.11, only reason_codes differs]');
+  const { data: v211SnapshotAForDiff } = await serviceClient.rpc('build_analytics_snapshot_v2_11', { p_target_user_id: userAId });
+  const itemsV211A: any[] = (v211SnapshotAForDiff as any)?.target_user_open_inventory_evidence?.item_decision_evidence ?? [];
+  const hybridHistoricalRow211 = itemsV211A.find((i) => i.item_id === fx.hybridHistoricalOpen);
+  check(
+    'liquidity_cohort (the cohort this migration reads from) is byte-identical between v2.11 and v2.12 — no new cohort logic, no new fallback policy',
+    stableStringify(hybridHistoricalRow211?.liquidity_cohort) === stableStringify(hybridHistoricalRow212?.liquidity_cohort),
+    { v211: hybridHistoricalRow211?.liquidity_cohort, v212: hybridHistoricalRow212?.liquidity_cohort },
+  );
+  check(
+    'liquidity_cohort_match is byte-identical between v2.11 and v2.12',
+    hybridHistoricalRow211?.liquidity_cohort_match === hybridHistoricalRow212?.liquidity_cohort_match,
+    { v211: hybridHistoricalRow211?.liquidity_cohort_match, v212: hybridHistoricalRow212?.liquidity_cohort_match },
+  );
+  check(
+    'economic_cohort (the acquisition-economics cohort — a DIFFERENT object) is byte-identical and was never read by this migration',
+    stableStringify(hybridHistoricalRow211?.economic_cohort) === stableStringify(hybridHistoricalRow212?.economic_cohort),
+    { v211: hybridHistoricalRow211?.economic_cohort, v212: hybridHistoricalRow212?.economic_cohort },
+  );
+
+  console.log('\n[v2.12 — test 18/19: existing Hybrid reason codes remain present, unchanged, and correctly named]');
+  const existingHybridCodesPresent = ['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL'].every((c) => hybridHistoricalRow212?.reason_codes.includes(c));
+  check('hybridHistoricalOpen keeps HYBRID_REVIEW_REQUIRED and HYBRID_LISTED_SIGNAL exactly as before', existingHybridCodesPresent, hybridHistoricalRow212?.reason_codes);
+  check(
+    'HYBRID_HIGH_CAPITAL_SIGNAL / HYBRID_LOW_UPSIDE_SIGNAL remain the Hybrid-specific names anywhere they appear — never replaced by the Business/unclassified generic HIGH_CAPITAL_EXPOSURE / LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL names',
+    itemsV212A.filter((i) => i.current_purpose_name === 'Hybrid').every((i: any) =>
+      !(i.reason_codes.includes('HIGH_CAPITAL_EXPOSURE') || i.reason_codes.includes('LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'))),
+    itemsV212A.filter((i) => i.current_purpose_name === 'Hybrid').map((i: any) => i.reason_codes),
+  );
+
+  console.log('\n[v2.12 — test 20/21: Business and Personal item_decision_evidence rows remain byte-identical]');
+  check(
+    'businessLongDomOpen (real Business fixture, listed ~200d ago) reason_codes are byte-identical between v2.11 and v2.12',
+    stableStringify(itemsV211A.find((i) => i.item_id === fx.businessLongDomOpen)?.reason_codes) === stableStringify(businessLongDomRow212?.reason_codes),
+    { v211: itemsV211A.find((i) => i.item_id === fx.businessLongDomOpen)?.reason_codes, v212: businessLongDomRow212?.reason_codes },
+  );
+  check(
+    'personalOpenItem reason_codes are byte-identical between v2.11 and v2.12',
+    stableStringify(itemsV211A.find((i) => i.item_id === fx.personalOpenItem)?.reason_codes) === stableStringify(personalRow212?.reason_codes),
+    { v211: itemsV211A.find((i) => i.item_id === fx.personalOpenItem)?.reason_codes, v212: personalRow212?.reason_codes },
+  );
+  check(
+    'every Business row across the whole snapshot is byte-identical between v2.11 and v2.12',
+    itemsV211A.filter((i) => i.current_purpose_name === 'Business').every((v211Item) => {
+      const v212Item = itemsV212A.find((i) => i.item_id === v211Item.item_id);
+      return stableStringify(v211Item) === stableStringify(v212Item);
+    }),
+  );
+  check(
+    'every Personal row across the whole snapshot is byte-identical between v2.11 and v2.12',
+    itemsV211A.filter((i) => i.current_purpose_name === 'Personal').every((v211Item) => {
+      const v212Item = itemsV212A.find((i) => i.item_id === v211Item.item_id);
+      return stableStringify(v211Item) === stableStringify(v212Item);
+    }),
+  );
+
+  console.log('\n[v2.12 — test 25/26: v2.11 remains byte-identical and callable; v2.12 changes only the intended Hybrid reason-code arrays and version metadata]');
+  function stripVolatileKeys212(snap: any) {
+    const { generated_at, snapshot_schema_version, analytics_definition_version, ...rest } = snap ?? {};
+    return rest;
+  }
+  function stripReasonCodesFromItems(items: any[]) {
+    return (items ?? []).map((i) => { const { reason_codes, ...rest } = i; return rest; });
+  }
+  const oidsV211 = (v211SnapshotAForDiff as any)?.target_user_open_inventory_evidence ?? {};
+  const oidsV212 = (v212SnapshotA as any)?.target_user_open_inventory_evidence ?? {};
+  const { item_decision_evidence: itemDecisionV211, ...oidsRestV211 } = oidsV211;
+  const { item_decision_evidence: itemDecisionV212, ...oidsRestV212 } = oidsV212;
+  check(
+    'every section of target_user_open_inventory_evidence OTHER than item_decision_evidence is byte-identical (population_summary, purpose_position_summary, hybrid_purpose_review, personal_inventory_control, module_limitations all untouched)',
+    stableStringify(oidsRestV211) === stableStringify(oidsRestV212),
+    { onlyMismatch: stableStringify(oidsRestV211) === stableStringify(oidsRestV212) ? null : { oidsRestV211, oidsRestV212 } },
+  );
+  check(
+    'item_decision_evidence rows are byte-identical between v2.11 and v2.12 EXCEPT reason_codes (item ordering, every numeric field, every cohort object all unchanged)',
+    stableStringify(stripReasonCodesFromItems(itemDecisionV211)) === stableStringify(stripReasonCodesFromItems(itemDecisionV212)),
+  );
+  check(
+    'every section OTHER than target_user_open_inventory_evidence is byte-identical between v2.11 and v2.12 (stable-stringify, generated_at/version keys aside)',
+    stableStringify({ ...stripVolatileKeys212(v211SnapshotAForDiff), target_user_open_inventory_evidence: undefined })
+      === stableStringify({ ...stripVolatileKeys212(v212SnapshotA), target_user_open_inventory_evidence: undefined }),
+  );
+
+  console.log('\n[v2.12 — permissions]');
+  const { error: v212AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_12', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_12 directly', !!v212AuthedError, v212AuthedError);
+  const { error: v212HelperAuthedError } = await clientA.rpc('_enrich_hybrid_comparable_dom_signals_v2_12', { p_item_decision_evidence: [] });
+  check('authenticated client cannot call _enrich_hybrid_comparable_dom_signals_v2_12 directly', !!v212HelperAuthedError, v212HelperAuthedError);
+  const { error: v212ForgedTargetError } = await clientA.rpc('build_analytics_snapshot_v2_12', { p_target_user_id: userBId });
+  check('authenticated client cannot invoke build_analytics_snapshot_v2_12 for a forged target user id either', !!v212ForgedTargetError, v212ForgedTargetError);
+
+  console.log('\n[v2.12 — old-version compatibility, including v2.11]');
+  const { error: v211StillCallableError } = await serviceClient.rpc('build_analytics_snapshot_v2_11', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_11 still callable by service_role after v2.12 migration', !v211StillCallableError, v211StillCallableError);
+
+  console.log('\n[v2.12 — test 23: two-user fixture proves target-user isolation]');
+  const { data: v212SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v2_12', { p_target_user_id: userBId });
+  const itemsV212B: any[] = (v212SnapshotB as any)?.target_user_open_inventory_evidence?.item_decision_evidence ?? [];
+  const userBHybridIds = [fx.userBHybridOpenOne, fx.userBHybridOpenTwo];
+  check(
+    'user B\'s item ids and user A\'s item ids never overlap',
+    itemsV212A.every((a) => !itemsV212B.some((b) => b.item_id === a.item_id)),
+    { userAIds: itemsV212A.map((i) => i.item_id), userBIds: itemsV212B.map((i) => i.item_id) },
+  );
+  check(
+    "user B's own Hybrid items are present and correctly scoped to user B only",
+    userBHybridIds.every((id) => itemsV212B.some((i) => i.item_id === id)) && userBHybridIds.every((id) => !itemsV212A.some((i) => i.item_id === id)),
+    { userBHybridIds, userAIds: itemsV212A.map((i) => i.item_id) },
+  );
+
+  console.log('\n[v2.12 — test 24: no shared item-level Hybrid identity is introduced]');
+  check('no shared_open_inventory_evidence key exists anywhere in the snapshot (OIDS has no shared/pooled counterpart — unchanged by this migration)', !('shared_open_inventory_evidence' in ((v212SnapshotA as any) ?? {})), Object.keys((v212SnapshotA as any) ?? {}));
+  const sharedSectionsSerialized212 = stableStringify({
+    shared_purpose_evidence: (v212SnapshotA as any)?.shared_purpose_evidence,
+    shared_acquisition_evidence: (v212SnapshotA as any)?.shared_acquisition_evidence,
+    shared_inventory_segmentation_evidence: (v212SnapshotA as any)?.shared_inventory_segmentation_evidence,
+    shared_deal_channel_evidence: (v212SnapshotA as any)?.shared_deal_channel_evidence,
+    shared_listing_channel_evidence: (v212SnapshotA as any)?.shared_listing_channel_evidence,
+    shared_capital_liquidity_evidence: (v212SnapshotA as any)?.shared_capital_liquidity_evidence,
+    shared_calendar_seasonality_evidence: (v212SnapshotA as any)?.shared_calendar_seasonality_evidence,
+  });
+  check(
+    'no shared-scope section contains a HYBRID_DOM_ABOVE_COMPARABLE code or an item_decision_evidence-shaped item identity',
+    !sharedSectionsSerialized212.includes('HYBRID_DOM_ABOVE_COMPARABLE') && !sharedSectionsSerialized212.includes('item_decision_evidence'),
+  );
+
+  console.log('\n[v2.12 — test 32: old-version compatibility, all prior versions]');
+  const v212StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ...v211StillCallableChecks,
+    ['build_analytics_snapshot_v2_11', { p_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v212StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.12 migration`, !error, error);
+  }
+
+  console.log('\n[v2.12 — production promotion]');
+  check('ANALYTICS_VERSION constant used by the production runner is now 2.12', ANALYTICS_VERSION === '2.12', ANALYTICS_VERSION);
+  const runA212 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new production run stores analytics_version 2.12', runA212.analytics_version === '2.12', runA212.analytics_version);
+  check('new production run snapshot.snapshot_schema_version is 2.12', (runA212.snapshot as any)?.snapshot_schema_version === '2.12', (runA212.snapshot as any)?.snapshot_schema_version);
+  const runA212Insights = (runA212.snapshot as any)?.insights;
+  check('new production run insights.source_analytics_version is 2.12 (evidence-only bump)', runA212Insights?.source_analytics_version === '2.12', runA212Insights?.source_analytics_version);
+  check(
+    'new production run insights_engine_version / findings_selector_version remain 1.7 (no new Findings Selector rule was added — HYBRID_PURPOSE_REVIEW_PRIORITY is still not implemented)',
+    runA212Insights?.insights_engine_version === '1.7' && runA212Insights?.findings_selector_version === '1.7',
+    { insights_engine_version: runA212Insights?.insights_engine_version, findings_selector_version: runA212Insights?.findings_selector_version },
+  );
+  check(
+    'HYBRID_PURPOSE_REVIEW_PRIORITY is not among the selected findings or rule families (not implemented in this task)',
+    !(runA212Insights?.selected_findings ?? []).some((f: any) => f.finding_code === 'HYBRID_PURPOSE_REVIEW_PRIORITY')
+      && !(runA212Insights?.rule_evaluations ?? []).some((r: any) => r.finding_code === 'HYBRID_PURPOSE_REVIEW_PRIORITY'),
+    (runA212Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
+  );
+  check(
+    'every one of the eight rule families still produced a rule_evaluations entry (none silently dropped by the v2.12 promotion)',
+    new Set((runA212Insights?.rule_evaluations ?? []).map((r: any) => r.finding_code)).size >= 1,
+    (runA212Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
+  );
+
+  console.log('\n[v2.12 — old stored runs remain readable]');
+  const { data: oldRunReadBack212 } = await serviceClient
+    .from('analytics_runs').select('analytics_version, snapshot').eq('id', syntheticOldRun!.id).single();
+  check(
+    'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.12 migration',
+    oldRunReadBack212?.analytics_version === '1.8' && (oldRunReadBack212?.snapshot as any)?.snapshot_schema_version === '1.8',
+    oldRunReadBack212,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

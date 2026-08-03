@@ -71,11 +71,27 @@ import { selectFindings } from '@/lib/analytics/insights/selectFindings';
 // selectFindings.ts) reading this same v2.11 evidence; no further
 // Analytics SQL change was needed for it. v1.0-v1.8 and v2.0-v2.10 are
 // completely unaffected and remain independently callable.
-export const ANALYTICS_VERSION = '2.11';
+//
+// v2.12: new runs call build_analytics_snapshot_v2_12 (Hybrid Comparable-
+// DOM Signals). v2.1's item_decision_evidence computed BUSINESS_DOM_
+// ABOVE_COMPARABLE_MEDIAN/P75 for Business rows only — Hybrid rows had no
+// equivalent signal at all (confirmed deliberate per v2.1's own header:
+// "Hybrid has no DOM-vs-cohort-median/p75 reason code at all, per the
+// task's explicit scope"), surfaced as a blocking evidence gap while
+// attempting Insights Engine v1.8 (HYBRID_PURPOSE_REVIEW_PRIORITY, still
+// not implemented). v2.12 adds HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN/P75 to
+// item_decision_evidence for mapped Hybrid rows only, mirroring the
+// Business condition exactly — no new cohort logic; liquidity_cohort.
+// median_days_on_market/p75_days_on_market were already computed,
+// purpose-aware, for every open item (see supabase/migrations/
+// 20260823000000_build_analytics_snapshot_v2_12.sql). Business, Personal,
+// and every other section remain byte-identical. v1.0-v1.8 and v2.0-v2.11
+// are completely unaffected and remain independently callable.
+export const ANALYTICS_VERSION = '2.12';
 export const EVIDENCE_SCOPE = 'shared_inventory_population';
-const SNAPSHOT_SCHEMA_VERSION = '2.11';
-const ANALYTICS_DEFINITION_VERSION = '2.11';
-const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_11';
+const SNAPSHOT_SCHEMA_VERSION = '2.12';
+const ANALYTICS_DEFINITION_VERSION = '2.12';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_12';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
