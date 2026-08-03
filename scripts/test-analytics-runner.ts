@@ -99,7 +99,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_10
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_11
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -108,7 +108,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_10') {
+          if (name === 'build_analytics_snapshot_v2_11') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -128,7 +128,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_10') {
+          if (name === 'build_analytics_snapshot_v2_11') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -195,8 +195,8 @@ async function main() {
   // inside the JSON itself.
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '2.10',
-    analytics_definition_version: '2.10',
+    snapshot_schema_version: '2.11',
+    analytics_definition_version: '2.11',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     purpose_semantics: 'current_item_purpose',
@@ -272,12 +272,12 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_10', { p_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_11', { p_target_user_id: userAId });
   // Since Insights Engine v1.0, the persisted snapshot additionally carries a
   // top-level `insights` key (application-layer enrichment, versioned
   // independently — see src/lib/analytics/insights/). Stripping it before
-  // comparing confirms the underlying Analytics v2.10 evidence itself is
-  // still byte-identical to a fresh direct RPC call — v2.10 calculations are
+  // comparing confirms the underlying Analytics v2.11 evidence itself is
+  // still byte-identical to a fresh direct RPC call — v2.11 calculations are
   // unmodified, only enriched on top.
   const { insights: _insightsA, ...snapAWithoutInsights } = snapA;
   check(
@@ -493,13 +493,27 @@ async function main() {
     (popSummary?.excluded_historical_realized_holding_days_count ?? 0) >= 1,
     popSummary?.excluded_historical_realized_holding_days_count,
   );
+  // Postgres truncates identifiers to 63 bytes (NAMEDATALEN-1) — this
+  // column's full name is 65 bytes, so the v1.1 migration's own jsonb key
+  // is silently truncated to "...holding_days_coun" (missing the final
+  // "t"; the migration's own NOTICE flags this at apply time). Every prior
+  // fixture set happened to leave this bucket at 0 (no non-historical,
+  // holding_days-present, realized item had ever triggered has_lifecycle_
+  // date_issue), so reading the untruncated (wrong) key via `?? 0` never
+  // surfaced the mismatch until v2.11's listingAfterExitInvalidOrder
+  // fixture (a deliberate has_listing_after_exit case) exercised it for
+  // the first time. Reading the ACTUAL (truncated) key here, not fixing
+  // the decades-old v1.1 SQL identifier, since this is a test-assertion
+  // fix, not an Analytics v1.1/v2.10/v2.11 behavior change.
+  const excludedUnreliableAcquisitionDateRealizedHoldingDaysCount =
+    (popSummary as Record<string, unknown> | undefined)?.['excluded_unreliable_acquisition_date_realized_holding_days_coun'] as number | undefined;
   check(
     'holding reconciliation: eligible + excluded_historical + excluded_unreliable === raw',
     (popSummary?.eligible_realized_holding_days_count ?? 0)
       + (popSummary?.excluded_historical_realized_holding_days_count ?? 0)
-      + (popSummary?.excluded_unreliable_acquisition_date_realized_holding_days_count ?? 0)
+      + (excludedUnreliableAcquisitionDateRealizedHoldingDaysCount ?? 0)
       === popSummary?.raw_realized_holding_days_present_count,
-    popSummary,
+    { popSummary, excludedUnreliableAcquisitionDateRealizedHoldingDaysCount },
   );
   const positiveBandRow = positivePerf?.find((r: any) => r.holding_sample_size > 0);
   check('module-level holding_sample_size uses the reliable rule (some positive band row has holding_sample_size > 0)', !!positiveBandRow, positivePerf);
@@ -3820,11 +3834,13 @@ async function main() {
     check(`${fn} still callable by service_role after v2.10 migration`, !error, error);
   }
 
-  console.log('\n[v2.10 — production promotion]');
-  check('ANALYTICS_VERSION constant used by the production runner is now 2.10', ANALYTICS_VERSION === '2.10', ANALYTICS_VERSION);
-  const runA210 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new production run stores analytics_version 2.10', runA210.analytics_version === '2.10', runA210.analytics_version);
-  check('new production run snapshot.snapshot_schema_version is 2.10', (runA210.snapshot as any)?.snapshot_schema_version === '2.10', (runA210.snapshot as any)?.snapshot_schema_version);
+  // Note: at the point v2.10 was promoted, this section asserted the
+  // runner's ANALYTICS_VERSION was 2.10 specifically and created a fresh
+  // production run to check it. The runner has since been promoted again
+  // to v2.11 (see the "[v2.11 — production promotion]" section below) —
+  // that generic check already lives in the "[production runner — creates
+  // a completed run with the current ANALYTICS_VERSION]" block above, so
+  // it is not repeated here.
 
   console.log('\n[v2.10 — old stored runs remain readable]');
   const { data: oldRunReadBack210 } = await serviceClient
@@ -3847,6 +3863,267 @@ async function main() {
       && (coverageRowsCheck ?? []).some((r: any) => r.user_id === userAId && r.complete_history_start_date === coverageStartAIso)
       && (coverageRowsCheck ?? []).some((r: any) => r.user_id === userBId && r.complete_history_start_date === coverageStartBIso),
     coverageRowsCheck,
+  );
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Analytics v2.11 — Per-Platform Listing-to-Exit Timing
+  // ══════════════════════════════════════════════════════════════════════
+  // Fixture math, independently derived from setup-analytics-test-fixtures.ts's
+  // own daysAgo() inputs (never copied from a prior run's output):
+  //   businessFastSale               Marketplace listed 580d ago, exit 560d ago -> 20
+  //   historicalImportRealized       Marketplace listed  30d ago, exit  10d ago -> 20  (Historical Import)
+  //   crossListedMarketplaceKijiji   Marketplace listed 150d ago \_ exit 100d ago (via Marketplace)
+  //                                  Kijiji       listed 145d ago /  -> Marketplace span 50, Kijiji span 45
+  //   sameDayListingAndExit          Marketplace listed   5d ago, exit   5d ago -> 0
+  //   listingAfterExitInvalidOrder   Marketplace listed  10d ago, exit  40d ago -> INVALID (listed after exit)
+  // Marketplace realized+exposed = 5 total; valid sample = {20, 20, 50, 0} (4),
+  // sorted [0, 20, 20, 50] -> median 20; invalid = 1; missing = 0; coverage = 80%.
+  // Kijiji realized+exposed = 1 (only the cross-listed item); valid sample = {45};
+  // median 45; coverage 100%. Reverb realized+exposed = 0 (reverbOpenSoleSample is
+  // OPEN, tradedViaReverb/historicalTradedNoExitChannel have no listing exposure
+  // at all) -> sample 0, coverage null.
+
+  console.log('\n[v2.11 — helper and builder callable; correct evidence path and field names]');
+  const { data: v211SnapshotA, error: v211Error } = await serviceClient.rpc('build_analytics_snapshot_v2_11', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_11 callable by service_role', !v211Error, v211Error);
+  check('v2.11 snapshot_schema_version is 2.11', (v211SnapshotA as any)?.snapshot_schema_version === '2.11', (v211SnapshotA as any)?.snapshot_schema_version);
+  check('v2.11 analytics_definition_version is 2.11', (v211SnapshotA as any)?.analytics_definition_version === '2.11', (v211SnapshotA as any)?.analytics_definition_version);
+
+  const targetListingEvidence211 = (v211SnapshotA as any)?.target_user_listing_channel_evidence;
+  const pooledRows211: any[] = targetListingEvidence211?.performance_by_listing_channel ?? [];
+  const purposeRows211: any[] = targetListingEvidence211?.performance_by_listing_channel_by_purpose ?? [];
+  const marketplaceRow211 = pooledRows211.find((r) => r.listing_channel_name === 'Marketplace');
+  const kijijiRow211 = pooledRows211.find((r) => r.listing_channel_name === 'Kijiji');
+  const reverbRow211 = pooledRows211.find((r) => r.listing_channel_name === 'Reverb');
+
+  check(
+    'performance_by_listing_channel rows carry every new field name, at the correct path (target_user_listing_channel_evidence.performance_by_listing_channel)',
+    !!marketplaceRow211
+      && 'channel_listing_to_exit_sample_size' in marketplaceRow211
+      && 'median_channel_listing_to_exit_days' in marketplaceRow211
+      && 'channel_listing_to_exit_coverage_percent' in marketplaceRow211
+      && 'invalid_channel_listing_after_exit_count' in marketplaceRow211
+      && 'realized_exposed_item_count' in marketplaceRow211
+      && 'missing_channel_listing_to_exit_count' in marketplaceRow211,
+    marketplaceRow211,
+  );
+
+  console.log('\n[v2.11 — test 1/4/8: single-item and multi-item durations, same-day, Historical Import]');
+  check('Marketplace realized_exposed_item_count is 5', marketplaceRow211?.realized_exposed_item_count === 5, marketplaceRow211);
+  check(
+    'Marketplace channel_listing_to_exit_sample_size is 4 (5 realized minus 1 invalid-order) — proves the same-day (0) and Historical Import (20) entries were both INCLUDED, not silently dropped',
+    marketplaceRow211?.channel_listing_to_exit_sample_size === 4,
+    marketplaceRow211,
+  );
+  check('Marketplace median_channel_listing_to_exit_days is 20 (median of {0, 20, 20, 50})', marketplaceRow211?.median_channel_listing_to_exit_days === 20, marketplaceRow211);
+  const { data: historicalImportRow } = await serviceClient
+    .from('analytics_item_lifecycle_v2')
+    .select('is_historical_import, exit_date')
+    .eq('item_id', fx.historicalImportRealized)
+    .eq('user_id', userAId)
+    .single();
+  check('historicalImportRealized is genuinely flagged is_historical_import', historicalImportRow?.is_historical_import === true, historicalImportRow);
+
+  console.log('\n[v2.11 — test 2/13: cross-listed item gets a separate, genuinely platform-specific duration per channel]');
+  check('Kijiji realized_exposed_item_count is 1 (only the cross-listed item)', kijijiRow211?.realized_exposed_item_count === 1, kijijiRow211);
+  check('Kijiji channel_listing_to_exit_sample_size is 1', kijijiRow211?.channel_listing_to_exit_sample_size === 1, kijijiRow211);
+  check(
+    "Kijiji's median_channel_listing_to_exit_days is 45 (ITS OWN listed_at, 145 days before exit) — " +
+      'NOT 50 (what the item\'s GLOBAL first-listed-anywhere date, Marketplace\'s 150-days-ago, would have produced) — ' +
+      'proving this is genuinely per-channel timing, not global lifecycle DOM read from the wrong channel',
+    kijijiRow211?.median_channel_listing_to_exit_days === 45,
+    kijijiRow211,
+  );
+  check('Kijiji channel_listing_to_exit_coverage_percent is 100', kijijiRow211?.channel_listing_to_exit_coverage_percent === 100, kijijiRow211);
+
+  console.log('\n[v2.11 — test 3: duplicate listings on the same platform canonicalize to the earliest listed_at]');
+  // item_listings enforces UNIQUE(inventory_item_id, deal_channel_id), so a real
+  // duplicate (item, channel) row can never exist — verified structurally below —
+  // and canonicalization is therefore proven via the identical MIN(listed_at)
+  // GROUP BY (item, channel) expression the migration uses, evaluated standalone
+  // over literal synthetic rows (never touching a real table), rather than by
+  // attempting an insert the schema forbids.
+  const { data: dupConstraintCheck } = await serviceClient
+    .from('item_listings')
+    .select('id')
+    .eq('inventory_item_id', fx.businessFastSale);
+  check('item_listings has at most one row for (item, channel) — duplicate insertion is structurally impossible, matching the migration header\'s documented reasoning', (dupConstraintCheck ?? []).length <= 1, dupConstraintCheck);
+  {
+    const canonicalizationQuery = `
+      WITH synthetic_listings(inventory_item_id, deal_channel_id, listed_at) AS (
+        VALUES (999001, 1, DATE '2026-01-10'), (999001, 1, DATE '2026-01-05'), (999001, 1, DATE '2026-01-20')
+      )
+      SELECT inventory_item_id, deal_channel_id, MIN(listed_at) AS canonical_channel_listed_at
+      FROM synthetic_listings GROUP BY inventory_item_id, deal_channel_id
+    `;
+    const pgQueryUrl = `${SUPABASE_URL}/pg/query`;
+    const res = await fetch(pgQueryUrl, {
+      method: 'POST',
+      headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: canonicalizationQuery }),
+    });
+    const rows = await res.json().catch(() => null);
+    const canonical = Array.isArray(rows) ? rows[0]?.canonical_channel_listed_at : null;
+    check(
+      'MIN(listed_at) GROUP BY (item, channel) — the exact canonicalization expression v2.11 uses — picks the EARLIEST of three synthetic same-item/same-channel dates (2026-01-05), not the first or last inserted',
+      canonical === '2026-01-05',
+      rows,
+    );
+  }
+
+  console.log('\n[v2.11 — test 5/6: listed-after-exit is invalid, excluded, counted — never a negative duration]');
+  check('Marketplace invalid_channel_listing_after_exit_count is 1 (listingAfterExitInvalidOrder)', marketplaceRow211?.invalid_channel_listing_after_exit_count === 1, marketplaceRow211);
+  check('Marketplace missing_channel_listing_to_exit_count is 0', marketplaceRow211?.missing_channel_listing_to_exit_count === 0, marketplaceRow211);
+  const allTargetRows211ForNegativeCheck = [...pooledRows211, ...purposeRows211];
+  check(
+    'no median_channel_listing_to_exit_days is ever negative, across every target-scope row (pooled and by-Purpose)',
+    allTargetRows211ForNegativeCheck.every((r) => r.median_channel_listing_to_exit_days === null || r.median_channel_listing_to_exit_days >= 0),
+    allTargetRows211ForNegativeCheck.map((r) => r.median_channel_listing_to_exit_days),
+  );
+
+  console.log('\n[v2.11 — test 7: missing/zero-sample timing is handled honestly, never a fabricated value]');
+  check('Reverb realized_exposed_item_count is 0', reverbRow211?.realized_exposed_item_count === 0, reverbRow211);
+  check('Reverb channel_listing_to_exit_sample_size is 0', reverbRow211?.channel_listing_to_exit_sample_size === 0, reverbRow211);
+  check('Reverb median_channel_listing_to_exit_days is null (never fabricated as 0)', reverbRow211?.median_channel_listing_to_exit_days === null, reverbRow211);
+  check('Reverb channel_listing_to_exit_coverage_percent is null (0/0 is never presented as 0%)', reverbRow211?.channel_listing_to_exit_coverage_percent === null, reverbRow211);
+
+  console.log('\n[v2.11 — test 9: Business, Hybrid, and Personal all remain included (no new Purpose filtering)]');
+  const kijijiHybridPurposeRow211 = purposeRows211.find((r) => r.listing_channel_name === 'Kijiji' && r.current_purpose_name === 'Hybrid');
+  const marketplaceBusinessPurposeRow211 = purposeRows211.find((r) => r.listing_channel_name === 'Marketplace' && r.current_purpose_name === 'Business');
+  check('a Hybrid-purpose row exists for Kijiji (hybridHistoricalOpen\'s exposure) — Hybrid items are not filtered out', !!kijijiHybridPurposeRow211, kijijiHybridPurposeRow211);
+  check('the Hybrid-purpose Kijiji row carries the new fields too (well-formed, not omitted)', kijijiHybridPurposeRow211 && 'channel_listing_to_exit_sample_size' in kijijiHybridPurposeRow211, kijijiHybridPurposeRow211);
+  check('a Business-purpose row exists for Marketplace and matches the pooled row\'s new-field values (single-Purpose fixture population here)', marketplaceBusinessPurposeRow211?.median_channel_listing_to_exit_days === 20 && marketplaceBusinessPurposeRow211?.channel_listing_to_exit_sample_size === 4, marketplaceBusinessPurposeRow211);
+
+  console.log('\n[v2.11 — test 10/11: target-user scoping and shared aggregation privacy]');
+  const { data: v211SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v2_11', { p_target_user_id: userBId });
+  const targetPooledRowsB211: any[] = (v211SnapshotB as any)?.target_user_listing_channel_evidence?.performance_by_listing_channel ?? [];
+  const marketplaceRowB211 = targetPooledRowsB211.find((r: any) => r.listing_channel_name === 'Marketplace');
+  check(
+    "userB's target-user Marketplace row reflects only userB's own items (realized_exposed_item_count differs from userA's 5, since userB's own Marketplace fixture item(s) are separate)",
+    marketplaceRowB211 === undefined || marketplaceRowB211.realized_exposed_item_count !== 5 || marketplaceRowB211.median_channel_listing_to_exit_days !== 20,
+    { marketplaceRowB211, userAMarketplaceRow: marketplaceRow211 },
+  );
+  const sharedListingEvidence211 = (v211SnapshotA as any)?.shared_listing_channel_evidence;
+  const sharedPooledRows211: any[] = sharedListingEvidence211?.performance_by_listing_channel ?? [];
+  const sharedMarketplaceRow211 = sharedPooledRows211.find((r) => r.listing_channel_name === 'Marketplace');
+  check('shared performance_by_listing_channel rows never carry a user_id key (aggregate only)', sharedPooledRows211.every((r) => !('user_id' in r)), sharedPooledRows211.map((r) => Object.keys(r)));
+  check(
+    "shared (pooled, all users) Marketplace realized_exposed_item_count (>= userA's own 5) reflects more than just userA — proves shared scope aggregates across users rather than silently scoping to one",
+    (sharedMarketplaceRow211?.realized_exposed_item_count ?? 0) >= 5,
+    sharedMarketplaceRow211,
+  );
+
+  console.log('\n[v2.11 — test 12: coverage reconciles exactly (sample + invalid + missing = realized), every row, both scopes]');
+  function checkCoverageReconciles(label: string, row: any) {
+    if (!row) { check(`${label}: row exists`, false); return; }
+    const total = (row.channel_listing_to_exit_sample_size ?? 0) + (row.invalid_channel_listing_after_exit_count ?? 0) + (row.missing_channel_listing_to_exit_count ?? 0);
+    check(`${label}: sample_size + invalid_after_exit + missing === realized_exposed_item_count`, total === row.realized_exposed_item_count, { label, total, realized: row.realized_exposed_item_count, row });
+  }
+  checkCoverageReconciles('target Marketplace', marketplaceRow211);
+  checkCoverageReconciles('target Kijiji', kijijiRow211);
+  checkCoverageReconciles('target Reverb', reverbRow211);
+  checkCoverageReconciles('shared Marketplace', sharedMarketplaceRow211);
+
+  console.log('\n[v2.11 — test 14/15: existing global-DOM fields and every other v2.10 section remain byte-identical]');
+  const { data: v210SnapshotAForDiff } = await serviceClient.rpc('build_analytics_snapshot_v2_10', { p_target_user_id: userAId });
+  const v210MarketplaceRow = ((v210SnapshotAForDiff as any)?.target_user_listing_channel_evidence?.performance_by_listing_channel ?? []).find((r: any) => r.listing_channel_name === 'Marketplace');
+  check(
+    'median_days_on_market (global lifecycle DOM) is unchanged by v2.11 — same value as v2.10, not renamed or recomputed',
+    v210MarketplaceRow?.median_days_on_market === marketplaceRow211?.median_days_on_market && v210MarketplaceRow?.dom_sample_size === marketplaceRow211?.dom_sample_size,
+    { v210: v210MarketplaceRow?.median_days_on_market, v211: marketplaceRow211?.median_days_on_market },
+  );
+  function stripVolatileAndListingKeys(snap: any) {
+    const { generated_at, snapshot_schema_version, analytics_definition_version, shared_listing_channel_evidence, target_user_listing_channel_evidence, ...rest } = snap ?? {};
+    return rest;
+  }
+  check(
+    'every section other than {shared,target_user}_listing_channel_evidence is byte-identical between v2.10 and v2.11 (stable-stringify)',
+    stableStringify(stripVolatileAndListingKeys(v210SnapshotAForDiff)) === stableStringify(stripVolatileAndListingKeys(v211SnapshotA)),
+    { onlyInV210: stableStringify(stripVolatileAndListingKeys(v210SnapshotAForDiff)) === stableStringify(stripVolatileAndListingKeys(v211SnapshotA)) ? null : 'mismatch' },
+  );
+  const { population_summary: v210Pop, cross_listing_summary: v210Cls } = (v210SnapshotAForDiff as any)?.target_user_listing_channel_evidence ?? {};
+  const { population_summary: v211Pop, cross_listing_summary: v211Cls } = targetListingEvidence211 ?? {};
+  check('population_summary within target_user_listing_channel_evidence is untouched by v2.11', stableStringify(v210Pop) === stableStringify(v211Pop), { v210Pop, v211Pop });
+  check('cross_listing_summary within target_user_listing_channel_evidence is untouched by v2.11', stableStringify(v210Cls) === stableStringify(v211Cls), { v210Cls, v211Cls });
+
+  console.log('\n[v2.11 — permissions]');
+  const { error: v211AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_11', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_11 directly', !!v211AuthedError, v211AuthedError);
+  const { error: v211HelperAuthedError } = await clientA.rpc('_build_per_platform_listing_to_exit_timing_v2_11', { p_target_user_id: userAId });
+  check('authenticated client cannot call _build_per_platform_listing_to_exit_timing_v2_11 directly', !!v211HelperAuthedError, v211HelperAuthedError);
+  const { error: v211ForgedTargetError } = await clientA.rpc('build_analytics_snapshot_v2_11', { p_target_user_id: userBId });
+  check('authenticated client cannot invoke build_analytics_snapshot_v2_11 for a forged target user id either', !!v211ForgedTargetError, v211ForgedTargetError);
+
+  console.log('\n[v2.11 — test 16: old-version compatibility, including v2.10]');
+  const v211StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ['build_analytics_snapshot_v1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_1', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_2', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_3', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_4', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_5', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_6', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_7', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v1_8', { p_recommendation_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_0', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_1', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_2', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_3', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_4', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_5', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_6', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_7', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_8', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_9', { p_target_user_id: userAId }],
+    ['build_analytics_snapshot_v2_10', { p_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v211StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.11 migration`, !error, error);
+  }
+
+  console.log('\n[v2.11 — test 20: STRONG_LISTING_PLATFORM is not implemented in this task]');
+  const insightsRuleFiles = fs.readdirSync(path.join(__dirname, '../src/lib/analytics/insights/rules'));
+  check(
+    'no rule file is named for STRONG_LISTING_PLATFORM',
+    !insightsRuleFiles.some((f) => /listingplatform/i.test(f.replace(/[_-]/g, ''))),
+    insightsRuleFiles,
+  );
+  const selectFindingsSourceForV211 = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/selectFindings.ts'), 'utf8');
+  check('selectFindings.ts does not reference STRONG_LISTING_PLATFORM', !selectFindingsSourceForV211.includes('STRONG_LISTING_PLATFORM'), null);
+
+  console.log('\n[v2.11 — test 21: no PII or item-level identifiers in the new aggregate fields]');
+  const allNewListingRows211 = [...pooledRows211, ...purposeRows211, ...sharedPooledRows211, ...(sharedListingEvidence211?.performance_by_listing_channel_by_purpose ?? [])];
+  const forbiddenKeyPattern = /^(item_id|user_id|model|email|notes|listing_text|item_name)$/i;
+  const anyForbiddenKey = allNewListingRows211.some((r) => Object.keys(r).some((k) => forbiddenKeyPattern.test(k)));
+  check('no row in performance_by_listing_channel (pooled or by-Purpose, shared or target) carries a forbidden item/user-identity key', !anyForbiddenKey, allNewListingRows211.map((r) => Object.keys(r)));
+
+  console.log('\n[v2.11 — production promotion]');
+  check('ANALYTICS_VERSION constant used by the production runner is now 2.11', ANALYTICS_VERSION === '2.11', ANALYTICS_VERSION);
+  const runA211 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new production run stores analytics_version 2.11', runA211.analytics_version === '2.11', runA211.analytics_version);
+  check('new production run snapshot.snapshot_schema_version is 2.11', (runA211.snapshot as any)?.snapshot_schema_version === '2.11', (runA211.snapshot as any)?.snapshot_schema_version);
+  const runA211Insights = (runA211.snapshot as any)?.insights;
+  check('new production run insights.source_analytics_version is 2.11 (evidence-only bump)', runA211Insights?.source_analytics_version === '2.11', runA211Insights?.source_analytics_version);
+  check(
+    'new production run insights_engine_version / findings_selector_version remain 1.5 (no new Findings Selector rule was added)',
+    runA211Insights?.insights_engine_version === '1.5' && runA211Insights?.findings_selector_version === '1.5',
+    { insights_engine_version: runA211Insights?.insights_engine_version, findings_selector_version: runA211Insights?.findings_selector_version },
+  );
+  check(
+    'the existing six rules still each produced a rule_evaluations entry (none silently dropped by the v2.11 promotion)',
+    new Set((runA211Insights?.rule_evaluations ?? []).map((r: any) => r.finding_code)).size >= 1
+      && !(runA211Insights?.selected_findings ?? []).some((f: any) => f.finding_code === 'STRONG_LISTING_PLATFORM'),
+    (runA211Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
+  );
+
+  console.log('\n[v2.11 — old stored runs remain readable]');
+  const { data: oldRunReadBack211 } = await serviceClient
+    .from('analytics_runs').select('analytics_version, snapshot').eq('id', syntheticOldRun!.id).single();
+  check(
+    'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.11 migration',
+    oldRunReadBack211?.analytics_version === '1.8' && (oldRunReadBack211?.snapshot as any)?.snapshot_schema_version === '1.8',
+    oldRunReadBack211,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

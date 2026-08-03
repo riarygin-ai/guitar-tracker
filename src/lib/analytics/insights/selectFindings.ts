@@ -1,8 +1,16 @@
 // Insights Engine v1.5 — orchestrator. Runs the Findings Selector rule set
-// against Analytics v2.10's target-user evidence sections and assembles the
+// against Analytics target-user evidence sections and assembles the
 // `insights` section merged into analytics_runs.snapshot by runAnalytics.ts.
-// Does not read or write Analytics v2.10 data itself — the caller supplies
-// the already-validated snapshot sections as plain evidence.
+// Does not read or write Analytics data itself — the caller supplies the
+// already-validated snapshot sections as plain evidence.
+//
+// SOURCE_ANALYTICS_VERSION moved from 2.10 to 2.11 (Analytics v2.11 —
+// Per-Platform Listing-to-Exit Timing) purely to reflect which Analytics
+// snapshot version now feeds this engine — none of the six rules below
+// read target_user_listing_channel_evidence / shared_listing_channel_
+// evidence (the only sections v2.11 touches), so this bump changes no
+// rule's behavior. insights_engine_version / findings_selector_version
+// deliberately stay at 1.5 — no new Findings Selector rule was added.
 //
 // Rules implemented:
 //   STRONG_BALANCED_ACQUISITION_BAND       (v1.0, unchanged in behavior)
@@ -38,7 +46,7 @@ import type { AcquisitionMethodPerformanceProfileFinding, InsightsSection, Selec
 
 export const INSIGHTS_ENGINE_VERSION = '1.5';
 export const FINDINGS_SELECTOR_VERSION = '1.5';
-export const SOURCE_ANALYTICS_VERSION = '2.10';
+export const SOURCE_ANALYTICS_VERSION = '2.11';
 
 export interface SelectFindingsInput {
   targetUserAcquisitionEvidence: unknown;

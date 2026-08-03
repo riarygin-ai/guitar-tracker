@@ -50,11 +50,29 @@ import { selectFindings } from '@/lib/analytics/insights/selectFindings';
 // user, this is still safe to run — the output honestly reports
 // 'coverage_unknown'/'insufficient_history' rather than overstating
 // confidence.
-export const ANALYTICS_VERSION = '2.10';
+//
+// v2.11: new runs call build_analytics_snapshot_v2_11 (Per-Platform
+// Listing-to-Exit Timing — a narrow follow-up to v2.6 Listing Channel
+// Exposure). v2.6's performance_by_listing_channel carried only GLOBAL
+// lifecycle DOM (median_days_on_market/dom_sample_size — the item's own
+// first_listed_at across ALL its channels, unchanged in meaning here).
+// v2.11 adds genuinely per-platform listing-to-exit duration fields
+// (channel_listing_to_exit_sample_size, median_channel_listing_to_exit_
+// days, channel_listing_to_exit_coverage_percent, invalid_channel_
+// listing_after_exit_count, realized_exposed_item_count, missing_
+// channel_listing_to_exit_count) to performance_by_listing_channel and
+// performance_by_listing_channel_by_purpose, in both shared_listing_
+// channel_evidence and target_user_listing_channel_evidence — no other
+// section or key is touched (v2.11 wraps v2.10 wholesale; see
+// supabase/migrations/20260822000000_build_analytics_snapshot_v2_11.sql).
+// Does NOT implement a STRONG_LISTING_PLATFORM Findings Selector rule —
+// this bump is evidence-only. v1.0-v1.8 and v2.0-v2.10 are completely
+// unaffected and remain independently callable.
+export const ANALYTICS_VERSION = '2.11';
 export const EVIDENCE_SCOPE = 'shared_inventory_population';
-const SNAPSHOT_SCHEMA_VERSION = '2.10';
-const ANALYTICS_DEFINITION_VERSION = '2.10';
-const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_10';
+const SNAPSHOT_SCHEMA_VERSION = '2.11';
+const ANALYTICS_DEFINITION_VERSION = '2.11';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_11';
 
 // ── Types ────────────────────────────────────────────────────────────────
 

@@ -402,6 +402,9 @@ export interface FixtureItemManifest {
   hybridRecentOpen: number;
   hybridHistoricalOpen: number;
   personalOpenItem: number;
+  // v2.11 (per-platform listing-to-exit timing)
+  sameDayListingAndExit: number;
+  listingAfterExitInvalidOrder: number;
   // User B
   userBZeroAssignedOpenOne: number;
   userBZeroAssignedOpenTwo: number;
@@ -1052,6 +1055,36 @@ export async function setupAnalyticsTestFixtures(admin: SupabaseClient): Promise
     const itemId = await insertItem(admin, 'userBHistoricalImportOpen', { userId: userBId, brandId: brand.gibson, subtypeId: subtype.electricGuitar, purposeId: purpose.business, model: 'Gibson (userB historical import, open)', status: 'owned' });
     const dealId = await insertDeal(admin, userBId, 'Historical Import', daysAgo(700), null, 'Historical inventory import');
     await insertDealItem(admin, userBId, dealId, itemId, 'in', 650);
+    return itemId;
+  });
+
+  // sameDayListingAndExit — Marketplace listing and sale exit on the SAME
+  // calendar day. Analytics v2.11's channel_listing_to_exit_days must be
+  // exactly 0 for this item (a same-day listing-to-exit span is valid, not
+  // excluded), never null and never negative.
+  await ensure('sameDayListingAndExit', async () => {
+    const { itemId } = await acquireItem(
+      admin, 'sameDayListingAndExit', { userId: userAId, brandId: brand.squier, subtypeId: subtype.electricGuitar, purposeId: purpose.business, model: 'Squier (same-day listing and exit)' },
+      'purchase', daysAgo(50), channel.regular, 200,
+    );
+    await insertListing(admin, userAId, itemId, channel.marketplace, daysAgo(5));
+    await realizeItem(admin, userAId, itemId, 'sale', daysAgo(5), channel.marketplace, 350);
+    return itemId;
+  });
+
+  // listingAfterExitInvalidOrder — a contrived data-entry-error scenario:
+  // the Marketplace listing record's listed_at (daysAgo(10)) is
+  // chronologically AFTER the item's own exit_date (daysAgo(40)). Analytics
+  // v2.11 must exclude this from channel_listing_to_exit_days (never a
+  // negative duration) and count it under
+  // invalid_channel_listing_after_exit_count instead.
+  await ensure('listingAfterExitInvalidOrder', async () => {
+    const { itemId } = await acquireItem(
+      admin, 'listingAfterExitInvalidOrder', { userId: userAId, brandId: brand.danelectro, subtypeId: subtype.electricGuitar, purposeId: purpose.business, model: 'Danelectro (listing recorded after exit)' },
+      'purchase', daysAgo(60), channel.regular, 250,
+    );
+    await realizeItem(admin, userAId, itemId, 'sale', daysAgo(40), channel.marketplace, 400);
+    await insertListing(admin, userAId, itemId, channel.marketplace, daysAgo(10));
     return itemId;
   });
 
