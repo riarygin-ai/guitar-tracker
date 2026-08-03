@@ -65,33 +65,102 @@ function toMetaFromRun(run: AnalyticsRun): AnalyticsRunMeta {
 
 // ─── Collapsible JSON section ───────────────────────────────────────────────
 
+const COPY_FEEDBACK_MS = 1800;
+
+// Small header-only control — deliberately its own component so each
+// CollapsibleSection instance gets an independent `copied` state without
+// any shared/global tracking.
+function CopyJsonButton({ label, data }: { label: string; data: unknown }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy(e: React.MouseEvent) {
+    // Header buttons sit beside the expand/collapse toggle — this must
+    // never bubble up into it.
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
+    } catch {
+      // Clipboard API unavailable (e.g. non-secure context) — no-op, never
+      // crash the page over a copy failure.
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      aria-label={`Copy ${label} JSON`}
+      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+    >
+      {copied ? (
+        <>
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          <span className="text-emerald-600 dark:text-emerald-400">Copied</span>
+        </>
+      ) : (
+        <>
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+          </svg>
+          Copy
+        </>
+      )}
+    </button>
+  );
+}
+
 function CollapsibleSection({
   title,
   defaultOpen = false,
+  data,
   children,
 }: {
   title: string;
   defaultOpen?: boolean;
+  /** When provided, a Copy button appears in the header that copies
+   *  JSON.stringify(data, null, 2) — this module's own data only, never the
+   *  whole snapshot. Omit (or pass undefined) to render no Copy button. */
+  data?: unknown;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const toggle = () => setOpen((v) => !v);
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
-      >
-        <span className="text-sm font-semibold text-slate-900 dark:text-white">{title}</span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-          className={`shrink-0 text-slate-400 transition-transform dark:text-slate-500 ${open ? 'rotate-90' : ''}`}
+      <div className="flex w-full items-center justify-between gap-2 px-4 py-3">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center text-left"
         >
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-      </button>
+          <span className="min-w-0 break-words text-sm font-semibold text-slate-900 dark:text-white">{title}</span>
+        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {data !== undefined && <CopyJsonButton label={title} data={data} />}
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={open}
+            aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
+            className="shrink-0 rounded p-1"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              className={`shrink-0 text-slate-400 transition-transform dark:text-slate-500 ${open ? 'rotate-90' : ''}`}
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
+        </div>
+      </div>
       {open && (
         <div className="border-t border-slate-100 px-4 py-3 dark:border-slate-700/50">
           {children}
@@ -125,8 +194,6 @@ export default function AnalyticsPage() {
   const [selectedSnapshot, setSelectedSnapshot] = useState<AnalyticsSnapshot | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
-
-  const [copied, setCopied] = useState(false);
 
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null;
 
@@ -171,7 +238,6 @@ export default function AnalyticsPage() {
 
   function selectRun(runId: number, snapshotAlreadyKnown?: AnalyticsSnapshot | null) {
     setSelectedRunId(runId);
-    setCopied(false);
     if (snapshotAlreadyKnown !== undefined) {
       setSelectedSnapshot(snapshotAlreadyKnown);
       setSnapshotError(null);
@@ -217,17 +283,6 @@ export default function AnalyticsPage() {
       setRunError(err instanceof Error ? err.message : 'Something went wrong running analytics.');
     } finally {
       setRunningAnalytics(false);
-    }
-  }
-
-  async function handleCopySnapshot() {
-    if (!selectedSnapshot) return;
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(selectedSnapshot, null, 2));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard API unavailable in non-secure context — no-op.
     }
   }
 
@@ -427,82 +482,82 @@ export default function AnalyticsPage() {
                     correct the same section keys in place (no redesign,
                     no charts). */}
                 {selectedSnapshot.shared_purpose_evidence && (
-                  <CollapsibleSection title="Shared Purpose Evidence">
+                  <CollapsibleSection title="Shared Purpose Evidence" data={selectedSnapshot.shared_purpose_evidence}>
                     <JsonBlock value={selectedSnapshot.shared_purpose_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.target_user_purpose_evidence && (
-                  <CollapsibleSection title="Target User Purpose Evidence">
+                  <CollapsibleSection title="Target User Purpose Evidence" data={selectedSnapshot.target_user_purpose_evidence}>
                     <JsonBlock value={selectedSnapshot.target_user_purpose_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.target_user_open_inventory_evidence && (
-                  <CollapsibleSection title="Open Inventory Decision Support" defaultOpen>
+                  <CollapsibleSection title="Open Inventory Decision Support" defaultOpen data={selectedSnapshot.target_user_open_inventory_evidence}>
                     <JsonBlock value={selectedSnapshot.target_user_open_inventory_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.shared_acquisition_evidence && (
-                  <CollapsibleSection title="Shared Acquisition Evidence">
+                  <CollapsibleSection title="Shared Acquisition Evidence" data={selectedSnapshot.shared_acquisition_evidence}>
                     <JsonBlock value={selectedSnapshot.shared_acquisition_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.target_user_acquisition_evidence && (
-                  <CollapsibleSection title="Target User Acquisition Evidence">
+                  <CollapsibleSection title="Target User Acquisition Evidence" data={selectedSnapshot.target_user_acquisition_evidence}>
                     <JsonBlock value={selectedSnapshot.target_user_acquisition_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.shared_inventory_segmentation_evidence && (
-                  <CollapsibleSection title="Shared Inventory Segmentation Evidence">
+                  <CollapsibleSection title="Shared Inventory Segmentation Evidence" data={selectedSnapshot.shared_inventory_segmentation_evidence}>
                     <JsonBlock value={selectedSnapshot.shared_inventory_segmentation_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.target_user_inventory_segmentation_evidence && (
-                  <CollapsibleSection title="Target User Inventory Segmentation Evidence">
+                  <CollapsibleSection title="Target User Inventory Segmentation Evidence" data={selectedSnapshot.target_user_inventory_segmentation_evidence}>
                     <JsonBlock value={selectedSnapshot.target_user_inventory_segmentation_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.shared_deal_channel_evidence && (
-                  <CollapsibleSection title="Shared Deal Channel Evidence">
+                  <CollapsibleSection title="Shared Deal Channel Evidence" data={selectedSnapshot.shared_deal_channel_evidence}>
                     <JsonBlock value={selectedSnapshot.shared_deal_channel_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.target_user_deal_channel_evidence && (
-                  <CollapsibleSection title="Target User Deal Channel Evidence">
+                  <CollapsibleSection title="Target User Deal Channel Evidence" data={selectedSnapshot.target_user_deal_channel_evidence}>
                     <JsonBlock value={selectedSnapshot.target_user_deal_channel_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.shared_listing_channel_evidence && (
-                  <CollapsibleSection title="Shared Listing Channel Evidence">
+                  <CollapsibleSection title="Shared Listing Channel Evidence" data={selectedSnapshot.shared_listing_channel_evidence}>
                     <JsonBlock value={selectedSnapshot.shared_listing_channel_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.target_user_listing_channel_evidence && (
-                  <CollapsibleSection title="Target User Listing Channel Evidence">
+                  <CollapsibleSection title="Target User Listing Channel Evidence" data={selectedSnapshot.target_user_listing_channel_evidence}>
                     <JsonBlock value={selectedSnapshot.target_user_listing_channel_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.shared_capital_liquidity_evidence && (
-                  <CollapsibleSection title="Shared Capital & Liquidity Evidence">
+                  <CollapsibleSection title="Shared Capital & Liquidity Evidence" data={selectedSnapshot.shared_capital_liquidity_evidence}>
                     <JsonBlock value={selectedSnapshot.shared_capital_liquidity_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.target_user_capital_liquidity_evidence && (
-                  <CollapsibleSection title="Target User Capital & Liquidity Evidence">
+                  <CollapsibleSection title="Target User Capital & Liquidity Evidence" data={selectedSnapshot.target_user_capital_liquidity_evidence}>
                     <JsonBlock value={selectedSnapshot.target_user_capital_liquidity_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.shared_calendar_seasonality_evidence && (
-                  <CollapsibleSection title="Shared Calendar & Seasonality Evidence">
+                  <CollapsibleSection title="Shared Calendar & Seasonality Evidence" data={selectedSnapshot.shared_calendar_seasonality_evidence}>
                     <JsonBlock value={selectedSnapshot.shared_calendar_seasonality_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.target_user_calendar_seasonality_evidence && (
-                  <CollapsibleSection title="Target User Calendar & Seasonality Evidence">
+                  <CollapsibleSection title="Target User Calendar & Seasonality Evidence" data={selectedSnapshot.target_user_calendar_seasonality_evidence}>
                     <JsonBlock value={selectedSnapshot.target_user_calendar_seasonality_evidence} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.insights && (
-                  <CollapsibleSection title="Insights" defaultOpen>
+                  <CollapsibleSection title="Insights" defaultOpen data={selectedSnapshot.insights}>
                     <JsonBlock value={selectedSnapshot.insights} />
                   </CollapsibleSection>
                 )}
@@ -511,86 +566,60 @@ export default function AnalyticsPage() {
                     before the v2.2 promotion. */}
                 {selectedSnapshot.evidence_aggregates && (
                   <>
-                    <CollapsibleSection title="Acquisition Value Band">
+                    <CollapsibleSection title="Acquisition Value Band" data={selectedSnapshot.evidence_aggregates.acquisition_value_band}>
                       <JsonBlock value={selectedSnapshot.evidence_aggregates.acquisition_value_band} />
                     </CollapsibleSection>
-                    <CollapsibleSection title="Acquisition to Exit">
+                    <CollapsibleSection title="Acquisition to Exit" data={selectedSnapshot.evidence_aggregates.acquisition_to_exit}>
                       <JsonBlock value={selectedSnapshot.evidence_aggregates.acquisition_to_exit} />
                     </CollapsibleSection>
-                    <CollapsibleSection title="Brand">
+                    <CollapsibleSection title="Brand" data={selectedSnapshot.evidence_aggregates.brand}>
                       <JsonBlock value={selectedSnapshot.evidence_aggregates.brand} />
                     </CollapsibleSection>
                     {selectedSnapshot.evidence_aggregates.deal_in_channel && (
-                      <CollapsibleSection title="Deal In Channel">
+                      <CollapsibleSection title="Deal In Channel" data={selectedSnapshot.evidence_aggregates.deal_in_channel}>
                         <JsonBlock value={selectedSnapshot.evidence_aggregates.deal_in_channel} />
                       </CollapsibleSection>
                     )}
                     {selectedSnapshot.evidence_aggregates.deal_out_channel && (
-                      <CollapsibleSection title="Deal Out Channel">
+                      <CollapsibleSection title="Deal Out Channel" data={selectedSnapshot.evidence_aggregates.deal_out_channel}>
                         <JsonBlock value={selectedSnapshot.evidence_aggregates.deal_out_channel} />
                       </CollapsibleSection>
                     )}
                     {selectedSnapshot.evidence_aggregates.channel_journey && (
-                      <CollapsibleSection title="Channel Journey">
+                      <CollapsibleSection title="Channel Journey" data={selectedSnapshot.evidence_aggregates.channel_journey}>
                         <JsonBlock value={selectedSnapshot.evidence_aggregates.channel_journey} />
                       </CollapsibleSection>
                     )}
                     {selectedSnapshot.evidence_aggregates.listing_channel_exposure && (
-                      <CollapsibleSection title="Listing Channel Exposure">
+                      <CollapsibleSection title="Listing Channel Exposure" data={selectedSnapshot.evidence_aggregates.listing_channel_exposure}>
                         <JsonBlock value={selectedSnapshot.evidence_aggregates.listing_channel_exposure} />
                       </CollapsibleSection>
                     )}
                     {selectedSnapshot.evidence_aggregates.category_type_performance && (
-                      <CollapsibleSection title="Category & Type Performance">
+                      <CollapsibleSection title="Category & Type Performance" data={selectedSnapshot.evidence_aggregates.category_type_performance}>
                         <JsonBlock value={selectedSnapshot.evidence_aggregates.category_type_performance} />
                       </CollapsibleSection>
                     )}
                     {selectedSnapshot.evidence_aggregates.capital_liquidity && (
-                      <CollapsibleSection title="Capital & Liquidity">
+                      <CollapsibleSection title="Capital & Liquidity" data={selectedSnapshot.evidence_aggregates.capital_liquidity}>
                         <JsonBlock value={selectedSnapshot.evidence_aggregates.capital_liquidity} />
                       </CollapsibleSection>
                     )}
                   </>
                 )}
                 {selectedSnapshot.target_user_evidence?.open_inventory_decision_support && (
-                  <CollapsibleSection title="Open Inventory Decision Support v1">
+                  <CollapsibleSection title="Open Inventory Decision Support v1" data={selectedSnapshot.target_user_evidence.open_inventory_decision_support}>
                     <JsonBlock value={selectedSnapshot.target_user_evidence.open_inventory_decision_support} />
                   </CollapsibleSection>
                 )}
                 {selectedSnapshot.recommendation_candidates && (
-                  <CollapsibleSection title="My Open Business Items">
+                  <CollapsibleSection title="My Open Business Items" data={selectedSnapshot.recommendation_candidates.open_business_items}>
                     <JsonBlock value={selectedSnapshot.recommendation_candidates.open_business_items} />
                   </CollapsibleSection>
                 )}
 
-                <CollapsibleSection title="Raw Snapshot">
-                  <div className="space-y-3">
-                    <JsonBlock value={selectedSnapshot} />
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={handleCopySnapshot}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-                      >
-                        {copied ? (
-                          <>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                            <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
-                          </>
-                        ) : (
-                          <>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                            </svg>
-                            Copy Snapshot JSON
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
+                <CollapsibleSection title="Raw Snapshot" data={selectedSnapshot}>
+                  <JsonBlock value={selectedSnapshot} />
                 </CollapsibleSection>
               </>
             )}
