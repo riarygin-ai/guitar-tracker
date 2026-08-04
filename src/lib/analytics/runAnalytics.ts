@@ -87,11 +87,34 @@ import { selectFindings } from '@/lib/analytics/insights/selectFindings';
 // 20260823000000_build_analytics_snapshot_v2_12.sql). Business, Personal,
 // and every other section remain byte-identical. v1.0-v1.8 and v2.0-v2.11
 // are completely unaffected and remain independently callable.
-export const ANALYTICS_VERSION = '2.12';
+//
+// v2.13: new runs call build_analytics_snapshot_v2_13 (Pattern Discovery
+// Evidence Foundation). Adds one new, purely additive top-level section,
+// target_user_pattern_discovery_evidence — a unified candidate-segment
+// dataset (13 curated dimensions: acquisition-value band, category, type-
+// within-category, brand-within-category, category x band, type x band,
+// acquisition method, exit method, acquisition-within-exit method, Deal In
+// channel, Deal Out channel, Deal In -> Deal Out journey, listing
+// platform) covering ONLY completed/realized item economics (net profit,
+// ROI, days-on-market, sample sizes, confidence, historical/app-tracked
+// composition) — for a future TypeScript Pattern Discovery Engine (not
+// built by this task) to compare segments against their peer groups. No
+// pattern selection, ranking, peer baseline, effect size, or
+// recommendation is computed here; no current open inventory or Personal-
+// holding-intent analysis is included. Every field is target-user
+// aggregate evidence only — no user_id, item_id, deal_id, or other item-
+// level identity (see supabase/migrations/
+// 20260824000000_build_analytics_snapshot_v2_13.sql). v2.13 wraps v2.12
+// wholesale — every existing section, and the nine existing Insights rule
+// families, are byte-identical. insights_engine_version and
+// findings_selector_version remain 1.8 (this bump is Analytics-SQL-only).
+// v1.0-v1.8 and v2.0-v2.12 are completely unaffected and remain
+// independently callable.
+export const ANALYTICS_VERSION = '2.13';
 export const EVIDENCE_SCOPE = 'shared_inventory_population';
-const SNAPSHOT_SCHEMA_VERSION = '2.12';
-const ANALYTICS_DEFINITION_VERSION = '2.12';
-const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_12';
+const SNAPSHOT_SCHEMA_VERSION = '2.13';
+const ANALYTICS_DEFINITION_VERSION = '2.13';
+const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_13';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -168,6 +191,9 @@ interface ValidatedAnalyticsSnapshot {
   target_user_capital_liquidity_evidence: Record<string, unknown>;
   shared_calendar_seasonality_evidence: Record<string, unknown>;
   target_user_calendar_seasonality_evidence: Record<string, unknown>;
+  // v2.13, optional — old snapshots (pre-v2.13) validate without it; the
+  // presence check below never requires this key.
+  target_user_pattern_discovery_evidence?: Record<string, unknown>;
 }
 
 export function isValidAnalyticsSnapshot(

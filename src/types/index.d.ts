@@ -464,6 +464,13 @@ export interface AnalyticsSnapshot {
   target_user_calendar_seasonality_evidence?:     Record<string, unknown>;
   module_limitations?:                   string[];
 
+  // Added in Snapshot v2.13 (Pattern Discovery Evidence Foundation) —
+  // absent on older v2.0-v2.12 stored snapshots, so optional here. A
+  // unified candidate-segment dataset (13 curated dimensions) covering
+  // ONLY realized item economics — no pattern selection, ranking, or
+  // recommendation.
+  target_user_pattern_discovery_evidence?:        Record<string, unknown>;
+
   // Insights Engine v1.0 (application layer, versioned independently of
   // Analytics — insights_engine_version / findings_selector_version, not
   // snapshot_schema_version / analytics_definition_version). Optional:

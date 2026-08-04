@@ -405,6 +405,9 @@ export interface FixtureItemManifest {
   // v2.11 (per-platform listing-to-exit timing)
   sameDayListingAndExit: number;
   listingAfterExitInvalidOrder: number;
+  // v2.13 (Pattern Discovery Evidence Foundation)
+  historicalTradeRealized: number;
+  realizedItemWithExpenses: number;
   // User B
   userBZeroAssignedOpenOne: number;
   userBZeroAssignedOpenTwo: number;
@@ -1085,6 +1088,38 @@ export async function setupAnalyticsTestFixtures(admin: SupabaseClient): Promise
     );
     await realizeItem(admin, userAId, itemId, 'sale', daysAgo(40), channel.marketplace, 400);
     await insertListing(admin, userAId, itemId, channel.marketplace, daysAgo(10));
+    return itemId;
+  });
+
+  // historicalTradeRealized — a 'Historical Trade' acquisition (distinct
+  // from plain 'Historical Import'/'Historical Purchase'). Analytics
+  // v2.13's ACQUISITION_METHOD family must map this to acquisition_method
+  // = 'trade' (via analytics_item_lifecycle's own historical-deal-type
+  // relabeling, 20260724000000_historical_deal_type_labels.sql), never
+  // 'unknown', while is_historical_import remains true.
+  await ensure('historicalTradeRealized', async () => {
+    const { itemId } = await acquireItem(
+      admin, 'historicalTradeRealized', { userId: userAId, brandId: brand.gibson, subtypeId: subtype.electricGuitar, purposeId: purpose.business, model: 'Gibson (Historical Trade)' },
+      'Historical Trade', daysAgo(500), null, 700,
+    );
+    await realizeItem(admin, userAId, itemId, 'sale', daysAgo(30), channel.marketplace, 900);
+    return itemId;
+  });
+
+  // realizedItemWithExpenses — a normal realized item carrying a real
+  // inventory_expenses row, so Analytics v2.13's net_profit (exit_value -
+  // acquisition_value - item_expenses_total) can be verified to actually
+  // subtract expenses, not just acquisition value.
+  await ensure('realizedItemWithExpenses', async () => {
+    const { itemId } = await acquireItem(
+      admin, 'realizedItemWithExpenses', { userId: userAId, brandId: brand.fender, subtypeId: subtype.electricGuitar, purposeId: purpose.business, model: 'Fender (realized, with expenses)' },
+      'purchase', daysAgo(90), channel.regular, 400,
+    );
+    await realizeItem(admin, userAId, itemId, 'sale', daysAgo(20), channel.marketplace, 700);
+    const { error: expenseError } = await admin
+      .from('inventory_expenses')
+      .insert({ user_id: userAId, item_id: itemId, expense_date: daysAgo(50), amount: 50, notes: 'Fixture: setup cost' });
+    if (expenseError) throw new Error(`Failed to insert expense for realizedItemWithExpenses: ${expenseError.message}`);
     return itemId;
   });
 

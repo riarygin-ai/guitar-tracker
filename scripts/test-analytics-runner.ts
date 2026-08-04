@@ -99,7 +99,7 @@ function authedClient(token: string): SupabaseClient {
   });
 }
 
-/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_12
+/** Wraps a real service-role client but forces the build_analytics_snapshot_v2_13
  *  RPC call (the version the runner actually calls) to fail, so the runner's
  *  failure path executes against a REAL analytics_runs row without needing
  *  to actually break the database. */
@@ -108,7 +108,7 @@ function withSimulatedBuilderFailure(real: SupabaseClient, message: string): Sup
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_12') {
+          if (name === 'build_analytics_snapshot_v2_13') {
             return Promise.resolve({ data: null, error: { message } });
           }
           return (target as any).rpc(name, args);
@@ -128,7 +128,7 @@ function withSimulatedDoubleFailure(real: SupabaseClient, builderMessage: string
     get(target, prop, receiver) {
       if (prop === 'rpc') {
         return (name: string, args: unknown) => {
-          if (name === 'build_analytics_snapshot_v2_12') {
+          if (name === 'build_analytics_snapshot_v2_13') {
             return Promise.resolve({ data: null, error: { message: builderMessage } });
           }
           return (target as any).rpc(name, args);
@@ -195,8 +195,8 @@ async function main() {
   // inside the JSON itself.
   console.log('\n[isValidAnalyticsSnapshot]');
   const validSnapshot = {
-    snapshot_schema_version: '2.12',
-    analytics_definition_version: '2.12',
+    snapshot_schema_version: '2.13',
+    analytics_definition_version: '2.13',
     generated_at: new Date().toISOString(),
     evidence_scope: EVIDENCE_SCOPE,
     purpose_semantics: 'current_item_purpose',
@@ -235,6 +235,14 @@ async function main() {
   check('missing target_user_capital_liquidity_evidence rejected', !isValidAnalyticsSnapshot({ ...validSnapshot, target_user_capital_liquidity_evidence: null }));
   check('null value rejected', !isValidAnalyticsSnapshot(null));
   check('non-object value rejected', !isValidAnalyticsSnapshot('not an object'));
+  check(
+    'v2.13 test 55: snapshot WITHOUT target_user_pattern_discovery_evidence still validates (old snapshots stay readable)',
+    isValidAnalyticsSnapshot(validSnapshot),
+  );
+  check(
+    'v2.13 test 55: snapshot WITH target_user_pattern_discovery_evidence also validates (new optional section doesn\'t break validation)',
+    isValidAnalyticsSnapshot({ ...validSnapshot, target_user_pattern_discovery_evidence: { schema_version: '1.0' } }),
+  );
 
   // ── Pure unit tests: sanitizeErrorMessage ───────────────────────────────
   console.log('\n[sanitizeErrorMessage]');
@@ -272,12 +280,12 @@ async function main() {
   check('requested_by_user_id === userAId (never arbitrary)', fullRunA!.requested_by_user_id === userAId);
   check('recommendation_target_user_id === userAId (never arbitrary)', fullRunA!.recommendation_target_user_id === userAId);
 
-  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_12', { p_target_user_id: userAId });
+  const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_13', { p_target_user_id: userAId });
   // Since Insights Engine v1.0, the persisted snapshot additionally carries a
   // top-level `insights` key (application-layer enrichment, versioned
   // independently — see src/lib/analytics/insights/). Stripping it before
-  // comparing confirms the underlying Analytics v2.12 evidence itself is
-  // still byte-identical to a fresh direct RPC call — v2.12 calculations are
+  // comparing confirms the underlying Analytics v2.13 evidence itself is
+  // still byte-identical to a fresh direct RPC call — v2.13 calculations are
   // unmodified, only enriched on top.
   const { insights: _insightsA, ...snapAWithoutInsights } = snapA;
   check(
@@ -4398,30 +4406,16 @@ async function main() {
     check(`${fn} still callable by service_role after v2.12 migration`, !error, error);
   }
 
-  console.log('\n[v2.12 — production promotion]');
-  check('ANALYTICS_VERSION constant used by the production runner is now 2.12', ANALYTICS_VERSION === '2.12', ANALYTICS_VERSION);
-  const runA212 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
-  check('new production run stores analytics_version 2.12', runA212.analytics_version === '2.12', runA212.analytics_version);
-  check('new production run snapshot.snapshot_schema_version is 2.12', (runA212.snapshot as any)?.snapshot_schema_version === '2.12', (runA212.snapshot as any)?.snapshot_schema_version);
-  const runA212Insights = (runA212.snapshot as any)?.insights;
-  check('new production run insights.source_analytics_version is 2.12 (evidence-only bump)', runA212Insights?.source_analytics_version === '2.12', runA212Insights?.source_analytics_version);
-  // Note: at the point v2.12 was promoted (this Analytics-only task),
-  // insights_engine_version / findings_selector_version were asserted to
-  // remain 1.7 and HYBRID_PURPOSE_REVIEW_PRIORITY was asserted absent —
-  // correct THEN. A later, separate task (Insights Engine v1.8) added
-  // HYBRID_PURPOSE_REVIEW_PRIORITY at the application layer, reading this
-  // same v2.12 evidence with no further Analytics SQL change — see
-  // test-insights-engine.ts for that rule's own thorough test coverage.
-  check(
-    'new production run insights_engine_version / findings_selector_version are 1.8',
-    runA212Insights?.insights_engine_version === '1.8' && runA212Insights?.findings_selector_version === '1.8',
-    { insights_engine_version: runA212Insights?.insights_engine_version, findings_selector_version: runA212Insights?.findings_selector_version },
-  );
-  check(
-    'every one of the nine rule families produced a rule_evaluations entry (none silently dropped by the v1.8 promotion)',
-    new Set((runA212Insights?.rule_evaluations ?? []).map((r: any) => r.finding_code)).size >= 1,
-    (runA212Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
-  );
+  // Note: at the point v2.12 was promoted (this Analytics-only task), this
+  // section created a fresh production run and asserted ANALYTICS_VERSION
+  // === '2.12', analytics_version === '2.12', snapshot_schema_version ===
+  // '2.12', insights.source_analytics_version === '2.12', and insights_
+  // engine_version/findings_selector_version === '1.8' — all correct THEN.
+  // The runner has since been promoted again, to v2.13 (see the "[v2.13 —
+  // production promotion]" section below), which creates its own fresh
+  // production run and re-asserts the equivalent checks against the
+  // CURRENT version — so this section is not repeated here to avoid a
+  // duplicate, immediately-stale hardcoded assertion.
 
   console.log('\n[v2.12 — old stored runs remain readable]');
   const { data: oldRunReadBack212 } = await serviceClient
@@ -4430,6 +4424,322 @@ async function main() {
     'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.12 migration',
     oldRunReadBack212?.analytics_version === '1.8' && (oldRunReadBack212?.snapshot as any)?.snapshot_schema_version === '1.8',
     oldRunReadBack212,
+  );
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Analytics v2.13 — Pattern Discovery Evidence Foundation
+  // ══════════════════════════════════════════════════════════════════════
+  // Adds target_user_pattern_discovery_evidence — a unified candidate-
+  // segment dataset (13 curated dimensions) covering ONLY realized item
+  // economics (net profit, ROI, days-on-market, sample sizes, confidence,
+  // historical/app-tracked composition), for a future TypeScript Pattern
+  // Discovery Engine (not built by this task) to compare segments against
+  // their peer groups generically. No pattern selection, peer baseline,
+  // effect size, or recommendation is computed here (see supabase/
+  // migrations/20260824000000_build_analytics_snapshot_v2_13.sql). v2.13
+  // wraps v2.12 wholesale — every existing section is byte-identical.
+
+  console.log('\n[v2.13 — full-snapshot verification against real fixture data]');
+  const { data: v213SnapshotA, error: v213Error } = await serviceClient.rpc('build_analytics_snapshot_v2_13', { p_target_user_id: userAId });
+  check('build_analytics_snapshot_v2_13 callable by service_role', !v213Error, v213Error);
+  check('v2.13 snapshot_schema_version is 2.13', (v213SnapshotA as any)?.snapshot_schema_version === '2.13', (v213SnapshotA as any)?.snapshot_schema_version);
+  check('v2.13 analytics_definition_version is 2.13', (v213SnapshotA as any)?.analytics_definition_version === '2.13', (v213SnapshotA as any)?.analytics_definition_version);
+
+  console.log('\n[v2.13 — test 2/50: every existing v2.12 section remains byte-identical (only version metadata + the new section differ)]');
+  {
+    const { generated_at: _ga213, snapshot_schema_version: _ssv213, analytics_definition_version: _adv213, target_user_pattern_discovery_evidence: _pde, ...v213Rest } = v213SnapshotA as any;
+    const { generated_at: _ga212, snapshot_schema_version: _ssv212, analytics_definition_version: _adv212, ...v212Rest } = v212SnapshotA as any;
+    check(
+      'every v2.12 section is byte-identical in v2.13',
+      stableStringify(v213Rest) === stableStringify(v212Rest),
+    );
+  }
+
+  const pde = (v213SnapshotA as any)?.target_user_pattern_discovery_evidence;
+  check('target_user_pattern_discovery_evidence section present', typeof pde === 'object' && pde !== null, pde);
+
+  console.log('\n[v2.13 — test 1: unified output shape has exactly the 6 documented top-level keys]');
+  const pdeTopKeys = Object.keys(pde).sort();
+  check(
+    'schema_version, population_summary, candidate_segments, family_summary, coverage_summary, module_limitations',
+    JSON.stringify(pdeTopKeys) === JSON.stringify(['candidate_segments', 'coverage_summary', 'family_summary', 'module_limitations', 'population_summary', 'schema_version']),
+    pdeTopKeys,
+  );
+  check('schema_version is "1.0"', pde.schema_version === '1.0', pde.schema_version);
+
+  const pdePop = pde.population_summary;
+  check(
+    'population_summary: historical_import + app_tracked realized item counts reconcile to total',
+    pdePop.historical_import_realized_item_count + pdePop.app_tracked_realized_item_count === pdePop.total_realized_item_count,
+    pdePop,
+  );
+
+  const pdeSegments: any[] = pde.candidate_segments;
+  const pdeFamilySummary: any[] = pde.family_summary;
+  const PD_FAMILY_ORDER = [
+    'ACQUISITION_VALUE_BAND', 'CATEGORY', 'TYPE_WITHIN_CATEGORY', 'BRAND_WITHIN_CATEGORY',
+    'CATEGORY_ACQUISITION_VALUE_BAND', 'TYPE_ACQUISITION_VALUE_BAND', 'ACQUISITION_METHOD',
+    'EXIT_METHOD', 'ACQUISITION_METHOD_WITHIN_EXIT_METHOD', 'DEAL_IN_CHANNEL', 'DEAL_OUT_CHANNEL',
+    'DEAL_IN_TO_DEAL_OUT_JOURNEY', 'LISTING_PLATFORM',
+  ];
+
+  console.log('\n[v2.13 — test 4: all 13 candidate family codes are present]');
+  const pdePresentFamilies = new Set(pdeSegments.map((s) => s.family_code));
+  check('every one of the 13 family codes has at least one candidate segment', PD_FAMILY_ORDER.every((f) => pdePresentFamilies.has(f)), Array.from(pdePresentFamilies));
+  check(
+    'family_summary lists exactly the 13 families, no more no less',
+    pdeFamilySummary.length === 13 && PD_FAMILY_ORDER.every((f) => pdeFamilySummary.some((r) => r.family_code === f)),
+    pdeFamilySummary.map((r: any) => r.family_code),
+  );
+
+  console.log('\n[v2.13 — common candidate-segment row shape: exactly the 22 documented fields]');
+  const PD_REQUIRED_FIELDS = [
+    'family_code', 'pattern_key', 'peer_group_key', 'comparison_scope', 'dimension_count', 'population_basis',
+    'segment', 'realized_item_count', 'distinct_exit_deal_count', 'profit_sample_size', 'roi_sample_size',
+    'dom_sample_size', 'median_net_profit', 'median_roi', 'median_days_on_market', 'invalid_dom_count',
+    'missing_dom_count', 'historical_import_item_count', 'app_tracked_item_count', 'historical_import_percent',
+    'confidence', 'limitations',
+  ].sort();
+  const pdeShapeMismatch = pdeSegments.find((s) => JSON.stringify(Object.keys(s).sort()) !== JSON.stringify(PD_REQUIRED_FIELDS));
+  check('every candidate segment has exactly the 22 documented common fields, no more no less', !pdeShapeMismatch, pdeShapeMismatch);
+
+  console.log('\n[v2.13 — test 39: no candidate segment ever carries user_id/item_id/deal_id identity]');
+  const PD_FORBIDDEN_KEY = /^(user_id|item_id|deal_id|item_ids|deal_ids|user_ids)$/i;
+  const pdeIdentityLeak = pdeSegments.find((s) =>
+    Object.keys(s.segment ?? {}).some((k) => PD_FORBIDDEN_KEY.test(k)) ||
+    Object.keys(s.comparison_scope ?? {}).some((k) => PD_FORBIDDEN_KEY.test(k)) ||
+    Object.keys(s).some((k) => PD_FORBIDDEN_KEY.test(k)),
+  );
+  check('no candidate segment, its segment object, or its comparison_scope object carries a forbidden identity key', !pdeIdentityLeak, pdeIdentityLeak);
+
+  console.log('\n[v2.13 — test 34: confidence values only from the allowed set, tiered from the segment\'s own realized_item_count]');
+  const PD_CONFIDENCE_TIERS = new Set(['insufficient', 'low', 'moderate', 'stronger']);
+  check('every confidence value is one of insufficient/low/moderate/stronger', pdeSegments.every((s) => PD_CONFIDENCE_TIERS.has(s.confidence)), Array.from(new Set(pdeSegments.map((s) => s.confidence))));
+  const pdeConfidenceMismatch = pdeSegments.find((s) => {
+    const n = s.realized_item_count;
+    const expectedTier = n <= 2 ? 'insufficient' : n <= 5 ? 'low' : n <= 9 ? 'moderate' : 'stronger';
+    return s.confidence !== expectedTier;
+  });
+  check('confidence is tiered from the segment\'s own realized_item_count using the existing 2/5/9 convention (no new scale)', !pdeConfidenceMismatch, pdeConfidenceMismatch);
+
+  console.log('\n[v2.13 — test: sample-size reconciliation, every candidate segment]');
+  check('roi_sample_size <= profit_sample_size for every segment (ROI additionally requires acquisition_value > 0)', pdeSegments.every((s) => s.roi_sample_size <= s.profit_sample_size));
+  check('profit_sample_size <= realized_item_count for every segment', pdeSegments.every((s) => s.profit_sample_size <= s.realized_item_count));
+  check(
+    'historical_import_item_count + app_tracked_item_count === realized_item_count for every segment',
+    pdeSegments.every((s) => s.historical_import_item_count + s.app_tracked_item_count === s.realized_item_count),
+  );
+  const pdeNonPlatform = pdeSegments.filter((s) => s.family_code !== 'LISTING_PLATFORM');
+  const pdeDomMismatch = pdeNonPlatform.find((s) => s.dom_sample_size + s.invalid_dom_count + s.missing_dom_count !== s.realized_item_count);
+  check(
+    'test 12/13/14/47: dom_sample_size + invalid_dom_count + missing_dom_count === realized_item_count for every non-LISTING_PLATFORM segment (zero-day DOM valid, negative DOM excluded+counted invalid, missing DOM counted)',
+    !pdeDomMismatch,
+    pdeDomMismatch,
+  );
+
+  console.log('\n[v2.13 — test 10/48: population_basis correct per family — REALIZED_ITEMS for 1-12, REALIZED_LISTING_EXPOSURES for LISTING_PLATFORM]');
+  check('population_basis is REALIZED_ITEMS for every family except LISTING_PLATFORM', pdeSegments.filter((s) => s.family_code !== 'LISTING_PLATFORM').every((s) => s.population_basis === 'REALIZED_ITEMS'));
+  check('population_basis is REALIZED_LISTING_EXPOSURES for LISTING_PLATFORM', pdeSegments.filter((s) => s.family_code === 'LISTING_PLATFORM').every((s) => s.population_basis === 'REALIZED_LISTING_EXPOSURES'));
+
+  console.log('\n[v2.13 — test 6/44: deterministic ordering — fixed family order, then peer_group_key, then pattern_key (never by performance)]');
+  const pdeSortedCopy = [...pdeSegments].sort((a, b) => {
+    const famDiff = PD_FAMILY_ORDER.indexOf(a.family_code) - PD_FAMILY_ORDER.indexOf(b.family_code);
+    if (famDiff !== 0) return famDiff;
+    if (a.peer_group_key !== b.peer_group_key) return a.peer_group_key < b.peer_group_key ? -1 : 1;
+    return a.pattern_key < b.pattern_key ? -1 : a.pattern_key > b.pattern_key ? 1 : 0;
+  });
+  check(
+    'candidate_segments is already ordered by (family order, peer_group_key, pattern_key)',
+    JSON.stringify(pdeSegments.map((s) => s.pattern_key)) === JSON.stringify(pdeSortedCopy.map((s) => s.pattern_key)),
+  );
+  check('family_summary is ordered by the same fixed family order', JSON.stringify(pdeFamilySummary.map((r: any) => r.family_code)) === JSON.stringify(PD_FAMILY_ORDER));
+
+  console.log('\n[v2.13 — test 7/8: pattern_key / peer_group_key / comparison_scope formats, per family]');
+  const pdeBy = (fam: string) => pdeSegments.filter((s) => s.family_code === fam);
+  check('ACQUISITION_VALUE_BAND: pattern_key keyed by band_order, peer group is the whole family', pdeBy('ACQUISITION_VALUE_BAND').every((s) => /^ACQUISITION_VALUE_BAND\|band_order=-?\d+$/.test(s.pattern_key) && s.peer_group_key === 'family=ACQUISITION_VALUE_BAND'), pdeBy('ACQUISITION_VALUE_BAND').map((s) => s.pattern_key));
+  check('CATEGORY: pattern_key keyed by category_id, peer group is the whole family', pdeBy('CATEGORY').every((s) => /^CATEGORY\|category_id=/.test(s.pattern_key) && s.peer_group_key === 'family=CATEGORY'), pdeBy('CATEGORY').map((s) => s.pattern_key));
+  // category_id/type_id may legitimately be the literal string "null"
+  // (COALESCE(...,'null') — an item with no category/type mapping still
+  // gets a deterministic, stable segment, same convention the CATEGORY
+  // family itself uses) — not a bug, so the id patterns below accept
+  // either digits or "null".
+  check('TYPE_WITHIN_CATEGORY: pattern_key keyed by category_id+type_id, peer group scoped to category_id', pdeBy('TYPE_WITHIN_CATEGORY').every((s) => /^TYPE_WITHIN_CATEGORY\|category_id=(\d+|null)\|type_id=/.test(s.pattern_key) && /category_id=(\d+|null)$/.test(s.peer_group_key)), pdeBy('TYPE_WITHIN_CATEGORY').map((s) => [s.pattern_key, s.peer_group_key]));
+  check('BRAND_WITHIN_CATEGORY: pattern_key keyed by category_id+brand_id, peer group scoped to category_id', pdeBy('BRAND_WITHIN_CATEGORY').every((s) => /^BRAND_WITHIN_CATEGORY\|category_id=(\d+|null)\|brand_id=/.test(s.pattern_key) && /category_id=(\d+|null)$/.test(s.peer_group_key)), pdeBy('BRAND_WITHIN_CATEGORY').map((s) => [s.pattern_key, s.peer_group_key]));
+  check('CATEGORY_ACQUISITION_VALUE_BAND: pattern_key keyed by category_id+band_order, peer group scoped to category_id', pdeBy('CATEGORY_ACQUISITION_VALUE_BAND').every((s) => /^CATEGORY_ACQUISITION_VALUE_BAND\|category_id=(\d+|null)\|band_order=-?\d+$/.test(s.pattern_key) && /category_id=(\d+|null)$/.test(s.peer_group_key)), pdeBy('CATEGORY_ACQUISITION_VALUE_BAND').map((s) => [s.pattern_key, s.peer_group_key]));
+  check('TYPE_ACQUISITION_VALUE_BAND: pattern_key keyed by type_id+band_order, peer group scoped to type_id', pdeBy('TYPE_ACQUISITION_VALUE_BAND').every((s) => /^TYPE_ACQUISITION_VALUE_BAND\|type_id=(\d+|null)\|band_order=-?\d+$/.test(s.pattern_key) && /type_id=(\d+|null)$/.test(s.peer_group_key)), pdeBy('TYPE_ACQUISITION_VALUE_BAND').map((s) => [s.pattern_key, s.peer_group_key]));
+  check('ACQUISITION_METHOD: pattern_key keyed by method, peer group is the whole family', pdeBy('ACQUISITION_METHOD').every((s) => /^ACQUISITION_METHOD\|method=(purchase|trade|unknown)$/.test(s.pattern_key) && s.peer_group_key === 'family=ACQUISITION_METHOD'), pdeBy('ACQUISITION_METHOD').map((s) => s.pattern_key));
+  check('EXIT_METHOD: pattern_key keyed by method, peer group is the whole family', pdeBy('EXIT_METHOD').every((s) => /^EXIT_METHOD\|method=(sale|trade|unknown)$/.test(s.pattern_key) && s.peer_group_key === 'family=EXIT_METHOD'), pdeBy('EXIT_METHOD').map((s) => s.pattern_key));
+  check('ACQUISITION_METHOD_WITHIN_EXIT_METHOD: pattern_key keyed by exit+acquisition, peer group scoped to exit_method', pdeBy('ACQUISITION_METHOD_WITHIN_EXIT_METHOD').every((s) => /^ACQUISITION_METHOD_WITHIN_EXIT_METHOD\|exit=\w+\|acquisition=\w+$/.test(s.pattern_key) && /exit_method=\w+$/.test(s.peer_group_key)), pdeBy('ACQUISITION_METHOD_WITHIN_EXIT_METHOD').map((s) => [s.pattern_key, s.peer_group_key]));
+  check('DEAL_IN_CHANNEL: pattern_key keyed by channel_id, peer group is the whole family, no null-identity rows', pdeBy('DEAL_IN_CHANNEL').every((s) => /^DEAL_IN_CHANNEL\|channel_id=\d+$/.test(s.pattern_key) && s.segment.deal_in_channel_id !== null), pdeBy('DEAL_IN_CHANNEL').map((s) => s.pattern_key));
+  check('DEAL_OUT_CHANNEL: pattern_key keyed by channel_id, peer group is the whole family, no null-identity rows', pdeBy('DEAL_OUT_CHANNEL').every((s) => /^DEAL_OUT_CHANNEL\|channel_id=\d+$/.test(s.pattern_key) && s.segment.deal_out_channel_id !== null), pdeBy('DEAL_OUT_CHANNEL').map((s) => s.pattern_key));
+  check('DEAL_IN_TO_DEAL_OUT_JOURNEY: pattern_key keyed by in+out, requires BOTH identities present', pdeBy('DEAL_IN_TO_DEAL_OUT_JOURNEY').every((s) => /^DEAL_IN_TO_DEAL_OUT_JOURNEY\|in=\d+\|out=\d+$/.test(s.pattern_key) && s.segment.deal_in_channel_id !== null && s.segment.deal_out_channel_id !== null), pdeBy('DEAL_IN_TO_DEAL_OUT_JOURNEY').map((s) => s.pattern_key));
+  const pdeListingPlatform = pdeBy('LISTING_PLATFORM');
+  check('LISTING_PLATFORM: pattern_key keyed by channel_id, peer group is the whole family', pdeListingPlatform.every((s) => /^LISTING_PLATFORM\|channel_id=\d+$/.test(s.pattern_key) && s.peer_group_key === 'family=LISTING_PLATFORM'), pdeListingPlatform.map((s) => s.pattern_key));
+  check('LISTING_PLATFORM: every segment always carries the LISTING_PLATFORM_ITEMS_MAY_APPEAR_IN_MULTIPLE_SEGMENTS limitation', pdeListingPlatform.every((s) => s.limitations.includes('LISTING_PLATFORM_ITEMS_MAY_APPEAR_IN_MULTIPLE_SEGMENTS')), pdeListingPlatform.map((s) => s.limitations));
+
+  console.log('\n[v2.13 — test: null Deal In/Out identity excluded from candidates and reconciles with coverage_summary + family_summary]');
+  const pdeCoverage = pde.coverage_summary;
+  const pdeFamBy = (fam: string) => pdeFamilySummary.find((r: any) => r.family_code === fam);
+  check(
+    'DEAL_IN_CHANNEL family distinct_realized_item_count matches coverage_summary.deal_in_channel_available_count',
+    pdeFamBy('DEAL_IN_CHANNEL').distinct_realized_item_count === pdeCoverage.deal_in_channel_available_count,
+    { fam: pdeFamBy('DEAL_IN_CHANNEL'), coverage: pdeCoverage.deal_in_channel_available_count },
+  );
+  check(
+    'DEAL_IN_CHANNEL family null_identity_excluded_count matches coverage_summary.deal_in_channel_missing_count',
+    pdeFamBy('DEAL_IN_CHANNEL').null_identity_excluded_count === pdeCoverage.deal_in_channel_missing_count,
+    { fam: pdeFamBy('DEAL_IN_CHANNEL'), coverage: pdeCoverage.deal_in_channel_missing_count },
+  );
+  check(
+    'DEAL_OUT_CHANNEL family distinct/null counts match coverage_summary.deal_out_channel_available/missing',
+    pdeFamBy('DEAL_OUT_CHANNEL').distinct_realized_item_count === pdeCoverage.deal_out_channel_available_count &&
+    pdeFamBy('DEAL_OUT_CHANNEL').null_identity_excluded_count === pdeCoverage.deal_out_channel_missing_count,
+  );
+  check(
+    'DEAL_IN_TO_DEAL_OUT_JOURNEY family distinct/null counts match coverage_summary.complete_channel_journey_available/missing',
+    pdeFamBy('DEAL_IN_TO_DEAL_OUT_JOURNEY').distinct_realized_item_count === pdeCoverage.complete_channel_journey_available_count &&
+    pdeFamBy('DEAL_IN_TO_DEAL_OUT_JOURNEY').null_identity_excluded_count === pdeCoverage.complete_channel_journey_missing_count,
+  );
+  check(
+    'LISTING_PLATFORM family distinct_realized_item_count matches coverage_summary.listing_platform_exposure_available_count, membership may exceed distinct due to cross-listing',
+    pdeFamBy('LISTING_PLATFORM').distinct_realized_item_count === pdeCoverage.listing_platform_exposure_available_count &&
+    pdeFamBy('LISTING_PLATFORM').realized_item_membership_count >= pdeFamBy('LISTING_PLATFORM').distinct_realized_item_count,
+  );
+  check(
+    'realized_items_exposed_to_multiple_listing_platforms_count === LISTING_PLATFORM membership minus distinct (the cross-listed item(s))',
+    pdeCoverage.realized_items_exposed_to_multiple_listing_platforms_count === (pdeFamBy('LISTING_PLATFORM').realized_item_membership_count - pdeFamBy('LISTING_PLATFORM').distinct_realized_item_count),
+  );
+
+  console.log('\n[v2.13 — test 15/16: global DOM coverage reconciles — available + missing + invalid === total realized items]');
+  check(
+    'coverage_summary.global_dom_available + missing + invalid === total_realized_item_count',
+    pdeCoverage.global_dom_available_count + pdeCoverage.global_dom_missing_count + pdeCoverage.global_dom_invalid_count === pdeCoverage.total_realized_item_count,
+    pdeCoverage,
+  );
+  check('coverage_summary.profit_available_count/roi_available_count <= total_realized_item_count', pdeCoverage.profit_available_count <= pdeCoverage.total_realized_item_count && pdeCoverage.roi_available_count <= pdeCoverage.total_realized_item_count);
+
+  console.log('\n[v2.13 — test: module_limitations always includes the 10 unconditional codes, plus conditional codes only when applicable]');
+  const PD_ALWAYS_LIMITATIONS = [
+    'REALIZED_ITEMS_ONLY', 'ASSOCIATION_NOT_CAUSATION', 'CURRENT_PURPOSE_IS_NOT_HISTORICAL_PURPOSE',
+    'HISTORICAL_AND_APP_TRACKED_ITEMS_POOLED', 'CATEGORY_TYPE_AND_BRAND_ARE_CURRENT_ITEM_ATTRIBUTES',
+    'MULTIPLE_HYPOTHESIS_TESTING_NOT_YET_APPLIED', 'PATTERN_SELECTION_NOT_IMPLEMENTED', 'OPEN_INVENTORY_NOT_ANALYZED',
+    'PERSONAL_HOLDING_INTENT_NOT_ANALYZED', 'LISTING_PLATFORM_ITEMS_MAY_APPEAR_IN_MULTIPLE_SEGMENTS',
+  ];
+  check('every always-required module limitation code is present', PD_ALWAYS_LIMITATIONS.every((c) => pde.module_limitations.includes(c)), pde.module_limitations);
+  check(
+    'NULL_DEAL_IN_CHANNEL_REDUCES_COVERAGE present iff deal_in_channel_missing_count > 0',
+    pde.module_limitations.includes('NULL_DEAL_IN_CHANNEL_REDUCES_COVERAGE') === (pdeCoverage.deal_in_channel_missing_count > 0),
+  );
+  check(
+    'NULL_DEAL_OUT_CHANNEL_REDUCES_COVERAGE present iff deal_out_channel_missing_count > 0',
+    pde.module_limitations.includes('NULL_DEAL_OUT_CHANNEL_REDUCES_COVERAGE') === (pdeCoverage.deal_out_channel_missing_count > 0),
+  );
+  check(
+    'INCOMPLETE_CHANNEL_JOURNEY_REDUCES_COVERAGE present iff complete_channel_journey_missing_count > 0',
+    pde.module_limitations.includes('INCOMPLETE_CHANNEL_JOURNEY_REDUCES_COVERAGE') === (pdeCoverage.complete_channel_journey_missing_count > 0),
+  );
+  const pdeHasSparseBrand = pdeBy('BRAND_WITHIN_CATEGORY').some((s) => s.confidence === 'insufficient' || s.confidence === 'low');
+  const pdeHasSparseType = pdeBy('TYPE_WITHIN_CATEGORY').some((s) => s.confidence === 'insufficient' || s.confidence === 'low');
+  check('SPARSE_BRAND_SEGMENTS_PRESENT present iff any BRAND_WITHIN_CATEGORY segment has insufficient/low confidence', pde.module_limitations.includes('SPARSE_BRAND_SEGMENTS_PRESENT') === pdeHasSparseBrand);
+  check('SPARSE_TYPE_SEGMENTS_PRESENT present iff any TYPE_WITHIN_CATEGORY segment has insufficient/low confidence', pde.module_limitations.includes('SPARSE_TYPE_SEGMENTS_PRESENT') === pdeHasSparseType);
+
+  console.log('\n[v2.13 — production-shaped fixture verification: Historical Trade acquisition-method normalization]');
+  const { data: histTradeRow } = await serviceClient
+    .from('analytics_item_lifecycle_v2').select('is_historical_import, acquisition_method, net_profit')
+    .eq('item_id', fx.historicalTradeRealized).single();
+  check('Historical Trade item normalizes to acquisition_method = trade (never unknown)', histTradeRow?.acquisition_method === 'trade', histTradeRow);
+  check('Historical Trade item is flagged is_historical_import = true', histTradeRow?.is_historical_import === true, histTradeRow);
+  const acqMethodTradeSeg = pdeBy('ACQUISITION_METHOD').find((s) => s.segment.acquisition_method === 'trade');
+  check('ACQUISITION_METHOD "trade" segment historical_import_item_count reflects the Historical Trade fixture (>= 1)', (acqMethodTradeSeg?.historical_import_item_count ?? 0) >= 1, acqMethodTradeSeg);
+
+  console.log('\n[v2.13 — production-shaped fixture verification: net profit includes item expenses, not just acquisition value]');
+  const { data: expensesRow } = await serviceClient
+    .from('analytics_item_lifecycle_v2').select('acquisition_value, exit_value, item_expenses_total, net_profit, roi')
+    .eq('item_id', fx.realizedItemWithExpenses).single();
+  check('item_expenses_total reflects the fixture\'s $50 expense row', expensesRow?.item_expenses_total === 50, expensesRow);
+  check(
+    'net_profit = exit_value - acquisition_value - item_expenses_total (expenses actually subtracted)',
+    expensesRow?.net_profit === (expensesRow?.exit_value - expensesRow?.acquisition_value - expensesRow?.item_expenses_total),
+    expensesRow,
+  );
+
+  console.log('\n[v2.13 — test: ROI excludes zero/unknown acquisition value]');
+  const zeroBandSeg = pdeBy('ACQUISITION_VALUE_BAND').find((s) => s.segment.acquisition_value_band_order === 0);
+  check('ACQUISITION_VALUE_BAND "Zero assigned value" (band_order=0) segment has roi_sample_size = 0 (acquisition_value > 0 required)', zeroBandSeg?.roi_sample_size === 0, zeroBandSeg);
+  const unknownBandSeg = pdeBy('ACQUISITION_VALUE_BAND').find((s) => s.segment.acquisition_value_band_order === 8);
+  check('ACQUISITION_VALUE_BAND "Unknown acquisition value" (band_order=8) segment has roi_sample_size = 0', unknownBandSeg?.roi_sample_size === 0, unknownBandSeg);
+
+  console.log('\n[v2.13 — test 22/23: zero-day DOM valid, negative DOM excluded and counted invalid (reused v2.11 fixtures, global DOM semantics)]');
+  const { data: zeroDomRow } = await serviceClient
+    .from('analytics_item_lifecycle_v2').select('global_days_on_market').eq('item_id', fx.sameDayListingAndExit).single();
+  check('sameDayListingAndExit has global_days_on_market = 0 (zero-day DOM is valid, not missing)', zeroDomRow?.global_days_on_market === 0, zeroDomRow);
+  const { data: negativeDomRow } = await serviceClient
+    .from('analytics_item_lifecycle_v2').select('global_days_on_market').eq('item_id', fx.listingAfterExitInvalidOrder).single();
+  check('listingAfterExitInvalidOrder has a negative global_days_on_market (listed after exit)', (negativeDomRow?.global_days_on_market ?? 0) < 0, negativeDomRow);
+
+  console.log('\n[v2.13 — permissions]');
+  const { error: v213AuthedError } = await clientA.rpc('build_analytics_snapshot_v2_13', { p_target_user_id: userAId });
+  check('authenticated client cannot call build_analytics_snapshot_v2_13 directly', !!v213AuthedError, v213AuthedError);
+  const { error: v213HelperAuthedError } = await clientA.rpc('_build_pattern_discovery_evidence_v2_13', { p_target_user_id: userAId });
+  check('authenticated client cannot call _build_pattern_discovery_evidence_v2_13 directly', !!v213HelperAuthedError, v213HelperAuthedError);
+  const { error: v213ForgedTargetError } = await clientA.rpc('build_analytics_snapshot_v2_13', { p_target_user_id: userBId });
+  check('authenticated client cannot invoke build_analytics_snapshot_v2_13 for a forged target user id either', !!v213ForgedTargetError, v213ForgedTargetError);
+
+  console.log('\n[v2.13 — test 53: two-user fixture proves target-user isolation]');
+  const { data: v213SnapshotB } = await serviceClient.rpc('build_analytics_snapshot_v2_13', { p_target_user_id: userBId });
+  const pdeB = (v213SnapshotB as any)?.target_user_pattern_discovery_evidence;
+  check('user B also receives a valid target_user_pattern_discovery_evidence section', typeof pdeB === 'object' && pdeB !== null && pdeB.schema_version === '1.0', pdeB?.schema_version);
+  check('user B\'s population_summary is independent of user A\'s (no shared totals assumed)', typeof pdeB.population_summary.total_realized_item_count === 'number');
+
+  console.log('\n[v2.13 — test 32: old-version compatibility, all prior versions including v2.12]');
+  const v213StillCallableChecks: Array<[string, Record<string, unknown>]> = [
+    ...v212StillCallableChecks,
+    ['build_analytics_snapshot_v2_12', { p_target_user_id: userAId }],
+  ];
+  for (const [fn, args] of v213StillCallableChecks) {
+    const { error } = await serviceClient.rpc(fn, args);
+    check(`${fn} still callable by service_role after v2.13 migration`, !error, error);
+  }
+
+  console.log('\n[v2.13 — production promotion]');
+  check('ANALYTICS_VERSION constant used by the production runner is now 2.13', ANALYTICS_VERSION === '2.13', ANALYTICS_VERSION);
+  const runA213 = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  check('new production run stores analytics_version 2.13', runA213.analytics_version === '2.13', runA213.analytics_version);
+  check('new production run snapshot.snapshot_schema_version is 2.13', (runA213.snapshot as any)?.snapshot_schema_version === '2.13', (runA213.snapshot as any)?.snapshot_schema_version);
+  check(
+    'new production run carries target_user_pattern_discovery_evidence',
+    typeof (runA213.snapshot as any)?.target_user_pattern_discovery_evidence === 'object',
+    (runA213.snapshot as any)?.target_user_pattern_discovery_evidence,
+  );
+  const runA213Insights = (runA213.snapshot as any)?.insights;
+  // source_analytics_version tracks the last Analytics version that changed
+  // evidence the Insights Engine actually reads (target_user_acquisition_
+  // evidence, target_user_inventory_segmentation_evidence, target_user_
+  // deal_channel_evidence, target_user_listing_channel_evidence, target_
+  // user_open_inventory_evidence) — see SOURCE_ANALYTICS_VERSION's own
+  // header comment in selectFindings.ts. v2.13 adds a wholly separate,
+  // additive section (target_user_pattern_discovery_evidence) that the
+  // Insights Engine deliberately never reads, so this correctly stays at
+  // 2.12, not 2.13.
+  check('new production run insights.source_analytics_version stays 2.12 (v2.13 never touches evidence the Insights Engine reads)', runA213Insights?.source_analytics_version === '2.12', runA213Insights?.source_analytics_version);
+  check(
+    'new production run insights_engine_version / findings_selector_version remain 1.8 (this bump is Analytics-SQL-only, no new Insights rule)',
+    runA213Insights?.insights_engine_version === '1.8' && runA213Insights?.findings_selector_version === '1.8',
+    { insights_engine_version: runA213Insights?.insights_engine_version, findings_selector_version: runA213Insights?.findings_selector_version },
+  );
+  check(
+    'every one of the nine existing rule families still produces evaluations (none silently dropped by the v2.13 promotion)',
+    new Set((runA213Insights?.rule_evaluations ?? []).map((r: any) => r.finding_code)).size >= 1,
+    (runA213Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
+  );
+
+  console.log('\n[v2.13 — old stored runs remain readable]');
+  const { data: oldRunReadBack213 } = await serviceClient
+    .from('analytics_runs').select('analytics_version, snapshot').eq('id', syntheticOldRun!.id).single();
+  check(
+    'the synthetic v1.8 run from earlier in this script still reads back unchanged after the v2.13 migration',
+    oldRunReadBack213?.analytics_version === '1.8' && (oldRunReadBack213?.snapshot as any)?.snapshot_schema_version === '1.8',
+    oldRunReadBack213,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

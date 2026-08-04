@@ -755,8 +755,8 @@ function main() {
   console.log('\n[Test 12 — old snapshots without insights still validate; new optional section accepted]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.12',
-      analytics_definition_version: '2.12',
+      snapshot_schema_version: '2.13',
+      analytics_definition_version: '2.13',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -1193,8 +1193,8 @@ function main() {
       ],
     };
     const fullSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.12',
-      analytics_definition_version: '2.12',
+      snapshot_schema_version: '2.13',
+      analytics_definition_version: '2.13',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -1585,8 +1585,8 @@ function main() {
   console.log('\n[M20 — old Insights Engine v1.0 and v1.1 snapshots remain readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.12',
-      analytics_definition_version: '2.12',
+      snapshot_schema_version: '2.13',
+      analytics_definition_version: '2.13',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -2067,8 +2067,8 @@ function main() {
   console.log('\n[J21 — old Insights Engine v1.0/v1.1/v1.2 snapshots (no channel-journey finding) remain readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.12',
-      analytics_definition_version: '2.12',
+      snapshot_schema_version: '2.13',
+      analytics_definition_version: '2.13',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -2482,8 +2482,8 @@ function main() {
   console.log('\n[D19 — old Insights Engine v1.3-shaped snapshot (channel-journey finding, no deal-out-channel finding) remains readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.12',
-      analytics_definition_version: '2.12',
+      snapshot_schema_version: '2.13',
+      analytics_definition_version: '2.13',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -2965,8 +2965,8 @@ function main() {
   console.log('\n[N21 — previous Insights Engine v1.4-shaped snapshot (deal-out-channel finding, no deal-in-channel finding) remains readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.12',
-      analytics_definition_version: '2.12',
+      snapshot_schema_version: '2.13',
+      analytics_definition_version: '2.13',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -3619,8 +3619,8 @@ function main() {
   console.log('\n[L30 — previous Insights Engine v1.5-shaped snapshot (no listing-platform finding) remains readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.12',
-      analytics_definition_version: '2.12',
+      snapshot_schema_version: '2.13',
+      analytics_definition_version: '2.13',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -4340,8 +4340,8 @@ function main() {
   console.log('\n[B34 — previous Insights Engine v1.6-shaped snapshot (no business-open-inventory-priority finding) remains readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.12',
-      analytics_definition_version: '2.12',
+      snapshot_schema_version: '2.13',
+      analytics_definition_version: '2.13',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
@@ -5048,8 +5048,8 @@ function main() {
   console.log('\n[H39 — previous Insights Engine v1.7-shaped snapshot (no hybrid-purpose-review-priority finding) remains readable]');
   {
     const baseSnapshot: Record<string, unknown> = {
-      snapshot_schema_version: '2.12',
-      analytics_definition_version: '2.12',
+      snapshot_schema_version: '2.13',
+      analytics_definition_version: '2.13',
       generated_at: new Date().toISOString(),
       evidence_scope: 'shared_inventory_population',
       purpose_semantics: 'v2',
