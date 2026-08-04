@@ -58,6 +58,11 @@ import {
   extractBusinessOpenInventoryCandidates,
   FINDING_CODE as BUSINESS_OPEN_INVENTORY_PRIORITY_FINDING_CODE,
 } from '../src/lib/analytics/insights/rules/businessOpenInventoryPriority';
+import {
+  evaluateHybridPurposeReviewPriority,
+  extractHybridOpenItemCandidates,
+  FINDING_CODE as HYBRID_PURPOSE_REVIEW_PRIORITY_FINDING_CODE,
+} from '../src/lib/analytics/insights/rules/hybridPurposeReviewPriority';
 import { selectFindings } from '../src/lib/analytics/insights/selectFindings';
 import { isValidAnalyticsSnapshot } from '../src/lib/analytics/runAnalytics';
 import type {
@@ -1147,8 +1152,8 @@ function main() {
     });
     const viaOrchestrator = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
 
-    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
-    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
+    check('insights_engine_version is 1.8', insights.insights_engine_version === '1.8', insights.insights_engine_version);
+    check('findings_selector_version is 1.8', insights.findings_selector_version === '1.8', insights.findings_selector_version);
     check(
       'the broad finding produced via selectFindings is identical to calling the rule directly (aside from generated_at, which the broad rule does not even set)',
       JSON.stringify(viaOrchestrator) === JSON.stringify(directResult),
@@ -1572,8 +1577,8 @@ function main() {
     check('the broad finding is numerically unchanged (median_net_profit 750)', broadFinding?.metrics.median_net_profit === 750, broadFinding?.metrics);
     check('the category finding is numerically unchanged (Guitars x $2,000-2,999)', categoryFinding?.segment.category_name === 'Guitars' && categoryFinding?.segment.acquisition_value_band_label === '$2,000-2,999', categoryFinding?.segment);
     check('the acquisition-method finding is also present (PURCHASE_ECONOMICS_TRADE_SPEED)', methodFinding?.profile_code === 'PURCHASE_ECONOMICS_TRADE_SPEED', methodFinding);
-    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
-    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
+    check('insights_engine_version is 1.8', insights.insights_engine_version === '1.8', insights.insights_engine_version);
+    check('findings_selector_version is 1.8', insights.findings_selector_version === '1.8', insights.findings_selector_version);
   }
 
   // ── M20: old Insights Engine 1.0 and 1.1 snapshots remain readable ──────
@@ -2054,8 +2059,8 @@ function main() {
     check('the category finding (minus orchestrator relationship linking) is byte-identical to calling the rule directly', JSON.stringify(categoryWithoutRelationship) === JSON.stringify(directCategory), { categoryWithoutRelationship, directCategory });
     check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
     check('the journey finding is also present (Marketplace -> Marketplace)', (viaOrchestratorJourney as SelectedFindingForTest | undefined)?.segment.deal_in_channel_name === 'Marketplace', viaOrchestratorJourney);
-    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
-    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
+    check('insights_engine_version is 1.8', insights.insights_engine_version === '1.8', insights.insights_engine_version);
+    check('findings_selector_version is 1.8', insights.findings_selector_version === '1.8', insights.findings_selector_version);
   }
 
   // ── J21: old Insights Engine snapshots (1.0, 1.1, 1.2) remain readable ──
@@ -2469,8 +2474,8 @@ function main() {
     check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
     check('the channel-journey finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorJourney) === JSON.stringify(directJourney), { viaOrchestratorJourney, directJourney });
     check('the deal-out-channel finding is also present (Marketplace)', (viaOrchestratorDealOut as SelectedFindingForTest | undefined)?.segment.channel_name === 'Marketplace', viaOrchestratorDealOut);
-    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
-    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
+    check('insights_engine_version is 1.8', insights.insights_engine_version === '1.8', insights.insights_engine_version);
+    check('findings_selector_version is 1.8', insights.findings_selector_version === '1.8', insights.findings_selector_version);
   }
 
   // ── D19: old Insights Engine snapshots remain readable ───────────────────
@@ -2952,8 +2957,8 @@ function main() {
         && (viaOrchestratorDealIn as SelectedFindingForTest | undefined)?.segment.channel_id === (viaOrchestratorDealOut as SelectedFindingForTest | undefined)?.segment.channel_id,
       { viaOrchestratorDealIn, viaOrchestratorDealOut },
     );
-    check('insights_engine_version is 1.7', insights.insights_engine_version === '1.7', insights.insights_engine_version);
-    check('findings_selector_version is 1.7', insights.findings_selector_version === '1.7', insights.findings_selector_version);
+    check('insights_engine_version is 1.8', insights.insights_engine_version === '1.8', insights.insights_engine_version);
+    check('findings_selector_version is 1.8', insights.findings_selector_version === '1.8', insights.findings_selector_version);
   }
 
   // ── N21: previous Insights Engine snapshots remain readable ──────────────
@@ -4391,6 +4396,739 @@ function main() {
     const v16Snapshot = { ...baseSnapshot, insights: v16ShapedInsights };
 
     check('a stored v2.12 snapshot carrying an Insights Engine v1.6-shaped insights section still validates', isValidAnalyticsSnapshot(v16Snapshot));
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // HYBRID_PURPOSE_REVIEW_PRIORITY (Insights Engine v1.8)
+  // ══════════════════════════════════════════════════════════════════════
+  // Reads the SAME target_user_open_inventory_evidence.item_decision_
+  // evidence array BUSINESS_OPEN_INVENTORY_PRIORITY reads, filtered to
+  // current_purpose_name = 'Hybrid'. Hybrid is never treated as
+  // inherently incorrect — this finding asks the user to confirm current
+  // intent, never automates a Purpose change.
+
+  // ── Fixture builder ───────────────────────────────────────────────────
+  interface HybridOpenItemFixture {
+    itemId: number;
+    itemDisplayName?: string | null;
+    currentPurposeName?: string | null;
+    dispositionMode?: string | null;
+    activeRealizationFlag?: boolean | null;
+    realizationPriorityOrder?: number | null;
+    purposePolicyStatus?: string | null;
+    listedFlag: boolean;
+    currentDomDays?: number | null;
+    ownershipAgeDays?: number | null;
+    acquisitionValue?: number | null;
+    estimatedSoldValue?: number | null;
+    estimatedNetUpside?: number | null;
+    estimatedUpsidePercent?: number | null;
+    openCapitalSharePercent?: number | null;
+    purposeOpenCapitalSharePercent?: number | null;
+    listingChannelNames?: string[];
+    isHistoricalImport?: boolean;
+    liquidityCohortMatch?: string | null;
+    reasonCodes: string[];
+  }
+
+  function makeHybridItemDecisionEvidence(items: HybridOpenItemFixture[]): unknown {
+    return {
+      item_decision_evidence: items.map((it) => ({
+        item_id: it.itemId,
+        item_display_name: it.itemDisplayName ?? `Test Hybrid Item ${it.itemId}`,
+        brand_id: 1,
+        brand_name: 'TestBrand',
+        category_id: 1,
+        category_name: 'TestCategory',
+        type_id: 1,
+        type_name: 'TestType',
+        model: 'should-never-appear-in-any-finding',
+        current_purpose_id: 3,
+        current_purpose_name: it.currentPurposeName !== undefined ? it.currentPurposeName : 'Hybrid',
+        purpose_policy_status: it.purposePolicyStatus !== undefined ? it.purposePolicyStatus : 'mapped',
+        disposition_mode: it.dispositionMode !== undefined ? it.dispositionMode : 'selective_realization',
+        realization_priority_order: it.realizationPriorityOrder !== undefined ? it.realizationPriorityOrder : 2,
+        active_realization_flag: it.activeRealizationFlag !== undefined ? it.activeRealizationFlag : true,
+        expected_holding_policy: 'extended_holding_acceptable',
+        acquisition_method: 'purchase',
+        acquisition_value: it.acquisitionValue ?? null,
+        acquisition_value_band_order: 4,
+        acquisition_value_band_label: '$1,000-1,999',
+        estimated_sold_value: it.estimatedSoldValue ?? null,
+        estimated_net_upside: it.estimatedNetUpside ?? null,
+        estimated_upside_percent: it.estimatedUpsidePercent ?? null,
+        is_historical_import: it.isHistoricalImport ?? false,
+        ownership_age_days: it.ownershipAgeDays ?? null,
+        listed_flag: it.listedFlag,
+        listing_state_basis: 'open_item_with_listing_record',
+        listing_channel_count: (it.listingChannelNames ?? []).length,
+        listing_channel_names: it.listingChannelNames ?? [],
+        first_listed_at: it.listedFlag ? '2026-01-01T00:00:00Z' : null,
+        current_dom_days: it.currentDomDays ?? null,
+        open_capital_share_percent: it.openCapitalSharePercent ?? null,
+        purpose_open_capital_share_percent: it.purposeOpenCapitalSharePercent ?? null,
+        economic_cohort: null,
+        liquidity_cohort: null,
+        liquidity_cohort_match: it.liquidityCohortMatch ?? 'purpose_matched',
+        comparable_evidence_available: false,
+        reason_codes: it.reasonCodes,
+      })),
+    };
+  }
+
+  function hybridEvalFor(
+    itemId: number,
+    evaluations: ReturnType<typeof evaluateHybridPurposeReviewPriority>['candidateEvaluations'],
+  ) {
+    return evaluations.find((e) => e.item_id === itemId);
+  }
+
+  // ── H1/H2: correct evidence path is used; hybrid_purpose_review[] is
+  // never used as rule evidence ────────────────────────────────────────
+  console.log('\n[H1/H2 — correct target-user item_decision_evidence path is used; hybrid_purpose_review[] is never used]');
+  {
+    const selectFindingsSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/selectFindings.ts'), 'utf8');
+    check(
+      'selectFindings.ts wires evaluateHybridPurposeReviewPriority(input.targetUserOpenInventoryEvidence)',
+      selectFindingsSource.includes('evaluateHybridPurposeReviewPriority(input.targetUserOpenInventoryEvidence)'),
+    );
+    const ruleSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/rules/hybridPurposeReviewPriority.ts'), 'utf8');
+    check(
+      'hybridPurposeReviewPriority.ts reads item_decision_evidence and never accesses .hybrid_purpose_review in code',
+      ruleSource.includes('evidence?.item_decision_evidence') && !ruleSource.includes('.hybrid_purpose_review'),
+    );
+    check(
+      'hybridPurposeReviewPriority.ts never accesses .shared_open_inventory_evidence in code (only mentions it in a comment)',
+      !ruleSource.toLowerCase().includes('.shared_open_inventory'),
+    );
+  }
+
+  // ── H3/H34: another user's items are never considered; two-user
+  // fixture proves no cross-user item leakage ──────────────────────────
+  console.log('\n[H3/H34 — another user\'s items are never considered; two-user fixture proves no cross-user item leakage]');
+  {
+    const userAItems: HybridOpenItemFixture[] = [
+      { itemId: 111, itemDisplayName: 'User A Hybrid Item', listedFlag: true, reasonCodes: ['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_P75'] },
+    ];
+    const userBItems: HybridOpenItemFixture[] = [
+      { itemId: 222, itemDisplayName: 'User B Hybrid Item', listedFlag: true, reasonCodes: ['HYBRID_REVIEW_REQUIRED', 'HYBRID_LISTED_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_P75'] },
+    ];
+    const { result: resultA } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence(userAItems));
+    const { result: resultB } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence(userBItems));
+    check('user A\'s result selects only user A\'s own item', resultA.status === 'selected' && resultA.segment.item_id === 111, resultA);
+    check('user B\'s result selects only user B\'s own item', resultB.status === 'selected' && resultB.segment.item_id === 222, resultB);
+    check('user A\'s result never contains user B\'s item_id anywhere in its serialized form', !JSON.stringify(resultA).includes('222'), resultA);
+    check('user B\'s result never contains user A\'s item_id anywhere in its serialized form', !JSON.stringify(resultB).includes('111'), resultB);
+  }
+
+  // ── H4/H5/H6: only mapped Hybrid/selective_realization items are
+  // eligible; Business and Personal are excluded entirely; actual Hybrid
+  // purpose-policy values are validated ─────────────────────────────────
+  console.log('\n[H4/H5/H6 — only mapped Hybrid selective_realization items are eligible; Business/Personal excluded; actual purpose-policy values validated]');
+  {
+    const items: HybridOpenItemFixture[] = [
+      { itemId: 1, listedFlag: true, reasonCodes: [] },
+      { itemId: 2, currentPurposeName: 'Business', listedFlag: true, reasonCodes: [] },
+      { itemId: 3, currentPurposeName: 'Personal', listedFlag: false, reasonCodes: [] },
+      { itemId: 4, purposePolicyStatus: 'missing_policy', listedFlag: true, reasonCodes: [] },
+      { itemId: 5, dispositionMode: 'active_realization', listedFlag: true, reasonCodes: [] },
+      { itemId: 6, realizationPriorityOrder: 1, listedFlag: true, reasonCodes: [] },
+    ];
+    const { candidateEvaluations } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence(items));
+    check('the plain Hybrid item (1) is eligible', hybridEvalFor(1, candidateEvaluations)?.eligible === true, hybridEvalFor(1, candidateEvaluations));
+    check('the Business item (2) receives no evaluation row at all — never a candidate for this rule', hybridEvalFor(2, candidateEvaluations) === undefined, candidateEvaluations);
+    check('the Personal item (3) receives no evaluation row at all — never a candidate for this rule', hybridEvalFor(3, candidateEvaluations) === undefined, candidateEvaluations);
+    check('item 4 (unmapped policy) is ineligible with PURPOSE_POLICY_STATUS_NOT_MAPPED', hybridEvalFor(4, candidateEvaluations)?.eligible === false && !!hybridEvalFor(4, candidateEvaluations)?.eligibility_failure_reasons.includes('PURPOSE_POLICY_STATUS_NOT_MAPPED'), hybridEvalFor(4, candidateEvaluations));
+    check('item 5 (disposition_mode = active_realization, a Business value) is ineligible with DISPOSITION_MODE_NOT_SELECTIVE_REALIZATION', hybridEvalFor(5, candidateEvaluations)?.eligible === false && !!hybridEvalFor(5, candidateEvaluations)?.eligibility_failure_reasons.includes('DISPOSITION_MODE_NOT_SELECTIVE_REALIZATION'), hybridEvalFor(5, candidateEvaluations));
+    check('item 6 (realization_priority_order = 1, a Business value) is ineligible with REALIZATION_PRIORITY_ORDER_NOT_TWO', hybridEvalFor(6, candidateEvaluations)?.eligible === false && !!hybridEvalFor(6, candidateEvaluations)?.eligibility_failure_reasons.includes('REALIZATION_PRIORITY_ORDER_NOT_TWO'), hybridEvalFor(6, candidateEvaluations));
+    check('exactly 4 evaluation rows exist (items 1, 4, 5, 6 — Business/Personal never considered)', candidateEvaluations.length === 4, candidateEvaluations.map((e) => e.item_id));
+
+    // Validate against REAL local Supabase v2.12 evidence — confirmed
+    // live: current_purpose_name = 'Hybrid', disposition_mode =
+    // 'selective_realization', active_realization_flag = true,
+    // realization_priority_order = 2, purpose_policy_status = 'mapped'.
+    const evidence = extractHybridOpenItemCandidates(makeHybridItemDecisionEvidence([{ itemId: 1, listedFlag: true, reasonCodes: [] }]))[0];
+    check(
+      'the fixture builder\'s defaults match the actual production purpose-policy values (disposition_mode=selective_realization, active_realization_flag=true, realization_priority_order=2, purpose_policy_status=mapped)',
+      evidence.disposition_mode === 'selective_realization' && evidence.active_realization_flag === true && evidence.realization_priority_order === 2 && evidence.purpose_policy_status === 'mapped',
+      evidence,
+    );
+  }
+
+  // ── H7/H8: exact Hybrid reason-code strings are used; Business-
+  // prefixed and generic Business/unclassified codes are never used ────
+  console.log('\n[H7/H8 — exact Hybrid reason-code strings are used; Business-prefixed and generic codes are ignored]');
+  {
+    const ruleSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/rules/hybridPurposeReviewPriority.ts'), 'utf8');
+    // Only the codes the rule actually GATES ON in code need to appear as
+    // literal string constants — HYBRID_REVIEW_REQUIRED (unconditional on
+    // every row), HYBRID_LISTED_SIGNAL (redundant with listed_flag),
+    // HYBRID_RECENT_ITEM/HYBRID_INSUFFICIENT_OWNERSHIP_HISTORY (data-
+    // quality only, never actionable), and HYBRID_DOM_ABOVE_COMPARABLE_
+    // MEDIAN (deliberately never independently checked — supporting
+    // evidence only) are correctly absent from the rule's own logic; they
+    // are documented in the module header comment instead.
+    const requiredHybridCodesInLogic = [
+      'HYBRID_UNLISTED_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL',
+      'HYBRID_LOW_UPSIDE_SIGNAL', 'HYBRID_DOM_ABOVE_COMPARABLE_P75',
+    ];
+    check('every Hybrid reason-code string this rule gates on appears in the rule source', requiredHybridCodesInLogic.every((c) => ruleSource.includes(`'${c}'`)), requiredHybridCodesInLogic.filter((c) => !ruleSource.includes(`'${c}'`)));
+    // Scan CODE lines only (strip full-line comments) — the header
+    // comment legitimately documents which Business-prefixed/generic
+    // codes are deliberately NOT used; what must never exist is an actual
+    // reference to them in the rule's own logic.
+    const codeOnlyForCodes = ruleSource.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
+    const businessPrefixedCodes = ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'BUSINESS_DOM_ABOVE_COMPARABLE_MEDIAN', 'BUSINESS_UNLISTED_OPEN_ITEM', 'BUSINESS_OWNERSHIP_AGE_120_PLUS'];
+    check('no Business-prefixed reason code appears in the rule\'s actual code (comments aside)', businessPrefixedCodes.every((c) => !codeOnlyForCodes.includes(c)), businessPrefixedCodes.filter((c) => codeOnlyForCodes.includes(c)));
+    check('no generic Business/unclassified code (HIGH_CAPITAL_EXPOSURE, LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL) appears in the rule\'s actual code (comments aside)', !codeOnlyForCodes.includes("'HIGH_CAPITAL_EXPOSURE'") && !codeOnlyForCodes.includes("'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'"));
+
+    // Defensive fixture: even if a row were somehow labeled Hybrid but
+    // carried the generic/Business codes, they must never drive a profile.
+    const item: HybridOpenItemFixture = { itemId: 1, listedFlag: true, reasonCodes: ['HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL', 'BUSINESS_DOM_ABOVE_COMPARABLE_P75'] };
+    const { candidateEvaluations } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([item]));
+    check('a Hybrid row carrying only generic/Business-prefixed codes is not actionable', hybridEvalFor(1, candidateEvaluations)?.actionable === false, hybridEvalFor(1, candidateEvaluations));
+  }
+
+  // ── H9/H10: every priority profile is recognized correctly; the first
+  // matching profile wins when an item matches more than one ──────────
+  console.log('\n[H9/H10 — every one of the eight priority profiles is recognized correctly; first match wins]');
+  {
+    const profileFixtures: Array<{ item: HybridOpenItemFixture; expectedProfile: string; expectedAction: string }> = [
+      {
+        item: { itemId: 1, listedFlag: false, ownershipAgeDays: 150, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL'] },
+        expectedProfile: 'UNLISTED_HIGH_CAPITAL_AGED',
+        expectedAction: 'DECIDE_LIST_AS_BUSINESS_OR_HOLD_AS_PERSONAL',
+      },
+      {
+        item: { itemId: 2, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LOW_UPSIDE_SIGNAL'] },
+        expectedProfile: 'LISTED_STALE_HIGH_CAPITAL_LOW_UPSIDE',
+        expectedAction: 'REVIEW_EXIT_PLAN_OR_PERSONAL_HOLD',
+      },
+      {
+        item: { itemId: 3, listedFlag: false, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LOW_UPSIDE_SIGNAL'] },
+        expectedProfile: 'UNLISTED_HIGH_CAPITAL_LOW_UPSIDE',
+        expectedAction: 'DECIDE_LIST_AS_BUSINESS_OR_HOLD_AS_PERSONAL',
+      },
+      {
+        item: { itemId: 4, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_HIGH_CAPITAL_SIGNAL'] },
+        expectedProfile: 'LISTED_STALE_HIGH_CAPITAL',
+        expectedAction: 'CONFIRM_ACTIVE_EXIT_OR_PERSONAL_HOLD',
+      },
+      {
+        item: { itemId: 5, listedFlag: false, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL'] },
+        expectedProfile: 'UNLISTED_HIGH_CAPITAL',
+        expectedAction: 'DECIDE_LIST_AS_BUSINESS_OR_KEEP_HYBRID',
+      },
+      {
+        item: { itemId: 6, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_LOW_UPSIDE_SIGNAL'] },
+        expectedProfile: 'LISTED_STALE_LOW_UPSIDE',
+        expectedAction: 'REVIEW_PRICE_EXIT_OR_PURPOSE',
+      },
+      {
+        item: { itemId: 7, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] },
+        expectedProfile: 'LISTED_STALE',
+        expectedAction: 'CONFIRM_ACTIVE_EXIT_OR_PERSONAL_HOLD',
+      },
+      {
+        item: { itemId: 8, listedFlag: false, ownershipAgeDays: 150, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL'] },
+        expectedProfile: 'UNLISTED_AGED',
+        expectedAction: 'CONFIRM_HYBRID_PURPOSE',
+      },
+    ];
+    for (const { item, expectedProfile, expectedAction } of profileFixtures) {
+      const { candidateEvaluations } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([item]));
+      const evalRow = hybridEvalFor(item.itemId, candidateEvaluations);
+      check(`item ${item.itemId} is assigned profile ${expectedProfile}`, evalRow?.priority_profile === expectedProfile, evalRow);
+      check(`item ${item.itemId} maps to action code ${expectedAction}`, evalRow?.recommended_action_code === expectedAction, evalRow);
+      check(`item ${item.itemId} is actionable and selected (sole candidate)`, evalRow?.actionable === true && evalRow?.selected === true, evalRow);
+    }
+
+    // Unlisted + high capital + reliable long hold matches BOTH profile 1
+    // (UNLISTED_HIGH_CAPITAL_AGED) and profile 5/8 — profile 1 must win.
+    const multiMatch: HybridOpenItemFixture = { itemId: 9, listedFlag: false, ownershipAgeDays: 150, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL'] };
+    const { candidateEvaluations: multiEvaluations } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([multiMatch]));
+    check('an item matching multiple profiles is assigned the highest (first-in-order) one', hybridEvalFor(9, multiEvaluations)?.priority_profile === 'UNLISTED_HIGH_CAPITAL_AGED', hybridEvalFor(9, multiEvaluations));
+  }
+
+  // ── H11/H12/H13/H14/H16/H21: single actionable signals alone are
+  // correctly insufficient ─────────────────────────────────────────────
+  console.log('\n[H11/H12/H13/H14/H16/H21 — Hybrid status, HYBRID_REVIEW_REQUIRED, unlisted, low-upside, median-only, high-capital-when-listed-and-not-stale, and HYBRID_RECENT_ITEM never independently qualify]');
+  {
+    const hybridStatusAlone: HybridOpenItemFixture = { itemId: 1, listedFlag: true, reasonCodes: [] };
+    const reviewRequiredAlone: HybridOpenItemFixture = { itemId: 2, listedFlag: true, reasonCodes: ['HYBRID_REVIEW_REQUIRED'] };
+    const unlistedAlone: HybridOpenItemFixture = { itemId: 3, listedFlag: false, reasonCodes: ['HYBRID_UNLISTED_SIGNAL'] };
+    const lowUpsideAlone: HybridOpenItemFixture = { itemId: 4, listedFlag: true, reasonCodes: ['HYBRID_LOW_UPSIDE_SIGNAL'] };
+    const medianOnlyNoP75: HybridOpenItemFixture = { itemId: 5, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN'] };
+    const highCapitalListedNotStale: HybridOpenItemFixture = { itemId: 6, listedFlag: true, reasonCodes: ['HYBRID_HIGH_CAPITAL_SIGNAL'] };
+    const recentItemAlone: HybridOpenItemFixture = { itemId: 7, listedFlag: true, reasonCodes: ['HYBRID_RECENT_ITEM'] };
+
+    const { candidateEvaluations } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([
+      hybridStatusAlone, reviewRequiredAlone, unlistedAlone, lowUpsideAlone, medianOnlyNoP75, highCapitalListedNotStale, recentItemAlone,
+    ]));
+    check('Hybrid status alone (no signals) does not qualify', hybridEvalFor(1, candidateEvaluations)?.actionable === false, hybridEvalFor(1, candidateEvaluations));
+    check('HYBRID_REVIEW_REQUIRED alone does not qualify (unconditional on every Hybrid row)', hybridEvalFor(2, candidateEvaluations)?.actionable === false, hybridEvalFor(2, candidateEvaluations));
+    check('HYBRID_UNLISTED_SIGNAL alone does not qualify', hybridEvalFor(3, candidateEvaluations)?.actionable === false, hybridEvalFor(3, candidateEvaluations));
+    check('HYBRID_LOW_UPSIDE_SIGNAL alone does not qualify', hybridEvalFor(4, candidateEvaluations)?.actionable === false, hybridEvalFor(4, candidateEvaluations));
+    check('HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN without P75 does not qualify (supporting evidence only)', hybridEvalFor(5, candidateEvaluations)?.actionable === false, hybridEvalFor(5, candidateEvaluations));
+    check('HYBRID_HIGH_CAPITAL_SIGNAL alone (listed, not stale) does not qualify', hybridEvalFor(6, candidateEvaluations)?.actionable === false, hybridEvalFor(6, candidateEvaluations));
+    check('HYBRID_RECENT_ITEM alone does not create urgency / does not qualify', hybridEvalFor(7, candidateEvaluations)?.actionable === false, hybridEvalFor(7, candidateEvaluations));
+  }
+
+  // ── H15: HYBRID_DOM_ABOVE_COMPARABLE_P75 CAN drive a stale profile ────
+  console.log('\n[H15 — HYBRID_DOM_ABOVE_COMPARABLE_P75 alone can drive the LISTED_STALE profile]');
+  {
+    const item: HybridOpenItemFixture = { itemId: 1, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { candidateEvaluations } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([item]));
+    check('P75 alone qualifies for LISTED_STALE', hybridEvalFor(1, candidateEvaluations)?.actionable === true && hybridEvalFor(1, candidateEvaluations)?.priority_profile === 'LISTED_STALE', hybridEvalFor(1, candidateEvaluations));
+  }
+
+  // ── H17/H18/H19: reliable long hold may be used; historical/unreliable
+  // age is never used; historical listing DOM may still be used ───────
+  console.log('\n[H17/H18/H19 — reliable HYBRID_LONG_HOLD_SIGNAL may be used; historical/unreliable age never used; historical listing DOM may still be used]');
+  {
+    const reliableAged: HybridOpenItemFixture = { itemId: 1, listedFlag: false, ownershipAgeDays: 150, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL'] };
+    // Synthetic edge case: reason_codes erroneously carries the age code
+    // despite is_historical_import — the rule must not trust it blindly.
+    const historicalAged: HybridOpenItemFixture = { itemId: 2, listedFlag: false, isHistoricalImport: true, ownershipAgeDays: 150, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL'] };
+    const nullAgeAged: HybridOpenItemFixture = { itemId: 3, listedFlag: false, ownershipAgeDays: null, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL'] };
+    const historicalStaleListing: HybridOpenItemFixture = { itemId: 4, listedFlag: true, isHistoricalImport: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+
+    const { candidateEvaluations } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([reliableAged, historicalAged, nullAgeAged, historicalStaleListing]));
+    check('a reliable long-held Hybrid item qualifies for UNLISTED_AGED', hybridEvalFor(1, candidateEvaluations)?.actionable === true && hybridEvalFor(1, candidateEvaluations)?.priority_profile === 'UNLISTED_AGED', hybridEvalFor(1, candidateEvaluations));
+    check('a Historical Import item never qualifies via HYBRID_LONG_HOLD_SIGNAL, even with the code present', hybridEvalFor(2, candidateEvaluations)?.actionable === false, hybridEvalFor(2, candidateEvaluations));
+    check('a null-ownership-age item never qualifies via HYBRID_LONG_HOLD_SIGNAL, even with the code present', hybridEvalFor(3, candidateEvaluations)?.actionable === false, hybridEvalFor(3, candidateEvaluations));
+    check('a Historical Import listed item with stale DOM still qualifies for LISTED_STALE', hybridEvalFor(4, candidateEvaluations)?.actionable === true && hybridEvalFor(4, candidateEvaluations)?.priority_profile === 'LISTED_STALE', hybridEvalFor(4, candidateEvaluations));
+  }
+
+  // ── H20: no weighted score exists anywhere in the rule ────────────────
+  console.log('\n[H20 — no weighted score exists]');
+  {
+    const ruleSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/rules/hybridPurposeReviewPriority.ts'), 'utf8');
+    const codeOnly = ruleSource.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
+    const weightedScorePatterns = [/\bscore\s*[:=+]/i, /\bweight(ed)?\s*[:=]/i, /\*\s*0\.\d/, /\+=.*\*/];
+    const matched = weightedScorePatterns.filter((p) => p.test(codeOnly)).map((p) => p.source);
+    check('no scoring variable or multiplicative accumulation pattern appears in the rule\'s actual code (comments aside)', matched.length === 0, matched);
+  }
+
+  // ── H22/H23: deterministic ranking follows the specified order,
+  // including null-last handling ─────────────────────────────────────────
+  console.log('\n[H22/H23 — deterministic ranking follows the specified order; null numeric values sort last]');
+  {
+    const higherPurposeCapital: HybridOpenItemFixture = { itemId: 1, listedFlag: true, purposeOpenCapitalSharePercent: 40, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const lowerPurposeCapital: HybridOpenItemFixture = { itemId: 2, listedFlag: true, purposeOpenCapitalSharePercent: 10, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: purposeCapitalResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([lowerPurposeCapital, higherPurposeCapital]));
+    check('rank step 2: larger purpose_open_capital_share_percent wins (40 beats 10)', purposeCapitalResult.status === 'selected' && purposeCapitalResult.segment.item_id === 1, purposeCapitalResult);
+
+    const higherOpenCapital: HybridOpenItemFixture = { itemId: 3, listedFlag: true, purposeOpenCapitalSharePercent: 20, openCapitalSharePercent: 30, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const lowerOpenCapital: HybridOpenItemFixture = { itemId: 4, listedFlag: true, purposeOpenCapitalSharePercent: 20, openCapitalSharePercent: 5, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: openCapitalResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([lowerOpenCapital, higherOpenCapital]));
+    check('rank step 3 (tied on step 2): larger open_capital_share_percent wins (30 beats 5)', openCapitalResult.status === 'selected' && openCapitalResult.segment.item_id === 3, openCapitalResult);
+
+    const olderReliableAge: HybridOpenItemFixture = { itemId: 5, listedFlag: true, ownershipAgeDays: 200, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const youngerReliableAge: HybridOpenItemFixture = { itemId: 6, listedFlag: true, ownershipAgeDays: 40, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: ageResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([youngerReliableAge, olderReliableAge]));
+    check('rank step 4 (tied on steps 2/3): larger reliable ownership_age_days wins (200 beats 40)', ageResult.status === 'selected' && ageResult.segment.item_id === 5, ageResult);
+
+    const nullPurposeCapital: HybridOpenItemFixture = { itemId: 7, listedFlag: true, purposeOpenCapitalSharePercent: null, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const smallRealPurposeCapital: HybridOpenItemFixture = { itemId: 8, listedFlag: true, purposeOpenCapitalSharePercent: 1, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: nullLastResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([nullPurposeCapital, smallRealPurposeCapital]));
+    check('null purpose_open_capital_share_percent sorts after even a small real value (null last)', nullLastResult.status === 'selected' && nullLastResult.segment.item_id === 8, nullLastResult);
+
+    const fullyTiedA: HybridOpenItemFixture = { itemId: 20, listedFlag: true, purposeOpenCapitalSharePercent: 15, openCapitalSharePercent: 15, ownershipAgeDays: 40, currentDomDays: 40, acquisitionValue: 700, estimatedUpsidePercent: 5, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const fullyTiedB: HybridOpenItemFixture = { itemId: 21, listedFlag: true, purposeOpenCapitalSharePercent: 15, openCapitalSharePercent: 15, ownershipAgeDays: 40, currentDomDays: 40, acquisitionValue: 700, estimatedUpsidePercent: 5, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: idTieResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([fullyTiedB, fullyTiedA]));
+    check('fully tied candidates break on ascending item_id — item 20 beats item 21', idTieResult.status === 'selected' && idTieResult.segment.item_id === 20, idTieResult);
+  }
+
+  // ── H24/H40: the winner is not hardcoded — swapping item ids/names does
+  // not affect semantic winner selection ────────────────────────────────
+  console.log('\n[H24/H40 — the winner is not hardcoded; swapping item ids/names does not affect semantic winner selection]');
+  {
+    const itemA: HybridOpenItemFixture = { itemId: 1, itemDisplayName: 'Strong Item', listedFlag: false, ownershipAgeDays: 150, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL'] };
+    const itemB: HybridOpenItemFixture = { itemId: 2, itemDisplayName: 'Weak Item', listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: originalResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([itemA, itemB]));
+    check('item 1 (the strongest profile) wins originally', originalResult.status === 'selected' && originalResult.segment.item_id === 1, originalResult);
+
+    const swappedA: HybridOpenItemFixture = { ...itemA, itemId: 2, itemDisplayName: 'Now Strong' };
+    const swappedB: HybridOpenItemFixture = { ...itemB, itemId: 1, itemDisplayName: 'Now Weak' };
+    const { result: swappedResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([swappedA, swappedB]));
+    check('when the winning signals move to item 2, item 2 wins instead — proving no hardcoded winner by id or name', swappedResult.status === 'selected' && swappedResult.segment.item_id === 2, swappedResult);
+  }
+
+  // ── H25: a runner-up is emitted only when another ACTIONABLE candidate
+  // exists ────────────────────────────────────────────────────────────
+  console.log('\n[H25 — a runner-up is emitted only when another actionable Hybrid candidate exists]');
+  {
+    const soleActionable: HybridOpenItemFixture = { itemId: 1, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const eligibleNotActionable: HybridOpenItemFixture = { itemId: 2, listedFlag: true, reasonCodes: [] };
+    const { result: soleResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([soleActionable, eligibleNotActionable]));
+    check('no runner-up appears with only one actionable candidate, even alongside an eligible-but-non-actionable peer', soleResult.status === 'selected' && soleResult.runner_up === undefined, soleResult.status === 'selected' ? soleResult.runner_up : soleResult);
+
+    const secondActionable: HybridOpenItemFixture = { itemId: 3, listedFlag: true, purposeOpenCapitalSharePercent: 1, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: twoActionableResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([soleActionable, secondActionable]));
+    check('a runner-up appears when a second actionable candidate exists', twoActionableResult.status === 'selected' && twoActionableResult.runner_up !== undefined, twoActionableResult.status === 'selected' ? twoActionableResult.runner_up : twoActionableResult);
+    check(
+      'the runner-up carries item_id, item_display_name, priority_profile, recommended_action_code, triggered_reason_codes, and reason_not_selected',
+      twoActionableResult.status === 'selected' && twoActionableResult.runner_up?.item_id === 1
+        && twoActionableResult.runner_up?.reason_not_selected === 'LOWER_RANKED_BY_DETERMINISTIC_PRIORITY',
+      twoActionableResult.status === 'selected' ? twoActionableResult.runner_up : twoActionableResult,
+    );
+  }
+
+  // ── H26/H27: purpose_review_options contains all three choices; the
+  // summary explicitly permits keeping Hybrid ────────────────────────────
+  console.log('\n[H26/H27 — purpose_review_options contains all three choices; the summary explicitly permits KEEP_HYBRID]');
+  {
+    const item: HybridOpenItemFixture = { itemId: 1, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_HIGH_CAPITAL_SIGNAL'] };
+    const { result } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([item]));
+    check('result is selected', result.status === 'selected', result);
+    if (result.status === 'selected') {
+      check(
+        'purpose_review_options contains exactly KEEP_HYBRID, CHANGE_TO_BUSINESS, and CHANGE_TO_PERSONAL',
+        JSON.stringify([...result.purpose_review_options].sort()) === JSON.stringify(['CHANGE_TO_BUSINESS', 'CHANGE_TO_PERSONAL', 'KEEP_HYBRID']),
+        result.purpose_review_options,
+      );
+      check('the summary explicitly states Hybrid remains valid (never pushes only toward Business or Personal)', /remains valid/i.test(result.summary) && /hybrid/i.test(result.summary), result.summary);
+    }
+  }
+
+  // ── H28: no automatic Purpose change occurs ───────────────────────────
+  console.log('\n[H28 — no automatic Purpose change occurs]');
+  {
+    const ruleSource = fs.readFileSync(path.join(__dirname, '../src/lib/analytics/insights/rules/hybridPurposeReviewPriority.ts'), 'utf8');
+    check(
+      'the rule never writes to inventory_items, never calls .update(, and never assigns purpose_id — it is a pure read/compute function',
+      !ruleSource.includes('.update(') && !ruleSource.includes('inventory_items') && !ruleSource.includes('purpose_id ='),
+    );
+  }
+
+  // ── H29: no exact price recommendation or overreaching claim is ever
+  // generated ─────────────────────────────────────────────────────────
+  console.log('\n[H29 — no exact price recommendation, Hybrid-is-bad claim, forced sale, or sale guarantee is ever generated]');
+  {
+    const allProfileItems: HybridOpenItemFixture[] = [
+      { itemId: 1, listedFlag: false, ownershipAgeDays: 150, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL'] },
+      { itemId: 2, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LOW_UPSIDE_SIGNAL'] },
+      { itemId: 3, listedFlag: false, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LOW_UPSIDE_SIGNAL'] },
+      { itemId: 4, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_HIGH_CAPITAL_SIGNAL'] },
+      { itemId: 5, listedFlag: false, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL'] },
+      { itemId: 6, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_LOW_UPSIDE_SIGNAL'] },
+      { itemId: 7, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] },
+      { itemId: 8, listedFlag: false, ownershipAgeDays: 150, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_LONG_HOLD_SIGNAL'] },
+    ];
+    const forbidden = [/\$\d/, /hybrid is a bad/i, /eliminate hybrid/i, /definitely overpriced/i, /must be sold/i, /will sell/i, /guarantees? a sale/i];
+    for (const item of allProfileItems) {
+      const { result } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([item]));
+      if (result.status !== 'selected') {
+        check(`item ${item.itemId} produced a selected finding to check its summary`, false, result);
+        continue;
+      }
+      const matched = forbidden.filter((p) => p.test(result.summary)).map((p) => p.source);
+      check(`item ${item.itemId}'s summary (profile ${result.priority_profile}) contains no forbidden phrasing`, matched.length === 0, { summary: result.summary, matched });
+    }
+  }
+
+  // ── H30: required limitations are present ─────────────────────────────
+  console.log('\n[H30 — existing evidence limitations are preserved and translated; required rule limitations are always present]');
+  {
+    const richLimitationsItem: HybridOpenItemFixture = {
+      itemId: 1, listedFlag: true, isHistoricalImport: true,
+      liquidityCohortMatch: 'cross_purpose_fallback',
+      reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'LOW_COMPARABLE_CONFIDENCE', 'PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE', 'ZERO_ASSIGNED_ACQUISITION_VALUE'],
+    };
+    const { result } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([richLimitationsItem]));
+    check('result is selected', result.status === 'selected', result);
+    if (result.status === 'selected') {
+      const requiredAlways = [
+        'TARGET_USER_ITEM_LEVEL_EVIDENCE',
+        'PURPOSE_REVIEW_IS_DECISION_SUPPORT_NOT_AUTOMATION',
+        'HYBRID_PURPOSE_MAY_REMAIN_VALID',
+        'ESTIMATED_VALUE_IS_USER_ESTIMATE',
+        'LISTING_ACTIVE_STATE_INFERRED',
+        'CURRENT_PURPOSE_IS_NOT_HISTORICAL_PURPOSE',
+        'ITEM_SELECTION_ASSOCIATION_NOT_CAUSATION',
+      ];
+      check('all seven always-required limitations are present', requiredAlways.every((l) => result.limitations.includes(l)), result.limitations);
+      check('HISTORICAL_ACQUISITION_DATE_UNRELIABLE is added for a Historical Import', result.limitations.includes('HISTORICAL_ACQUISITION_DATE_UNRELIABLE'), result.limitations);
+      check('LOW_COMPARABLE_CONFIDENCE is preserved from evidence', result.limitations.includes('LOW_COMPARABLE_CONFIDENCE'), result.limitations);
+      check('PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE is preserved from evidence', result.limitations.includes('PURPOSE_MATCHED_LIQUIDITY_COHORT_UNAVAILABLE'), result.limitations);
+      check('ZERO_ASSIGNED_ACQUISITION_VALUE_LIMITS_ECONOMIC_INTERPRETATION is translated from evidence', result.limitations.includes('ZERO_ASSIGNED_ACQUISITION_VALUE_LIMITS_ECONOMIC_INTERPRETATION'), result.limitations);
+    }
+
+    const plainItem: HybridOpenItemFixture = { itemId: 2, listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result: plainResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([plainItem]));
+    check(
+      'a plain item (no data-quality signals) carries exactly the seven required limitations, nothing conditional',
+      plainResult.status === 'selected' && plainResult.limitations.length === 7,
+      plainResult.status === 'selected' ? plainResult.limitations : plainResult,
+    );
+  }
+
+  // ── H31/H32/H33: no-finding behavior — EVIDENCE_UNAVAILABLE,
+  // NO_ELIGIBLE_HYBRID_OPEN_ITEMS, NO_ACTIONABLE_HYBRID_PURPOSE_REVIEW ──
+  console.log('\n[H31/H32/H33 — EVIDENCE_UNAVAILABLE, NO_ELIGIBLE_HYBRID_OPEN_ITEMS, and NO_ACTIONABLE_HYBRID_PURPOSE_REVIEW are all correctly distinguished]');
+  {
+    const { result: missingEvidenceResult } = evaluateHybridPurposeReviewPriority({});
+    check('missing item_decision_evidence yields EVIDENCE_UNAVAILABLE', missingEvidenceResult.status === 'no_eligible_finding' && missingEvidenceResult.reason_codes.includes('EVIDENCE_UNAVAILABLE'), missingEvidenceResult);
+    const { result: undefinedEvidenceResult } = evaluateHybridPurposeReviewPriority(undefined);
+    check('undefined evidence yields EVIDENCE_UNAVAILABLE', undefinedEvidenceResult.status === 'no_eligible_finding' && undefinedEvidenceResult.reason_codes.includes('EVIDENCE_UNAVAILABLE'), undefinedEvidenceResult);
+
+    const onlyBusinessAndPersonal: HybridOpenItemFixture[] = [
+      { itemId: 1, currentPurposeName: 'Business', listedFlag: true, reasonCodes: [] },
+      { itemId: 2, currentPurposeName: 'Personal', listedFlag: false, reasonCodes: [] },
+    ];
+    const { result: noEligibleResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence(onlyBusinessAndPersonal));
+    check('no Hybrid items at all yields NO_ELIGIBLE_HYBRID_OPEN_ITEMS', noEligibleResult.status === 'no_eligible_finding' && noEligibleResult.reason_codes.includes('NO_ELIGIBLE_HYBRID_OPEN_ITEMS'), noEligibleResult);
+
+    const eligibleButNotActionable: HybridOpenItemFixture[] = [
+      { itemId: 3, listedFlag: true, reasonCodes: [] },
+      { itemId: 4, listedFlag: false, reasonCodes: ['HYBRID_UNLISTED_SIGNAL'] },
+    ];
+    const { result: noActionableResult } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence(eligibleButNotActionable));
+    check('eligible Hybrid items exist but none match a profile -> NO_ACTIONABLE_HYBRID_PURPOSE_REVIEW', noActionableResult.status === 'no_eligible_finding' && noActionableResult.reason_codes.includes('NO_ACTIONABLE_HYBRID_PURPOSE_REVIEW'), noActionableResult);
+  }
+
+  // ── H36/H38: previous eight rule families remain byte-identical and
+  // identifier-free when the ninth (item-level) rule also fires ───────
+  console.log('\n[H36/H38 — the previous eight rule families remain identifier-free and byte-identical when HYBRID_PURPOSE_REVIEW_PRIORITY also fires]');
+  {
+    const broadEvidence = makeEvidence([
+      { order: 2, label: '$1,000-1,999', total: 15, realized: 8, domSample: 8, realizationRate: 55, profit: 550, roi: 45, dom: 15, confidence: 'moderate' },
+      { order: 3, label: '$2,000-2,999', total: 28, realized: 19, domSample: 19, realizationRate: 67.86, profit: 750, roi: 33.33, dom: 10.5, confidence: 'stronger' },
+      { order: 4, label: '$3,000-3,999', total: 12, realized: 6, domSample: 6, realizationRate: 60, profit: 600, roi: 20, dom: 20, confidence: 'moderate' },
+      { order: 5, label: '$4,000-4,999', total: 10, realized: 5, domSample: 5, realizationRate: 58, profit: 650, roi: 25, dom: 25, confidence: 'low' },
+    ]) as Record<string, unknown>;
+    const methodEvidence = makeMethodExitEvidence(ACCEPTANCE_METHOD_ROWS) as Record<string, unknown>;
+    const combinedAcquisitionEvidence = {
+      ...broadEvidence,
+      acquisition_to_exit_analysis: {
+        ...(broadEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+        ...(methodEvidence.acquisition_to_exit_analysis as Record<string, unknown>),
+      },
+    };
+    const categoryEvidence = makeCategoryEvidence([...GUITARS_BANDS, ...PEDALS_NO_QUALIFIER_BANDS]);
+    const journeyEvidence = makeJourneyEvidence(MARKETPLACE_JOURNEY_FIXTURES) as Record<string, unknown>;
+    const dealOutEvidence = makeDealOutChannelEvidence(DEAL_OUT_CHANNEL_FIXTURES) as Record<string, unknown>;
+    const dealInEvidence = makeDealInChannelEvidence(DEAL_IN_CHANNEL_FIXTURES) as Record<string, unknown>;
+    const combinedDealChannelEvidence = { ...journeyEvidence, ...dealOutEvidence, ...dealInEvidence };
+    const listingPlatformEvidence = makeListingPlatformEvidence(LISTING_PLATFORM_FIXTURES);
+    const businessOpenInventoryEvidence = makeItemDecisionEvidence([
+      { itemId: 901, itemDisplayName: 'Business Priority Item', currentPurposeName: 'Business', listedFlag: true, reasonCodes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75', 'HIGH_CAPITAL_EXPOSURE', 'LOW_ESTIMATED_UPSIDE_RELATIVE_TO_CAPITAL'] },
+    ]);
+    // Combined open-inventory evidence carries BOTH a Business and a
+    // Hybrid actionable item — proving the two Purpose-scoped rules never
+    // suppress or interfere with each other even reading the same array.
+    const combinedOpenInventoryEvidence = {
+      item_decision_evidence: [
+        ...(businessOpenInventoryEvidence as any).item_decision_evidence,
+        ...(makeHybridItemDecisionEvidence([
+          { itemId: 902, itemDisplayName: 'Hybrid Priority Item', listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LOW_UPSIDE_SIGNAL'] },
+        ]) as any).item_decision_evidence,
+      ],
+    };
+
+    const { result: directBroad } = evaluateStrongBalancedAcquisitionBand(combinedAcquisitionEvidence);
+    const { result: directCategory } = evaluateStrongCategoryAcquisitionBand(categoryEvidence);
+    const { result: directMethod } = evaluateAcquisitionMethodPerformanceProfile(combinedAcquisitionEvidence);
+    const { result: directJourney } = evaluateStrongDealInToDealOutJourney(combinedDealChannelEvidence);
+    const { result: directDealOut } = evaluateStrongDealOutChannel(combinedDealChannelEvidence);
+    const { result: directDealIn } = evaluateStrongDealInChannel(combinedDealChannelEvidence);
+    const { result: directListingPlatform } = evaluateStrongListingPlatform(listingPlatformEvidence);
+    const { result: directBusinessOpenInventory } = evaluateBusinessOpenInventoryPriority(combinedOpenInventoryEvidence);
+    const { result: directHybrid } = evaluateHybridPurposeReviewPriority(combinedOpenInventoryEvidence);
+
+    const insights = selectFindings({
+      targetUserAcquisitionEvidence: combinedAcquisitionEvidence,
+      targetUserInventorySegmentationEvidence: categoryEvidence,
+      targetUserDealChannelEvidence: combinedDealChannelEvidence,
+      targetUserListingChannelEvidence: listingPlatformEvidence,
+      targetUserOpenInventoryEvidence: combinedOpenInventoryEvidence,
+    });
+
+    check('all nine rule families are present in one insights payload', insights.selected_findings.length === 9, insights.selected_findings.map((f) => f.finding_code));
+
+    const viaOrchestratorBroad = insights.selected_findings.find((f) => f.finding_code === BROAD_FINDING_CODE);
+    const viaOrchestratorCategory = insights.selected_findings.find((f) => f.finding_code === CATEGORY_FINDING_CODE);
+    const viaOrchestratorMethod = insights.selected_findings.find((f) => f.finding_code === METHOD_PROFILE_FINDING_CODE);
+    const viaOrchestratorJourney = insights.selected_findings.find((f) => f.finding_code === JOURNEY_FINDING_CODE);
+    const viaOrchestratorDealOut = insights.selected_findings.find((f) => f.finding_code === DEAL_OUT_CHANNEL_FINDING_CODE);
+    const viaOrchestratorDealIn = insights.selected_findings.find((f) => f.finding_code === DEAL_IN_CHANNEL_FINDING_CODE);
+    const viaOrchestratorListingPlatform = insights.selected_findings.find((f) => f.finding_code === LISTING_PLATFORM_FINDING_CODE);
+    const viaOrchestratorBusinessOpenInventory = insights.selected_findings.find((f) => f.finding_code === BUSINESS_OPEN_INVENTORY_PRIORITY_FINDING_CODE);
+    const viaOrchestratorHybrid = insights.selected_findings.find((f) => f.finding_code === HYBRID_PURPOSE_REVIEW_PRIORITY_FINDING_CODE);
+
+    const categoryWithoutRelationship = viaOrchestratorCategory
+      ? { ...(viaOrchestratorCategory as SelectedFindingForTest), relationship: undefined, summary: (directCategory as SelectedFindingForTest).summary }
+      : viaOrchestratorCategory;
+
+    check('the broad finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorBroad) === JSON.stringify(directBroad), { viaOrchestratorBroad, directBroad });
+    check('the category finding (minus orchestrator relationship linking) is byte-identical to calling the rule directly', JSON.stringify(categoryWithoutRelationship) === JSON.stringify(directCategory), { categoryWithoutRelationship, directCategory });
+    check('the acquisition-method finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorMethod) === JSON.stringify(directMethod), { viaOrchestratorMethod, directMethod });
+    check('the channel-journey finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorJourney) === JSON.stringify(directJourney), { viaOrchestratorJourney, directJourney });
+    check('the deal-out-channel finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorDealOut) === JSON.stringify(directDealOut), { viaOrchestratorDealOut, directDealOut });
+    check('the deal-in-channel finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorDealIn) === JSON.stringify(directDealIn), { viaOrchestratorDealIn, directDealIn });
+    check('the listing-platform finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorListingPlatform) === JSON.stringify(directListingPlatform), { viaOrchestratorListingPlatform, directListingPlatform });
+    check('the business-open-inventory-priority finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorBusinessOpenInventory) === JSON.stringify(directBusinessOpenInventory), { viaOrchestratorBusinessOpenInventory, directBusinessOpenInventory });
+    check('the hybrid-purpose-review-priority finding is byte-identical to calling the rule directly', JSON.stringify(viaOrchestratorHybrid) === JSON.stringify(directHybrid), { viaOrchestratorHybrid, directHybrid });
+
+    check(
+      'Business Open Inventory Priority selects item 901 and Hybrid Purpose Review Priority selects item 902 — reading the same array, never confused, never suppressed',
+      (viaOrchestratorBusinessOpenInventory as any)?.segment?.item_id === 901 && (viaOrchestratorHybrid as any)?.segment?.item_id === 902,
+      { business: (viaOrchestratorBusinessOpenInventory as any)?.segment, hybrid: (viaOrchestratorHybrid as any)?.segment },
+    );
+
+    const eightAggregateFindings = [viaOrchestratorBroad, viaOrchestratorCategory, viaOrchestratorMethod, viaOrchestratorJourney, viaOrchestratorDealOut, viaOrchestratorDealIn, viaOrchestratorListingPlatform];
+    const aggregateSerialized = JSON.stringify(eightAggregateFindings);
+    check('none of the seven purely-aggregate findings contain an item_id field anywhere', !/"item_id"/i.test(aggregateSerialized), eightAggregateFindings);
+
+    const eightCodesWithoutTheNinth = insights.selected_findings
+      .filter((f) => f.finding_code !== HYBRID_PURPOSE_REVIEW_PRIORITY_FINDING_CODE)
+      .map((f) => f.finding_code)
+      .sort();
+    const expectedEightCodes = [
+      BROAD_FINDING_CODE, CATEGORY_FINDING_CODE, METHOD_PROFILE_FINDING_CODE, JOURNEY_FINDING_CODE,
+      DEAL_OUT_CHANNEL_FINDING_CODE, DEAL_IN_CHANNEL_FINDING_CODE, LISTING_PLATFORM_FINDING_CODE, BUSINESS_OPEN_INVENTORY_PRIORITY_FINDING_CODE,
+    ].sort();
+    check(
+      'filtering HYBRID_PURPOSE_REVIEW_PRIORITY back out reproduces exactly the previous eight finding_codes',
+      JSON.stringify(eightCodesWithoutTheNinth) === JSON.stringify(expectedEightCodes),
+      eightCodesWithoutTheNinth,
+    );
+  }
+
+  // ── H37: the new item-level finding contains only the allowed
+  // target-item identity — nothing else ─────────────────────────────────
+  console.log('\n[H37 — the hybrid-purpose-review-priority finding contains only the allowed target-item identity fields]');
+  {
+    const item: HybridOpenItemFixture = {
+      itemId: 1, listedFlag: true, listingChannelNames: ['Marketplace'],
+      reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LOW_UPSIDE_SIGNAL'],
+    };
+    const secondItem: HybridOpenItemFixture = { itemId: 2, listedFlag: true, purposeOpenCapitalSharePercent: 1, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] };
+    const { result } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence([item, secondItem]));
+    if (result.status !== 'selected') {
+      check('H37 setup produced a selected finding', false, result);
+    } else {
+      const allowedKeysByPath: Record<string, string[]> = {
+        root: ['finding_code', 'family', 'direction', 'status', 'headline', 'summary', 'segment', 'metrics', 'priority_profile', 'recommended_action_code', 'triggered_reason_codes', 'purpose_review_options', 'limitations', 'evidence_refs', 'runner_up'],
+        segment: ['item_id', 'item_display_name', 'brand_name', 'category_name', 'type_name', 'current_purpose_name', 'disposition_mode'],
+        metrics: [
+          'listed_flag', 'listing_channel_names', 'current_dom_days', 'reliable_ownership_age_days',
+          'acquisition_value', 'estimated_sold_value', 'estimated_net_upside', 'estimated_upside_percent',
+          'open_capital_share_percent', 'purpose_open_capital_share_percent',
+        ],
+        runner_up: ['item_id', 'item_display_name', 'priority_profile', 'recommended_action_code', 'triggered_reason_codes', 'reason_not_selected'],
+      };
+
+      const unexpectedKeys: string[] = [];
+      const walk = (value: unknown, pathKey: string): void => {
+        if (Array.isArray(value)) return;
+        if (typeof value !== 'object' || value === null) return;
+        const allowed = allowedKeysByPath[pathKey];
+        for (const key of Object.keys(value as Record<string, unknown>)) {
+          if (allowed && !allowed.includes(key)) unexpectedKeys.push(`${pathKey}.${key}`);
+          const nextPathKey = key === 'segment' ? 'segment' : key === 'metrics' ? 'metrics' : key === 'runner_up' ? 'runner_up' : key;
+          walk((value as Record<string, unknown>)[key], nextPathKey);
+        }
+      };
+      walk(result, 'root');
+
+      check('no unexpected keys appear anywhere in the finding (only the explicitly allowed target-item identity fields)', unexpectedKeys.length === 0, unexpectedKeys);
+
+      const serialized = JSON.stringify(result);
+      const forbiddenPatterns = [/"user_id"/i, /"email"/i, /"notes"/i, /"model"/i, /"serial/i, /"counterparty/i, /"contact/i, /"listing_text"/i, /"photo/i, /"storage_path/i, /"brand_id"/i, /"category_id"/i, /"type_id"/i];
+      const matched = forbiddenPatterns.filter((p) => p.test(serialized)).map((p) => p.source);
+      check('the finding contains no user_id, email, notes, model, serial number, counterparty, listing text, photo/storage path, or classification IDs', matched.length === 0, matched);
+      check('item_id and item_display_name ARE present (the deliberate exception for this item-level rule)', typeof result.segment.item_id === 'number' && typeof result.segment.item_display_name === 'string', result.segment);
+    }
+  }
+
+  // ── H39: previous Insights Engine snapshots (no hybrid-purpose-review
+  // rule) remain readable ────────────────────────────────────────────────
+  console.log('\n[H39 — previous Insights Engine v1.7-shaped snapshot (no hybrid-purpose-review-priority finding) remains readable]');
+  {
+    const baseSnapshot: Record<string, unknown> = {
+      snapshot_schema_version: '2.12',
+      analytics_definition_version: '2.12',
+      generated_at: new Date().toISOString(),
+      evidence_scope: 'shared_inventory_population',
+      purpose_semantics: 'v2',
+      shared_purpose_evidence: {},
+      target_user_purpose_evidence: {},
+      target_user_open_inventory_evidence: {},
+      shared_acquisition_evidence: {},
+      target_user_acquisition_evidence: {},
+      shared_inventory_segmentation_evidence: {},
+      target_user_inventory_segmentation_evidence: {},
+      shared_deal_channel_evidence: {},
+      target_user_deal_channel_evidence: {},
+      shared_listing_channel_evidence: {},
+      target_user_listing_channel_evidence: {},
+      shared_capital_liquidity_evidence: {},
+      target_user_capital_liquidity_evidence: {},
+      shared_calendar_seasonality_evidence: {},
+      target_user_calendar_seasonality_evidence: {},
+    };
+
+    const v17ShapedInsights = {
+      insights_engine_version: '1.7',
+      findings_selector_version: '1.7',
+      source_analytics_version: '2.12',
+      generated_at: new Date().toISOString(),
+      selected_findings: [
+        {
+          finding_code: BUSINESS_OPEN_INVENTORY_PRIORITY_FINDING_CODE,
+          family: 'open_inventory_action',
+          direction: 'action',
+          status: 'selected',
+          headline: 'placeholder v1.7-shaped headline',
+          summary: 'placeholder v1.7-shaped summary',
+          segment: { item_id: 1, item_display_name: 'Placeholder', brand_name: 'Brand', category_name: 'Category', type_name: 'Type', current_purpose_name: 'Business', disposition_mode: 'active_realization' },
+          metrics: {
+            listed_flag: true, listing_channel_names: [], acquisition_value: 700, estimated_sold_value: null,
+            estimated_net_upside: null, estimated_upside_percent: null, current_dom_days: 40,
+            reliable_ownership_age_days: null, open_capital_share_percent: 10, purpose_open_capital_share_percent: 20,
+          },
+          priority_profile: 'STALE_LISTING',
+          recommended_action_code: 'REFRESH_LISTING',
+          triggered_reason_codes: ['BUSINESS_DOM_ABOVE_COMPARABLE_P75'],
+          limitations: ['TARGET_USER_ITEM_LEVEL_EVIDENCE'],
+          evidence_refs: ['target_user_open_inventory_evidence.item_decision_evidence'],
+          // No hybrid-purpose-review-priority finding at all — this is the
+          // v1.7 shape.
+        },
+      ],
+      rule_evaluations: [],
+    };
+    const v17Snapshot = { ...baseSnapshot, insights: v17ShapedInsights };
+
+    check('a stored v2.12 snapshot carrying an Insights Engine v1.7-shaped insights section still validates', isValidAnalyticsSnapshot(v17Snapshot));
+  }
+
+  // ── H39 (production expectation): representative fixture selects an
+  // UNLISTED_HIGH_CAPITAL_LOW_UPSIDE-shaped item over a LISTED_STALE_LOW_
+  // UPSIDE-shaped item and multiple LISTED_STALE-shaped items — matching
+  // the task's own production-shaped smoke-test expectation, using
+  // synthetic (never real production) items ───────────────────────────
+  console.log('\n[H39 — production-shaped fixture: an UNLISTED_HIGH_CAPITAL_LOW_UPSIDE profile outranks a LISTED_STALE_LOW_UPSIDE profile and several LISTED_STALE profiles]');
+  {
+    const productionShaped: HybridOpenItemFixture[] = [
+      // Modeled after "2013 Gibson ES-195" (UNLISTED_HIGH_CAPITAL_LOW_UPSIDE) — expected winner.
+      { itemId: 8001, itemDisplayName: 'Synthetic Semi-Hollow Guitar', listedFlag: false, acquisitionValue: 2500, openCapitalSharePercent: 12, purposeOpenCapitalSharePercent: 25, reasonCodes: ['HYBRID_UNLISTED_SIGNAL', 'HYBRID_HIGH_CAPITAL_SIGNAL', 'HYBRID_LOW_UPSIDE_SIGNAL'] },
+      // Modeled after "Ibanez EHB1135MS-SKL Bass Workshop" (LISTED_STALE_LOW_UPSIDE) — expected runner-up-shaped, but ranks below the unlisted profile.
+      { itemId: 8002, itemDisplayName: 'Synthetic Bass Workshop', listedFlag: true, acquisitionValue: 1800, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75', 'HYBRID_LOW_UPSIDE_SIGNAL'] },
+      // Modeled after the several LISTED_STALE-only items (PRS Hollowbody II Piezo, RUF Master Vinci 6, BC Rich ST Legacy, Marshall JCM 800, Marshall 1960A).
+      { itemId: 8003, itemDisplayName: 'Synthetic Stale Item A', listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] },
+      { itemId: 8004, itemDisplayName: 'Synthetic Stale Item B', listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] },
+      { itemId: 8005, itemDisplayName: 'Synthetic Stale Item C', listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] },
+      { itemId: 8006, itemDisplayName: 'Synthetic Stale Item D', listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] },
+      { itemId: 8007, itemDisplayName: 'Synthetic Stale Item E', listedFlag: true, reasonCodes: ['HYBRID_DOM_ABOVE_COMPARABLE_P75'] },
+    ];
+    const { result, candidateEvaluations } = evaluateHybridPurposeReviewPriority(makeHybridItemDecisionEvidence(productionShaped));
+    check('exactly one finding is selected', result.status === 'selected', result);
+    check('the winner is the UNLISTED_HIGH_CAPITAL_LOW_UPSIDE-shaped item (8001), matching the ES-195-style profile', result.status === 'selected' && result.segment.item_id === 8001 && result.priority_profile === 'UNLISTED_HIGH_CAPITAL_LOW_UPSIDE', result);
+    check('the runner-up is the LISTED_STALE_LOW_UPSIDE-shaped item (8002), outranking the plain LISTED_STALE items', result.status === 'selected' && result.runner_up?.item_id === 8002, result.status === 'selected' ? result.runner_up : result);
+    check('all 7 production-shaped items received an evaluation row', candidateEvaluations.length === 7, candidateEvaluations.map((e) => e.item_id));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

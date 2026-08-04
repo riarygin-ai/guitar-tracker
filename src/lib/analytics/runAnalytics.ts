@@ -321,17 +321,19 @@ export async function runAnalyticsForCurrentUser(
 
     const durationMs = Math.max(0, Math.round(performance.now() - startMark));
 
-    // ── 4b. Insights Engine v1.7 — Findings Selector ─────────────────────
-    // Application-layer enrichment on top of the already-validated v2.11
+    // ── 4b. Insights Engine v1.8 — Findings Selector ─────────────────────
+    // Application-layer enrichment on top of the already-validated v2.12
     // snapshot, versioned independently (insights_engine_version /
     // findings_selector_version) from snapshot_schema_version /
     // analytics_definition_version. Never reads shared/pooled evidence —
     // only this snapshot's own target_user_acquisition_evidence,
     // target_user_inventory_segmentation_evidence,
     // target_user_deal_channel_evidence, target_user_listing_channel_
-    // evidence, and (new in v1.7, for BUSINESS_OPEN_INVENTORY_PRIORITY
-    // only) target_user_open_inventory_evidence. Optional on the stored
-    // row: old snapshots without `insights` remain valid
+    // evidence, and target_user_open_inventory_evidence (read by both
+    // BUSINESS_OPEN_INVENTORY_PRIORITY, v1.7, and — new in v1.8 —
+    // HYBRID_PURPOSE_REVIEW_PRIORITY, which filters the SAME array to
+    // current_purpose_name = 'Hybrid' instead of 'Business'). Optional on
+    // the stored row: old snapshots without `insights` remain valid
     // (isValidAnalyticsSnapshot never required this key).
     const insights = selectFindings({
       targetUserAcquisitionEvidence: snapshot.target_user_acquisition_evidence,

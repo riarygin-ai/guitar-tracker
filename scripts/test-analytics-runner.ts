@@ -285,8 +285,8 @@ async function main() {
     JSON.stringify({ ...snapAWithoutInsights, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
   );
   check(
-    'persisted snapshot carries the Insights Engine v1.7 enrichment',
-    !!snapA.insights && snapA.insights.insights_engine_version === '1.7' && snapA.insights.findings_selector_version === '1.7',
+    'persisted snapshot carries the Insights Engine v1.8 enrichment',
+    !!snapA.insights && snapA.insights.insights_engine_version === '1.8' && snapA.insights.findings_selector_version === '1.8',
     snapA.insights,
   );
 
@@ -4405,19 +4405,20 @@ async function main() {
   check('new production run snapshot.snapshot_schema_version is 2.12', (runA212.snapshot as any)?.snapshot_schema_version === '2.12', (runA212.snapshot as any)?.snapshot_schema_version);
   const runA212Insights = (runA212.snapshot as any)?.insights;
   check('new production run insights.source_analytics_version is 2.12 (evidence-only bump)', runA212Insights?.source_analytics_version === '2.12', runA212Insights?.source_analytics_version);
+  // Note: at the point v2.12 was promoted (this Analytics-only task),
+  // insights_engine_version / findings_selector_version were asserted to
+  // remain 1.7 and HYBRID_PURPOSE_REVIEW_PRIORITY was asserted absent —
+  // correct THEN. A later, separate task (Insights Engine v1.8) added
+  // HYBRID_PURPOSE_REVIEW_PRIORITY at the application layer, reading this
+  // same v2.12 evidence with no further Analytics SQL change — see
+  // test-insights-engine.ts for that rule's own thorough test coverage.
   check(
-    'new production run insights_engine_version / findings_selector_version remain 1.7 (no new Findings Selector rule was added — HYBRID_PURPOSE_REVIEW_PRIORITY is still not implemented)',
-    runA212Insights?.insights_engine_version === '1.7' && runA212Insights?.findings_selector_version === '1.7',
+    'new production run insights_engine_version / findings_selector_version are 1.8',
+    runA212Insights?.insights_engine_version === '1.8' && runA212Insights?.findings_selector_version === '1.8',
     { insights_engine_version: runA212Insights?.insights_engine_version, findings_selector_version: runA212Insights?.findings_selector_version },
   );
   check(
-    'HYBRID_PURPOSE_REVIEW_PRIORITY is not among the selected findings or rule families (not implemented in this task)',
-    !(runA212Insights?.selected_findings ?? []).some((f: any) => f.finding_code === 'HYBRID_PURPOSE_REVIEW_PRIORITY')
-      && !(runA212Insights?.rule_evaluations ?? []).some((r: any) => r.finding_code === 'HYBRID_PURPOSE_REVIEW_PRIORITY'),
-    (runA212Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
-  );
-  check(
-    'every one of the eight rule families still produced a rule_evaluations entry (none silently dropped by the v2.12 promotion)',
+    'every one of the nine rule families produced a rule_evaluations entry (none silently dropped by the v1.8 promotion)',
     new Set((runA212Insights?.rule_evaluations ?? []).map((r: any) => r.finding_code)).size >= 1,
     (runA212Insights?.selected_findings ?? []).map((f: any) => f.finding_code),
   );

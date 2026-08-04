@@ -405,7 +405,8 @@ export type RuleEvaluationRow =
   | DealOutChannelCandidateEvaluation
   | DealInChannelCandidateEvaluation
   | ListingPlatformCandidateEvaluation
-  | BusinessOpenInventoryCandidateEvaluation;
+  | BusinessOpenInventoryCandidateEvaluation
+  | HybridOpenItemCandidateEvaluation;
 
 export type MethodAdvantage = 'Purchase' | 'Trade' | 'Neutral';
 
@@ -574,11 +575,116 @@ export interface BusinessOpenInventoryCandidateEvaluation {
   eligibility_failure_reasons: string[];
 }
 
+// ── HYBRID_PURPOSE_REVIEW_PRIORITY (Insights Engine v1.8) ──────────────────
+// One row per OPEN Hybrid item, read from the SAME target_user_open_
+// inventory_evidence.item_decision_evidence[] array BUSINESS_OPEN_
+// INVENTORY_PRIORITY reads (never hybrid_purpose_review[], which is a
+// DIFFERENT section this rule never touches). The second Purpose-scoped,
+// item-level rule (current_purpose_name = 'Hybrid' only). reason_codes
+// are the real SQL-generated Hybrid-prefixed strings (HYBRID_REVIEW_
+// REQUIRED, HYBRID_LISTED_SIGNAL/_UNLISTED_SIGNAL, HYBRID_LONG_HOLD_
+// SIGNAL, HYBRID_HIGH_CAPITAL_SIGNAL, HYBRID_LOW_UPSIDE_SIGNAL, HYBRID_
+// RECENT_ITEM/_INSUFFICIENT_OWNERSHIP_HISTORY, and — since Analytics
+// v2.12 — HYBRID_DOM_ABOVE_COMPARABLE_MEDIAN/_P75) — see
+// extractHybridOpenItemCandidates in rules/hybridPurposeReviewPriority.ts
+// and supabase/migrations/20260812000000_build_analytics_snapshot_v2_1.
+// sql / 20260823000000_build_analytics_snapshot_v2_12.sql. Never the
+// Business-prefixed or generic Business/unclassified codes. Hybrid is
+// never treated as inherently incorrect — this finding asks the user to
+// confirm current intent, never automates a Purpose change.
+export interface HybridOpenItemCandidate {
+  item_id: number;
+  item_display_name: string | null;
+  brand_name: string | null;
+  category_name: string | null;
+  type_name: string | null;
+  current_purpose_id: number | null;
+  current_purpose_name: string | null;
+  disposition_mode: string | null;
+  active_realization_flag: boolean | null;
+  realization_priority_order: number | null;
+  purpose_policy_status: string | null;
+  listed_flag: boolean;
+  current_dom_days: number | null;
+  ownership_age_days: number | null;
+  acquisition_value: number | null;
+  estimated_sold_value: number | null;
+  estimated_net_upside: number | null;
+  estimated_upside_percent: number | null;
+  open_capital_share_percent: number | null;
+  purpose_open_capital_share_percent: number | null;
+  listing_channel_names: string[];
+  reason_codes: string[];
+  is_historical_import: boolean;
+  liquidity_cohort_match: string | null;
+  comparable_evidence_available: boolean;
+}
+
+export type HybridPurposeReviewPriorityProfile =
+  | 'UNLISTED_HIGH_CAPITAL_AGED'
+  | 'LISTED_STALE_HIGH_CAPITAL_LOW_UPSIDE'
+  | 'UNLISTED_HIGH_CAPITAL_LOW_UPSIDE'
+  | 'LISTED_STALE_HIGH_CAPITAL'
+  | 'UNLISTED_HIGH_CAPITAL'
+  | 'LISTED_STALE_LOW_UPSIDE'
+  | 'LISTED_STALE'
+  | 'UNLISTED_AGED';
+
+export interface HybridPurposeReviewRunnerUp {
+  item_id: number;
+  item_display_name: string | null;
+  priority_profile: HybridPurposeReviewPriorityProfile;
+  recommended_action_code: string;
+  triggered_reason_codes: string[];
+  reason_not_selected: string;
+}
+
+// No baseline, no confidence tier — a single-item deterministic
+// prioritizer, like BUSINESS_OPEN_INVENTORY_PRIORITY. direction: 'review'
+// (not 'strength'/'tradeoff'/'action') — this finding asks the user to
+// confirm intent, it never asserts a strength, a tradeoff, or an
+// automatic action. purpose_review_options is a fixed set of choices,
+// never a recommendation of which one to pick.
+export interface HybridPurposeReviewPriorityFinding {
+  finding_code: string;
+  family: 'purpose_alignment';
+  direction: 'review';
+  status: 'selected';
+  headline: string;
+  summary: string;
+  segment: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  priority_profile: HybridPurposeReviewPriorityProfile;
+  recommended_action_code: string;
+  triggered_reason_codes: string[];
+  purpose_review_options: string[];
+  limitations: string[];
+  evidence_refs: string[];
+  runner_up?: HybridPurposeReviewRunnerUp;
+}
+
+export type HybridPurposeReviewRuleEvaluationResult =
+  | HybridPurposeReviewPriorityFinding
+  | NoFindingResult;
+
+export interface HybridOpenItemCandidateEvaluation {
+  finding_code: string;
+  item_id: number;
+  item_display_name: string | null;
+  eligible: boolean;
+  actionable: boolean;
+  selected: boolean;
+  priority_profile: HybridPurposeReviewPriorityProfile | null;
+  recommended_action_code: string | null;
+  actionable_reason_codes: string[];
+  eligibility_failure_reasons: string[];
+}
+
 export interface InsightsSection {
   insights_engine_version: string;
   findings_selector_version: string;
   source_analytics_version: string;
   generated_at: string;
-  selected_findings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding | ListingPlatformFinding | BusinessOpenInventoryPriorityFinding>;
+  selected_findings: Array<SelectedFinding | AcquisitionMethodPerformanceProfileFinding | ListingPlatformFinding | BusinessOpenInventoryPriorityFinding | HybridPurposeReviewPriorityFinding>;
   rule_evaluations: RuleEvaluationRow[];
 }
