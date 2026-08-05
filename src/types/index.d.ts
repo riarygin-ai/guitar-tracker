@@ -471,6 +471,13 @@ export interface AnalyticsSnapshot {
   // recommendation.
   target_user_pattern_discovery_evidence?:        Record<string, unknown>;
 
+  // Added by Pattern Discovery Engine v1.0 (application layer, versioned
+  // independently of Analytics — engine_version, not snapshot_schema_
+  // version). Optional: absent on stored runs from before this engine
+  // existed. Reads only target_user_pattern_discovery_evidence above —
+  // never Insights' selected findings, never open-inventory evidence.
+  pattern_discovery?:                             Record<string, unknown>;
+
   // Insights Engine v1.0 (application layer, versioned independently of
   // Analytics — insights_engine_version / findings_selector_version, not
   // snapshot_schema_version / analytics_definition_version). Optional:

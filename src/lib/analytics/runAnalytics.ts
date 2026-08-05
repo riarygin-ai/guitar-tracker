@@ -12,6 +12,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { selectFindings } from '@/lib/analytics/insights/selectFindings';
+import { runPatternDiscovery } from '@/lib/analytics/patternDiscovery';
 
 // ── Constants — must match the current snapshot contract exactly ───────────
 // (analytics_runs' own DEFAULTs and build_analytics_snapshot_v2_3's own
@@ -368,7 +369,20 @@ export async function runAnalyticsForCurrentUser(
       targetUserListingChannelEvidence: snapshot.target_user_listing_channel_evidence,
       targetUserOpenInventoryEvidence: snapshot.target_user_open_inventory_evidence,
     });
-    const snapshotWithInsights = { ...snapshot, insights };
+
+    // ── 4c. Pattern Discovery Engine v1.0 ────────────────────────────────
+    // Reads ONLY snapshot.target_user_pattern_discovery_evidence (v2.13's
+    // additive section) — never Insights' selected findings, never
+    // target_user_open_inventory_evidence, never any other section. Runs
+    // fully independently of step 4b: neither step's output can affect the
+    // other, and removing `pattern_discovery` from the final object below
+    // leaves the Analytics + Insights snapshot byte-identical to what step
+    // 4b alone would have produced. Never throws — malformed/missing
+    // evidence yields status = 'evidence_unavailable' (see
+    // patternDiscovery/index.ts).
+    const patternDiscovery = runPatternDiscovery(snapshot.target_user_pattern_discovery_evidence);
+
+    const snapshotWithInsights = { ...snapshot, insights, pattern_discovery: patternDiscovery };
 
     // ── 5. Persist completed run ─────────────────────────────────────────
     const { data: completedRun, error: completeError } = await serviceClient

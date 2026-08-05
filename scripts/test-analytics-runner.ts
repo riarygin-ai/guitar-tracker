@@ -283,19 +283,27 @@ async function main() {
   const { data: directSnapshotA } = await serviceClient.rpc('build_analytics_snapshot_v2_13', { p_target_user_id: userAId });
   // Since Insights Engine v1.0, the persisted snapshot additionally carries a
   // top-level `insights` key (application-layer enrichment, versioned
-  // independently — see src/lib/analytics/insights/). Stripping it before
-  // comparing confirms the underlying Analytics v2.13 evidence itself is
-  // still byte-identical to a fresh direct RPC call — v2.13 calculations are
-  // unmodified, only enriched on top.
-  const { insights: _insightsA, ...snapAWithoutInsights } = snapA;
+  // independently — see src/lib/analytics/insights/). Since Pattern
+  // Discovery Engine v1.0, it also carries a top-level `pattern_discovery`
+  // key (same independent-versioning pattern — see src/lib/analytics/
+  // patternDiscovery/). Stripping both before comparing confirms the
+  // underlying Analytics v2.13 evidence itself is still byte-identical to a
+  // fresh direct RPC call — v2.13 calculations are unmodified, only
+  // enriched on top.
+  const { insights: _insightsA, pattern_discovery: _patternDiscoveryA, ...snapAWithoutInsights } = snapA;
   check(
-    'persisted snapshot (minus Insights Engine enrichment) equals a fresh direct builder call (same generated_at aside)',
+    'persisted snapshot (minus Insights Engine + Pattern Discovery enrichment) equals a fresh direct builder call (same generated_at aside)',
     JSON.stringify({ ...snapAWithoutInsights, generated_at: null }) === JSON.stringify({ ...(directSnapshotA as any), generated_at: null }),
   );
   check(
     'persisted snapshot carries the Insights Engine v1.8 enrichment',
     !!snapA.insights && snapA.insights.insights_engine_version === '1.8' && snapA.insights.findings_selector_version === '1.8',
     snapA.insights,
+  );
+  check(
+    'persisted snapshot carries the Pattern Discovery Engine v1.0 enrichment',
+    !!snapA.pattern_discovery && snapA.pattern_discovery.engine_version === '1.0' && snapA.pattern_discovery.source_analytics_version === '2.13',
+    snapA.pattern_discovery,
   );
 
   console.log('\n[successful run — user B]');

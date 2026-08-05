@@ -561,6 +561,11 @@ export default function AnalyticsPage() {
                     <JsonBlock value={selectedSnapshot.target_user_pattern_discovery_evidence} />
                   </CollapsibleSection>
                 )}
+                {selectedSnapshot.pattern_discovery && (
+                  <CollapsibleSection title="Pattern Discovery Findings" data={selectedSnapshot.pattern_discovery}>
+                    <JsonBlock value={selectedSnapshot.pattern_discovery} />
+                  </CollapsibleSection>
+                )}
                 {selectedSnapshot.insights && (
                   <CollapsibleSection title="Insights" defaultOpen data={selectedSnapshot.insights}>
                     <JsonBlock value={selectedSnapshot.insights} />
