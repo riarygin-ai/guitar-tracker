@@ -5,7 +5,10 @@
 // other recommendation/action language — these are descriptive discovered
 // associations, not automated business actions.
 
-import type { MetricEffect, PatternDiscoveryCandidateSegment, PatternType } from './types';
+import type { MetricEffect, PatternType } from './types';
+import type { ConfirmedTierMetricDiagnosis } from './evaluateCandidate';
+import { CONFIRMED_MIN_METRIC_SAMPLE, CONFIRMED_MIN_PEER_SEGMENTS, BINARY_EXCEPTION_MIN_SAMPLE } from './thresholds';
+import { formatCurrency, formatRoiPercent, formatDays, formatCount, formatPeerSegmentCount, joinWithAnd } from './formatting';
 
 // ── Segment identity phrase — one small switch per novel family, since
 // each family's `segment` object carries different label fields. Never
@@ -38,27 +41,34 @@ const METRIC_LABEL: Record<MetricEffect['metric_code'], string> = {
   median_days_on_market: 'realized days on market',
 };
 
+// Formats a raw metric number for display ONLY — never mutates the
+// underlying metric_effects value itself (candidate_value/peer_baseline_
+// median/advantage_value/relative_advantage_percent all stay full-
+// precision everywhere except inside these returned strings). See
+// formatting.ts for the shared rounding/trimming rules.
+function formatMetricNumber(metric: MetricEffect['metric_code'], value: number): string {
+  if (metric === 'median_net_profit') return formatCurrency(value);
+  if (metric === 'median_roi') return formatRoiPercent(value);
+  return formatDays(value);
+}
+
 function formatMetricValue(effect: MetricEffect): string {
   if (effect.candidate_value === null) return 'unavailable';
-  if (effect.metric_code === 'median_net_profit') return `CAD $${effect.candidate_value}`;
-  if (effect.metric_code === 'median_roi') return `${effect.candidate_value}%`;
-  return `${effect.candidate_value} days`;
+  return formatMetricNumber(effect.metric_code, effect.candidate_value);
 }
 
 function formatPeerBaseline(effect: MetricEffect): string {
   if (effect.peer_baseline_median === null) return 'unavailable';
-  if (effect.metric_code === 'median_net_profit') return `CAD $${effect.peer_baseline_median}`;
-  if (effect.metric_code === 'median_roi') return `${effect.peer_baseline_median}%`;
-  return `${effect.peer_baseline_median} days`;
+  return formatMetricNumber(effect.metric_code, effect.peer_baseline_median);
 }
 
 function describeTriggeredEffect(effect: MetricEffect): string {
   const label = METRIC_LABEL[effect.metric_code];
   const verb = effect.direction === 'improvement' ? 'stronger than' : 'weaker than';
   return (
-    `Candidate ${label} is ${formatMetricValue(effect)} (n=${effect.candidate_sample_size}), ` +
+    `Candidate ${label} is ${formatMetricValue(effect)} (n=${formatCount(effect.candidate_sample_size)}), ` +
     `${verb} the eligible peer baseline of ${formatPeerBaseline(effect)} ` +
-    `(median of ${effect.peer_eligible_segment_count} eligible peer segments, minimum peer sample n=${effect.peer_minimum_sample_size}).`
+    `(median of ${formatPeerSegmentCount(effect.peer_eligible_segment_count)}, minimum peer sample n=${formatCount(effect.peer_minimum_sample_size ?? 0)}).`
   );
 }
 
@@ -159,9 +169,79 @@ export function candidatePatternCode(patternType: PatternType, patternKey: strin
   return `DISCOVERY|${patternType}|${patternKey}`;
 }
 
-export function buildConfirmationNeeded(candidate: PatternDiscoveryCandidateSegment): string[] {
-  return [
-    `More realized items in ${candidate.pattern_key} (currently n=${candidate.realized_item_count}) before this can reach confirmed-pattern sample thresholds.`,
-    'More eligible peer segments in the same peer group before a confirmed leave-one-out peer baseline can be established.',
-  ];
+const METRIC_SHORT_LABEL: Record<MetricEffect['metric_code'], string> = {
+  median_net_profit: 'profit',
+  median_roi: 'ROI',
+  median_days_on_market: 'DOM',
+};
+
+/**
+ * Builds deterministic, factually-accurate confirmation_needed messages
+ * from the row's own per-metric confirmed-tier blocker diagnoses (see
+ * evaluateCandidate.ts's diagnoseConfirmedTierMetricBlocker) — never a
+ * generic "needs more items" message keyed off evidence_confidence,
+ * realized_item_count, hypothesis status, or peer weakness alone. Fixed,
+ * stable order: (1) candidate metric samples, (2) peer metric samples,
+ * (3) peer segment count, (4) classification. Each category contributes
+ * at most one message, so duplicates are structurally impossible.
+ */
+export function buildConfirmationNeeded(diagnoses: ConfirmedTierMetricDiagnosis[], confirmedTierDidNotClassify: boolean): string[] {
+  const messages: string[] = [];
+
+  const candidateBlocked = diagnoses.filter((d) => d.category === 'candidate_sample');
+  const peerSampleBlocked = diagnoses.filter((d) => d.category === 'peer_sample');
+  const peerCountBlocked = diagnoses.filter((d) => d.category === 'peer_count');
+
+  // (1) Candidate metric samples — only when a material metric's OWN
+  // sample is below the confirmed floor. Never fires when every material
+  // candidate metric sample is already >= 6.
+  if (candidateBlocked.length > 0) {
+    const metricNames = candidateBlocked.map((d) => METRIC_SHORT_LABEL[d.metric_code]);
+    const sampleList = candidateBlocked.map((d) => `${METRIC_SHORT_LABEL[d.metric_code]} n=${formatCount(d.candidate_sample_size)}`).join(', ');
+    messages.push(
+      `More completed items are needed for this segment's ${joinWithAnd(metricNames)} evidence to reach the confirmed threshold of ` +
+        `n=${CONFIRMED_MIN_METRIC_SAMPLE} (current samples: ${sampleList}).`,
+    );
+  }
+
+  // (2) Peer metric samples — enough distinct peer segments exist, but too
+  // few individually reach the confirmed sample floor.
+  if (peerSampleBlocked.length > 0) {
+    const metricNames = peerSampleBlocked.map((d) => METRIC_SHORT_LABEL[d.metric_code]);
+    const minSample = Math.min(...peerSampleBlocked.map((d) => d.min_eligible_peer_sample_at_hypothesis_tier ?? 0));
+    const anyBinary = peerSampleBlocked.some((d) => d.is_binary_family);
+    const threshold = anyBinary ? BINARY_EXCEPTION_MIN_SAMPLE : CONFIRMED_MIN_METRIC_SAMPLE;
+    const binaryNote = anyBinary
+      ? ` (this is a binary-comparison family — both segments must also reach confidence 'stronger')`
+      : '';
+    messages.push(
+      `More completed items are needed in eligible peer segments for ${joinWithAnd(metricNames)} to reach the confirmed peer threshold of ` +
+        `n=${threshold}${binaryNote} (current minimum peer sample n=${formatCount(minSample)}).`,
+    );
+  }
+
+  // (3) Peer segment count — not enough DISTINCT peer segments exist at
+  // all, even at the loosest (hypothesis) sample floor.
+  if (peerCountBlocked.length > 0) {
+    const minCount = Math.min(...peerCountBlocked.map((d) => d.eligible_peer_count_at_hypothesis_tier));
+    const anyBinary = peerCountBlocked.some((d) => d.is_binary_family);
+    const requirementNote = anyBinary
+      ? `1 required with both segments reaching sample size >= ${BINARY_EXCEPTION_MIN_SAMPLE} and confidence 'stronger' (2 required otherwise)`
+      : `${CONFIRMED_MIN_PEER_SEGMENTS} required`;
+    messages.push(
+      `More eligible peer segments are needed to establish a confirmed leave-one-out baseline (currently ${formatPeerSegmentCount(minCount)}; ${requirementNote}).`,
+    );
+  }
+
+  // (4) Classification — every material metric already satisfies the
+  // confirmed tier's candidate+peer requirements, but the confirmed-tier
+  // signal set still doesn't map to one of the 7 supported pattern types
+  // (a tighter, confirmed-only peer pool can shift a baseline enough to
+  // change materiality even when every sample/count check passes). Never
+  // claims more data will necessarily resolve this.
+  if (candidateBlocked.length === 0 && peerSampleBlocked.length === 0 && peerCountBlocked.length === 0 && confirmedTierDidNotClassify) {
+    messages.push('The current confirmed-tier metric signals do not yet form one of the supported confirmed pattern profiles.');
+  }
+
+  return messages;
 }

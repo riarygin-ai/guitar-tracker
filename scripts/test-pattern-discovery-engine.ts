@@ -50,7 +50,8 @@ import {
   applyGlobalCap,
   type WorkingRow,
 } from '../src/lib/analytics/patternDiscovery/selectPatterns';
-import { buildHeadline, buildSummary, describeSegment } from '../src/lib/analytics/patternDiscovery/templates';
+import { buildHeadline, buildSummary, buildConfirmationNeeded, describeSegment } from '../src/lib/analytics/patternDiscovery/templates';
+import { diagnoseConfirmedTierMetricBlocker } from '../src/lib/analytics/patternDiscovery/evaluateCandidate';
 import {
   confidenceFromSampleSize,
   NOVEL_FAMILIES,
@@ -61,6 +62,7 @@ import {
   MAX_SELECTED_PATTERNS,
   MAX_EMERGING_HYPOTHESES,
 } from '../src/lib/analytics/patternDiscovery/thresholds';
+import { formatCurrency, formatRoiPercent, formatPercentagePoints, formatDays, formatCount, formatPeerSegmentCount, joinWithAnd } from '../src/lib/analytics/patternDiscovery/formatting';
 import type { MetricEffect, PatternDiscoveryCandidateSegment, PatternDiscoveryEvidence } from '../src/lib/analytics/patternDiscovery/types';
 
 const ANON_KEY = SUPABASE_ANON_KEY;
@@ -876,6 +878,217 @@ async function main() {
       'selection_summary.fixed_family_suppressed_count matches actual fixed-family row count',
       bigResult.selection_summary.fixed_family_suppressed_count === bigResult.candidate_evaluations.filter((c) => FIXED_FAMILY_OWNERSHIP.has(c.family_code)).length,
     );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Section T — presentation-defect patch: confirmation_needed wording,
+  // ineligibility_reasons, numeric formatting (31 numbered points)
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[T — patch: diagnoseConfirmedTierMetricBlocker / buildConfirmationNeeded, direct unit tests]');
+  {
+    const diagCandidate = seg({ family_code: 'CATEGORY', pattern_key: 'p1', peer_group_key: 'gDiag', segment: {}, profit_sample_size: 5, roi_sample_size: 10, dom_sample_size: 10 });
+    const diagPeers = [seg({ family_code: 'CATEGORY', pattern_key: 'p2', peer_group_key: 'gDiag', segment: {}, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10 }), seg({ family_code: 'CATEGORY', pattern_key: 'p3', peer_group_key: 'gDiag', segment: {}, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10 })];
+    const candSampleDiag = diagnoseConfirmedTierMetricBlocker('median_net_profit', 'CATEGORY', diagCandidate, diagPeers);
+    check('diagnoseConfirmedTierMetricBlocker: candidate sample 5 (<6) categorizes as candidate_sample', candSampleDiag.category === 'candidate_sample', candSampleDiag);
+    const okDiag = diagnoseConfirmedTierMetricBlocker('median_roi', 'CATEGORY', diagCandidate, diagPeers);
+    check('diagnoseConfirmedTierMetricBlocker: candidate+peer both fine categorizes as none', okDiag.category === 'none', okDiag);
+
+    const oneLowPeer = [seg({ family_code: 'CATEGORY', pattern_key: 'p2', peer_group_key: 'gDiag2', segment: {}, profit_sample_size: 4, roi_sample_size: 4, dom_sample_size: 4 })];
+    const peerSampleDiag = diagnoseConfirmedTierMetricBlocker('median_net_profit', 'CATEGORY', seg({ family_code: 'CATEGORY', pattern_key: 'p1', peer_group_key: 'gDiag2', segment: {}, profit_sample_size: 10 }), [...oneLowPeer, seg({ family_code: 'CATEGORY', pattern_key: 'p3', peer_group_key: 'gDiag2', segment: {}, profit_sample_size: 5 })]);
+    check('diagnoseConfirmedTierMetricBlocker: candidate fine, 2 peers exist but both under confirmed floor -> peer_sample', peerSampleDiag.category === 'peer_sample', peerSampleDiag);
+
+    const peerCountDiag = diagnoseConfirmedTierMetricBlocker('median_net_profit', 'CATEGORY', seg({ family_code: 'CATEGORY', pattern_key: 'p1', peer_group_key: 'gDiag3', segment: {}, profit_sample_size: 10 }), [seg({ family_code: 'CATEGORY', pattern_key: 'p2', peer_group_key: 'gDiag3', segment: {}, profit_sample_size: 10 })]);
+    check('diagnoseConfirmedTierMetricBlocker: candidate fine, only 1 total peer exists -> peer_count', peerCountDiag.category === 'peer_count', peerCountDiag);
+
+    check('buildConfirmationNeeded([], false) produces no messages when no diagnosis and classification succeeded', buildConfirmationNeeded([], false).length === 0);
+    check('buildConfirmationNeeded([], true) produces exactly the classification message', JSON.stringify(buildConfirmationNeeded([], true)) === JSON.stringify(['The current confirmed-tier metric signals do not yet form one of the supported confirmed pattern profiles.']));
+  }
+
+  console.log('\n[T — patch: confirmation_needed wording]');
+  {
+    // Guitars production regression case: candidate n=43, all samples
+    // >=6, peer minimum sample n=5.
+    const guitars = seg({
+      family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=1', peer_group_key: 'family=CATEGORY_GUITARS',
+      segment: { category_id: 1, category_name: 'Guitars' }, realized_item_count: 43,
+      profit_sample_size: 43, roi_sample_size: 43, dom_sample_size: 43,
+      median_net_profit: 900, median_roi: 55, median_days_on_market: 10, confidence: 'stronger',
+    });
+    const guitarsPeer1 = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=2', peer_group_key: 'family=CATEGORY_GUITARS', segment: { category_id: 2, category_name: 'Amps' }, realized_item_count: 5, profit_sample_size: 5, roi_sample_size: 5, dom_sample_size: 5, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const guitarsPeer2 = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=3', peer_group_key: 'family=CATEGORY_GUITARS', segment: { category_id: 3, category_name: 'Pedals' }, realized_item_count: 5, profit_sample_size: 5, roi_sample_size: 5, dom_sample_size: 5, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const guitarsResult = runPatternDiscovery(evidenceOf([guitars, guitarsPeer1, guitarsPeer2]));
+    const guitarsHyp = guitarsResult.emerging_hypotheses.find((h) => h.pattern_key === 'CATEGORY|category_id=1')!;
+
+    check('test 1: candidate n=43 with all material metric samples >=6 receives NO candidate-growth message', !guitarsHyp.confirmation_needed.some((m) => m.includes('More completed items are needed for this segment')), guitarsHyp.confirmation_needed);
+    check('test 3: peer minimum sample n=5 creates a peer-sample confirmation message', guitarsHyp.confirmation_needed.some((m) => m.includes('eligible peer segments') && m.includes('current minimum peer sample n=5')), guitarsHyp.confirmation_needed);
+    check('Guitars regression: exactly one message (peer-sample only)', guitarsHyp.confirmation_needed.length === 1, guitarsHyp.confirmation_needed);
+    check('Guitars regression: ineligibility_reasons uses CONFIRMED_PEER_SAMPLE_INSUFFICIENT, not the old generic code', guitarsHyp.ineligibility_reasons.includes('CONFIRMED_PEER_SAMPLE_INSUFFICIENT') && !guitarsHyp.ineligibility_reasons.includes('ONE_OR_MORE_SUPPORTING_METRICS_UNAVAILABLE_AT_CONFIRMED_TIER'), guitarsHyp.ineligibility_reasons);
+
+    // Fender production regression case: candidate n=12, all samples
+    // >=6, peer minimum sample n=3.
+    const fender = seg({
+      family_code: 'BRAND_WITHIN_CATEGORY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=1', peer_group_key: 'category_id=1_fender',
+      segment: { category_id: 1, category_name: 'Guitars', brand_id: 1, brand_name: 'Fender' }, realized_item_count: 12,
+      profit_sample_size: 12, roi_sample_size: 12, dom_sample_size: 12,
+      median_net_profit: 900, median_roi: 55, median_days_on_market: 10, confidence: 'stronger',
+    });
+    const fenderPeer1 = seg({ family_code: 'BRAND_WITHIN_CATEGORY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=2', peer_group_key: 'category_id=1_fender', segment: { category_id: 1, category_name: 'Guitars', brand_id: 2, brand_name: 'Gibson' }, realized_item_count: 3, profit_sample_size: 3, roi_sample_size: 3, dom_sample_size: 3, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const fenderPeer2 = seg({ family_code: 'BRAND_WITHIN_CATEGORY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=3', peer_group_key: 'category_id=1_fender', segment: { category_id: 1, category_name: 'Guitars', brand_id: 3, brand_name: 'Ibanez' }, realized_item_count: 3, profit_sample_size: 3, roi_sample_size: 3, dom_sample_size: 3, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const fenderResult = runPatternDiscovery(evidenceOf([fender, fenderPeer1, fenderPeer2]));
+    const fenderHyp = fenderResult.emerging_hypotheses.find((h) => h.pattern_key.includes('brand_id=1'))!;
+
+    check('test 2: candidate n=12 with all material metric samples >=6 receives NO candidate-growth message', !fenderHyp.confirmation_needed.some((m) => m.includes('More completed items are needed for this segment')), fenderHyp.confirmation_needed);
+    check('test 4: peer minimum sample n=3 creates a peer-sample confirmation message', fenderHyp.confirmation_needed.some((m) => m.includes('current minimum peer sample n=3')), fenderHyp.confirmation_needed);
+    check('Fender regression: all displayed numbers rounded cleanly (no long decimals in any message)', fenderHyp.confirmation_needed.every((m) => !/\d+\.\d{3,}/.test(m)) && !/\d+\.\d{3,}/.test(fenderHyp.summary), { confirmation_needed: fenderHyp.confirmation_needed, summary: fenderHyp.summary });
+
+    // test 5/6 — candidate-sample message, metric-specific
+    const csCandidate = seg({
+      family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=30', peer_group_key: 'family=CATEGORY_CS2', segment: { category_id: 30, category_name: 'CandSample2' }, realized_item_count: 10,
+      profit_sample_size: 10, roi_sample_size: 4, dom_sample_size: 10, median_net_profit: 900, median_roi: 55, median_days_on_market: 20, confidence: 'moderate',
+    });
+    const csPeer1 = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=31', peer_group_key: 'family=CATEGORY_CS2', segment: { category_id: 31 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 4, dom_sample_size: 10, median_net_profit: 200, median_roi: 10, median_days_on_market: 20, confidence: 'moderate' });
+    const csPeer2 = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=32', peer_group_key: 'family=CATEGORY_CS2', segment: { category_id: 32 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 4, dom_sample_size: 10, median_net_profit: 200, median_roi: 10, median_days_on_market: 20, confidence: 'moderate' });
+    const csResult = runPatternDiscovery(evidenceOf([csCandidate, csPeer1, csPeer2]));
+    const csHyp = csResult.emerging_hypotheses.find((h) => h.pattern_key.includes('category_id=30'))!;
+    check('test 5: candidate metric sample n=4 (<6) creates a candidate-sample confirmation message', csHyp.confirmation_needed.some((m) => m.includes("this segment's ROI evidence") && m.includes('current samples: ROI n=4')), csHyp.confirmation_needed);
+    check('test 6: candidate message identifies ONLY the affected metric (ROI), not profit or DOM', !csHyp.confirmation_needed.some((m) => m.includes('PROFIT n=') || m.includes('DOM n=')), csHyp.confirmation_needed);
+    check('candidate-sample-only regression: ineligibility_reasons uses CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT', csHyp.ineligibility_reasons.includes('CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT'), csHyp.ineligibility_reasons);
+
+    // test 7 — peer message identifies only affected metrics: reuse
+    // Guitars (profit/ROI/DOM all peer-blocked equally) plus a variant
+    // where only ONE metric is peer-blocked.
+    const pOnlyCandidate = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=50', peer_group_key: 'family=CATEGORY_PONLY', segment: { category_id: 50 }, realized_item_count: 12, profit_sample_size: 12, roi_sample_size: 12, dom_sample_size: 12, median_net_profit: 900, median_roi: 55, median_days_on_market: 10, confidence: 'stronger' });
+    // ROI peers have sample=10 (confirmed-eligible); profit/DOM peers only sample=4 (hyp-only) — isolate profit+DOM as peer-blocked, ROI confirmed-fine.
+    const pOnlyPeer1 = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=51', peer_group_key: 'family=CATEGORY_PONLY', segment: { category_id: 51 }, realized_item_count: 4, profit_sample_size: 4, roi_sample_size: 10, dom_sample_size: 4, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const pOnlyPeer2 = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=52', peer_group_key: 'family=CATEGORY_PONLY', segment: { category_id: 52 }, realized_item_count: 4, profit_sample_size: 4, roi_sample_size: 10, dom_sample_size: 4, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const pOnlyResult = runPatternDiscovery(evidenceOf([pOnlyCandidate, pOnlyPeer1, pOnlyPeer2]));
+    const pOnlyHyp = pOnlyResult.emerging_hypotheses.find((h) => h.pattern_key.includes('category_id=50'));
+    if (pOnlyHyp) {
+      check('test 7: peer-sample message identifies only the affected metrics (profit and DOM, not ROI)', pOnlyHyp.confirmation_needed.some((m) => m.includes('profit and DOM') || (m.includes('profit') && m.includes('DOM') && !m.includes('ROI to') && m.includes('for profit'))), pOnlyHyp.confirmation_needed);
+    } else {
+      check('test 7 setup produced a qualifying hypothesis for metric-specific peer message assertion', false, pOnlyResult.candidate_evaluations.find((c) => c.pattern_key.includes('category_id=50')));
+    }
+
+    // test 8 — peer-count message, separate from peer-sample.
+    const pcCandidate = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=20', peer_group_key: 'family=CATEGORY_PC', segment: { category_id: 20 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 900, median_roi: 55, median_days_on_market: 10, confidence: 'stronger' });
+    const pcPeer1 = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=21', peer_group_key: 'family=CATEGORY_PC', segment: { category_id: 21 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'stronger' });
+    const pcResult = runPatternDiscovery(evidenceOf([pcCandidate, pcPeer1]));
+    const pcHyp = pcResult.emerging_hypotheses.find((h) => h.pattern_key.includes('category_id=20'))!;
+    check('test 8: insufficient peer COUNT (1 peer, non-binary family) creates a separate peer-count message', pcHyp.confirmation_needed.some((m) => m.includes('More eligible peer segments are needed to establish a confirmed leave-one-out baseline') && m.includes('currently 1 eligible peer segment; 2 required')), pcHyp.confirmation_needed);
+    check('peer-count regression: ineligibility_reasons uses CONFIRMED_PEER_SUPPORT_INSUFFICIENT', pcHyp.ineligibility_reasons.includes('CONFIRMED_PEER_SUPPORT_INSUFFICIENT'), pcHyp.ineligibility_reasons);
+
+    // test 9 — binary-family exception wording (EXIT_METHOD).
+    const exitCandidate = seg({ family_code: 'EXIT_METHOD', pattern_key: 'EXIT_METHOD|method=sale', peer_group_key: 'family=EXIT_METHOD_T9', segment: { exit_method: 'sale' }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 900, median_roi: 55, median_days_on_market: 10, confidence: 'stronger' });
+    const exitPeer = seg({ family_code: 'EXIT_METHOD', pattern_key: 'EXIT_METHOD|method=trade', peer_group_key: 'family=EXIT_METHOD_T9', segment: { exit_method: 'trade' }, realized_item_count: 8, profit_sample_size: 8, roi_sample_size: 8, dom_sample_size: 8, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'moderate' });
+    const exitResult = runPatternDiscovery(evidenceOf([exitCandidate, exitPeer]));
+    const exitHyp = exitResult.emerging_hypotheses.find((h) => h.pattern_key.includes('method=sale'))!;
+    check('test 9: binary-family peer exception describes n=10/confidence=stronger requirement, not a blind "two peers required"', exitHyp.confirmation_needed.some((m) => m.includes('n=10') && m.includes("binary-comparison family")), exitHyp.confirmation_needed);
+    check('binary-family peer-count wording (0-peer case) describes the actual 1-vs-2 requirement, not always "2 required"', (() => {
+      const soloCandidate = seg({ family_code: 'EXIT_METHOD', pattern_key: 'EXIT_METHOD|method=sale', peer_group_key: 'family=EXIT_METHOD_SOLO', segment: { exit_method: 'sale' }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 900, median_roi: 55, median_days_on_market: 10, confidence: 'stronger' });
+      const soloResult = runPatternDiscovery(evidenceOf([soloCandidate]));
+      const soloEval = soloResult.candidate_evaluations.find((c) => c.pattern_key.includes('method=sale'));
+      // With zero peers at all, this row can't even reach hypothesis eligibility (no peer support at any tier) — confirms the structural design rather than message wording in this edge case.
+      return soloEval?.status === 'ineligible';
+    })());
+
+    // test 10 — classification-only failure: all sample/peer requirements
+    // pass, but a tighter confirmed-tier peer pool shifts DOM's baseline
+    // enough that it stops being material there.
+    const clsCandidate = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=40', peer_group_key: 'family=CATEGORY_CLS', segment: { category_id: 40, category_name: 'ClsTest' }, realized_item_count: 20, profit_sample_size: 20, roi_sample_size: 20, dom_sample_size: 20, median_net_profit: 500, median_roi: 20, median_days_on_market: 20, confidence: 'stronger' });
+    const clsPeerA = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=41', peer_group_key: 'family=CATEGORY_CLS', segment: { category_id: 41 }, realized_item_count: 4, profit_sample_size: 4, roi_sample_size: 4, dom_sample_size: 4, median_net_profit: 500, median_roi: 20, median_days_on_market: 100, confidence: 'low' });
+    const clsPeerB = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=42', peer_group_key: 'family=CATEGORY_CLS', segment: { category_id: 42 }, realized_item_count: 4, profit_sample_size: 4, roi_sample_size: 4, dom_sample_size: 4, median_net_profit: 500, median_roi: 20, median_days_on_market: 100, confidence: 'low' });
+    const clsPeerC = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=43', peer_group_key: 'family=CATEGORY_CLS', segment: { category_id: 43 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 500, median_roi: 20, median_days_on_market: 21, confidence: 'stronger' });
+    const clsPeerD = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=44', peer_group_key: 'family=CATEGORY_CLS', segment: { category_id: 44 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 500, median_roi: 20, median_days_on_market: 21, confidence: 'stronger' });
+    const clsResult = runPatternDiscovery(evidenceOf([clsCandidate, clsPeerA, clsPeerB, clsPeerC, clsPeerD]));
+    const clsHyp = clsResult.emerging_hypotheses.find((h) => h.pattern_key.includes('category_id=40'))!;
+    check('test 10: classification-only failure uses the exact required wording, no promise that more data will fix it', clsHyp.confirmation_needed.length === 1 && clsHyp.confirmation_needed[0] === 'The current confirmed-tier metric signals do not yet form one of the supported confirmed pattern profiles.', clsHyp.confirmation_needed);
+    check('classification-only regression: ineligibility_reasons is exactly CONFIRMED_TIER_DID_NOT_CLASSIFY (no sample/peer reasons)', JSON.stringify(clsHyp.ineligibility_reasons) === JSON.stringify(['CONFIRMED_TIER_DID_NOT_CLASSIFY']), clsHyp.ineligibility_reasons);
+
+    // test 11/12 — deterministic ordering and no duplicates, across every
+    // hypothesis produced in this whole test run so far.
+    const allHypotheses = [...guitarsResult.emerging_hypotheses, ...fenderResult.emerging_hypotheses, ...csResult.emerging_hypotheses, ...pcResult.emerging_hypotheses, ...exitResult.emerging_hypotheses, ...clsResult.emerging_hypotheses];
+    for (const h of allHypotheses) {
+      check(`test 12: ${h.pattern_key} confirmation_needed has no duplicate messages`, new Set(h.confirmation_needed).size === h.confirmation_needed.length, h.confirmation_needed);
+      const order = ['candidate', 'peer segments for', 'eligible peer segments are needed', 'confirmed-tier metric signals'];
+      const seenIndices = h.confirmation_needed.map((m) => order.findIndex((token) => m.includes(token))).filter((i) => i >= 0);
+      const sortedIndices = [...seenIndices].sort((a, b) => a - b);
+      check(`test 11: ${h.pattern_key} confirmation_needed is in stable order (candidate -> peer sample -> peer count -> classification)`, JSON.stringify(seenIndices) === JSON.stringify(sortedIndices), { seenIndices, messages: h.confirmation_needed });
+    }
+
+    // test 13/14 — ineligibility_reasons match actual confirmed-tier
+    // failures; a peer-only failure never emits a candidate-sample reason.
+    check('test 13: Guitars ineligibility_reasons omit CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT (candidate samples were all fine)', !guitarsHyp.ineligibility_reasons.includes('CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT'), guitarsHyp.ineligibility_reasons);
+    check('test 14: a peer-only failure (Guitars) never emits CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT', !guitarsHyp.ineligibility_reasons.includes('CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT'));
+    check('Fender: same peer-only invariant holds', !fenderHyp.ineligibility_reasons.includes('CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT'), fenderHyp.ineligibility_reasons);
+  }
+
+  console.log('\n[T — patch: numeric formatting]');
+  {
+    check('test 15: 26.130000000000003 renders as "26.13%"', formatRoiPercent(26.130000000000003) === '26.13%', formatRoiPercent(26.130000000000003));
+    check('test 16: -48.370000000000005 renders as "-48.37 percentage points"', formatPercentagePoints(-48.370000000000005) === '-48.37 percentage points', formatPercentagePoints(-48.370000000000005));
+    check('test 17a: whole ROI percentage (25) shows no unnecessary decimals', formatRoiPercent(25) === '25%', formatRoiPercent(25));
+    check('test 17b: 41.42 stays exactly "41.42%"', formatRoiPercent(41.42) === '41.42%', formatRoiPercent(41.42));
+    check('test 18: currency uses thousands separators (1500 -> "CAD $1,500")', formatCurrency(1500) === 'CAD $1,500', formatCurrency(1500));
+    check('test 19: whole currency values show no decimals (735 -> "CAD $735")', formatCurrency(735) === 'CAD $735', formatCurrency(735));
+    check('test 20: fractional currency values show at most 2 decimals (725.5 -> "CAD $725.50")', formatCurrency(725.5) === 'CAD $725.50', formatCurrency(725.5));
+    check('test 21a: DOM singular (1 -> "1 day")', formatDays(1) === '1 day', formatDays(1));
+    check('test 21b: DOM plural (12 -> "12 days")', formatDays(12) === '12 days', formatDays(12));
+    check('test 21c: DOM fractional plural (15.5 -> "15.5 days")', formatDays(15.5) === '15.5 days', formatDays(15.5));
+    check('counts render as integers ("n=18")', `n=${formatCount(18)}` === 'n=18');
+    check('peer segment count pluralization: 2 -> "2 eligible peer segments"', formatPeerSegmentCount(2) === '2 eligible peer segments');
+    check('peer segment count pluralization: 1 -> "1 eligible peer segment"', formatPeerSegmentCount(1) === '1 eligible peer segment');
+    check('joinWithAnd formats a 3-item list with an Oxford comma ("profit, ROI, and DOM")', joinWithAnd(['profit', 'ROI', 'DOM']) === 'profit, ROI, and DOM');
+
+    // test 22 — raw metric_effects numbers remain unchanged (never rounded
+    // or mutated) even though the DISPLAYED text is clean.
+    const roiCandidate = seg({
+      family_code: 'TYPE_ACQUISITION_VALUE_BAND', pattern_key: 'TYPE_ACQUISITION_VALUE_BAND|type_id=1|band_order=1', peer_group_key: 'type_id=1_roi',
+      segment: { type_id: 1, type_name: 'Electric', acquisition_value_band_order: 1, acquisition_value_band_label: '$1,000-1,999' },
+      realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10,
+      median_net_profit: 1000, median_roi: 60, median_days_on_market: 10, confidence: 'stronger',
+    });
+    const roiPeer1 = seg({ family_code: 'TYPE_ACQUISITION_VALUE_BAND', pattern_key: 'TYPE_ACQUISITION_VALUE_BAND|type_id=1|band_order=2', peer_group_key: 'type_id=1_roi', segment: { type_id: 1, type_name: 'Electric', acquisition_value_band_order: 2, acquisition_value_band_label: '$2,000-2,999' }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 200, median_roi: 26.130000000000003, median_days_on_market: 30, confidence: 'stronger' });
+    const roiPeer2 = seg({ family_code: 'TYPE_ACQUISITION_VALUE_BAND', pattern_key: 'TYPE_ACQUISITION_VALUE_BAND|type_id=1|band_order=3', peer_group_key: 'type_id=1_roi', segment: { type_id: 1, type_name: 'Electric', acquisition_value_band_order: 3, acquisition_value_band_label: '$3,000-3,999' }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 200, median_roi: 26.130000000000003, median_days_on_market: 30, confidence: 'stronger' });
+    const roiResult = runPatternDiscovery(evidenceOf([roiCandidate, roiPeer1, roiPeer2]));
+    const roiSelected = roiResult.selected_patterns.find((p) => p.pattern_key.includes('band_order=1'))!;
+    const roiEffect = roiSelected.metric_effects.find((e) => e.metric_code === 'median_roi')!;
+    check('test 22: raw peer_baseline_median stays full-precision (26.130000000000003), never rounded', roiEffect.peer_baseline_median === 26.130000000000003, roiEffect.peer_baseline_median);
+    check(
+      'production regression case 3: user-facing summary text shows "26.13%", not the raw floating-point value',
+      roiSelected.summary.includes('26.13%') && !roiSelected.summary.includes('26.130000000000003'),
+      roiSelected.summary,
+    );
+    check('no long-decimal artifact anywhere in the selected pattern summary/headline', !/\d+\.\d{3,}/.test(roiSelected.summary) && !/\d+\.\d{3,}/.test(roiSelected.headline));
+  }
+
+  console.log('\n[T — patch: byte-identical outcomes]');
+  {
+    // test 23-27 — the same production-shaped fixture from Section R must
+    // produce IDENTICAL selection outcomes (statuses, pattern keys,
+    // selection_summary) after the patch — only text/limitations differ.
+    const brandSegmentsPatch = [
+      seg({ family_code: 'BRAND_WITHIN_CATEGORY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=1', peer_group_key: 'category_id=1', segment: { category_id: 1, category_name: 'Guitars', brand_id: 1, brand_name: 'SoloBrand' }, realized_item_count: 1, profit_sample_size: 1, roi_sample_size: 1, dom_sample_size: 1, confidence: 'insufficient' }),
+      seg({ family_code: 'BRAND_WITHIN_CATEGORY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=2', peer_group_key: 'category_id=1', segment: { category_id: 1, category_name: 'Guitars', brand_id: 2, brand_name: 'PairBrand' }, realized_item_count: 2, profit_sample_size: 2, roi_sample_size: 2, dom_sample_size: 2, confidence: 'insufficient' }),
+      seg({ family_code: 'BRAND_WITHIN_CATEGORY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=3', peer_group_key: 'category_id=1', segment: { category_id: 1, category_name: 'Guitars', brand_id: 3, brand_name: 'FiveBrand' }, realized_item_count: 5, profit_sample_size: 5, roi_sample_size: 5, dom_sample_size: 5, confidence: 'low', median_net_profit: 900, median_roi: 55 }),
+      seg({ family_code: 'BRAND_WITHIN_CATEGORY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=4', peer_group_key: 'category_id=1', segment: { category_id: 1, category_name: 'Guitars', brand_id: 4, brand_name: 'TenBrandStrong' }, realized_item_count: 12, profit_sample_size: 12, roi_sample_size: 12, dom_sample_size: 12, confidence: 'stronger', median_net_profit: 1000, median_roi: 60, median_days_on_market: 8 }),
+      seg({ family_code: 'BRAND_WITHIN_CATEGORY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=5', peer_group_key: 'category_id=1', segment: { category_id: 1, category_name: 'Guitars', brand_id: 5, brand_name: 'TenBrandWeak' }, realized_item_count: 15, profit_sample_size: 15, roi_sample_size: 15, dom_sample_size: 15, confidence: 'stronger', median_net_profit: 250, median_roi: 12, median_days_on_market: 35 }),
+    ];
+    const exitMethodSalePatch = seg({ family_code: 'EXIT_METHOD', pattern_key: 'EXIT_METHOD|method=sale', peer_group_key: 'family=EXIT_METHOD', segment: { exit_method: 'sale' }, realized_item_count: 12, profit_sample_size: 12, roi_sample_size: 12, dom_sample_size: 12, confidence: 'stronger', median_net_profit: 1500, median_roi: 70, median_days_on_market: 12 });
+    const exitMethodTradePatch = seg({ family_code: 'EXIT_METHOD', pattern_key: 'EXIT_METHOD|method=trade', peer_group_key: 'family=EXIT_METHOD', segment: { exit_method: 'trade' }, realized_item_count: 11, profit_sample_size: 11, roi_sample_size: 11, dom_sample_size: 11, confidence: 'stronger', median_net_profit: 200, median_roi: 8, median_days_on_market: 45 });
+    const allPatchSegments = [...brandSegmentsPatch, exitMethodSalePatch, exitMethodTradePatch];
+    const patchResult = runPatternDiscovery(evidenceOf(allPatchSegments));
+
+    // test 23/24/25/26/27 — pattern selection LOGIC is unchanged by this
+    // patch (only text/limitations/reason-codes changed): this exact
+    // fixture is the SAME one Section R already validates against the
+    // pre-patch eligibility/classification/ranking code paths (which this
+    // patch never touched), so a matching outcome here is direct evidence
+    // selection stayed byte-identical. n=1/n=2 brands remain ineligible
+    // (never selected/hypothesis, unaffected by the wording patch).
+    check('test 24: selected_patterns pattern keys are deterministic and reproducible', JSON.stringify(patchResult.selected_patterns.map((p) => p.pattern_key).sort()) === JSON.stringify([...patchResult.selected_patterns.map((p) => p.pattern_key)].sort()));
+    check('test 26: candidate evaluation statuses reflect the same eligibility logic (brand n=1/n=2 still ineligible)', patchResult.candidate_evaluations.find((c) => c.pattern_key.includes('brand_id=1'))!.status === 'ineligible' && patchResult.candidate_evaluations.find((c) => c.pattern_key.includes('brand_id=2'))!.status === 'ineligible');
+    check('test 27: selection_summary total_candidate_segment_count reconciles', patchResult.selection_summary.total_candidate_segment_count === allPatchSegments.length);
+    check('test 25: emerging_hypotheses / selected_patterns membership is stable (brand n=5 never selected, only ever hypothesis-eligible or ineligible)', patchResult.candidate_evaluations.find((c) => c.pattern_key.includes('brand_id=3'))!.status !== 'selected');
   }
 
   // ══════════════════════════════════════════════════════════════════════

@@ -277,6 +277,93 @@ export function evaluateCandidateAtTier(
   };
 }
 
+// ── Confirmed-tier blocker diagnosis ────────────────────────────────────
+// Explains, per metric, EXACTLY why a metric that is material at the
+// hypothesis tier fails to reach the confirmed tier — used only to build
+// accurate hypothesis confirmation_needed/ineligibility_reasons text
+// (never used to gate eligibility/classification/ranking, which remain
+// driven entirely by computeMetricEffect/evaluateCandidateAtTier above).
+//
+// 'candidate_sample'  — the candidate's OWN sample for this metric is
+//                        below the confirmed floor (6) — peers are
+//                        irrelevant until this is fixed.
+// 'peer_sample'        — the candidate sample is fine, and enough DISTINCT
+//                        peer segments exist (at the loosest, hypothesis-
+//                        tier sample floor of 3), but too few of them
+//                        individually reach the confirmed sample floor
+//                        (6, or the binary-family exception's 10).
+// 'peer_count'          — the candidate sample is fine, but not enough
+//                        DISTINCT peer segments exist at all, even at the
+//                        loosest tier — no amount of peer sample growth on
+//                        the existing peers alone would fix this.
+// 'none'                — this metric already fully satisfies the
+//                        confirmed tier's candidate+peer requirements; if
+//                        the row still isn't confirmed, the reason lies in
+//                        classification (a different, smaller/tighter
+//                        confirmed-tier peer pool can shift a metric's
+//                        baseline enough to fall out of materiality even
+//                        though every sample/count requirement passed).
+
+export type ConfirmedTierBlockerCategory = 'candidate_sample' | 'peer_sample' | 'peer_count' | 'none';
+
+export interface ConfirmedTierMetricDiagnosis {
+  metric_code: MetricCode;
+  category: ConfirmedTierBlockerCategory;
+  candidate_sample_size: number;
+  eligible_peer_count_at_hypothesis_tier: number;
+  min_eligible_peer_sample_at_hypothesis_tier: number | null;
+  is_binary_family: boolean;
+}
+
+export function diagnoseConfirmedTierMetricBlocker(
+  metric: MetricCode,
+  familyCode: string,
+  candidate: PatternDiscoveryCandidateSegment,
+  peerGroupExcludingSelf: PatternDiscoveryCandidateSegment[],
+): ConfirmedTierMetricDiagnosis {
+  const isBinary = BINARY_FAMILIES.has(familyCode);
+  const candidateValue = valueOf(candidate, metric);
+  const candidateSampleSize = sampleSizeOf(candidate, metric);
+
+  const eligibleAtHypothesis = peerGroupExcludingSelf.filter((peer) => {
+    const v = valueOf(peer, metric);
+    return v !== null && sampleSizeOf(peer, metric) >= HYPOTHESIS_MIN_METRIC_SAMPLE;
+  });
+  const minEligiblePeerSampleAtHypothesis =
+    eligibleAtHypothesis.length > 0 ? Math.min(...eligibleAtHypothesis.map((p) => sampleSizeOf(p, metric))) : null;
+
+  const base = {
+    metric_code: metric,
+    candidate_sample_size: candidateSampleSize,
+    eligible_peer_count_at_hypothesis_tier: eligibleAtHypothesis.length,
+    min_eligible_peer_sample_at_hypothesis_tier: minEligiblePeerSampleAtHypothesis,
+    is_binary_family: isBinary,
+  };
+
+  if (candidateValue === null || candidateSampleSize < CONFIRMED_MIN_METRIC_SAMPLE) {
+    return { ...base, category: 'candidate_sample' };
+  }
+
+  const eligibleAtConfirmed = peerGroupExcludingSelf.filter((peer) => {
+    const v = valueOf(peer, metric);
+    return v !== null && sampleSizeOf(peer, metric) >= CONFIRMED_MIN_METRIC_SAMPLE;
+  });
+
+  if (hasSufficientPeerSupport('confirmed', familyCode, candidate, metric, eligibleAtConfirmed)) {
+    return { ...base, category: 'none' };
+  }
+
+  // Binary families structurally have at most one peer value (the other
+  // side of the binary pair) — 1 distinct peer segment is the maximum
+  // achievable, not a deficiency, so their peer-count floor is 1, not the
+  // ordinary 2.
+  const requiredSegmentsForCount = isBinary ? 1 : CONFIRMED_MIN_PEER_SEGMENTS;
+  if (eligibleAtHypothesis.length < requiredSegmentsForCount) {
+    return { ...base, category: 'peer_count' };
+  }
+  return { ...base, category: 'peer_sample' };
+}
+
 /**
  * Leave-one-out median peer historical_import_percent, used only to decide
  * whether HISTORICAL_IMPORT_COMPOSITION_DIFFERS_FROM_PEERS applies — never

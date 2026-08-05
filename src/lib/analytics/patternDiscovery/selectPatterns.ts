@@ -5,7 +5,8 @@
 // see thresholds.ts's own header for why these exist instead of formal
 // statistical significance testing.
 
-import { evaluateCandidateAtTier, historicalImportCompositionDiffPercentagePoints } from './evaluateCandidate';
+import { diagnoseConfirmedTierMetricBlocker, evaluateCandidateAtTier, historicalImportCompositionDiffPercentagePoints } from './evaluateCandidate';
+import type { ConfirmedTierMetricDiagnosis } from './evaluateCandidate';
 import { classifyPattern } from './classifyPattern';
 import { buildHeadline, buildSummary, buildConfirmationNeeded, candidatePatternCode } from './templates';
 import {
@@ -272,6 +273,8 @@ function buildEmergingHypothesis(row: WorkingRow): EmergingHypothesis {
   const classification = row.hypothesisClassification!;
   const evalResult = row.hypothesisEval;
   const limitations = buildRowLimitations(row, true);
+  const diagnoses = diagnoseHypothesisMetricBlockers(row);
+  const confirmedTierDidNotClassify = row.confirmedClassification === null;
   return {
     pattern_code: candidatePatternCode(classification.pattern_type, row.candidate.pattern_key),
     family_code: row.candidate.family_code,
@@ -291,41 +294,65 @@ function buildEmergingHypothesis(row: WorkingRow): EmergingHypothesis {
     limitations,
     evidence_refs: ['target_user_pattern_discovery_evidence.candidate_segments'],
     status: 'hypothesis',
-    confirmation_needed: buildConfirmationNeeded(row.candidate),
-    ineligibility_reasons: deriveHypothesisIneligibilityReasons(row),
+    confirmation_needed: buildConfirmationNeeded(diagnoses, confirmedTierDidNotClassify),
+    ineligibility_reasons: deriveHypothesisIneligibilityReasons(row, diagnoses),
   };
 }
 
 /**
- * Explains WHY a hypothesis-qualifying row didn't reach confirmed status —
- * the task's own "fails confirmed selection only because of low
- * confidence, confirmed peer support, or one missing supporting metric"
- * eligibility condition, made explicit and auditable.
+ * Diagnoses, for every metric that is MATERIAL at the hypothesis tier
+ * (i.e. actually part of this hypothesis' evidentiary claim), exactly why
+ * it does or doesn't also clear the confirmed tier — see evaluateCandidate
+ * .ts's diagnoseConfirmedTierMetricBlocker for the category definitions.
+ * Metrics that were never material at the hypothesis tier are irrelevant
+ * to explaining THIS hypothesis' confirmed-tier gap and are excluded.
  */
-function deriveHypothesisIneligibilityReasons(row: WorkingRow): string[] {
+function diagnoseHypothesisMetricBlockers(row: WorkingRow): ConfirmedTierMetricDiagnosis[] {
+  const triggeredMetricCodes = new Set(row.hypothesisEval.metricEffects.filter((e) => e.materiality).map((e) => e.metric_code));
+  return row.hypothesisEval.metricEffects
+    .filter((e) => triggeredMetricCodes.has(e.metric_code))
+    .map((e) => diagnoseConfirmedTierMetricBlocker(e.metric_code, row.candidate.family_code, row.candidate, row.peerGroup));
+}
+
+/**
+ * Explains WHY a hypothesis-qualifying row didn't reach confirmed status,
+ * using the SAME per-metric diagnoses that drive confirmation_needed text
+ * — so the reason codes and the human-readable messages can never
+ * disagree about what actually blocked confirmation.
+ */
+function deriveHypothesisIneligibilityReasons(row: WorkingRow, diagnoses: ConfirmedTierMetricDiagnosis[]): string[] {
   const reasons: string[] = [];
+  if (diagnoses.some((d) => d.category === 'candidate_sample')) reasons.push('CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT');
+  if (diagnoses.some((d) => d.category === 'peer_sample')) reasons.push('CONFIRMED_PEER_SAMPLE_INSUFFICIENT');
+  if (diagnoses.some((d) => d.category === 'peer_count')) reasons.push('CONFIRMED_PEER_SUPPORT_INSUFFICIENT');
+  if (row.confirmedClassification === null) reasons.push('CONFIRMED_TIER_DID_NOT_CLASSIFY');
   if (CONFIDENCE_RANK[row.confirmedEval.confidence] < CONFIDENCE_RANK['moderate']) {
     reasons.push('CONFIRMED_CONFIDENCE_BELOW_MODERATE');
   }
-  const insufficientPeerAtConfirmed = row.hypothesisEval.metricEffects.some((hypEffect) => {
-    if (!hypEffect.materiality) return false;
-    const confirmedEffect = row.confirmedEval.metricEffects.find((e) => e.metric_code === hypEffect.metric_code);
-    return confirmedEffect ? !confirmedEffect.available && confirmedEffect.candidate_sample_size >= hypEffect.candidate_sample_size : false;
-  });
-  if (insufficientPeerAtConfirmed) reasons.push('CONFIRMED_PEER_SUPPORT_INSUFFICIENT');
-  const missingSupportingMetricAtConfirmed = row.hypothesisEval.metricEffects.filter(
-    (hypEffect) => hypEffect.materiality && !row.confirmedEval.metricEffects.find((e) => e.metric_code === hypEffect.metric_code)?.available,
-  ).length;
-  if (missingSupportingMetricAtConfirmed > 0) reasons.push('ONE_OR_MORE_SUPPORTING_METRICS_UNAVAILABLE_AT_CONFIRMED_TIER');
-  if (row.confirmedClassification === null) reasons.push('CONFIRMED_TIER_DID_NOT_CLASSIFY');
   return reasons;
 }
+
+// Additive metadata only — never used to gate eligibility, confidence,
+// ranking, or selection. These four families compare economics across
+// segments (category/type/brand/value-band) without controlling for each
+// segment's own acquisition-value mix or deal composition, so the
+// comparison itself may partly reflect that uncontrolled mix rather than
+// the segment identity alone.
+const VALUE_BAND_MIX_UNCONTROLLED_FAMILIES: ReadonlySet<string> = new Set([
+  'CATEGORY',
+  'TYPE_WITHIN_CATEGORY',
+  'BRAND_WITHIN_CATEGORY',
+  'TYPE_ACQUISITION_VALUE_BAND',
+]);
 
 function buildRowLimitations(row: WorkingRow, isHypothesis: boolean): string[] {
   const limitations = new Set<string>(['REALIZED_ITEMS_ONLY', 'ASSOCIATION_NOT_CAUSATION', 'HISTORICAL_AND_APP_TRACKED_ITEMS_POOLED']);
   for (const l of row.candidate.limitations) limitations.add(l);
   if (row.historicalDiffPp !== null && row.historicalDiffPp >= HISTORICAL_IMPORT_COMPOSITION_DIFF_THRESHOLD_PP) {
     limitations.add('HISTORICAL_IMPORT_COMPOSITION_DIFFERS_FROM_PEERS');
+  }
+  if (VALUE_BAND_MIX_UNCONTROLLED_FAMILIES.has(row.candidate.family_code)) {
+    limitations.add('VALUE_BAND_AND_DEAL_MIX_NOT_CONTROLLED');
   }
   if (isHypothesis) limitations.add('PRELIMINARY_HYPOTHESIS_NOT_YET_CONFIRMED');
   return Array.from(limitations);
