@@ -1092,6 +1092,156 @@ async function main() {
   }
 
   // ══════════════════════════════════════════════════════════════════════
+  // Section U — reason-code accuracy patch: CONFIRMED_TIER_DID_NOT_CLASSIFY
+  // must only appear when every earlier confirmed-tier prerequisite
+  // (candidate sample, peer sample, peer count, confidence) already
+  // passed (25 numbered points)
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[U — CONFIRMED_TIER_DID_NOT_CLASSIFY gating]');
+  {
+    // Guitars production-shaped case: candidate n=43, all samples >=6,
+    // confirmed peer minimum sample = 5.
+    const guitars = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=1', peer_group_key: 'family=CATEGORY_GUITARS_U', segment: { category_id: 1, category_name: 'Guitars' }, realized_item_count: 43, profit_sample_size: 43, roi_sample_size: 43, dom_sample_size: 43, median_net_profit: 900, median_roi: 55, median_days_on_market: 10, confidence: 'stronger' });
+    const guitarsPeer1 = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=2', peer_group_key: 'family=CATEGORY_GUITARS_U', segment: { category_id: 2, category_name: 'Amps' }, realized_item_count: 5, profit_sample_size: 5, roi_sample_size: 5, dom_sample_size: 5, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const guitarsPeer2 = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=3', peer_group_key: 'family=CATEGORY_GUITARS_U', segment: { category_id: 3, category_name: 'Pedals' }, realized_item_count: 5, profit_sample_size: 5, roi_sample_size: 5, dom_sample_size: 5, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const guitarsResult = runPatternDiscovery(evidenceOf([guitars, guitarsPeer1, guitarsPeer2]));
+    const guitarsHyp = guitarsResult.emerging_hypotheses.find((h) => h.pattern_key === 'CATEGORY|category_id=1')!;
+    const guitarsEval = guitarsResult.candidate_evaluations.find((c) => c.pattern_key === 'CATEGORY|category_id=1')!;
+
+    check('test 1: peer sample n=5 does not emit CONFIRMED_TIER_DID_NOT_CLASSIFY', !guitarsHyp.ineligibility_reasons.includes('CONFIRMED_TIER_DID_NOT_CLASSIFY'), guitarsHyp.ineligibility_reasons);
+    check('test 11 / production result: Guitars ineligibility_reasons is EXACTLY ["CONFIRMED_PEER_SAMPLE_INSUFFICIENT"]', JSON.stringify(guitarsHyp.ineligibility_reasons) === JSON.stringify(['CONFIRMED_PEER_SAMPLE_INSUFFICIENT']), guitarsHyp.ineligibility_reasons);
+    check(
+      'test 13: Guitars confirmation_needed remains EXACTLY the documented, unchanged message',
+      JSON.stringify(guitarsHyp.confirmation_needed) ===
+        JSON.stringify(['More completed items are needed in eligible peer segments for profit, ROI, and DOM to reach the confirmed peer threshold of n=6 (current minimum peer sample n=5).']),
+      guitarsHyp.confirmation_needed,
+    );
+    check('test 16: Guitars hypothesis identity (pattern_key/family_code/pattern_type) is unchanged', guitarsHyp.pattern_key === 'CATEGORY|category_id=1' && guitarsHyp.family_code === 'CATEGORY' && guitarsHyp.pattern_type === 'BALANCED_STRENGTH', { pattern_key: guitarsHyp.pattern_key, family_code: guitarsHyp.family_code, pattern_type: guitarsHyp.pattern_type });
+    check('test 17: Guitars summary/headline are unchanged in shape (no classification wording leaked into them)', !guitarsHyp.summary.includes('confirmed pattern profiles') && !guitarsHyp.headline.includes('confirmed pattern profiles'));
+    check('test 19: Guitars candidate evaluation status remains "hypothesis"', guitarsEval.status === 'hypothesis', guitarsEval.status);
+    check('test 20: Guitars raw metric_effects values are untouched (peer_baseline_median still a real number, not stringified/rounded away)', typeof guitarsHyp.metric_effects[0].peer_baseline_median === 'number');
+
+    // Fender production-shaped case: candidate n=12, all samples >=6,
+    // confirmed peer minimum sample = 3.
+    const fender = seg({ family_code: 'BRAND_WITHIN_CATEGORY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=1', peer_group_key: 'category_id=1_fender_U', segment: { category_id: 1, category_name: 'Guitars', brand_id: 1, brand_name: 'Fender' }, realized_item_count: 12, profit_sample_size: 12, roi_sample_size: 12, dom_sample_size: 12, median_net_profit: 900, median_roi: 55, median_days_on_market: 10, confidence: 'stronger' });
+    const fenderPeer1 = seg({ family_code: 'BRAND_WITHIN_CATEGORY_PEER_ONLY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=2', peer_group_key: 'category_id=1_fender_U', segment: { category_id: 1, category_name: 'Guitars', brand_id: 2, brand_name: 'Gibson' }, realized_item_count: 3, profit_sample_size: 3, roi_sample_size: 3, dom_sample_size: 3, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const fenderPeer2 = seg({ family_code: 'BRAND_WITHIN_CATEGORY_PEER_ONLY', pattern_key: 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=3', peer_group_key: 'category_id=1_fender_U', segment: { category_id: 1, category_name: 'Guitars', brand_id: 3, brand_name: 'Ibanez' }, realized_item_count: 3, profit_sample_size: 3, roi_sample_size: 3, dom_sample_size: 3, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'low' });
+    const fenderResult = runPatternDiscovery(evidenceOf([fender, fenderPeer1, fenderPeer2]));
+    const fenderHyp = fenderResult.emerging_hypotheses.find((h) => h.pattern_key.includes('brand_id=1'))!;
+    const fenderEval = fenderResult.candidate_evaluations.find((c) => c.pattern_key.includes('brand_id=1'))!;
+
+    check('test 2: peer sample n=3 does not emit CONFIRMED_TIER_DID_NOT_CLASSIFY', !fenderHyp.ineligibility_reasons.includes('CONFIRMED_TIER_DID_NOT_CLASSIFY'), fenderHyp.ineligibility_reasons);
+    check('test 12 / production result: Fender ineligibility_reasons is EXACTLY ["CONFIRMED_PEER_SAMPLE_INSUFFICIENT"]', JSON.stringify(fenderHyp.ineligibility_reasons) === JSON.stringify(['CONFIRMED_PEER_SAMPLE_INSUFFICIENT']), fenderHyp.ineligibility_reasons);
+    check(
+      'test 14: Fender confirmation_needed remains EXACTLY the documented, unchanged message',
+      JSON.stringify(fenderHyp.confirmation_needed) ===
+        JSON.stringify(['More completed items are needed in eligible peer segments for profit, ROI, and DOM to reach the confirmed peer threshold of n=6 (current minimum peer sample n=3).']),
+      fenderHyp.confirmation_needed,
+    );
+    check('Fender hypothesis identity is unchanged', fenderHyp.pattern_key === 'BRAND_WITHIN_CATEGORY|category_id=1|brand_id=1' && fenderHyp.pattern_type === 'BALANCED_STRENGTH');
+    check('Fender candidate evaluation status remains "hypothesis"', fenderEval.status === 'hypothesis', fenderEval.status);
+
+    // test 3 — candidate sample n=5 does not emit the classification
+    // reason. Peer rows use a dummy, non-novel/non-fixed family_code so
+    // they are never ALSO independently evaluated as competing 'CATEGORY'
+    // candidates in their own right (peer eligibility is keyed purely by
+    // peer_group_key, never by the peer row's own family_code — see
+    // evaluateCandidate.ts's hasSufficientPeerSupport/computeMetricEffect,
+    // neither of which ever reads a peer's family_code) — this keeps the
+    // fixture isolated to testing exactly one row's own blocker.
+    const csCandidate = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=60', peer_group_key: 'family=CATEGORY_CS_U', segment: { category_id: 60 }, realized_item_count: 10, profit_sample_size: 5, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 900, median_roi: 55, median_days_on_market: 20, confidence: 'moderate' });
+    const csPeer1 = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=61', peer_group_key: 'family=CATEGORY_CS_U', segment: { category_id: 61 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 200, median_roi: 10, median_days_on_market: 20, confidence: 'stronger' });
+    const csPeer2 = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=62', peer_group_key: 'family=CATEGORY_CS_U', segment: { category_id: 62 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 200, median_roi: 10, median_days_on_market: 20, confidence: 'stronger' });
+    const csResult = runPatternDiscovery(evidenceOf([csCandidate, csPeer1, csPeer2]));
+    const csHyp = csResult.emerging_hypotheses.find((h) => h.pattern_key.includes('category_id=60'))!;
+    check('test 3: candidate sample n=5 does not emit CONFIRMED_TIER_DID_NOT_CLASSIFY', !csHyp.ineligibility_reasons.includes('CONFIRMED_TIER_DID_NOT_CLASSIFY'), csHyp.ineligibility_reasons);
+    check('candidate-sample-only case: reasons contains only CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT', JSON.stringify(csHyp.ineligibility_reasons) === JSON.stringify(['CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT']), csHyp.ineligibility_reasons);
+
+    // test 4 — insufficient confirmed peer COUNT does not emit the
+    // classification reason.
+    const pcCandidate = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=70', peer_group_key: 'family=CATEGORY_PC_U', segment: { category_id: 70 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 900, median_roi: 55, median_days_on_market: 10, confidence: 'stronger' });
+    const pcPeer1 = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=71', peer_group_key: 'family=CATEGORY_PC_U', segment: { category_id: 71 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 200, median_roi: 10, median_days_on_market: 30, confidence: 'stronger' });
+    const pcResult = runPatternDiscovery(evidenceOf([pcCandidate, pcPeer1]));
+    const pcHyp = pcResult.emerging_hypotheses.find((h) => h.pattern_key.includes('category_id=70'))!;
+    check('test 4: insufficient confirmed peer count does not emit CONFIRMED_TIER_DID_NOT_CLASSIFY', !pcHyp.ineligibility_reasons.includes('CONFIRMED_TIER_DID_NOT_CLASSIFY'), pcHyp.ineligibility_reasons);
+    check('peer-count-only case: reasons contains only CONFIRMED_PEER_SUPPORT_INSUFFICIENT', JSON.stringify(pcHyp.ineligibility_reasons) === JSON.stringify(['CONFIRMED_PEER_SUPPORT_INSUFFICIENT']), pcHyp.ineligibility_reasons);
+
+    // test 5 — confirmed confidence below moderate does not emit the
+    // classification reason. realized_item_count=5 deliberately drives
+    // the pattern-level confidence tier down to 'low' via the candidate's
+    // own realized_item_count component even though every per-metric
+    // sample/peer requirement independently passes.
+    const confCandidate = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=80', peer_group_key: 'family=CATEGORY_CONF_U', segment: { category_id: 80 }, realized_item_count: 5, profit_sample_size: 5, roi_sample_size: 5, dom_sample_size: 5, median_net_profit: 500, median_roi: 20, median_days_on_market: 20, confidence: 'low' });
+    const confPeerLow1 = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=81', peer_group_key: 'family=CATEGORY_CONF_U', segment: { category_id: 81 }, realized_item_count: 4, profit_sample_size: 4, roi_sample_size: 4, dom_sample_size: 4, median_net_profit: 500, median_roi: 20, median_days_on_market: 100, confidence: 'low' });
+    const confPeerLow2 = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=82', peer_group_key: 'family=CATEGORY_CONF_U', segment: { category_id: 82 }, realized_item_count: 4, profit_sample_size: 4, roi_sample_size: 4, dom_sample_size: 4, median_net_profit: 500, median_roi: 20, median_days_on_market: 100, confidence: 'low' });
+    const confPeerHigh1 = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=83', peer_group_key: 'family=CATEGORY_CONF_U', segment: { category_id: 83 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 500, median_roi: 20, median_days_on_market: 21, confidence: 'stronger' });
+    const confPeerHigh2 = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=84', peer_group_key: 'family=CATEGORY_CONF_U', segment: { category_id: 84 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 500, median_roi: 20, median_days_on_market: 21, confidence: 'stronger' });
+    const confResult = runPatternDiscovery(evidenceOf([confCandidate, confPeerLow1, confPeerLow2, confPeerHigh1, confPeerHigh2]));
+    const confHyp = confResult.emerging_hypotheses.find((h) => h.pattern_key.includes('category_id=80'));
+    if (confHyp) {
+      check('test 5: confirmed confidence below moderate does not emit CONFIRMED_TIER_DID_NOT_CLASSIFY', !confHyp.ineligibility_reasons.includes('CONFIRMED_TIER_DID_NOT_CLASSIFY'), confHyp.ineligibility_reasons);
+      check('confidence-only case: CONFIRMED_CONFIDENCE_BELOW_MODERATE is present', confHyp.ineligibility_reasons.includes('CONFIRMED_CONFIDENCE_BELOW_MODERATE'), confHyp.ineligibility_reasons);
+    } else {
+      check('test 5 fixture produced a qualifying low-confidence hypothesis', false, confResult.candidate_evaluations.find((c) => c.pattern_key.includes('category_id=80')));
+    }
+
+    // test 6 — unavailable confirmed-tier metric effect (i.e. any diagnosis
+    // category other than 'none') never emits the classification reason;
+    // verified directly against the diagnostic function's own contract.
+    const diagUnavailable = diagnoseConfirmedTierMetricBlocker('median_net_profit', 'CATEGORY', csCandidate, [csPeer1, csPeer2]);
+    check('test 6: an unavailable confirmed-tier metric effect (category != none) is exactly what candidate-sample gating above already excludes', diagUnavailable.category !== 'none' && !csHyp.ineligibility_reasons.includes('CONFIRMED_TIER_DID_NOT_CLASSIFY'), diagUnavailable);
+
+    // test 7/8 — a true classification-only failure DOES emit the
+    // classification reason, and ONLY that reason.
+    const clsCandidate = seg({ family_code: 'CATEGORY', pattern_key: 'CATEGORY|category_id=90', peer_group_key: 'family=CATEGORY_CLS_U', segment: { category_id: 90, category_name: 'ClsTest' }, realized_item_count: 20, profit_sample_size: 20, roi_sample_size: 20, dom_sample_size: 20, median_net_profit: 500, median_roi: 20, median_days_on_market: 20, confidence: 'stronger' });
+    const clsPeerA = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=91', peer_group_key: 'family=CATEGORY_CLS_U', segment: { category_id: 91 }, realized_item_count: 4, profit_sample_size: 4, roi_sample_size: 4, dom_sample_size: 4, median_net_profit: 500, median_roi: 20, median_days_on_market: 100, confidence: 'low' });
+    const clsPeerB = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=92', peer_group_key: 'family=CATEGORY_CLS_U', segment: { category_id: 92 }, realized_item_count: 4, profit_sample_size: 4, roi_sample_size: 4, dom_sample_size: 4, median_net_profit: 500, median_roi: 20, median_days_on_market: 100, confidence: 'low' });
+    const clsPeerC = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=93', peer_group_key: 'family=CATEGORY_CLS_U', segment: { category_id: 93 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 500, median_roi: 20, median_days_on_market: 21, confidence: 'stronger' });
+    const clsPeerD = seg({ family_code: 'CATEGORY_PEER_ONLY', pattern_key: 'CATEGORY|category_id=94', peer_group_key: 'family=CATEGORY_CLS_U', segment: { category_id: 94 }, realized_item_count: 10, profit_sample_size: 10, roi_sample_size: 10, dom_sample_size: 10, median_net_profit: 500, median_roi: 20, median_days_on_market: 21, confidence: 'stronger' });
+    const clsResult = runPatternDiscovery(evidenceOf([clsCandidate, clsPeerA, clsPeerB, clsPeerC, clsPeerD]));
+    const clsHyp = clsResult.emerging_hypotheses.find((h) => h.pattern_key.includes('category_id=90'))!;
+    check('test 7: a true classification-only failure emits CONFIRMED_TIER_DID_NOT_CLASSIFY', clsHyp.ineligibility_reasons.includes('CONFIRMED_TIER_DID_NOT_CLASSIFY'), clsHyp.ineligibility_reasons);
+    check(
+      'test 8: classification-only failure emits ONLY the classification reason — no candidate/peer-sample/peer-count reasons',
+      JSON.stringify(clsHyp.ineligibility_reasons) === JSON.stringify(['CONFIRMED_TIER_DID_NOT_CLASSIFY']),
+      clsHyp.ineligibility_reasons,
+    );
+    check(
+      'classification-only confirmation_needed also stays exactly the classification message (unchanged by this patch)',
+      JSON.stringify(clsHyp.confirmation_needed) === JSON.stringify(['The current confirmed-tier metric signals do not yet form one of the supported confirmed pattern profiles.']),
+      clsHyp.confirmation_needed,
+    );
+
+    // test 9/10 — deterministic ordering, no duplicates, across every
+    // hypothesis produced in this section.
+    const allHypothesesU = [guitarsHyp, fenderHyp, csHyp, pcHyp, ...(confHyp ? [confHyp] : []), clsHyp];
+    for (const h of allHypothesesU) {
+      check(`test 10: ${h.pattern_key} ineligibility_reasons has no duplicate codes`, new Set(h.ineligibility_reasons).size === h.ineligibility_reasons.length, h.ineligibility_reasons);
+    }
+    const guitarsResultAgain = runPatternDiscovery(evidenceOf([guitars, guitarsPeer1, guitarsPeer2]));
+    const guitarsHypAgain = guitarsResultAgain.emerging_hypotheses.find((h) => h.pattern_key === 'CATEGORY|category_id=1')!;
+    check('test 9: reason ordering is deterministic (repeat run yields the identical array)', JSON.stringify(guitarsHyp.ineligibility_reasons) === JSON.stringify(guitarsHypAgain.ineligibility_reasons));
+
+    // test 18 — selection_summary is unaffected by this patch (still
+    // reconciles the same way it always has for this fixture).
+    check('test 18: Guitars fixture selection_summary reconciles (emerging_hypothesis_count matches array length)', guitarsResult.selection_summary.emerging_hypothesis_count === guitarsResult.emerging_hypotheses.length);
+    check('Fender fixture selection_summary reconciles', fenderResult.selection_summary.emerging_hypothesis_count === fenderResult.emerging_hypotheses.length);
+
+    // test 15 — selected pattern identities are unaffected (this patch
+    // never touches selectedRows/buildSelectedPattern at all).
+    check('test 15: no selected_patterns exist in any of these under-sampled fixtures (they remain hypotheses only, as before)', guitarsResult.selected_patterns.length === 0 && fenderResult.selected_patterns.length === 0);
+
+    // test 23/24 — no SQL migration, no version change (structural checks).
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+    const migrationsDir = path.join(__dirname, '../supabase/migrations');
+    const migrationFiles = fs.readdirSync(migrationsDir);
+    check('test 23: no new SQL migration file was added by this patch (still the same v2.13 migration, nothing newer)', !migrationFiles.some((f: string) => f > '20260824000000_build_analytics_snapshot_v2_13.sql'), migrationFiles.filter((f: string) => f > '20260824000000_build_analytics_snapshot_v2_13.sql'));
+    check('test 24: engine_version is still 1.0 after this patch', guitarsResult.engine_version === '1.0', guitarsResult.engine_version);
+    check('test 24b: source_analytics_version is still 2.13 after this patch', guitarsResult.source_analytics_version === '2.13', guitarsResult.source_analytics_version);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
   // Section S — integration with the real production runner (1, 5, 6, 75,
   // 76, 77, 78, 79)
   // ══════════════════════════════════════════════════════════════════════

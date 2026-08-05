@@ -319,16 +319,39 @@ function diagnoseHypothesisMetricBlockers(row: WorkingRow): ConfirmedTierMetricD
  * using the SAME per-metric diagnoses that drive confirmation_needed text
  * — so the reason codes and the human-readable messages can never
  * disagree about what actually blocked confirmation.
+ *
+ * CONFIRMED_TIER_DID_NOT_CLASSIFY is a claim about the SIGNAL COMBINATION,
+ * not about sample/peer/confidence adequacy — it is only accurate when
+ * every earlier confirmed-tier prerequisite already passed (every
+ * material metric had sufficient candidate sample, sufficient confirmed-
+ * tier peer sample, sufficient confirmed-tier peer count, and pattern-
+ * level confirmed confidence reached moderate+ — i.e. confirmed metric
+ * effects were fully calculable). When any of those prerequisites failed
+ * instead, the confirmed tier was never fully evaluable in the first
+ * place, so blaming "classification" on top would misdescribe the real
+ * blocker (see templates.ts's buildConfirmationNeeded, which gates its
+ * own classification message the same way).
  */
 function deriveHypothesisIneligibilityReasons(row: WorkingRow, diagnoses: ConfirmedTierMetricDiagnosis[]): string[] {
   const reasons: string[] = [];
-  if (diagnoses.some((d) => d.category === 'candidate_sample')) reasons.push('CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT');
-  if (diagnoses.some((d) => d.category === 'peer_sample')) reasons.push('CONFIRMED_PEER_SAMPLE_INSUFFICIENT');
-  if (diagnoses.some((d) => d.category === 'peer_count')) reasons.push('CONFIRMED_PEER_SUPPORT_INSUFFICIENT');
-  if (row.confirmedClassification === null) reasons.push('CONFIRMED_TIER_DID_NOT_CLASSIFY');
-  if (CONFIDENCE_RANK[row.confirmedEval.confidence] < CONFIDENCE_RANK['moderate']) {
-    reasons.push('CONFIRMED_CONFIDENCE_BELOW_MODERATE');
+  const hasCandidateSampleBlocker = diagnoses.some((d) => d.category === 'candidate_sample');
+  const hasPeerSampleBlocker = diagnoses.some((d) => d.category === 'peer_sample');
+  const hasPeerCountBlocker = diagnoses.some((d) => d.category === 'peer_count');
+  const confirmedConfidenceBelowModerate = CONFIDENCE_RANK[row.confirmedEval.confidence] < CONFIDENCE_RANK['moderate'];
+
+  if (hasCandidateSampleBlocker) reasons.push('CONFIRMED_CANDIDATE_SAMPLE_INSUFFICIENT');
+  if (hasPeerSampleBlocker) reasons.push('CONFIRMED_PEER_SAMPLE_INSUFFICIENT');
+  if (hasPeerCountBlocker) reasons.push('CONFIRMED_PEER_SUPPORT_INSUFFICIENT');
+
+  const confirmedPrerequisitesSatisfied =
+    !hasCandidateSampleBlocker && !hasPeerSampleBlocker && !hasPeerCountBlocker && !confirmedConfidenceBelowModerate;
+  const confirmedPatternType = row.confirmedClassification?.pattern_type ?? null;
+  if (confirmedPrerequisitesSatisfied && confirmedPatternType === null) {
+    reasons.push('CONFIRMED_TIER_DID_NOT_CLASSIFY');
   }
+
+  if (confirmedConfidenceBelowModerate) reasons.push('CONFIRMED_CONFIDENCE_BELOW_MODERATE');
+
   return reasons;
 }
 
