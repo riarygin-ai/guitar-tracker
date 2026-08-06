@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import CompactPageHeader from '@/components/CompactPageHeader';
+import AdviceCardView from '@/components/AdviceCardView';
 import {
   supabase,
   getRecentAnalyticsRuns,
@@ -15,12 +16,10 @@ import type { AnalyticsRun, AnalyticsRunMeta, AnalyticsRunStatus, AnalyticsSnaps
 import type { AnalyticsRunAdviceMeta, AnalyticsRunAdviceRow, SourceRegistryEntry } from '@/lib/analytics/advice/types';
 import {
   formatAdviceStatus,
-  formatAdviceType,
   formatConfidence,
   formatDateTime as formatAdviceDateTime,
   formatKeyMetrics,
   formatPatternMetricEntry,
-  formatPriority,
   formatSourceType,
   humanizeCode,
 } from '@/lib/analytics/advice/presentation';
@@ -82,19 +81,6 @@ function AdviceStatusBadge({ status }: { status: string | null }) {
         <path d="M12 2 9.5 8.5 3 11l6.5 2.5L12 20l2.5-6.5L21 11l-6.5-2.5z" />
       </svg>
       {formatAdviceStatus(status)}
-    </span>
-  );
-}
-
-function PriorityBadge({ priority }: { priority: string }) {
-  const classes: Record<string, string> = {
-    high: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-700',
-    medium: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700',
-    low: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600',
-  };
-  return (
-    <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${classes[priority] ?? classes.low}`}>
-      {formatPriority(priority)}
     </span>
   );
 }
@@ -359,7 +345,7 @@ export default function AnalyticsPage() {
     setSelectedAdviceRevisionId(revisions[0]?.id ?? null);
   }
 
-  async function handleGenerateAdvice(runId: number) {
+  async function handleGenerateAdvice(runId: number, mode: 'auto' | 'retry' = 'retry') {
     // Defense in depth alongside the disabled/aria-busy button state below —
     // a second invocation for the SAME run while one is already in flight
     // must never fire a second request (a different run is always fine —
@@ -371,7 +357,14 @@ export default function AnalyticsPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error('Not authenticated — please sign in again.');
 
-      const res = await fetch(`/api/analytics/runs/${runId}/advice`, {
+      // 'auto' — used only by History's "Generate" button, for a run with
+      // no revision yet: idempotent, so a second concurrent/duplicate
+      // request safely skips instead of creating a second revision. The
+      // default, 'retry', is Run Detail's existing Generate/Retry/
+      // Regenerate behavior — always creates a new revision — unchanged
+      // from before this parameter existed.
+      const url = mode === 'auto' ? `/api/analytics/runs/${runId}/advice?mode=auto` : `/api/analytics/runs/${runId}/advice`;
+      const res = await fetch(url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
@@ -388,7 +381,15 @@ export default function AnalyticsPage() {
       }
       await loadAdviceMetaForHistory(runsRef.current);
 
-      if (!res.ok && res.status !== 502) {
+      // A concurrent/duplicate 'auto' request racing another one for the
+      // SAME run is expected and NOT an error — the RPC's idempotency
+      // guard means this response just means "a revision already exists
+      // now, which is exactly the desired end state" — the row refresh
+      // above already reflects it. Every other non-ok outcome (including
+      // 'retry' mode's — which has no such idempotency reason to skip) is
+      // a real error to surface.
+      const isBenignAlreadyExists = mode === 'auto' && res.status === 409 && payload.reason === 'ADVICE_ALREADY_EXISTS_FOR_RUN';
+      if (!res.ok && res.status !== 502 && !isBenignAlreadyExists) {
         throw new Error(typeof payload.error === 'string' ? payload.error : `Server error (${res.status})`);
       }
     } catch (err) {
@@ -591,12 +592,23 @@ export default function AnalyticsPage() {
                         <td className="px-4 py-3 text-slate-700 dark:text-slate-200">{formatDuration(run.duration_ms)}</td>
                         <td className="px-4 py-3 text-slate-700 dark:text-slate-200">{run.analytics_version}</td>
                         <td className="px-4 py-3">
-                          <div className="flex flex-col gap-0.5">
+                          <div className="flex flex-col items-start gap-1">
                             <AdviceStatusBadge status={advice?.status ?? null} />
                             {advice && (
                               <span className="text-[11px] text-slate-400 dark:text-slate-500">
                                 Rev {advice.revision_number}{advice.model ? ` · ${advice.model}` : ''}
                               </span>
+                            )}
+                            {run.status === 'completed' && !advice && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleGenerateAdvice(run.id, 'auto'); }}
+                                disabled={generatingAdviceForRunId === run.id}
+                                aria-busy={generatingAdviceForRunId === run.id}
+                                className="mt-0.5 inline-flex items-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+                              >
+                                {generatingAdviceForRunId === run.id ? 'Generating…' : 'Generate Advice'}
+                              </button>
                             )}
                           </div>
                         </td>
@@ -622,12 +634,17 @@ export default function AnalyticsPage() {
               {runs.map((run) => {
                 const isSelected = run.id === selectedRunId;
                 const advice = adviceMetaByRun[run.id];
+                const isGeneratingThisRun = generatingAdviceForRunId === run.id;
                 return (
-                  <button
+                  <div
                     key={run.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => selectRun(run.id)}
-                    className={`w-full rounded-2xl border p-4 text-left transition ${
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRun(run.id); }
+                    }}
+                    className={`w-full cursor-pointer rounded-2xl border p-4 text-left transition ${
                       isSelected
                         ? 'border-slate-300 bg-slate-50 dark:border-slate-500 dark:bg-slate-700/50'
                         : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800'
@@ -641,10 +658,21 @@ export default function AnalyticsPage() {
                       <span>Duration {formatDuration(run.duration_ms)}</span>
                       <span>Version {run.analytics_version}</span>
                     </div>
-                    <div className="mt-2">
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
                       <AdviceStatusBadge status={advice?.status ?? null} />
+                      {run.status === 'completed' && !advice && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleGenerateAdvice(run.id, 'auto'); }}
+                          disabled={isGeneratingThisRun}
+                          aria-busy={isGeneratingThisRun}
+                          className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+                        >
+                          {isGeneratingThisRun ? 'Generating…' : 'Generate Advice'}
+                        </button>
+                      )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -816,35 +844,11 @@ export default function AnalyticsPage() {
                 ) : (
                   <div className="space-y-3">
                     {selectedAdvice.advice?.advice_cards.map((card) => (
-                      <div key={card.advice_code} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-700 dark:bg-slate-700/30">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{formatAdviceType(card.advice_type)}</span>
-                          <PriorityBadge priority={card.priority} />
-                          <ConfidencePill confidence={card.confidence_label} />
-                        </div>
-                        <h4 className="mt-1.5 break-words text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
-                        <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{card.advice}</p>
-                        <p className="mt-1.5 break-words text-xs text-slate-500 dark:text-slate-400"><span className="font-semibold">Why it matters:</span> {card.why_it_matters}</p>
-                        {card.limitations.length > 0 && (
-                          <ul className="mt-1.5 list-disc space-y-0.5 break-words pl-4 text-[11px] text-slate-400 dark:text-slate-500">
-                            {card.limitations.map((l) => <li key={l}>{humanizeCode(l)}</li>)}
-                          </ul>
-                        )}
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleViewEvidence(card.source_ids)}
-                            className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                          >
-                            View Evidence ({card.source_ids.length})
-                          </button>
-                          {card.item_id != null && (
-                            <Link href={`/inventory/${card.item_id}`} className="shrink-0 text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
-                              Open Item
-                            </Link>
-                          )}
-                        </div>
-                      </div>
+                      <AdviceCardView
+                        key={card.advice_code}
+                        card={card}
+                        evidence={{ kind: 'button', onClick: () => handleViewEvidence(card.source_ids) }}
+                      />
                     ))}
                   </div>
                 )}

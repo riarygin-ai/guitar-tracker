@@ -1,8 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { splitSearchTerms } from '@/lib/search';
-import type { AnalyticsRunAdviceMeta } from '@/lib/analytics/advice/types';
+import type { AnalyticsRunAdviceMeta, AnalyticsRunAdviceRow } from '@/lib/analytics/advice/types';
 import type {
   AiPrompt,
+  AnalyticsRunMeta,
   AppUser,
   Brand,
   CashFlow,
@@ -1167,5 +1168,48 @@ export async function getLatestAdviceForRun(runId: number) {
     .order('revision_number', { ascending: false })
     .limit(1)
     .maybeSingle();
+}
+
+// The Dashboard's actual selection rule: the newest Analytics Run (by
+// analytics_run_id — an identity column, so higher id = created later,
+// same ordering `getRecentAnalyticsRuns` already relies on) that has AT
+// LEAST ONE completed advice revision, and within that run, its HIGHEST
+// completed revision — not necessarily that run's globally-latest
+// revision, since a later retry attempt may have failed. A single
+// ORDER BY (analytics_run_id DESC, revision_number DESC) LIMIT 1 over
+// status='completed' rows satisfies both conditions at once: the top row
+// is, by construction, in the newest run that has any completed row, and
+// the highest-numbered completed revision within it. RLS on
+// analytics_run_advice already restricts this to the caller's own rows
+// (see the module header above), so this can never return another user's
+// advice. Returns null when the current user has no completed advice at
+// all — the Dashboard section must not render in that case.
+export async function getLatestCompletedAdviceForCurrentUser(): Promise<{
+  data: { run: AnalyticsRunMeta; advice: AnalyticsRunAdviceRow } | null;
+  error: unknown;
+}> {
+  const { data: adviceRow, error: adviceError } = await supabase
+    .from('analytics_run_advice')
+    .select(ANALYTICS_RUN_ADVICE_FULL_COLUMNS)
+    .eq('status', 'completed')
+    .order('analytics_run_id', { ascending: false })
+    .order('revision_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (adviceError || !adviceRow) return { data: null, error: adviceError };
+
+  const { data: run, error: runError } = await supabase
+    .from('analytics_runs')
+    .select(ANALYTICS_RUN_META_COLUMNS)
+    .eq('id', (adviceRow as unknown as AnalyticsRunAdviceRow).analytics_run_id)
+    .maybeSingle();
+
+  if (runError || !run) return { data: null, error: runError };
+
+  return {
+    data: { run: run as unknown as AnalyticsRunMeta, advice: adviceRow as unknown as AnalyticsRunAdviceRow },
+    error: null,
+  };
 }
 

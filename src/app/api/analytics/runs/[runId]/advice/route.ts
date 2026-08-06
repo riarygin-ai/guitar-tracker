@@ -7,22 +7,28 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Generate AI Advice / Retry — for an EXISTING analytics_runs row only.
-// Every explicit, user-triggered click (whether this run has no advice
-// yet, or a prior attempt failed) always requests a NEW revision — the
-// idempotent "skip if a revision already exists" guard is exclusively for
-// the automatic post-run-completion trigger (see POST /api/analytics/runs,
-// which calls generateAdviceForRun with mode: 'auto'), never for this
-// explicit endpoint.
+// Every explicit, user-triggered click defaults to always requesting a NEW
+// revision (mode: 'retry') — Run Detail's Generate/Retry/Regenerate
+// buttons all rely on this, unchanged. The one exception is Analytics
+// History's "Generate" button for a run with no revision yet
+// (?mode=auto): idempotent, so a duplicate/concurrent click safely skips
+// instead of creating a second revision — the same 'auto' behavior POST
+// /api/analytics/runs already uses for the automatic post-run-completion
+// trigger, now also reachable explicitly for a run whose automatic
+// generation never fired or was skipped.
 //
-// Deliberately no request body: the only input is the run id in the URL,
-// and the caller can never supply their own target user — mirrors POST
-// /api/analytics/runs' own "no client input" contract exactly.
+// Deliberately still no request BODY: the only input beyond the run id in
+// the URL is this one query-string mode flag, and the caller can never
+// supply their own target user — mirrors POST /api/analytics/runs' own
+// "no client input" contract.
 export async function POST(req: NextRequest, context: { params: Promise<{ runId: string }> }) {
   const { runId: runIdParam } = await context.params;
   const runId = Number(runIdParam);
   if (!Number.isInteger(runId) || runId <= 0) {
     return NextResponse.json({ error: 'Invalid run id' }, { status: 400 });
   }
+
+  const mode = req.nextUrl.searchParams.get('mode') === 'auto' ? 'auto' : 'retry';
 
   // ── Authenticate ─────────────────────────────────────────────────────
   const authHeader = req.headers.get('authorization');
@@ -68,7 +74,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ runId:
     runId,
     requestingUserId: appUser.id as number,
     serviceClient,
-    mode: 'retry',
+    mode,
   });
 
   if (outcome.status === 'skipped') {
@@ -80,6 +86,9 @@ export async function POST(req: NextRequest, context: { params: Promise<{ runId:
     if (outcome.reason === 'RUN_NOT_COMPLETED') {
       return NextResponse.json({ error: 'This run has not completed yet' }, { status: 409 });
     }
+    // mode: 'auto' only — a concurrent/duplicate request already claimed
+    // (or already found) a revision for this run; the caller's `reason`
+    // check treats this specific case as a benign refresh, not an error.
     return NextResponse.json({ error: 'Advice generation could not be started', reason: outcome.reason }, { status: 409 });
   }
 

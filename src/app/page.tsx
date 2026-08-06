@@ -1,12 +1,12 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { supabase, getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getAllListedDates, getLatestCompletedAnalyticsRun, getLatestAdviceForRun } from '@/lib/supabase'
+import { supabase, getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getAllListedDates, getLatestCompletedAdviceForCurrentUser } from '@/lib/supabase'
 import type { AnalyticsRunMeta } from '@/types'
 import type { AnalyticsRunAdviceRow } from '@/lib/analytics/advice/types'
-import { formatConfidence, formatDateTime as formatAdviceDateTime, formatPriority, humanizeCode } from '@/lib/analytics/advice/presentation'
+import { formatDateTime as formatAdviceDateTime } from '@/lib/analytics/advice/presentation'
+import AdviceCardView from '@/components/AdviceCardView'
 
 export default function HomePage() {
   const router = useRouter()
@@ -29,56 +29,21 @@ export default function HomePage() {
   // ── Latest Analytics Advice (Auditable AI Advice v1.0) ──────────────────
   // Deliberately its own independent fetch, separate from the main
   // Promise.all above — the rest of the Dashboard must never wait on (or
-  // fail because of) analytics/advice availability.
-  const [latestRun, setLatestRun] = useState<AnalyticsRunMeta | null>(null)
-  const [latestAdvice, setLatestAdvice] = useState<AnalyticsRunAdviceRow | null>(null)
+  // fail because of) analytics/advice availability. Display-only: the
+  // Dashboard neither generates nor retries advice — that now lives
+  // exclusively in Analytics History (see src/app/analytics/page.tsx).
+  const [latestCompletedAdvice, setLatestCompletedAdvice] = useState<{ run: AnalyticsRunMeta; advice: AnalyticsRunAdviceRow } | null>(null)
   const [adviceLoading, setAdviceLoading] = useState(true)
-  const [adviceActionBusy, setAdviceActionBusy] = useState(false)
-  const [adviceActionError, setAdviceActionError] = useState<string | null>(null)
-
-  async function loadLatestAdvice() {
-    setAdviceLoading(true)
-    const { data: run } = await getLatestCompletedAnalyticsRun()
-    const runMeta = (run as AnalyticsRunMeta | null) ?? null
-    setLatestRun(runMeta)
-    if (runMeta) {
-      const { data: advice } = await getLatestAdviceForRun(runMeta.id)
-      setLatestAdvice((advice as unknown as AnalyticsRunAdviceRow | null) ?? null)
-    } else {
-      setLatestAdvice(null)
-    }
-    setAdviceLoading(false)
-  }
 
   useEffect(() => {
-    loadLatestAdvice()
-  }, [])
-
-  async function handleDashboardAdviceAction() {
-    // Defense in depth alongside the disabled/aria-busy button state below —
-    // a second invocation (e.g. a queued click event) while one is already
-    // in flight must never fire a second request.
-    if (!latestRun || adviceActionBusy) return
-    setAdviceActionBusy(true)
-    setAdviceActionError(null)
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session?.access_token) throw new Error('Not authenticated — please sign in again.')
-      const res = await fetch(`/api/analytics/runs/${latestRun.id}/advice`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      })
-      await loadLatestAdvice()
-      if (!res.ok && res.status !== 502) {
-        const payload = await res.json().catch(() => ({}))
-        throw new Error(typeof payload.error === 'string' ? payload.error : `Server error (${res.status})`)
-      }
-    } catch (err) {
-      setAdviceActionError(err instanceof Error ? err.message : 'Could not generate advice.')
-    } finally {
-      setAdviceActionBusy(false)
+    async function loadLatestCompletedAdvice() {
+      setAdviceLoading(true)
+      const { data } = await getLatestCompletedAdviceForCurrentUser()
+      setLatestCompletedAdvice(data)
+      setAdviceLoading(false)
     }
-  }
+    loadLatestCompletedAdvice()
+  }, [])
 
   useEffect(() => {
     async function loadData() {
@@ -478,138 +443,43 @@ export default function HomePage() {
         </p>
       </section>
 
-      {/* ── Latest Analytics Advice (Auditable AI Advice v1.0) ─────────── */}
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="page-overline">Latest Analytics Advice</p>
-            {latestRun && (
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                From the run generated {formatAdviceDateTime(latestRun.completed_at ?? latestRun.created_at)}
-              </p>
+      {/* ── Latest Analytics Advice (Auditable AI Advice v1.0) ───────────
+          Display-only: no Generate/Retry control and no "View Analytics
+          History" link live here — Analytics History is the only place
+          Advice generation starts (see src/app/analytics/page.tsx). The
+          section renders nothing at all — not even an empty-state message
+          — until a completed Advice revision is actually found; a user
+          with no Advice history simply sees the rest of the Dashboard. */}
+      {!adviceLoading && latestCompletedAdvice && (
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+          <p className="page-overline">Latest Analytics Advice</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            From the Analytics Run generated {formatAdviceDateTime(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at)}.
+          </p>
+
+          <div className="mt-4">
+            {(latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 ? (
+              <div className="min-w-0">
+                <p className="break-words text-sm font-semibold text-slate-900 dark:text-white">{latestCompletedAdvice.advice.advice?.run_summary.headline}</p>
+                <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{latestCompletedAdvice.advice.advice?.run_summary.summary}</p>
+              </div>
+            ) : (
+              <div className="grid gap-3 lg:grid-cols-3">
+                {latestCompletedAdvice.advice.advice!.advice_cards.map((card) => (
+                  <AdviceCardView
+                    key={card.advice_code}
+                    card={card}
+                    evidence={{
+                      kind: 'link',
+                      href: `/analytics?runId=${latestCompletedAdvice.run.id}&sourceIds=${card.source_ids.map((s) => encodeURIComponent(s)).join(',')}`,
+                    }}
+                  />
+                ))}
+              </div>
             )}
           </div>
-          <Link href="/analytics" className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
-            View Analytics History
-          </Link>
-        </div>
-
-        {adviceActionError && (
-          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-400">
-            {adviceActionError}
-          </div>
-        )}
-
-        <div className="mt-3">
-          {adviceLoading ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400">Loading…</p>
-          ) : !latestRun ? (
-            // No completed run
-            <div className="flex flex-col items-start gap-2">
-              <p className="text-sm text-slate-500 dark:text-slate-400">No completed Analytics Run yet.</p>
-              <Link
-                href="/analytics"
-                className="inline-flex h-9 items-center justify-center rounded-xl bg-slate-950 px-3.5 text-xs font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
-              >
-                Run Analytics
-              </Link>
-            </div>
-          ) : !latestAdvice ? (
-            // Completed run, no advice
-            <div className="flex flex-col items-start gap-2">
-              <p className="text-sm text-slate-500 dark:text-slate-400">Your latest Analytics Run is ready, but AI Advice hasn&apos;t been generated for it yet.</p>
-              <button
-                type="button"
-                onClick={handleDashboardAdviceAction}
-                disabled={adviceActionBusy}
-                aria-busy={adviceActionBusy}
-                className="inline-flex h-9 items-center justify-center rounded-xl bg-slate-950 px-3.5 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
-              >
-                {adviceActionBusy ? 'Generating…' : 'Generate Advice'}
-              </button>
-            </div>
-          ) : latestAdvice.status === 'pending' || latestAdvice.status === 'generating' ? (
-            // Pending/generating
-            <div className="flex items-center gap-2">
-              <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300" />
-              <p className="text-sm text-slate-600 dark:text-slate-300">Advice is being generated…</p>
-            </div>
-          ) : latestAdvice.status === 'failed' ? (
-            // Failed — deterministic run remains available; never imply Analytics itself failed
-            <div className="flex flex-col items-start gap-2">
-              <p className="text-sm text-slate-600 dark:text-slate-300">
-                AI Advice generation did not complete for the latest run — your Analytics data itself is available and up to date.
-              </p>
-              <button
-                type="button"
-                onClick={handleDashboardAdviceAction}
-                disabled={adviceActionBusy}
-                aria-busy={adviceActionBusy}
-                className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
-              >
-                {adviceActionBusy ? 'Retrying…' : 'Retry Advice'}
-              </button>
-            </div>
-          ) : (
-            // Completed
-            (() => {
-              const cards = latestAdvice.advice?.advice_cards ?? []
-              const primary = cards[0]
-              const secondary = cards.slice(1, 3)
-              if (!primary) {
-                return (
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{latestAdvice.advice?.run_summary.headline}</p>
-                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{latestAdvice.advice?.run_summary.summary}</p>
-                  </div>
-                )
-              }
-              const primaryEvidenceHref = `/analytics?runId=${latestRun.id}&sourceIds=${primary.source_ids.map((s) => encodeURIComponent(s)).join(',')}`
-              return (
-                <div className="grid gap-3 lg:grid-cols-3">
-                  <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700/30 lg:col-span-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
-                        {formatPriority(primary.priority)}
-                      </span>
-                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-400">
-                        Confidence: {formatConfidence(primary.confidence_label)}
-                      </span>
-                    </div>
-                    <h3 className="mt-2 break-words text-base font-semibold text-slate-900 dark:text-white">{primary.headline}</h3>
-                    <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{primary.advice}</p>
-                    <div className="mt-2.5 flex flex-wrap items-center gap-3">
-                      <Link href={primaryEvidenceHref} className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
-                        View Evidence ({primary.source_ids.length})
-                      </Link>
-                      <span className="text-[11px] text-slate-400 dark:text-slate-500">{primary.source_ids.length} source{primary.source_ids.length === 1 ? '' : 's'}</span>
-                    </div>
-                  </div>
-
-                  {/* Up to two secondary cards on desktop only — mobile shows the primary card and keeps the section compact. */}
-                  {secondary.length > 0 && (
-                    <div className="hidden gap-3 lg:col-span-3 lg:grid lg:grid-cols-2">
-                      {secondary.map((card) => (
-                        <div key={card.advice_code} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3.5 dark:border-slate-700 dark:bg-slate-800/60">
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{humanizeCode(card.advice_type)}</span>
-                          <h4 className="mt-1 break-words text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
-                          <p className="mt-1 break-words text-xs text-slate-600 dark:text-slate-300">{card.advice}</p>
-                          <Link
-                            href={`/analytics?runId=${latestRun.id}&sourceIds=${card.source_ids.map((s) => encodeURIComponent(s)).join(',')}`}
-                            className="mt-1.5 inline-block text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                          >
-                            View Evidence ({card.source_ids.length})
-                          </Link>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })()
-          )}
-        </div>
-      </section>
+        </section>
+      )}
 
       {loading ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">Loading dashboard...</div>
