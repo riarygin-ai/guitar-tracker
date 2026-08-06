@@ -17,7 +17,7 @@ import { buildAdviceInputPacket } from './buildInputPacket';
 import { hashCanonicalInputPacket } from './canonicalHash';
 import { validateAdviceResponse } from './validateAdviceResponse';
 import { ADVICE_PROVIDER, ADVICE_SCHEMA_VERSION, PROMPT_TEMPLATE_VERSION } from './types';
-import type { AnalyticsRunAdviceRow } from './types';
+import type { AdviceStatus, AnalyticsRunAdviceRow } from './types';
 
 export type GenerateAdviceOutcome =
   | { status: 'completed'; row: AnalyticsRunAdviceRow }
@@ -40,7 +40,28 @@ export interface GenerateAdviceForRunParams {
 }
 
 const ADVICE_ROW_COLUMNS =
-  'id, analytics_run_id, user_id, revision_number, status, provider, model, advice_schema_version, prompt_template_version, canonical_input_hash, advice, source_refs, generated_at, error_code, error_message, created_at, updated_at';
+  'id, analytics_run_id, user_id, revision_number, status, provider, model, advice_schema_version, prompt_template_version, canonical_input_hash, input_packet, advice, source_refs, generated_at, error_code, error_message, created_at, updated_at';
+
+/** Row shape returned by the claim_next_analytics_run_advice_revision RPC —
+ *  a subset of the full advice row (no input_packet/advice/source_refs/
+ *  error fields, since a freshly claimed row never has them yet) plus the
+ *  was_created flag that distinguishes "this call created a new pending
+ *  row" from "auto mode found an existing revision and returned it
+ *  unchanged". */
+interface ClaimedAdviceRevision {
+  id: number;
+  analytics_run_id: number;
+  user_id: number;
+  revision_number: number;
+  status: AdviceStatus;
+  provider: string;
+  model: string;
+  advice_schema_version: string;
+  prompt_template_version: string;
+  created_at: string;
+  updated_at: string;
+  was_created: boolean;
+}
 
 async function markFailed(
   serviceClient: SupabaseClient,
@@ -103,60 +124,47 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
     return { status: 'skipped', reason: 'RUN_NOT_COMPLETED' };
   }
 
-  // ── 2. Determine the next revision number ──────────────────────────
-  const { data: existingRevisions } = await serviceClient
-    .from('analytics_run_advice')
-    .select('revision_number')
-    .eq('analytics_run_id', runId)
-    .order('revision_number', { ascending: false })
-    .limit(1);
+  // ── 2. Atomically claim (or, for 'auto' mode when one already exists,
+  // retrieve) the next revision via the DB-serialized RPC. Allocation and
+  // the "skip when any revision already exists" check happen inside the
+  // SAME transaction, under a pg_advisory_xact_lock keyed by runId — this
+  // is the concurrency guard, not a client-side read-then-insert race.
+  // The RPC re-validates run existence/ownership/completed-status itself
+  // (defense in depth against a race between the step-1 fetch above and
+  // this call), so its exceptions are mapped to the same outcome
+  // vocabulary as step 1. ─────────────────────────────────────────────────
+  const { data: claimedRows, error: claimError } = await serviceClient.rpc('claim_next_analytics_run_advice_revision', {
+    p_analytics_run_id: runId,
+    p_user_id: requestingUserId,
+    p_mode: mode,
+    p_provider: ADVICE_PROVIDER,
+    p_model: ADVICE_MODEL_ID,
+    p_advice_schema_version: ADVICE_SCHEMA_VERSION,
+    p_prompt_template_version: PROMPT_TEMPLATE_VERSION,
+  });
 
-  const highestRevision = existingRevisions && existingRevisions.length > 0 ? (existingRevisions[0].revision_number as number) : 0;
-
-  if (mode === 'auto' && highestRevision > 0) {
-    // Idempotent: initial automatic generation only ever happens once per
-    // run — a browser refresh, rerender, repeated poll, or duplicate
-    // server request must never create a second revision on its own.
-    return { status: 'skipped', reason: 'ADVICE_ALREADY_EXISTS_FOR_RUN' };
-  }
-
-  const nextRevision = highestRevision + 1;
-
-  // ── 3. Insert the pending row. The UNIQUE(analytics_run_id,
-  // revision_number) constraint is the real concurrency guard: if two
-  // requests race for the same revision_number, only one INSERT can
-  // succeed. ────────────────────────────────────────────────────────────
-  const { data: inserted, error: insertError } = await serviceClient
-    .from('analytics_run_advice')
-    .insert({
-      analytics_run_id: runId,
-      user_id: requestingUserId,
-      revision_number: nextRevision,
-      status: 'pending',
-      provider: ADVICE_PROVIDER,
-      // The model this attempt is expected to use — reconciled with
-      // whatever generateAnalyticsAdvice() actually reports below (today
-      // always the same value; kept as a real reconciliation step, not an
-      // assumption, in case a future per-request override is added).
-      model: ADVICE_MODEL_ID,
-      advice_schema_version: ADVICE_SCHEMA_VERSION,
-      prompt_template_version: PROMPT_TEMPLATE_VERSION,
-    })
-    .select(ADVICE_ROW_COLUMNS)
-    .single();
-
-  if (insertError || !inserted) {
-    // Unique-violation (23505) means another concurrent request already
-    // claimed this revision — exactly the idempotency guarantee this
-    // function exists to provide, not a real error.
-    if ((insertError as { code?: string } | null)?.code === '23505') {
-      return { status: 'skipped', reason: 'CONCURRENT_GENERATION_ALREADY_IN_PROGRESS' };
-    }
-    console.error('[generateAdvice] failed to insert pending advice row for run', runId, ':', sanitizeErrorMessage(insertError));
+  if (claimError) {
+    const message = sanitizeErrorMessage(claimError);
+    if (message.includes('RUN_NOT_FOUND')) return { status: 'skipped', reason: 'RUN_NOT_FOUND' };
+    if (message.includes('RUN_NOT_OWNED_BY_CALLER')) return { status: 'skipped', reason: 'RUN_NOT_OWNED_BY_CALLER' };
+    if (message.includes('RUN_NOT_COMPLETED')) return { status: 'skipped', reason: 'RUN_NOT_COMPLETED' };
+    console.error('[generateAdvice] revision claim RPC failed for run', runId, ':', message);
     return { status: 'skipped', reason: 'FAILED_TO_CREATE_ADVICE_ROW' };
   }
 
-  const rowId = inserted.id as number;
+  const claimed = (claimedRows as ClaimedAdviceRevision[] | null)?.[0];
+  if (!claimed) {
+    console.error('[generateAdvice] revision claim RPC returned no row for run', runId);
+    return { status: 'skipped', reason: 'FAILED_TO_CREATE_ADVICE_ROW' };
+  }
+
+  if (!claimed.was_created) {
+    // 'auto' mode found an existing revision and returned it unchanged —
+    // the idempotent no-duplicate-on-refresh/poll/retry-request guarantee.
+    return { status: 'skipped', reason: 'ADVICE_ALREADY_EXISTS_FOR_RUN' };
+  }
+
+  const rowId = claimed.id;
 
   // ── 4. Build the deterministic packet from the SAVED snapshot only. ──
   const { packet, sourceRegistry, notes } = buildAdviceInputPacket({
@@ -171,11 +179,16 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
     return { status: 'failed', row };
   }
 
-  // ── 5. Canonical hash, then flip to 'generating'. ────────────────────
+  // ── 5. Canonical hash from the EXACT persisted packet, then flip to
+  // 'generating' — this single update is also the only place
+  // canonical_input_hash and input_packet are ever set (both immutable
+  // afterward, DB-trigger enforced). The packet built above is the same
+  // object hashed here and persisted here: never rebuilt, never
+  // reconstructed later. ────────────────────────────────────────────────
   const canonicalInputHash = hashCanonicalInputPacket(packet);
   const { error: generatingError } = await serviceClient
     .from('analytics_run_advice')
-    .update({ status: 'generating', canonical_input_hash: canonicalInputHash })
+    .update({ status: 'generating', canonical_input_hash: canonicalInputHash, input_packet: packet })
     .eq('id', rowId);
 
   if (generatingError) {
@@ -183,21 +196,19 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
     return { status: 'failed', row };
   }
 
-  // ── 6. Call OpenAI. ───────────────────────────────────────────────────
+  // ── 6. Call OpenAI with that same packet. ────────────────────────────
   let raw: string;
-  let resolvedModel: string;
   try {
     const result = await generateAnalyticsAdvice(packet);
     raw = result.raw;
-    resolvedModel = result.model;
   } catch (openAiError) {
     const row = await markFailed(serviceClient, rowId, 'OPENAI_ERROR', sanitizeErrorMessage(openAiError));
     return { status: 'failed', row };
   }
 
-  // Record the actual model used even on a later validation failure, so
-  // diagnostics always show what was attempted.
-  await serviceClient.from('analytics_run_advice').update({ model: resolvedModel }).eq('id', rowId);
+  // `model` was already set at claim time and is immutable from here on —
+  // generateAnalyticsAdvice() always uses ADVICE_MODEL_ID (no per-request
+  // override exists), so there is nothing to reconcile.
 
   // ── 7. Validate the structured response + every source ID. ──────────
   const validation = validateAdviceResponse(raw, sourceRegistry);

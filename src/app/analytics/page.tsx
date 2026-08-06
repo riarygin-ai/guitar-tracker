@@ -24,7 +24,7 @@ import {
   formatSourceType,
   humanizeCode,
 } from '@/lib/analytics/advice/presentation';
-import { sourceIdToDomId } from '@/lib/analytics/advice/buildInputPacket';
+import { sourceIdToDomId, parseSourceIdsDeepLinkParam } from '@/lib/analytics/advice/buildInputPacket';
 
 const HISTORY_LIMIT = 10;
 const HIGHLIGHT_MS = 2600;
@@ -283,13 +283,27 @@ export default function AnalyticsPage() {
   const [adviceRevisions, setAdviceRevisions] = useState<AnalyticsRunAdviceRow[]>([]);
   const [adviceRevisionsLoading, setAdviceRevisionsLoading] = useState(false);
   const [selectedAdviceRevisionId, setSelectedAdviceRevisionId] = useState<number | null>(null);
-  const [generatingAdvice, setGeneratingAdvice] = useState(false);
+  // Scoped to the run currently generating/retrying — NOT a single global
+  // boolean — so that (a) a Generate/Retry in flight for one run never
+  // blocks starting one for a different run, and (b) the completion
+  // handler below can tell whether the user is still looking at the run
+  // it was called for before overwriting adviceRevisions with its result.
+  const [generatingAdviceForRunId, setGeneratingAdviceForRunId] = useState<number | null>(null);
   const [adviceActionError, setAdviceActionError] = useState<string | null>(null);
   const [highlightedSourceIds, setHighlightedSourceIds] = useState<Set<string>>(new Set());
   const sourceCardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null;
   const selectedAdvice = adviceRevisions.find((a) => a.id === selectedAdviceRevisionId) ?? adviceRevisions[0] ?? null;
+  const generatingAdvice = selectedRun != null && generatingAdviceForRunId === selectedRun.id;
+
+  // Always-current refs for values read inside async callbacks whose
+  // closures were captured before the user navigated elsewhere — plain
+  // state reads there would be stale.
+  const selectedRunIdRef = useRef<number | null>(null);
+  useEffect(() => { selectedRunIdRef.current = selectedRunId; }, [selectedRunId]);
+  const runsRef = useRef<AnalyticsRunMeta[]>([]);
+  useEffect(() => { runsRef.current = runs; }, [runs]);
 
   // Deep-link support (e.g. from the Dashboard's "View Evidence" link):
   // ?runId=123 auto-selects that run; &sourceIds=a,b,c (URI-encoded, comma
@@ -318,7 +332,7 @@ export default function AnalyticsPage() {
     const sourceIdsParam = searchParams.get('sourceIds');
     sourceDeepLinkHandled.current = true;
     if (!sourceIdsParam) return;
-    const ids = sourceIdsParam.split(',').map((s) => decodeURIComponent(s)).filter(Boolean);
+    const ids = parseSourceIdsDeepLinkParam(sourceIdsParam);
     // Source cards render after this same tick — defer one frame so the
     // ref registry is populated before we try to scroll to it.
     setTimeout(() => handleViewEvidence(ids), 300);
@@ -346,7 +360,12 @@ export default function AnalyticsPage() {
   }
 
   async function handleGenerateAdvice(runId: number) {
-    setGeneratingAdvice(true);
+    // Defense in depth alongside the disabled/aria-busy button state below —
+    // a second invocation for the SAME run while one is already in flight
+    // must never fire a second request (a different run is always fine —
+    // the DB-serialized RPC in generateAdviceForRun handles that safely).
+    if (generatingAdviceForRunId === runId) return;
+    setGeneratingAdviceForRunId(runId);
     setAdviceActionError(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -358,10 +377,16 @@ export default function AnalyticsPage() {
       });
       const payload = await res.json().catch(() => ({}));
 
-      // Whether it completed or failed, the attempt is now persisted —
-      // reload revisions either way so the UI reflects the real outcome.
-      await loadAdviceRevisions(runId);
-      await loadAdviceMetaForHistory(runs);
+      // Whether it completed or failed, the attempt is now persisted.
+      // Refresh the compact History status unconditionally (harmless
+      // regardless of which run is currently selected), but only overwrite
+      // the visible revision list/selection if the user hasn't since
+      // navigated to a different run — otherwise this stale response would
+      // silently replace what's on screen for the run they're now viewing.
+      if (selectedRunIdRef.current === runId) {
+        await loadAdviceRevisions(runId);
+      }
+      await loadAdviceMetaForHistory(runsRef.current);
 
       if (!res.ok && res.status !== 502) {
         throw new Error(typeof payload.error === 'string' ? payload.error : `Server error (${res.status})`);
@@ -369,7 +394,7 @@ export default function AnalyticsPage() {
     } catch (err) {
       setAdviceActionError(err instanceof Error ? err.message : 'Could not generate advice.');
     } finally {
-      setGeneratingAdvice(false);
+      setGeneratingAdviceForRunId((current) => (current === runId ? null : current));
     }
   }
 
@@ -377,9 +402,15 @@ export default function AnalyticsPage() {
     if (sourceIds.length === 0) return;
     setHighlightedSourceIds(new Set(sourceIds));
     // Scroll to the first referenced source card — the rest are
-    // highlighted in place even if off-screen.
+    // highlighted in place even if off-screen. An unknown/malformed
+    // source_id (e.g. a stale or hand-edited deep link) simply has no
+    // matching ref — a safe no-op, never a crash.
     const firstEl = sourceCardRefs.current.get(sourceIds[0]);
     firstEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Move keyboard/AT focus to the target card too — the ring highlight
+    // alone is a purely visual cue; tabIndex={-1} on the card (below) makes
+    // it script-focusable without adding it to normal tab order.
+    firstEl?.focus({ preventScroll: true });
     setTimeout(() => setHighlightedSourceIds(new Set()), HIGHLIGHT_MS);
   }
 
@@ -682,7 +713,7 @@ export default function AnalyticsPage() {
                 <select
                   value={selectedAdviceRevisionId ?? ''}
                   onChange={(e) => setSelectedAdviceRevisionId(Number(e.target.value))}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                  className="min-w-0 max-w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
                 >
                   {adviceRevisions.map((rev) => (
                     <option key={rev.id} value={rev.id}>
@@ -712,6 +743,7 @@ export default function AnalyticsPage() {
                   type="button"
                   onClick={() => selectedRun && handleGenerateAdvice(selectedRun.id)}
                   disabled={generatingAdvice || selectedRun?.status !== 'completed'}
+                  aria-busy={generatingAdvice}
                   className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                 >
                   {generatingAdvice ? 'Generating…' : 'Generate AI Advice'}
@@ -736,6 +768,7 @@ export default function AnalyticsPage() {
                   type="button"
                   onClick={() => selectedRun && handleGenerateAdvice(selectedRun.id)}
                   disabled={generatingAdvice}
+                  aria-busy={generatingAdvice}
                   className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
                 >
                   {generatingAdvice ? 'Retrying…' : 'Retry Advice'}
@@ -762,9 +795,9 @@ export default function AnalyticsPage() {
                   )}
                 </div>
 
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{selectedAdvice.advice?.run_summary.headline}</h3>
-                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{selectedAdvice.advice?.run_summary.summary}</p>
+                <div className="min-w-0">
+                  <h3 className="break-words text-sm font-semibold text-slate-900 dark:text-white">{selectedAdvice.advice?.run_summary.headline}</h3>
+                  <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{selectedAdvice.advice?.run_summary.summary}</p>
                   {(selectedAdvice.advice?.run_summary.source_ids.length ?? 0) > 0 && (
                     <button
                       type="button"
@@ -783,21 +816,21 @@ export default function AnalyticsPage() {
                 ) : (
                   <div className="space-y-3">
                     {selectedAdvice.advice?.advice_cards.map((card) => (
-                      <div key={card.advice_code} className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-700 dark:bg-slate-700/30">
+                      <div key={card.advice_code} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-700 dark:bg-slate-700/30">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{formatAdviceType(card.advice_type)}</span>
                           <PriorityBadge priority={card.priority} />
                           <ConfidencePill confidence={card.confidence_label} />
                         </div>
-                        <h4 className="mt-1.5 text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
-                        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{card.advice}</p>
-                        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400"><span className="font-semibold">Why it matters:</span> {card.why_it_matters}</p>
+                        <h4 className="mt-1.5 break-words text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
+                        <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{card.advice}</p>
+                        <p className="mt-1.5 break-words text-xs text-slate-500 dark:text-slate-400"><span className="font-semibold">Why it matters:</span> {card.why_it_matters}</p>
                         {card.limitations.length > 0 && (
-                          <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[11px] text-slate-400 dark:text-slate-500">
+                          <ul className="mt-1.5 list-disc space-y-0.5 break-words pl-4 text-[11px] text-slate-400 dark:text-slate-500">
                             {card.limitations.map((l) => <li key={l}>{humanizeCode(l)}</li>)}
                           </ul>
                         )}
-                        <div className="mt-2 flex items-center justify-between gap-2">
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                           <button
                             type="button"
                             onClick={() => handleViewEvidence(card.source_ids)}
@@ -806,7 +839,7 @@ export default function AnalyticsPage() {
                             View Evidence ({card.source_ids.length})
                           </button>
                           {card.item_id != null && (
-                            <Link href={`/inventory/${card.item_id}`} className="text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
+                            <Link href={`/inventory/${card.item_id}`} className="shrink-0 text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
                               Open Item
                             </Link>
                           )}
@@ -819,7 +852,7 @@ export default function AnalyticsPage() {
                 {selectedAdvice.advice && selectedAdvice.advice.limitations.length > 0 && (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-700/30">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Limitations</p>
-                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-slate-500 dark:text-slate-400">
+                    <ul className="mt-1 list-disc space-y-0.5 break-words pl-4 text-xs text-slate-500 dark:text-slate-400">
                       {selectedAdvice.advice.limitations.map((l) => <li key={l}>{humanizeCode(l)}</li>)}
                     </ul>
                   </div>
@@ -829,6 +862,7 @@ export default function AnalyticsPage() {
                   type="button"
                   onClick={() => selectedRun && handleGenerateAdvice(selectedRun.id)}
                   disabled={generatingAdvice}
+                  aria-busy={generatingAdvice}
                   className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
                 >
                   {generatingAdvice ? 'Regenerating…' : 'Regenerate Advice'}
@@ -855,7 +889,8 @@ export default function AnalyticsPage() {
                         if (el) sourceCardRefs.current.set(source.source_id, el);
                         else sourceCardRefs.current.delete(source.source_id);
                       }}
-                      className={`rounded-xl border p-3 transition ${
+                      tabIndex={-1}
+                      className={`min-w-0 rounded-xl border p-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
                         isHighlighted
                           ? 'border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300 dark:border-indigo-500 dark:bg-indigo-900/20 dark:ring-indigo-700'
                           : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-700/30'
@@ -870,15 +905,15 @@ export default function AnalyticsPage() {
                         )}
                         <ConfidencePill confidence={source.confidence} />
                       </div>
-                      <h4 className="mt-1.5 text-sm font-semibold text-slate-900 dark:text-white">{source.headline}</h4>
-                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{source.summary}</p>
+                      <h4 className="mt-1.5 break-words text-sm font-semibold text-slate-900 dark:text-white">{source.headline}</h4>
+                      <p className="mt-1 break-words text-xs text-slate-600 dark:text-slate-300">{source.summary}</p>
 
                       {metricEntries.length > 0 && (
                         <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3">
                           {metricEntries.map((m, i) => (
-                            <div key={`${m.label}-${i}`}>
-                              <dt className="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">{m.label}</dt>
-                              <dd className="text-xs font-medium text-slate-700 dark:text-slate-200">{m.value}</dd>
+                            <div key={`${m.label}-${i}`} className="min-w-0">
+                              <dt className="truncate text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">{m.label}</dt>
+                              <dd className="break-words text-xs font-medium text-slate-700 dark:text-slate-200">{m.value}</dd>
                             </div>
                           ))}
                         </dl>
@@ -889,7 +924,7 @@ export default function AnalyticsPage() {
                           {source.confirmation_needed && source.confirmation_needed.length > 0 && (
                             <div>
                               <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Confirmation needed</p>
-                              <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-slate-500 dark:text-slate-400">
+                              <ul className="list-disc space-y-0.5 break-words pl-4 text-[11px] text-slate-500 dark:text-slate-400">
                                 {source.confirmation_needed.map((c) => <li key={c}>{c}</li>)}
                               </ul>
                             </div>
@@ -897,7 +932,7 @@ export default function AnalyticsPage() {
                           {source.ineligibility_reasons && source.ineligibility_reasons.length > 0 && (
                             <div>
                               <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Why not confirmed</p>
-                              <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-slate-500 dark:text-slate-400">
+                              <ul className="list-disc space-y-0.5 break-words pl-4 text-[11px] text-slate-500 dark:text-slate-400">
                                 {source.ineligibility_reasons.map((r) => <li key={r}>{humanizeCode(r)}</li>)}
                               </ul>
                             </div>
@@ -906,15 +941,15 @@ export default function AnalyticsPage() {
                       ) : null}
 
                       {source.limitations.length > 0 && (
-                        <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
+                        <p className="mt-2 break-words text-[11px] text-slate-400 dark:text-slate-500">
                           {source.limitations.map((l) => humanizeCode(l)).join(' · ')}
                         </p>
                       )}
 
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500">{source.source_id}</span>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <span className="min-w-0 break-all font-mono text-[10px] text-slate-400 dark:text-slate-500">{source.source_id}</span>
                         {source.item_id != null && (
-                          <Link href={`/inventory/${source.item_id}`} className="text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
+                          <Link href={`/inventory/${source.item_id}`} className="shrink-0 text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
                             Open Item
                           </Link>
                         )}

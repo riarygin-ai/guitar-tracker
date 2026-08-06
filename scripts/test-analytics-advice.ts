@@ -35,7 +35,8 @@ import {
 } from './setup-analytics-test-fixtures';
 import { runAnalyticsForCurrentUser } from '../src/lib/analytics/runAnalytics';
 import { generateAdviceForRun } from '../src/lib/analytics/advice/generateAdvice';
-import { buildAdviceInputPacket, sourceIdToDomId } from '../src/lib/analytics/advice/buildInputPacket';
+import type { GenerateAdviceOutcome } from '../src/lib/analytics/advice/generateAdvice';
+import { buildAdviceInputPacket, sourceIdToDomId, parseSourceIdsDeepLinkParam } from '../src/lib/analytics/advice/buildInputPacket';
 import { canonicalJsonStringify, hashCanonicalInputPacket } from '../src/lib/analytics/advice/canonicalHash';
 import { validateAdviceResponse } from '../src/lib/analytics/advice/validateAdviceResponse';
 import { ADVICE_MODEL_ID, ADVICE_SYSTEM_PROMPT } from '../src/lib/openai';
@@ -187,6 +188,39 @@ function buildSyntheticSnapshot() {
   };
 }
 
+// Isolated legacy-shaped completed run (no Insights/Pattern Discovery) —
+// used by Section F below so every fixture there gets its OWN dedicated
+// run rather than sharing legacyRunId from Section D, keeping each test's
+// cleanup independently verifiable. Packet building always fails
+// deterministically (NO_VALID_EVIDENCE) for this shape, so every
+// generateAdviceForRun() call against it resolves without any OpenAI cost.
+async function createDedicatedLegacyRun(serviceClient: SupabaseClient, ownerId: number): Promise<number> {
+  const { data, error } = await serviceClient
+    .from('analytics_runs')
+    .insert({
+      requested_by_user_id: ownerId,
+      recommendation_target_user_id: ownerId,
+      analytics_version: '1.8',
+      evidence_scope: 'shared_business_population',
+      status: 'completed',
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      snapshot: { snapshot_schema_version: '1.8', analytics_definition_version: '1.8', generated_at: new Date().toISOString(), evidence_scope: 'shared_business_population' },
+    })
+    .select('id')
+    .single();
+  if (error || !data) throw new Error(`Failed to create dedicated legacy run fixture: ${error?.message}`);
+  return data.id as number;
+}
+
+function isFailedOutcome(r: GenerateAdviceOutcome): r is Extract<GenerateAdviceOutcome, { status: 'failed' }> {
+  return r.status === 'failed';
+}
+
+function isSkippedWithReason(r: GenerateAdviceOutcome, reason: string): r is Extract<GenerateAdviceOutcome, { status: 'skipped' }> {
+  return r.status === 'skipped' && r.reason === reason;
+}
+
 async function main() {
   // ── Safety gate ───────────────────────────────────────────────────────
   assertLocalSupabaseUrl(SUPABASE_URL);
@@ -273,6 +307,14 @@ async function main() {
   const malformedResult = buildAdviceInputPacket({ runId: 1, analyticsVersion: '1.8', evidenceScope: 'x', snapshot: 'not even an object' });
   check('test 35b: a completely malformed snapshot value never throws', malformedResult.packet === null, malformedResult.notes);
   check('sourceIdToDomId never throws on special characters and stays deterministic', sourceIdToDomId('pattern:DISCOVERY|X|Y=1') === sourceIdToDomId('pattern:DISCOVERY|X|Y=1'));
+  check('sourceIdToDomId is a valid, collision-safe HTML id (only percent-encoded/alphanumeric chars, distinct sources -> distinct ids)', /^advice-source-[A-Za-z0-9%_-]+$/.test(sourceIdToDomId('pattern:DISCOVERY|X|Y=1')) && sourceIdToDomId('pattern:A') !== sourceIdToDomId('pattern:B'));
+
+  // Deep-link evidence navigation: ?sourceIds=... must decode safely even
+  // when hand-edited/truncated/corrupted, never throw and crash the page.
+  check('parseSourceIdsDeepLinkParam decodes a well-formed comma-separated, URI-encoded list', JSON.stringify(parseSourceIdsDeepLinkParam(['insight:A:band:1', 'pattern:B|C'].map(encodeURIComponent).join(','))) === JSON.stringify(['insight:A:band:1', 'pattern:B|C']));
+  check('parseSourceIdsDeepLinkParam drops a malformed percent-encoding segment instead of throwing', JSON.stringify(parseSourceIdsDeepLinkParam(`${encodeURIComponent('insight:A')},%E0%A4%A,${encodeURIComponent('insight:B')}`)) === JSON.stringify(['insight:A', 'insight:B']));
+  check('parseSourceIdsDeepLinkParam on an entirely malformed param returns an empty array, never throws', JSON.stringify(parseSourceIdsDeepLinkParam('%,%%,%zz')) === JSON.stringify([]));
+  check('parseSourceIdsDeepLinkParam drops empty segments (e.g. a trailing comma)', JSON.stringify(parseSourceIdsDeepLinkParam(`${encodeURIComponent('insight:A')},`)) === JSON.stringify(['insight:A']));
 
   // ══════════════════════════════════════════════════════════════════════
   // Section B — canonical hashing (test 12)
@@ -451,6 +493,237 @@ async function main() {
   check('test 37b: a numeric 0 key_metrics value renders as a real zero, not unavailable', formatKeyMetrics({ dom_sample_size: 0 }).find((m) => m.label.toLowerCase().includes('sample'))?.value !== '—');
   check('unknown reason/error code falls back to a readable humanization instead of crashing', humanizeCode('SOME_TOTALLY_UNKNOWN_CODE_XYZ') === 'Some totally unknown code xyz');
   check('humanizeCode never throws on an empty string', humanizeCode('') === '—');
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Section F — migration 20260826000000 hardening: composite ownership FK,
+  // audit-field immutability trigger, "authenticated has no write grant at
+  // all" (not just RLS), and atomic revision-allocation concurrency
+  // (claim_next_analytics_run_advice_revision). Every fixture row created
+  // here is deleted and the deletion verified before this section returns —
+  // unlike Section D/E's shared legacyRun/realRun (left for the disposable
+  // local stack to eventually discard), the tests below create many rows in
+  // one shot and must prove none are left behind, per the explicit
+  // "verify all fixture rows were removed after every persistent
+  // concurrency test" requirement.
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[F — composite FK, immutability trigger, write grants, atomic revision allocation]');
+
+  // F1 — composite ownership FK rejects a REAL run id paired with a user_id
+  // that is NOT that run's owner (as opposed to test 1/2 above, which used
+  // a wholly nonexistent run id — this is the actual ownership guarantee).
+  {
+    const runId = await createDedicatedLegacyRun(serviceClient, userAId);
+    const { error: mismatchError } = await serviceClient.from('analytics_run_advice').insert({
+      analytics_run_id: runId,
+      user_id: userBId,
+      revision_number: 1,
+      status: 'pending',
+      provider: ADVICE_PROVIDER,
+      model: ADVICE_MODEL_ID,
+      advice_schema_version: ADVICE_SCHEMA_VERSION,
+      prompt_template_version: PROMPT_TEMPLATE_VERSION,
+    });
+    check('composite ownership FK rejects a real run id paired with a non-owning user_id', mismatchError !== null, mismatchError);
+
+    const { error: f1DeleteError } = await serviceClient.from('analytics_runs').delete().eq('id', runId);
+    const { count: f1Leftover } = await serviceClient.from('analytics_run_advice').select('id', { count: 'exact', head: true }).eq('analytics_run_id', runId);
+    check('cleanup: F1 fixture run deleted with no leftover advice rows', !f1DeleteError && (f1Leftover ?? 0) === 0, { f1DeleteError, f1Leftover });
+  }
+
+  // F2 — cascade delete: a valid advice row followed by deleting its parent
+  // run must remove the advice row too (ON DELETE CASCADE via the new
+  // composite FK, now the ONLY FK from analytics_run_advice into
+  // analytics_runs).
+  {
+    const runId = await createDedicatedLegacyRun(serviceClient, userAId);
+    const { data: cascadeRow, error: cascadeInsertError } = await serviceClient.from('analytics_run_advice').insert({
+      analytics_run_id: runId,
+      user_id: userAId,
+      revision_number: 1,
+      status: 'pending',
+      provider: ADVICE_PROVIDER,
+      model: ADVICE_MODEL_ID,
+      advice_schema_version: ADVICE_SCHEMA_VERSION,
+      prompt_template_version: PROMPT_TEMPLATE_VERSION,
+    }).select('id').single();
+    check('F2 fixture: valid advice row (real run, real owner) inserted', !cascadeInsertError && !!cascadeRow, cascadeInsertError);
+
+    await serviceClient.from('analytics_runs').delete().eq('id', runId);
+    const { data: survivorRows } = await serviceClient.from('analytics_run_advice').select('id').eq('analytics_run_id', runId);
+    check('test: deleting an analytics run cascades to all its advice revisions', (survivorRows?.length ?? 0) === 0, survivorRows);
+  }
+
+  // F3 — audit-field immutability trigger: protected columns are rejected
+  // after insert; status/advice/source_refs/generated_at/error fields
+  // remain updatable; canonical_input_hash/input_packet may be set once
+  // from NULL but never changed again afterward.
+  {
+    const runId = await createDedicatedLegacyRun(serviceClient, userAId);
+    const { data: immutRow, error: immutInsertError } = await serviceClient.from('analytics_run_advice').insert({
+      analytics_run_id: runId,
+      user_id: userAId,
+      revision_number: 1,
+      status: 'pending',
+      provider: ADVICE_PROVIDER,
+      model: ADVICE_MODEL_ID,
+      advice_schema_version: ADVICE_SCHEMA_VERSION,
+      prompt_template_version: PROMPT_TEMPLATE_VERSION,
+    }).select('id').single();
+    check('F3 fixture: pending advice row inserted', !immutInsertError && !!immutRow, immutInsertError);
+    const rowId = immutRow!.id as number;
+
+    const { error: revisionUpdateError } = await serviceClient.from('analytics_run_advice').update({ revision_number: 99 }).eq('id', rowId);
+    check('immutability trigger rejects changing revision_number after insert', revisionUpdateError !== null, revisionUpdateError);
+
+    const { error: providerUpdateError } = await serviceClient.from('analytics_run_advice').update({ provider: 'someone-else' }).eq('id', rowId);
+    check('immutability trigger rejects changing provider after insert', providerUpdateError !== null, providerUpdateError);
+
+    // A genuinely different (still valid/owned) run id, so this isolates
+    // the immutability trigger from the composite FK — the FK alone would
+    // happily allow this new (run, user) pair since otherRunId is also
+    // owned by userAId.
+    const otherRunId = await createDedicatedLegacyRun(serviceClient, userAId);
+    const { error: runIdChangeError } = await serviceClient.from('analytics_run_advice').update({ analytics_run_id: otherRunId }).eq('id', rowId);
+    check('immutability trigger rejects changing analytics_run_id after insert', runIdChangeError !== null, runIdChangeError);
+
+    const { error: generatingTransitionError } = await serviceClient.from('analytics_run_advice')
+      .update({ status: 'generating', canonical_input_hash: 'f'.repeat(64), input_packet: { packet_version: '1.0', marker: 'first-set' } })
+      .eq('id', rowId);
+    check('pending->generating transition (first-time hash/input_packet set) succeeds', generatingTransitionError === null, generatingTransitionError);
+
+    const { error: rehashError } = await serviceClient.from('analytics_run_advice').update({ canonical_input_hash: 'a'.repeat(64) }).eq('id', rowId);
+    check('immutability trigger rejects re-setting canonical_input_hash once already set', rehashError !== null, rehashError);
+
+    const { error: repacketError } = await serviceClient.from('analytics_run_advice').update({ input_packet: { packet_version: '1.0', marker: 'second-set' } }).eq('id', rowId);
+    check('immutability trigger rejects re-setting input_packet once already set', repacketError !== null, repacketError);
+
+    const { error: completeError } = await serviceClient.from('analytics_run_advice')
+      .update({
+        status: 'completed',
+        advice: { schema_version: '1.0', run_summary: { headline: 'H', summary: 'S', source_ids: [] }, advice_cards: [], limitations: [] },
+        source_refs: [],
+        generated_at: new Date().toISOString(),
+      })
+      .eq('id', rowId);
+    check('generating->completed lifecycle update (status/advice/source_refs/generated_at) still succeeds', completeError === null, completeError);
+
+    await serviceClient.from('analytics_runs').delete().in('id', [runId, otherRunId]);
+    const { data: f3Survivors } = await serviceClient.from('analytics_run_advice').select('id').in('analytics_run_id', [runId, otherRunId]);
+    check('cleanup: F3 fixture runs deleted with no leftover advice rows', (f3Survivors?.length ?? 0) === 0, f3Survivors);
+  }
+
+  // F4 — authenticated users still have no INSERT/UPDATE/DELETE privileges
+  // at all on analytics_run_advice (SELECT-only, service-role-only
+  // writes) — a stronger guarantee than RLS alone, since these grants are
+  // enforced even before any policy is evaluated.
+  {
+    const runId = await createDedicatedLegacyRun(serviceClient, userAId);
+    const { error: authedInsertError } = await clientA.from('analytics_run_advice').insert({
+      analytics_run_id: runId,
+      user_id: userAId,
+      revision_number: 1,
+      status: 'pending',
+      provider: ADVICE_PROVIDER,
+      model: ADVICE_MODEL_ID,
+      advice_schema_version: ADVICE_SCHEMA_VERSION,
+      prompt_template_version: PROMPT_TEMPLATE_VERSION,
+    });
+    check('authenticated role cannot INSERT into analytics_run_advice', authedInsertError !== null, authedInsertError);
+
+    const { data: seedRow } = await serviceClient.from('analytics_run_advice').insert({
+      analytics_run_id: runId,
+      user_id: userAId,
+      revision_number: 1,
+      status: 'pending',
+      provider: ADVICE_PROVIDER,
+      model: ADVICE_MODEL_ID,
+      advice_schema_version: ADVICE_SCHEMA_VERSION,
+      prompt_template_version: PROMPT_TEMPLATE_VERSION,
+    }).select('id').single();
+    const seedRowId = seedRow!.id as number;
+
+    const { error: authedUpdateError } = await clientA.from('analytics_run_advice').update({ status: 'failed', error_code: 'X', error_message: 'X' }).eq('id', seedRowId);
+    check('authenticated role cannot UPDATE analytics_run_advice (even its own row)', authedUpdateError !== null, authedUpdateError);
+
+    const { error: authedDeleteError } = await clientA.from('analytics_run_advice').delete().eq('id', seedRowId);
+    check('authenticated role cannot DELETE analytics_run_advice (even its own row)', authedDeleteError !== null, authedDeleteError);
+
+    await serviceClient.from('analytics_runs').delete().eq('id', runId);
+    const { data: f4Survivors } = await serviceClient.from('analytics_run_advice').select('id').eq('analytics_run_id', runId);
+    check('cleanup: F4 fixture run deleted with no leftover advice rows', (f4Survivors?.length ?? 0) === 0, f4Survivors);
+  }
+
+  // F5/F6 — concurrency: multiple concurrent AUTO-mode requests against the
+  // SAME run must create exactly one revision, serialized by
+  // claim_next_analytics_run_advice_revision's advisory transaction lock —
+  // never a duplicate, never an unhandled unique-constraint error; then
+  // multiple concurrent explicit RETRY requests against that same run must
+  // each create their OWN unique, contiguous revision. Uses a dedicated
+  // legacy (no-evidence) run so every attempt resolves deterministically to
+  // 'failed'/NO_VALID_EVIDENCE with zero OpenAI cost — this exercises the
+  // REAL generateAdviceForRun() entry point end-to-end, not just the RPC in
+  // isolation.
+  console.log('\n[F5/F6 — concurrent auto/retry advice generation]');
+  {
+    const runId = await createDedicatedLegacyRun(serviceClient, userAId);
+
+    const CONCURRENT_AUTO_REQUESTS = 12;
+    const autoResults = await Promise.all(
+      Array.from({ length: CONCURRENT_AUTO_REQUESTS }, () =>
+        generateAdviceForRun({ runId, requestingUserId: userAId, serviceClient, mode: 'auto' }),
+      ),
+    );
+    const autoCreated = autoResults.filter(isFailedOutcome);
+    const autoSkipped = autoResults.filter((r) => isSkippedWithReason(r, 'ADVICE_ALREADY_EXISTS_FOR_RUN'));
+    check(
+      `${CONCURRENT_AUTO_REQUESTS} concurrent auto-generation requests produce exactly ONE created revision (the rest skip as already-existing)`,
+      autoCreated.length === 1 && autoSkipped.length === CONCURRENT_AUTO_REQUESTS - 1,
+      { created: autoCreated.length, skipped: autoSkipped.length, statuses: autoResults.map((r) => (r.status === 'skipped' ? r.reason : r.status)) },
+    );
+    const { data: autoRevisions } = await serviceClient.from('analytics_run_advice').select('revision_number').eq('analytics_run_id', runId);
+    check('exactly one revision (number 1) actually persisted after concurrent auto requests', (autoRevisions?.length ?? 0) === 1 && autoRevisions?.[0]?.revision_number === 1, autoRevisions);
+
+    const CONCURRENT_RETRY_REQUESTS = 12;
+    const retryResults = await Promise.all(
+      Array.from({ length: CONCURRENT_RETRY_REQUESTS }, () =>
+        generateAdviceForRun({ runId, requestingUserId: userAId, serviceClient, mode: 'retry' }),
+      ),
+    );
+    const retryFailedOutcomes = retryResults.filter(isFailedOutcome);
+    check(
+      `${CONCURRENT_RETRY_REQUESTS} concurrent retry requests each create their own revision — no throws, no raw DB errors surfaced`,
+      retryFailedOutcomes.length === CONCURRENT_RETRY_REQUESTS,
+      retryResults.map((r) => r.status),
+    );
+    const retryRevisionNumbers = retryFailedOutcomes.map((r) => r.row.revision_number).sort((a, b) => a - b);
+    const uniqueRetryRevisionNumbers = new Set(retryRevisionNumbers);
+    check('all concurrent retry revision numbers are unique (no duplicates)', uniqueRetryRevisionNumbers.size === retryRevisionNumbers.length, retryRevisionNumbers);
+    check(
+      'concurrent retry revision numbers are exactly 2..13 (contiguous, continuing after the auto-created revision 1)',
+      JSON.stringify(retryRevisionNumbers) === JSON.stringify(Array.from({ length: CONCURRENT_RETRY_REQUESTS }, (_, i) => i + 2)),
+      retryRevisionNumbers,
+    );
+
+    const { data: allRunRevisions } = await serviceClient.from('analytics_run_advice').select('id, revision_number').eq('analytics_run_id', runId).order('revision_number', { ascending: true });
+    check('final revision selector can read every created revision (1 auto + 12 retries = 13 total rows)', (allRunRevisions?.length ?? 0) === 1 + CONCURRENT_RETRY_REQUESTS, allRunRevisions?.length);
+    check(
+      'no earlier revision was overwritten by a later concurrent request (every revision_number 1..13 present exactly once)',
+      JSON.stringify(allRunRevisions?.map((r) => r.revision_number)) === JSON.stringify(Array.from({ length: 1 + CONCURRENT_RETRY_REQUESTS }, (_, i) => i + 1)),
+      allRunRevisions?.map((r) => r.revision_number),
+    );
+
+    // ── Cleanup + verification (required for every persistent concurrency
+    // test): delete the dedicated run (cascades every revision it
+    // produced) and verify zero rows remain. ─────────────────────────────
+    const { error: f5f6DeleteError } = await serviceClient.from('analytics_runs').delete().eq('id', runId);
+    const { data: f5f6Survivors } = await serviceClient.from('analytics_run_advice').select('id').eq('analytics_run_id', runId);
+    const { data: f5f6RunSurvivor } = await serviceClient.from('analytics_runs').select('id').eq('id', runId).maybeSingle();
+    check(
+      'cleanup: concurrency fixture run + all its revisions fully removed, verified by count',
+      !f5f6DeleteError && (f5f6Survivors?.length ?? 0) === 0 && !f5f6RunSurvivor,
+      { f5f6DeleteError, leftoverAdviceRows: f5f6Survivors?.length, leftoverRun: f5f6RunSurvivor },
+    );
+  }
 
   // ══════════════════════════════════════════════════════════════════════
   // Section E — real end-to-end (real Analytics run + real OpenAI call),

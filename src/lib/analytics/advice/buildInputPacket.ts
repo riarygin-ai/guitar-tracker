@@ -275,3 +275,20 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
 export function sourceIdToDomId(sourceId: string): string {
   return `advice-source-${encodeURIComponent(sourceId).replace(/[.!~*'()]/g, (c) => `%${c.charCodeAt(0).toString(16)}`)}`;
 }
+
+/** Parses the `?sourceIds=a,b,c` deep-link query param (each segment
+ *  URI-encoded, comma-separated) back into real source_id strings.
+ *  `decodeURIComponent` throws on a malformed percent-encoding — a
+ *  hand-edited, truncated, or otherwise corrupted URL must never crash the
+ *  page, so each segment is decoded independently and a bad one is simply
+ *  dropped rather than aborting the whole list. */
+export function parseSourceIdsDeepLinkParam(raw: string): string[] {
+  return raw.split(',').flatMap((segment) => {
+    try {
+      const decoded = decodeURIComponent(segment);
+      return decoded ? [decoded] : [];
+    } catch {
+      return [];
+    }
+  });
+}

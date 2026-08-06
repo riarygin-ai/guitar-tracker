@@ -78,18 +78,43 @@ export function resolvedSupabaseUrlHostname(url: string): string {
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
 
-/** Hard-fails unless `url`'s hostname is localhost/127.0.0.1/::1. Always
- *  prints the resolved URL first, so a caller never runs anything
- *  destructive without seeing exactly what it's about to touch. */
+// The local Supabase CLI's fixed API port for this project (supabase/config.toml
+// [api] port = 54321) — never the hosted `https://<ref>.supabase.co` origin,
+// which carries no port at all. Checking the port in addition to the hostname
+// means a hostname-only allowlist can't be satisfied by some future local
+// proxy/tunnel that forwards a "localhost" name to a remote database.
+const LOCAL_SUPABASE_API_PORT = '54321';
+
+/** Hard-fails unless `url`'s hostname is localhost/127.0.0.1/::1 AND (when a
+ *  port is present in the URL, which the local stack always sets) that port
+ *  is exactly the local Supabase CLI's API port. Always prints the resolved
+ *  URL first, so a caller never runs anything destructive without seeing
+ *  exactly what it's about to touch.
+ *
+ *  This is a fail-closed allowlist, not a denylist: it does not attempt to
+ *  recognize "*.supabase.co" and block it specifically — any hostname other
+ *  than the three local ones is rejected outright, so a hosted project ref
+ *  can never pass regardless of what it looks like. There is deliberately no
+ *  environment-variable escape hatch (e.g. an "ALLOW_REMOTE_TEST_DB" flag) —
+ *  a database-writing test that needs to run against something other than
+ *  the disposable local stack should not exist. */
 export function assertLocalSupabaseUrl(url: string): void {
   console.log(`[safety] Resolved Supabase URL: ${url}`);
   const hostname = resolvedSupabaseUrlHostname(url);
+  const parsed = new URL(url);
   if (!LOCAL_HOSTNAMES.has(hostname)) {
     throw new Error(
       `Refusing to run: Supabase URL "${url}" (hostname "${hostname}") is not local. ` +
       'This script must only ever run against a disposable local Supabase stack. ' +
       'Run `supabase start`, and if NEXT_PUBLIC_SUPABASE_URL is exported in your shell, ' +
       'point it at http://127.0.0.1:54321 before retrying. .env.local is never read by this script.',
+    );
+  }
+  if (parsed.port && parsed.port !== LOCAL_SUPABASE_API_PORT) {
+    throw new Error(
+      `Refusing to run: Supabase URL "${url}" has hostname "${hostname}" (local) but port ` +
+      `"${parsed.port}" does not match the local Supabase CLI's API port (${LOCAL_SUPABASE_API_PORT}). ` +
+      'Run `supabase status` to confirm the correct local API URL before retrying.',
     );
   }
 }

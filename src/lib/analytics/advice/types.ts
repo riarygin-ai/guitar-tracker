@@ -23,6 +23,12 @@ export interface AnalyticsRunAdviceRow {
   advice_schema_version: string;
   prompt_template_version: string;
   canonical_input_hash: string | null;
+  /** The EXACT Advice Input Packet persisted at generation time — the same
+   *  object canonically hashed into canonical_input_hash and sent to
+   *  OpenAI. Null only for rows created before this column existed
+   *  (legacy rows); every row created from this point forward populates
+   *  it. Immutable after first set (DB trigger enforced). */
+  input_packet: AdviceInputPacket | null;
   advice: StructuredAdviceResponse | null;
   source_refs: SourceRegistryEntry[] | null;
   generated_at: string | null;
@@ -32,10 +38,11 @@ export interface AnalyticsRunAdviceRow {
   updated_at: string;
 }
 
-// Metadata-only shape (everything except `advice`/`source_refs`) — for
-// History-list bulk lookups that must never pull every revision's full
-// structured payload into memory at once.
-export type AnalyticsRunAdviceMeta = Omit<AnalyticsRunAdviceRow, 'advice' | 'source_refs'>;
+// Metadata-only shape (everything except `advice`/`source_refs`/
+// `input_packet`) — for History-list bulk lookups that must never pull
+// every revision's full structured payload (or its input packet) into
+// memory at once.
+export type AnalyticsRunAdviceMeta = Omit<AnalyticsRunAdviceRow, 'advice' | 'source_refs' | 'input_packet'>;
 
 // ── Source registry ──────────────────────────────────────────────────────
 // The complete, closed list of citable evidence for one run — built once

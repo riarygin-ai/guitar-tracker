@@ -55,7 +55,10 @@ export default function HomePage() {
   }, [])
 
   async function handleDashboardAdviceAction() {
-    if (!latestRun) return
+    // Defense in depth alongside the disabled/aria-busy button state below —
+    // a second invocation (e.g. a queued click event) while one is already
+    // in flight must never fire a second request.
+    if (!latestRun || adviceActionBusy) return
     setAdviceActionBusy(true)
     setAdviceActionError(null)
     try {
@@ -519,6 +522,7 @@ export default function HomePage() {
                 type="button"
                 onClick={handleDashboardAdviceAction}
                 disabled={adviceActionBusy}
+                aria-busy={adviceActionBusy}
                 className="inline-flex h-9 items-center justify-center rounded-xl bg-slate-950 px-3.5 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
               >
                 {adviceActionBusy ? 'Generating…' : 'Generate Advice'}
@@ -540,6 +544,7 @@ export default function HomePage() {
                 type="button"
                 onClick={handleDashboardAdviceAction}
                 disabled={adviceActionBusy}
+                aria-busy={adviceActionBusy}
                 className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
               >
                 {adviceActionBusy ? 'Retrying…' : 'Retry Advice'}
@@ -562,7 +567,7 @@ export default function HomePage() {
               const primaryEvidenceHref = `/analytics?runId=${latestRun.id}&sourceIds=${primary.source_ids.map((s) => encodeURIComponent(s)).join(',')}`
               return (
                 <div className="grid gap-3 lg:grid-cols-3">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700/30 lg:col-span-3">
+                  <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700/30 lg:col-span-3">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
                         {formatPriority(primary.priority)}
@@ -571,8 +576,8 @@ export default function HomePage() {
                         Confidence: {formatConfidence(primary.confidence_label)}
                       </span>
                     </div>
-                    <h3 className="mt-2 text-base font-semibold text-slate-900 dark:text-white">{primary.headline}</h3>
-                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{primary.advice}</p>
+                    <h3 className="mt-2 break-words text-base font-semibold text-slate-900 dark:text-white">{primary.headline}</h3>
+                    <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{primary.advice}</p>
                     <div className="mt-2.5 flex flex-wrap items-center gap-3">
                       <Link href={primaryEvidenceHref} className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
                         View Evidence ({primary.source_ids.length})
@@ -585,10 +590,10 @@ export default function HomePage() {
                   {secondary.length > 0 && (
                     <div className="hidden gap-3 lg:col-span-3 lg:grid lg:grid-cols-2">
                       {secondary.map((card) => (
-                        <div key={card.advice_code} className="rounded-2xl border border-slate-200 bg-white p-3.5 dark:border-slate-700 dark:bg-slate-800/60">
+                        <div key={card.advice_code} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3.5 dark:border-slate-700 dark:bg-slate-800/60">
                           <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{humanizeCode(card.advice_type)}</span>
-                          <h4 className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
-                          <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{card.advice}</p>
+                          <h4 className="mt-1 break-words text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
+                          <p className="mt-1 break-words text-xs text-slate-600 dark:text-slate-300">{card.advice}</p>
                           <Link
                             href={`/analytics?runId=${latestRun.id}&sourceIds=${card.source_ids.map((s) => encodeURIComponent(s)).join(',')}`}
                             className="mt-1.5 inline-block text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"

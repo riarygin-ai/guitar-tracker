@@ -1113,7 +1113,7 @@ const ANALYTICS_RUN_ADVICE_META_COLUMNS =
   'id, analytics_run_id, user_id, revision_number, status, provider, model, advice_schema_version, prompt_template_version, canonical_input_hash, generated_at, error_code, error_message, created_at, updated_at';
 
 const ANALYTICS_RUN_ADVICE_FULL_COLUMNS =
-  `${ANALYTICS_RUN_ADVICE_META_COLUMNS}, advice, source_refs`;
+  `${ANALYTICS_RUN_ADVICE_META_COLUMNS}, advice, source_refs, input_packet`;
 
 // Bulk, lightweight lookup for the History list — never loads `advice`/
 // `source_refs` JSON for every row. Fetches every revision for the given
