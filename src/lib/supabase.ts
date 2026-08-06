@@ -1170,45 +1170,84 @@ export async function getLatestAdviceForRun(runId: number) {
     .maybeSingle();
 }
 
-// The Dashboard's actual selection rule: the newest Analytics Run (by
-// analytics_run_id — an identity column, so higher id = created later,
-// same ordering `getRecentAnalyticsRuns` already relies on) that has AT
-// LEAST ONE completed advice revision, and within that run, its HIGHEST
-// completed revision — not necessarily that run's globally-latest
-// revision, since a later retry attempt may have failed. A single
-// ORDER BY (analytics_run_id DESC, revision_number DESC) LIMIT 1 over
-// status='completed' rows satisfies both conditions at once: the top row
-// is, by construction, in the newest run that has any completed row, and
-// the highest-numbered completed revision within it. RLS on
-// analytics_run_advice already restricts this to the caller's own rows
-// (see the module header above), so this can never return another user's
-// advice. Returns null when the current user has no completed advice at
-// all — the Dashboard section must not render in that case.
+// The Dashboard's actual selection rule: the newest Analytics Run — by
+// the RUN's own created_at, never analytics_run_id or advice row order,
+// which is a distinct (if usually correlated) thing — that has AT LEAST
+// ONE completed advice revision, and within that run, its HIGHEST
+// completed revision, not necessarily that run's globally-latest
+// revision, since a later retry attempt may have failed. run.id DESC is
+// the deterministic tie-breaker for two runs created in the exact same
+// instant (created_at has only timestamp, not sub-timestamp, resolution).
+//
+// This requires two round trips rather than one: (1) every completed
+// advice row's (analytics_run_id, revision_number) for the caller — RLS-
+// scoped, so this can never see another user's rows — and (2) those
+// specific runs' own created_at/id, so the sort key is the run's real
+// creation time rather than assumed to track analytics_run_id ordering.
+// A third, final query fetches the single winning row's full advice
+// content (advice/source_refs/input_packet) — never loaded for rows that
+// didn't win. Returns null when the current user has no completed advice
+// at all — the Dashboard section must not render in that case.
 export async function getLatestCompletedAdviceForCurrentUser(): Promise<{
   data: { run: AnalyticsRunMeta; advice: AnalyticsRunAdviceRow } | null;
   error: unknown;
 }> {
+  const { data: completedRows, error: completedError } = await supabase
+    .from('analytics_run_advice')
+    .select('analytics_run_id, revision_number')
+    .eq('status', 'completed');
+
+  if (completedError) return { data: null, error: completedError };
+  if (!completedRows || completedRows.length === 0) return { data: null, error: null };
+
+  const runIds = Array.from(new Set(completedRows.map((r) => r.analytics_run_id as number)));
+
+  const { data: runs, error: runsError } = await supabase
+    .from('analytics_runs')
+    .select(ANALYTICS_RUN_META_COLUMNS)
+    .in('id', runIds);
+
+  if (runsError) return { data: null, error: runsError };
+
+  const runById = new Map<number, AnalyticsRunMeta>((runs ?? []).map((r) => {
+    const meta = r as unknown as AnalyticsRunMeta;
+    return [meta.id, meta];
+  }));
+
+  const candidates = completedRows
+    .map((row) => {
+      const run = runById.get(row.analytics_run_id as number);
+      // A completed advice row whose parent run isn't found (should not
+      // happen — the composite ownership FK guarantees the run exists —
+      // but skipped defensively rather than thrown) never becomes a
+      // candidate.
+      if (!run) return null;
+      return { run, revisionNumber: row.revision_number as number };
+    })
+    .filter((c): c is { run: AnalyticsRunMeta; revisionNumber: number } => c !== null);
+
+  if (candidates.length === 0) return { data: null, error: null };
+
+  candidates.sort((a, b) => {
+    if (a.run.created_at !== b.run.created_at) return a.run.created_at > b.run.created_at ? -1 : 1;
+    if (a.run.id !== b.run.id) return a.run.id > b.run.id ? -1 : 1;
+    return b.revisionNumber - a.revisionNumber;
+  });
+
+  const winner = candidates[0];
+
   const { data: adviceRow, error: adviceError } = await supabase
     .from('analytics_run_advice')
     .select(ANALYTICS_RUN_ADVICE_FULL_COLUMNS)
+    .eq('analytics_run_id', winner.run.id)
+    .eq('revision_number', winner.revisionNumber)
     .eq('status', 'completed')
-    .order('analytics_run_id', { ascending: false })
-    .order('revision_number', { ascending: false })
-    .limit(1)
     .maybeSingle();
 
   if (adviceError || !adviceRow) return { data: null, error: adviceError };
 
-  const { data: run, error: runError } = await supabase
-    .from('analytics_runs')
-    .select(ANALYTICS_RUN_META_COLUMNS)
-    .eq('id', (adviceRow as unknown as AnalyticsRunAdviceRow).analytics_run_id)
-    .maybeSingle();
-
-  if (runError || !run) return { data: null, error: runError };
-
   return {
-    data: { run: run as unknown as AnalyticsRunMeta, advice: adviceRow as unknown as AnalyticsRunAdviceRow },
+    data: { run: winner.run, advice: adviceRow as unknown as AnalyticsRunAdviceRow },
     error: null,
   };
 }

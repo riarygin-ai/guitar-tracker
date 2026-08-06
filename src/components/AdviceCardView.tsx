@@ -8,6 +8,13 @@
 // navigate to — Run Detail scrolls to an in-page source card, the Dashboard
 // links to a different page entirely — so that choice is passed in as the
 // `evidence` prop rather than hardcoded here.
+//
+// Two variants: 'full' (Run Detail — every field, View Evidence included;
+// this is the default, so Run Detail's existing call sites are unchanged)
+// and 'compact' (Dashboard only — type/priority/confidence/headline/advice
+// text/Open Item ONLY; deliberately never why_it_matters, limitations,
+// View Evidence, or a source count — the Dashboard shows no deterministic
+// evidence at all). `evidence` is only consulted in 'full' mode.
 
 import Link from 'next/link';
 import type { AdviceCard } from '@/lib/analytics/advice/types';
@@ -38,12 +45,38 @@ export type AdviceCardEvidenceAction =
   | { kind: 'link'; href: string }
   | { kind: 'button'; onClick: () => void };
 
+export type AdviceCardVariant = 'full' | 'compact';
+
 export interface AdviceCardViewProps {
   card: AdviceCard;
-  evidence: AdviceCardEvidenceAction;
+  /** Required for 'full' (the default) — ignored entirely in 'compact'
+   *  mode, since compact never renders a View Evidence control. */
+  evidence?: AdviceCardEvidenceAction;
+  variant?: AdviceCardVariant;
 }
 
-export default function AdviceCardView({ card, evidence }: AdviceCardViewProps) {
+export default function AdviceCardView({ card, evidence, variant = 'full' }: AdviceCardViewProps) {
+  if (variant === 'compact') {
+    return (
+      <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-700 dark:bg-slate-700/30">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{formatAdviceType(card.advice_type)}</span>
+          <PriorityBadge priority={card.priority} />
+          <ConfidencePill confidence={card.confidence_label} />
+        </div>
+        <h4 className="mt-1.5 break-words text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
+        <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{card.advice}</p>
+        {card.item_id != null && (
+          <div className="mt-2">
+            <Link href={`/inventory/${card.item_id}`} className="text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
+              Open Item
+            </Link>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-700 dark:bg-slate-700/30">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -59,26 +92,28 @@ export default function AdviceCardView({ card, evidence }: AdviceCardViewProps) 
           {card.limitations.map((l) => <li key={l}>{humanizeCode(l)}</li>)}
         </ul>
       )}
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        {evidence.kind === 'link' ? (
-          <Link href={evidence.href} className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
-            View Evidence ({card.source_ids.length})
-          </Link>
-        ) : (
-          <button
-            type="button"
-            onClick={evidence.onClick}
-            className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-          >
-            View Evidence ({card.source_ids.length})
-          </button>
-        )}
-        {card.item_id != null && (
-          <Link href={`/inventory/${card.item_id}`} className="shrink-0 text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
-            Open Item
-          </Link>
-        )}
-      </div>
+      {evidence && (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          {evidence.kind === 'link' ? (
+            <Link href={evidence.href} className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+              View Evidence ({card.source_ids.length})
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={evidence.onClick}
+              className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+            >
+              View Evidence ({card.source_ids.length})
+            </button>
+          )}
+          {card.item_id != null && (
+            <Link href={`/inventory/${card.item_id}`} className="shrink-0 text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
+              Open Item
+            </Link>
+          )}
+        </div>
+      )}
     </div>
   );
 }

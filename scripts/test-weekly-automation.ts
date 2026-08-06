@@ -29,14 +29,16 @@
 import { createClient } from '@supabase/supabase-js';
 import {
   SUPABASE_URL,
+  SUPABASE_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY,
   assertLocalSupabaseUrl,
   assertLocalSupabaseIsRunning,
   setupAnalyticsTestFixtures,
 } from './setup-analytics-test-fixtures';
-import { evaluateWeeklyTorontoWindow } from '../src/lib/analytics/automation/torontoSchedule';
-import { runWeeklyAutomationForUser } from '../src/lib/analytics/automation/runWeeklyAutomation';
+import { evaluateWeeklyTorontoWindow, getWeeklyScheduleStatusContext } from '../src/lib/analytics/automation/torontoSchedule';
+import { runWeeklyAutomationForUser, WEEKLY_AUTOMATION_CODE } from '../src/lib/analytics/automation/runWeeklyAutomation';
 import type { WeeklyAutomationOutcome } from '../src/lib/analytics/automation/runWeeklyAutomation';
+import { runAnalyticsForCurrentUser } from '../src/lib/analytics/runAnalytics';
 
 let passed = 0;
 let failed = 0;
@@ -287,6 +289,165 @@ async function main() {
       check('C6: the resulting advice row is failed/NO_VALID_EVIDENCE, never a crash', c6Advice?.status === 'failed' && c6Advice?.error_code === 'NO_VALID_EVIDENCE', c6Advice);
     }
   }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Section D — weekly status: grace-period boundary (pure, no DB)
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[D — weekly status: 60-minute grace period boundary]');
+
+  const statusJulyWed = findThursday(2026, 7);
+  statusJulyWed.setUTCDate(statusJulyWed.getUTCDate() - 1); // Thursday -> Wednesday, same week
+  // EDT (UTC-4): Wednesday 21:59 Toronto = 01:59 UTC next day; 22:00 = 02:00 UTC next day.
+  const before2159 = new Date(Date.UTC(statusJulyWed.getUTCFullYear(), statusJulyWed.getUTCMonth(), statusJulyWed.getUTCDate() + 1, 1, 59, 0));
+  const atGraceCutoff2200 = new Date(Date.UTC(statusJulyWed.getUTCFullYear(), statusJulyWed.getUTCMonth(), statusJulyWed.getUTCDate() + 1, 2, 0, 0));
+  const after2201 = new Date(Date.UTC(statusJulyWed.getUTCFullYear(), statusJulyWed.getUTCMonth(), statusJulyWed.getUTCDate() + 1, 2, 1, 0));
+
+  const ctxBefore = getWeeklyScheduleStatusContext(before2159);
+  check('no execution before the grace period (Wed 21:59 Toronto) is not marked missed', ctxBefore.pastGracePeriod === false, ctxBefore);
+
+  const ctxAtCutoff = getWeeklyScheduleStatusContext(atGraceCutoff2200);
+  check('exactly at the grace cutoff (Wed 22:00 Toronto) IS marked missed if nothing ran', ctxAtCutoff.pastGracePeriod === true, ctxAtCutoff);
+
+  const ctxAfter = getWeeklyScheduleStatusContext(after2201);
+  check('after the grace period (Wed 22:01 Toronto) is marked missed if nothing ran', ctxAfter.pastGracePeriod === true, ctxAfter);
+  check('the period key is the SAME Wednesday whether before or after that Wednesday\'s own grace cutoff', ctxBefore.currentPeriodKey === ctxAfter.currentPeriodKey, { before: ctxBefore.currentPeriodKey, after: ctxAfter.currentPeriodKey });
+  check('"next scheduled" before grace still points at THIS week\'s Wednesday 9pm', new Date(ctxBefore.nextScheduledAtUtc).getTime() < new Date(ctxAfter.nextScheduledAtUtc).getTime());
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Section E — weekly status endpoint: real states, ownership, cross-user
+  // rejection. Reuses the process.env values already set for the cron
+  // route in Section B.
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[E — /api/analytics/automation/status: states, ownership, cross-user rejection]');
+
+  const { GET: statusGet } = await import('../src/app/api/analytics/automation/status/route');
+  const anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } });
+  const STATUS_URL = 'http://localhost/api/analytics/automation/status';
+
+  async function tokenFor(email: string, password: string): Promise<string> {
+    const { data, error } = await anonClient.auth.signInWithPassword({ email, password });
+    if (error || !data.session) throw new Error(`sign-in failed for ${email}: ${error?.message}`);
+    return data.session.access_token;
+  }
+
+  const noAuthStatusRes = await statusGet(new NextRequest(STATUS_URL));
+  check('status endpoint: missing Authorization header returns 401', noAuthStatusRes.status === 401);
+
+  const userATokenForStatus = await tokenFor(fixtures.userAEmail, fixtures.password);
+  const userBTokenForStatus = await tokenFor(fixtures.userBEmail, fixtures.password);
+
+  const nowStatusContext = getWeeklyScheduleStatusContext();
+  const statusTestPeriodKey = nowStatusContext.currentPeriodKey;
+
+  async function insertExecutionRow(targetUserId: number, status: 'running' | 'completed' | 'failed', extra: Record<string, unknown> = {}) {
+    const { data, error } = await serviceClient
+      .from('analytics_automation_executions')
+      .insert({
+        automation_code: WEEKLY_AUTOMATION_CODE,
+        target_user_id: targetUserId,
+        local_period_key: statusTestPeriodKey,
+        status,
+        started_at: new Date().toISOString(),
+        ...extra,
+      })
+      .select('id')
+      .single();
+    if (error || !data) throw new Error(`Failed to insert synthetic execution row: ${error?.message}`);
+    return data.id as number;
+  }
+
+  // E1 — Running
+  const runningExecId = await insertExecutionRow(userAId, 'running');
+  createdExecutionIds.push(runningExecId);
+  const runningRes = await statusGet(new NextRequest(STATUS_URL, { headers: { authorization: `Bearer ${userATokenForStatus}` } }));
+  const runningBody = await runningRes.json();
+  check('E1: a running execution reports state "running"', runningRes.status === 200 && runningBody.state === 'running', runningBody);
+
+  // Clear it so the next case's SELECT (by period key) is unambiguous —
+  // (automation_code, target_user_id, local_period_key) is unique, so a
+  // second row for the same triple would itself violate the constraint;
+  // delete-then-insert simulates the row's own lifecycle transitions.
+  await serviceClient.from('analytics_automation_executions').delete().eq('id', runningExecId);
+  createdExecutionIds.splice(createdExecutionIds.indexOf(runningExecId), 1);
+
+  // E2 — Completed, with a related run link
+  const statusTestRun = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  createdRunIds.push(statusTestRun.id);
+  const completedExecId = await insertExecutionRow(userAId, 'completed', { completed_at: new Date().toISOString(), analytics_run_id: statusTestRun.id });
+  createdExecutionIds.push(completedExecId);
+  const completedRes = await statusGet(new NextRequest(STATUS_URL, { headers: { authorization: `Bearer ${userATokenForStatus}` } }));
+  const completedBody = await completedRes.json();
+  check('E2: a completed execution reports state "completed" with the related run id', completedRes.status === 200 && completedBody.state === 'completed' && completedBody.analyticsRunId === statusTestRun.id, completedBody);
+
+  // E3 — cross-user rejection + ownership: userB has NO row for this
+  // period (only userA does) — userB must never see userA's execution.
+  const userBStatusRes = await statusGet(new NextRequest(STATUS_URL, { headers: { authorization: `Bearer ${userBTokenForStatus}` } }));
+  const userBStatusBody = await userBStatusRes.json();
+  check(
+    'E3: userB never sees userA\'s execution for the same period (state is did_not_run/next_scheduled, never completed/running, and no analyticsRunId leaks through)',
+    userBStatusBody.state !== 'completed' && userBStatusBody.state !== 'running' && userBStatusBody.analyticsRunId === undefined,
+    userBStatusBody,
+  );
+
+  await serviceClient.from('analytics_automation_executions').delete().eq('id', completedExecId);
+  createdExecutionIds.splice(createdExecutionIds.indexOf(completedExecId), 1);
+
+  // E4 — Failed: a safe message only, never the raw error_message.
+  const RAW_SECRET_LOOKING_MESSAGE = 'relation "some_internal_table" does not exist — connection string postgresql://user:pass@host/db';
+  const failedExecId = await insertExecutionRow(userAId, 'failed', {
+    completed_at: new Date().toISOString(),
+    error_code: 'ANALYTICS_RUN_FAILED',
+    error_message: RAW_SECRET_LOOKING_MESSAGE,
+  });
+  createdExecutionIds.push(failedExecId);
+  const failedRes = await statusGet(new NextRequest(STATUS_URL, { headers: { authorization: `Bearer ${userATokenForStatus}` } }));
+  const failedBodyText = await failedRes.clone().text();
+  const failedBody = JSON.parse(failedBodyText);
+  check('E4: a failed execution reports state "failed"', failedRes.status === 200 && failedBody.state === 'failed', failedBody);
+  check('E4: the raw error_message is NEVER returned by the status endpoint', !failedBodyText.includes(RAW_SECRET_LOOKING_MESSAGE), failedBodyText);
+  check('E4: a safe, generic user-facing message is returned instead', typeof failedBody.message === 'string' && failedBody.message.length > 0, failedBody);
+
+  await serviceClient.from('analytics_automation_executions').delete().eq('id', failedExecId);
+  createdExecutionIds.splice(createdExecutionIds.indexOf(failedExecId), 1);
+
+  // E5 — Did not run / Next scheduled: no row exists for this period at
+  // all (already true — the above cases each cleaned up after
+  // themselves). The route must agree with getWeeklyScheduleStatusContext
+  // computed at (approximately) the same real "now".
+  const noRowRes = await statusGet(new NextRequest(STATUS_URL, { headers: { authorization: `Bearer ${userATokenForStatus}` } }));
+  const noRowBody = await noRowRes.json();
+  const expectedState = nowStatusContext.pastGracePeriod ? 'did_not_run' : 'next_scheduled';
+  check(
+    `E5: with no execution row, the endpoint reports "${expectedState}" — consistent with the current real Toronto grace-period state`,
+    noRowRes.status === 200 && noRowBody.state === expectedState,
+    { noRowBody, nowStatusContext },
+  );
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Section F — a manual Analytics run must never alter a failed weekly
+  // execution row for the same user.
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[F — manual Analytics run does not alter a failed weekly execution]');
+
+  const independenceExecId = await insertExecutionRow(userAId, 'failed', {
+    local_period_key: 'test-weekly-automation-independence-period',
+    completed_at: new Date().toISOString(),
+    error_code: 'ANALYTICS_RUN_FAILED',
+    error_message: 'synthetic failure for the manual-run-independence test',
+  });
+  createdExecutionIds.push(independenceExecId);
+
+  const { data: beforeRow } = await serviceClient.from('analytics_automation_executions').select('*').eq('id', independenceExecId).single();
+
+  const manualRun = await runAnalyticsForCurrentUser({ appUserId: userAId, serviceClient });
+  createdRunIds.push(manualRun.id);
+
+  const { data: afterRow } = await serviceClient.from('analytics_automation_executions').select('*').eq('id', independenceExecId).single();
+  check(
+    'F: a manual Analytics run leaves the failed weekly execution row byte-for-byte unchanged',
+    JSON.stringify(beforeRow) === JSON.stringify(afterRow),
+    { beforeRow, afterRow },
+  );
 
   // ══════════════════════════════════════════════════════════════════════
   // Cleanup + verification (required for every persistent concurrency

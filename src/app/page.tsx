@@ -466,14 +466,7 @@ export default function HomePage() {
             ) : (
               <div className="grid gap-3 lg:grid-cols-3">
                 {latestCompletedAdvice.advice.advice!.advice_cards.map((card) => (
-                  <AdviceCardView
-                    key={card.advice_code}
-                    card={card}
-                    evidence={{
-                      kind: 'link',
-                      href: `/analytics?runId=${latestCompletedAdvice.run.id}&sourceIds=${card.source_ids.map((s) => encodeURIComponent(s)).join(',')}`,
-                    }}
-                  />
+                  <AdviceCardView key={card.advice_code} card={card} variant="compact" />
                 ))}
               </div>
             )}

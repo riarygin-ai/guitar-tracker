@@ -247,6 +247,117 @@ function JsonBlock({ value }: { value: unknown }) {
   );
 }
 
+// ─── Weekly Automation status panel ────────────────────────────────────────
+// Read-only — never triggers or retries anything itself. A failed weekly
+// period is permanently terminal (see analytics_automation_executions'
+// own unique-per-period claim); this panel only explains that plainly and
+// points at the existing "Run Analytics" button above, which is a fully
+// independent manual action and never touches the weekly audit row.
+
+type WeeklyAutomationStatus =
+  | { state: 'completed'; periodKey: string; completedAt: string | null; analyticsRunId: number | null }
+  | { state: 'running'; periodKey: string; startedAt: string | null }
+  | { state: 'failed'; periodKey: string; completedAt: string | null; message: string }
+  | { state: 'did_not_run'; periodKey: string }
+  | { state: 'next_scheduled'; periodKey: string; nextScheduledAtUtc: string };
+
+const WEEKLY_AUTOMATION_STATE_LABELS: Record<WeeklyAutomationStatus['state'], string> = {
+  completed: 'Completed',
+  running: 'Running',
+  failed: 'Failed',
+  did_not_run: 'Did not run',
+  next_scheduled: 'Scheduled',
+};
+
+const WEEKLY_AUTOMATION_STATE_BADGE_CLASSES: Record<WeeklyAutomationStatus['state'], string> = {
+  completed: 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700',
+  running: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700',
+  failed: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700',
+  did_not_run: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700',
+  next_scheduled: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600',
+};
+
+function WeeklyAutomationStateBadge({ state }: { state: WeeklyAutomationStatus['state'] }) {
+  return (
+    <span className={`inline-flex shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${WEEKLY_AUTOMATION_STATE_BADGE_CLASSES[state]}`}>
+      {WEEKLY_AUTOMATION_STATE_LABELS[state]}
+    </span>
+  );
+}
+
+function WeeklyAutomationStatusPanel() {
+  const [status, setStatus] = useState<WeeklyAutomationStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        if (!cancelled) setLoading(false);
+        return;
+      }
+      try {
+        const res = await fetch('/api/analytics/automation/status', {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as WeeklyAutomationStatus;
+          if (!cancelled) setStatus(data);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-slate-900 dark:text-white">Weekly Automation</p>
+        {status && <WeeklyAutomationStateBadge state={status.state} />}
+      </div>
+      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Schedule: Wednesday, 9:00 PM America/Toronto</p>
+
+      <div className="mt-2 min-w-0">
+        {loading ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">Loading…</p>
+        ) : !status ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">Weekly automation status is unavailable right now.</p>
+        ) : status.state === 'completed' ? (
+          <div className="space-y-1">
+            <p className="break-words text-sm text-slate-600 dark:text-slate-300">Completed {formatDateTime(status.completedAt)}.</p>
+            {status.analyticsRunId != null && (
+              <Link href={`/analytics?runId=${status.analyticsRunId}`} className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                View this week&apos;s Analytics Run
+              </Link>
+            )}
+          </div>
+        ) : status.state === 'running' ? (
+          <div className="flex items-center gap-2">
+            <div className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300" />
+            <p className="break-words text-sm text-slate-600 dark:text-slate-300">Running{status.startedAt ? ` since ${formatDateTime(status.startedAt)}` : ''}…</p>
+          </div>
+        ) : status.state === 'failed' ? (
+          <div className="space-y-1">
+            <p className="break-words text-sm text-rose-700 dark:text-rose-400">{status.message}</p>
+            <p className="break-words text-xs text-slate-500 dark:text-slate-400">
+              This period will not be retried automatically. Use the Run Analytics button above whenever you&apos;d like fresh Analytics and Advice.
+            </p>
+          </div>
+        ) : status.state === 'did_not_run' ? (
+          <p className="break-words text-sm text-slate-600 dark:text-slate-300">Weekly Analytics did not run for this period.</p>
+        ) : (
+          <p className="break-words text-sm text-slate-500 dark:text-slate-400">Next run: {formatDateTime(status.nextScheduledAtUtc)}.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function AnalyticsPage() {
@@ -552,6 +663,8 @@ export default function AnalyticsPage() {
           {runError}
         </div>
       )}
+
+      <WeeklyAutomationStatusPanel />
 
       {/* ── Recent runs ──────────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">

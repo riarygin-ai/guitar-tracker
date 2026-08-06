@@ -43,6 +43,9 @@ import { ADVICE_MODEL_ID, ADVICE_SYSTEM_PROMPT } from '../src/lib/openai';
 import { ADVICE_PROVIDER, ADVICE_SCHEMA_VERSION, PROMPT_TEMPLATE_VERSION } from '../src/lib/analytics/advice/types';
 import { formatConfidence, formatCurrency, formatKeyMetrics, humanizeCode } from '../src/lib/analytics/advice/presentation';
 import type { SourceRegistryEntry } from '../src/lib/analytics/advice/types';
+import { supabase, getLatestCompletedAdviceForCurrentUser } from '../src/lib/supabase';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const ANON_KEY = SUPABASE_ANON_KEY;
 const SERVICE_ROLE_KEY = SUPABASE_SERVICE_ROLE_KEY;
@@ -777,6 +780,197 @@ async function main() {
     // second revision even after a real attempt.
     const secondRealAuto = await generateAdviceForRun({ runId: realRun.id, requestingUserId: userAId, serviceClient, mode: 'auto' });
     check('automatic idempotency holds for a real run too — a second auto call is skipped', secondRealAuto.status === 'skipped' && secondRealAuto.reason === 'ADVICE_ALREADY_EXISTS_FOR_RUN', secondRealAuto);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Section G — Dashboard Advice selection: true created_at chronology
+  // (never analytics_run_id/insertion order), a failed newer revision
+  // falling back to an earlier completed one on the SAME run, and a
+  // completed retry on an OLDER run never replacing a newer run's already-
+  // completed Advice. Synthetic rows (directly inserted, not generated via
+  // the real pipeline) with fully controlled created_at timestamps — this
+  // section tests the SELECTION logic in getLatestCompletedAdviceForCurrentUser,
+  // not generation. created_at is deliberately set far in the future
+  // (2099) so these rows are always the chronologically newest in the
+  // dataset regardless of whatever real rows earlier sections created.
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[G — Dashboard Advice selection: created_at chronology]');
+  {
+    const minimalSnapshot = { snapshot_schema_version: '2.13', analytics_definition_version: '2.13', generated_at: new Date().toISOString(), evidence_scope: 'shared_business_population' };
+
+    const insertSyntheticRun = async (createdAtIso: string): Promise<number> => {
+      const { data, error } = await serviceClient
+        .from('analytics_runs')
+        .insert({
+          requested_by_user_id: userAId,
+          recommendation_target_user_id: userAId,
+          analytics_version: '2.13',
+          evidence_scope: 'shared_business_population',
+          status: 'completed',
+          started_at: createdAtIso,
+          completed_at: createdAtIso,
+          created_at: createdAtIso,
+          snapshot: minimalSnapshot,
+        })
+        .select('id')
+        .single();
+      if (error || !data) throw new Error(`Failed to insert synthetic run: ${error?.message}`);
+      return data.id as number;
+    };
+
+    const minimalCompletedAdviceResponse = (headline: string) => ({
+      schema_version: '1.0',
+      run_summary: { headline, summary: 'Synthetic summary for ordering test.', source_ids: [] },
+      advice_cards: [],
+      limitations: [],
+    });
+
+    const insertCompletedAdvice = async (runId: number, revisionNumber: number, headline: string): Promise<number> => {
+      const { data, error } = await serviceClient
+        .from('analytics_run_advice')
+        .insert({
+          analytics_run_id: runId,
+          user_id: userAId,
+          revision_number: revisionNumber,
+          status: 'completed',
+          provider: ADVICE_PROVIDER,
+          model: ADVICE_MODEL_ID,
+          advice_schema_version: ADVICE_SCHEMA_VERSION,
+          prompt_template_version: PROMPT_TEMPLATE_VERSION,
+          canonical_input_hash: 'f'.repeat(64),
+          advice: minimalCompletedAdviceResponse(headline),
+          source_refs: [],
+          generated_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+      if (error || !data) throw new Error(`Failed to insert completed advice: ${error?.message}`);
+      return data.id as number;
+    };
+
+    const insertFailedAdvice = async (runId: number, revisionNumber: number): Promise<number> => {
+      const { data, error } = await serviceClient
+        .from('analytics_run_advice')
+        .insert({
+          analytics_run_id: runId,
+          user_id: userAId,
+          revision_number: revisionNumber,
+          status: 'failed',
+          provider: ADVICE_PROVIDER,
+          model: ADVICE_MODEL_ID,
+          advice_schema_version: ADVICE_SCHEMA_VERSION,
+          prompt_template_version: PROMPT_TEMPLATE_VERSION,
+          error_code: 'SYNTHETIC_TEST_FAILURE',
+          error_message: 'synthetic failure for ordering test',
+        })
+        .select('id')
+        .single();
+      if (error || !data) throw new Error(`Failed to insert failed advice: ${error?.message}`);
+      return data.id as number;
+    };
+
+    const T0 = new Date('2099-01-01T00:00:00.000Z').getTime();
+    const runOldId = await insertSyntheticRun(new Date(T0).toISOString());              // inserted FIRST -> lower id
+    const runNewId = await insertSyntheticRun(new Date(T0 + 3_600_000).toISOString());  // inserted SECOND -> higher id, 1h later
+
+    // Force a genuine created_at/id DISAGREEMENT: runOldId keeps its LOWER
+    // id but is made chronologically NEWEST — proving selection follows
+    // created_at, never analytics_run_id/insertion order.
+    const runOldNewCreatedAt = new Date(T0 + 7_200_000).toISOString(); // 2h after T0 — after runNewId's own created_at
+    await serviceClient.from('analytics_runs').update({ created_at: runOldNewCreatedAt }).eq('id', runOldId);
+
+    await insertCompletedAdvice(runNewId, 1, 'Headline from the chronologically OLDER run');
+    const adviceOldRunRev1 = await insertCompletedAdvice(runOldId, 1, 'Headline from the chronologically NEWER run (rev 1)');
+
+    // Sign the SAME shared client src/app/page.tsx's Dashboard uses (via
+    // getLatestCompletedAdviceForCurrentUser) in as userA.
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email: fixtures.userAEmail, password: fixtures.password });
+    if (signInError) throw new Error(`Failed to sign in as userA for Section G: ${signInError.message}`);
+
+    const g1 = await getLatestCompletedAdviceForCurrentUser();
+    check(
+      'G1: selection follows the run\'s created_at, not analytics_run_id/insertion order — the chronologically newest run wins despite its LOWER id',
+      g1.data?.run.id === runOldId && g1.data?.advice.id === adviceOldRunRev1,
+      { got: g1.data && { runId: g1.data.run.id, adviceId: g1.data.advice.id }, expectedRunId: runOldId, expectedAdviceId: adviceOldRunRev1 },
+    );
+
+    // G2 — a failed newer revision on the SAME (still-newest) run must
+    // fall back to that run's own earlier completed revision, never an
+    // older run.
+    await insertFailedAdvice(runOldId, 2);
+    const g2 = await getLatestCompletedAdviceForCurrentUser();
+    check(
+      'G2: a failed newer revision on the newest run falls back to that SAME run\'s earlier completed revision, never an older run',
+      g2.data?.run.id === runOldId && g2.data?.advice.id === adviceOldRunRev1 && g2.data?.advice.revision_number === 1,
+      g2.data && { runId: g2.data.run.id, adviceId: g2.data.advice.id, revision: g2.data.advice.revision_number },
+    );
+
+    // G3 — retrying the OLDER run to a successful completion must NOT
+    // replace the newer run's already-completed Advice.
+    const adviceNewRunRev2 = await insertCompletedAdvice(runNewId, 2, 'A second, completed retry on the OLDER run');
+    const g3 = await getLatestCompletedAdviceForCurrentUser();
+    check(
+      'G3: a completed retry on the OLDER run never replaces the newer run\'s completed Advice',
+      g3.data?.run.id === runOldId && g3.data?.advice.id === adviceOldRunRev1,
+      { got: g3.data && { runId: g3.data.run.id, adviceId: g3.data.advice.id }, mustStillBeRunId: runOldId, unusedNewCompletedRetryId: adviceNewRunRev2 },
+    );
+
+    // G4 — deterministic id tie-breaker when two runs share the EXACT
+    // same created_at.
+    const runTieId = await insertSyntheticRun(runOldNewCreatedAt); // same created_at as runOldId, but a HIGHER id
+    const adviceTieRev1 = await insertCompletedAdvice(runTieId, 1, 'Tie-break run — same created_at, higher id');
+    const g4 = await getLatestCompletedAdviceForCurrentUser();
+    check(
+      'G4: when two runs share the exact same created_at, the HIGHER run id is the deterministic tie-breaker',
+      g4.data?.run.id === runTieId && g4.data?.advice.id === adviceTieRev1,
+      g4.data && { runId: g4.data.run.id, adviceId: g4.data.advice.id },
+    );
+
+    await supabase.auth.signOut();
+
+    await serviceClient.from('analytics_runs').delete().in('id', [runOldId, runNewId, runTieId]);
+    const { data: leftoverRuns } = await serviceClient.from('analytics_runs').select('id').in('id', [runOldId, runNewId, runTieId]);
+    check('cleanup: Section G synthetic runs removed (advice cascaded with them)', (leftoverRuns?.length ?? 0) === 0, leftoverRuns);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Section H — compact vs full AdviceCardView: structural guarantee (no
+  // browser/DOM renderer available in this environment — see the session's
+  // final report for the exact manual smoke-test checklist. This is a
+  // source-level check, not a rendered-DOM assertion: it locates the
+  // COMPACT branch's own JSX precisely (from its `if (variant ===
+  // 'compact')` guard to the line immediately before the unconditional
+  // full-variant `return (` that follows it) and asserts the excluded
+  // fields/labels appear ONLY in the remainder of the file, never inside
+  // that isolated block — deliberately excluding the file's header
+  // comments (which legitimately describe both variants in prose) from
+  // the search entirely, unlike a whole-file occurrence count would.
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[H — compact vs full AdviceCardView: structural guarantee]');
+  {
+    const componentSource = fs.readFileSync(path.resolve(process.cwd(), 'src', 'components', 'AdviceCardView.tsx'), 'utf8');
+
+    const compactBlockStart = componentSource.indexOf("if (variant === 'compact') {");
+    const fullReturnMarker = '\n  return (\n    <div';
+    const fullReturnStart = componentSource.indexOf(fullReturnMarker, compactBlockStart);
+    if (compactBlockStart === -1 || fullReturnStart === -1) {
+      throw new Error('Section H: could not locate the compact/full branch boundary in AdviceCardView.tsx — component structure changed; update this test\'s markers.');
+    }
+    const compactBlockOnly = componentSource.slice(compactBlockStart, fullReturnStart);
+    const fullVariantOnwards = componentSource.slice(fullReturnStart);
+
+    check('compact card never renders "Why it matters"', !compactBlockOnly.includes('card.why_it_matters') && fullVariantOnwards.includes('card.why_it_matters'));
+    check('compact card never renders limitations', !compactBlockOnly.includes('card.limitations') && fullVariantOnwards.includes('card.limitations'));
+    check('compact card never renders a "View Evidence" control', !compactBlockOnly.includes('View Evidence') && fullVariantOnwards.includes('View Evidence'));
+    check('compact card never renders a source count (source_ids.length)', !compactBlockOnly.includes('source_ids.length') && fullVariantOnwards.includes('source_ids.length'));
+    check('compact card DOES render an Open Item link (present in both variants)', compactBlockOnly.includes('Open Item') && fullVariantOnwards.includes('Open Item'));
+    check('AdviceCardView still exposes a real \'compact\' variant branch', componentSource.includes("variant === 'compact'"));
+
+    const analyticsPageSource = fs.readFileSync(path.resolve(process.cwd(), 'src', 'app', 'analytics', 'page.tsx'), 'utf8');
+    check('Run Detail (analytics/page.tsx) never passes variant="compact" — it keeps the full/default variant', !analyticsPageSource.includes('variant="compact"') && !analyticsPageSource.includes("variant: 'compact'"));
+
+    const dashboardSource = fs.readFileSync(path.resolve(process.cwd(), 'src', 'app', 'page.tsx'), 'utf8');
+    check('Dashboard (src/app/page.tsx) passes variant="compact"', dashboardSource.includes('variant="compact"'));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);
