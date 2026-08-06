@@ -1239,16 +1239,29 @@ async function main() {
     // v1.0's analytics_run_advice table) legitimately add their own new
     // migrations afterward — a blanket "no migration ever again" assertion
     // doesn't generalize across tasks, so it is not repeated here. This
-    // Pattern Discovery module's OWN migration boundary is unchanged: it
-    // still adds none (see supabase/migrations/ — no *pattern_discovery*
-    // or *build_analytics_snapshot_v2_1[4-9]*-shaped file exists).
+    // Pattern Discovery ENGINE (this file — the TypeScript selection/
+    // classification layer) still adds no SQL migration of its own (no
+    // new build_analytics_snapshot_v2_1[4-9]+). The one allowed exception,
+    // 20260830000000_pattern_discovery_evidence_exclude_cancelled_listings.sql,
+    // is a later, unrelated bug fix to _build_pattern_discovery_evidence_
+    // v2_13 (the SQL evidence-computation helper v2.13 already shipped
+    // with, called by build_analytics_snapshot_v2_13 — not by this
+    // engine) — same category of legitimate later exception as
+    // analytics_run_advice, named after "pattern_discovery" only because
+    // that helper function already was.
     const fs = require('fs') as typeof import('fs');
     const path = require('path') as typeof import('path');
     const migrationsDir = path.join(__dirname, '../supabase/migrations');
     const migrationFiles = fs.readdirSync(migrationsDir);
+    const ALLOWED_LATER_PATTERN_DISCOVERY_MIGRATIONS = new Set([
+      '20260830000000_pattern_discovery_evidence_exclude_cancelled_listings.sql',
+    ]);
     check(
-      'test 23: Pattern Discovery itself still adds no SQL migration (no build_analytics_snapshot_v2_1[4-9]+ or *pattern_discovery* migration file exists)',
-      !migrationFiles.some((f: string) => /build_analytics_snapshot_v2_(1[4-9]|[2-9]\d)/.test(f) || /pattern_discovery/i.test(f)),
+      'test 23: Pattern Discovery ENGINE itself still adds no SQL migration (no build_analytics_snapshot_v2_1[4-9]+, and no *pattern_discovery* migration beyond the allowed later evidence-helper bug fix)',
+      !migrationFiles.some((f: string) =>
+        /build_analytics_snapshot_v2_(1[4-9]|[2-9]\d)/.test(f) ||
+        (/pattern_discovery/i.test(f) && !ALLOWED_LATER_PATTERN_DISCOVERY_MIGRATIONS.has(f)),
+      ),
       migrationFiles,
     );
     check('test 24: engine_version is still 1.0 after this patch', guitarsResult.engine_version === '1.0', guitarsResult.engine_version);

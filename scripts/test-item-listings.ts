@@ -129,6 +129,7 @@ async function main() {
   if (!marketplaceId || !kijijiId) throw new Error('Marketplace/Kijiji deal_channels not found — seed data missing');
 
   const createdItemIds: number[] = [];
+  const createdDealIds: number[] = [];
 
   async function createTestItem(status: 'owned' = 'owned'): Promise<number> {
     const { data, error } = await serviceClient
@@ -313,10 +314,92 @@ async function main() {
   await supabase.auth.signOut();
 
   // ══════════════════════════════════════════════════════════════════════
+  // Section D — analytics_item_lifecycle + Pattern Discovery evidence:
+  // multi-cycle listing metrics (20260829000000/20260830000000).
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[D — analytics_item_lifecycle: multi-cycle listing metrics, cancelled exclusion]');
+
+  const day50Ago = daysFromToday(-50);
+  const day40Ago = daysFromToday(-40);
+  const day30Ago = daysFromToday(-30);
+  const day5Ago = daysFromToday(-5);
+
+  const dItemId = await createTestItem();
+
+  // Marketplace: cancelled cycle (day-50, must be fully excluded), then an
+  // ended cycle (day-40 -> day-30), then a currently-active cycle (day-5).
+  const { data: cancelledRow } = await serviceClient.from('item_listings').insert({ user_id: userId, inventory_item_id: dItemId, deal_channel_id: marketplaceId, status: 'active', listed_at: day50Ago }).select('id').single();
+  await serviceClient.from('item_listings').update({ status: 'cancelled', cancelled_at: new Date().toISOString() }).eq('id', cancelledRow!.id);
+
+  const { data: endedRow } = await serviceClient.from('item_listings').insert({ user_id: userId, inventory_item_id: dItemId, deal_channel_id: marketplaceId, status: 'active', listed_at: day40Ago }).select('id').single();
+  await serviceClient.from('item_listings').update({ status: 'ended', ended_at: day30Ago }).eq('id', endedRow!.id);
+
+  await serviceClient.from('item_listings').insert({ user_id: userId, inventory_item_id: dItemId, deal_channel_id: marketplaceId, status: 'active', listed_at: day5Ago });
+
+  // Kijiji: draft only — must never count as listed anywhere.
+  await serviceClient.from('item_listings').insert({ user_id: userId, inventory_item_id: dItemId, deal_channel_id: kijijiId, status: 'draft' });
+
+  const { data: lifecycleRow } = await serviceClient.from('analytics_item_lifecycle').select('*').eq('item_id', dItemId).maybeSingle();
+
+  check('D1: marketplace_listed_at is the latest active/ended cycle (cancelled excluded)', lifecycleRow?.marketplace_listed_at === day5Ago, lifecycleRow);
+  check('D2: marketplace_active_listed_at reflects the currently-active cycle', lifecycleRow?.marketplace_active_listed_at === day5Ago, lifecycleRow);
+  check('D3: marketplace_current_listing_age_days === 5', lifecycleRow?.marketplace_current_listing_age_days === 5, lifecycleRow);
+  check('D4: marketplace_listing_cycle_count === 2 (ended + active; cancelled excluded)', lifecycleRow?.marketplace_listing_cycle_count === 2, lifecycleRow);
+  check('D5: marketplace_total_listed_days === 15 (10 ended + 5 active-to-date)', lifecycleRow?.marketplace_total_listed_days === 15, lifecycleRow);
+  check('D6: kijiji_listed_at is NULL (draft-only never counts as listed)', lifecycleRow?.kijiji_listed_at === null, lifecycleRow);
+  check('D7: kijiji_listing_cycle_count === 0', lifecycleRow?.kijiji_listing_cycle_count === 0, lifecycleRow);
+  check(
+    'D8: first_listed_at is the TRUE earliest active/ended cycle across ALL cycles — not derived from LEAST() of the per-platform latest-cycle columns',
+    lifecycleRow?.first_listed_at === day40Ago,
+    lifecycleRow,
+  );
+  check('D9: last_listed_at is the latest active/ended cycle', lifecycleRow?.last_listed_at === day5Ago, lifecycleRow);
+  check('D10: listing_cycle_count (global) === 2', lifecycleRow?.listing_cycle_count === 2, lifecycleRow);
+  check('D11: total_listed_days (global) === 15', lifecycleRow?.total_listed_days === 15, lifecycleRow);
+
+  // Realize dItemId (acquisition + exit deal) so it's eligible for the
+  // LISTING_PLATFORM family in _build_pattern_discovery_evidence_v2_13,
+  // which reads item_listings directly (independent of the view fix
+  // above) and must apply the same cancelled-exclusion rule.
+  const { data: acqDeal } = await serviceClient.from('deals').insert({ user_id: userId, deal_type: 'purchase', deal_date: daysFromToday(-60), cash_paid: 50 }).select('id').single();
+  createdDealIds.push(acqDeal!.id as number);
+  await serviceClient.from('deal_items').insert({ user_id: userId, deal_id: acqDeal!.id, item_id: dItemId, direction: 'in', total_value: 50 });
+
+  const exitDate = daysFromToday(-1);
+  const { data: exitDeal } = await serviceClient.from('deals').insert({ user_id: userId, deal_type: 'sale', deal_date: exitDate, deal_channel_id: marketplaceId, cash_received: 150 }).select('id').single();
+  createdDealIds.push(exitDeal!.id as number);
+  await serviceClient.from('deal_items').insert({ user_id: userId, deal_id: exitDeal!.id, item_id: dItemId, direction: 'out', total_value: 150 });
+  await serviceClient.from('inventory_items').update({ status: 'sold', sold_date: exitDate }).eq('id', dItemId);
+
+  const { data: evidence, error: evidenceError } = await serviceClient.rpc('_build_pattern_discovery_evidence_v2_13', { p_target_user_id: userId });
+  check('D12: pattern discovery evidence RPC succeeds for the target user', !evidenceError, evidenceError);
+  const candidateSegments = ((evidence as { candidate_segments?: unknown[] } | null)?.candidate_segments ?? []) as Array<{
+    family_code: string;
+    segment: { listing_channel_id: number };
+    median_days_on_market: number | null;
+    realized_item_count: number;
+  }>;
+  const marketplaceSegment = candidateSegments.find((s) => s.family_code === 'LISTING_PLATFORM' && s.segment?.listing_channel_id === marketplaceId);
+  check('D13: LISTING_PLATFORM evidence includes a Marketplace segment for this realized item', !!marketplaceSegment, candidateSegments);
+  check(
+    'D14: LISTING_PLATFORM median_days_on_market is computed from the ended cycle (day-40), not the earlier cancelled cycle (day-50) — 39 days to exit',
+    marketplaceSegment?.median_days_on_market === 39,
+    marketplaceSegment,
+  );
+  const kijijiSegment = candidateSegments.find((s) => s.family_code === 'LISTING_PLATFORM' && s.segment?.listing_channel_id === kijijiId);
+  check('D15: no LISTING_PLATFORM segment for Kijiji (draft-only, never a real listing)', !kijijiSegment, kijijiSegment);
+
+  // ══════════════════════════════════════════════════════════════════════
   // Cleanup + verification
   // ══════════════════════════════════════════════════════════════════════
   console.log('\n[cleanup] Removing item_listings test fixtures...');
 
+  if (createdDealIds.length > 0) {
+    // ON DELETE CASCADE removes each deal's deal_items rows with it — must
+    // run before deleting inventory_items, since deal_items.item_id has no
+    // ON DELETE CASCADE back to inventory_items.
+    await serviceClient.from('deals').delete().in('id', createdDealIds);
+  }
   if (createdItemIds.length > 0) {
     // ON DELETE CASCADE removes each item's item_listings rows with it.
     await serviceClient.from('inventory_items').delete().in('id', createdItemIds);
@@ -325,10 +408,12 @@ async function main() {
 
   const { data: leftoverItems } = await serviceClient.from('inventory_items').select('id').in('id', createdItemIds.length > 0 ? createdItemIds : [-1]);
   const { data: leftoverListings } = await serviceClient.from('item_listings').select('id').in('inventory_item_id', createdItemIds.length > 0 ? createdItemIds : [-1]);
+  const { data: leftoverDeals } = await serviceClient.from('deals').select('id').in('id', createdDealIds.length > 0 ? createdDealIds : [-1]);
   const { data: leftoverUser } = await serviceClient.from('app_users').select('id').eq('auth_user_id', authUserId!);
 
   check('cleanup: every created inventory item was removed', (leftoverItems?.length ?? 0) === 0, leftoverItems);
   check('cleanup: every created item_listings row was removed (cascaded)', (leftoverListings?.length ?? 0) === 0, leftoverListings);
+  check('cleanup: every created deal was removed', (leftoverDeals?.length ?? 0) === 0, leftoverDeals);
   check('cleanup: the test user was removed', (leftoverUser?.length ?? 0) === 0, leftoverUser);
 
   console.log(`\n${passed} passed, ${failed} failed`);
