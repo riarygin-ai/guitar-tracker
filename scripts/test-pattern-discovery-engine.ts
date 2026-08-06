@@ -1231,12 +1231,26 @@ async function main() {
     // never touches selectedRows/buildSelectedPattern at all).
     check('test 15: no selected_patterns exist in any of these under-sampled fixtures (they remain hypotheses only, as before)', guitarsResult.selected_patterns.length === 0 && fenderResult.selected_patterns.length === 0);
 
-    // test 23/24 — no SQL migration, no version change (structural checks).
+    // Note: at the point the CONFIRMED_TIER_DID_NOT_CLASSIFY reason-code
+    // patch was made (this Pattern-Discovery-only task), test 23 asserted
+    // no SQL migration file existed newer than 20260824000000_build_
+    // analytics_snapshot_v2_13.sql — correct THEN, since that patch was
+    // TypeScript-only. Unrelated LATER tasks (e.g. Auditable AI Advice
+    // v1.0's analytics_run_advice table) legitimately add their own new
+    // migrations afterward — a blanket "no migration ever again" assertion
+    // doesn't generalize across tasks, so it is not repeated here. This
+    // Pattern Discovery module's OWN migration boundary is unchanged: it
+    // still adds none (see supabase/migrations/ — no *pattern_discovery*
+    // or *build_analytics_snapshot_v2_1[4-9]*-shaped file exists).
     const fs = require('fs') as typeof import('fs');
     const path = require('path') as typeof import('path');
     const migrationsDir = path.join(__dirname, '../supabase/migrations');
     const migrationFiles = fs.readdirSync(migrationsDir);
-    check('test 23: no new SQL migration file was added by this patch (still the same v2.13 migration, nothing newer)', !migrationFiles.some((f: string) => f > '20260824000000_build_analytics_snapshot_v2_13.sql'), migrationFiles.filter((f: string) => f > '20260824000000_build_analytics_snapshot_v2_13.sql'));
+    check(
+      'test 23: Pattern Discovery itself still adds no SQL migration (no build_analytics_snapshot_v2_1[4-9]+ or *pattern_discovery* migration file exists)',
+      !migrationFiles.some((f: string) => /build_analytics_snapshot_v2_(1[4-9]|[2-9]\d)/.test(f) || /pattern_discovery/i.test(f)),
+      migrationFiles,
+    );
     check('test 24: engine_version is still 1.0 after this patch', guitarsResult.engine_version === '1.0', guitarsResult.engine_version);
     check('test 24b: source_analytics_version is still 2.13 after this patch', guitarsResult.source_analytics_version === '2.13', guitarsResult.source_analytics_version);
   }

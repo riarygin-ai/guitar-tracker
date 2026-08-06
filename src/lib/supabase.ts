@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { splitSearchTerms } from '@/lib/search';
+import type { AnalyticsRunAdviceMeta } from '@/lib/analytics/advice/types';
 import type {
   AiPrompt,
   AppUser,
@@ -1085,5 +1086,86 @@ export async function getAnalyticsRunSnapshot(runId: number) {
     .select('id, snapshot')
     .eq('id', runId)
     .single();
+}
+
+// Latest COMPLETED run only — distinct from getRecentAnalyticsRuns, which
+// returns the most recent runs of any status. No snapshot (Dashboard only
+// needs run metadata + its advice, never the full evidence JSON).
+export async function getLatestCompletedAnalyticsRun() {
+  return supabase
+    .from('analytics_runs')
+    .select(ANALYTICS_RUN_META_COLUMNS)
+    .eq('status', 'completed')
+    .order('completed_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+}
+
+// ─── Analytics run advice (Auditable AI Advice v1.0) ───────────────────────────
+// Read-only, exactly like analytics_runs — analytics_run_advice has no
+// authenticated write grant or write policy (see supabase/migrations/
+// 20260825000000_analytics_run_advice.sql); every write happens server-side
+// via POST /api/analytics/runs and POST /api/analytics/runs/[runId]/advice.
+// RLS restricts every SELECT here to rows where user_id equals the current
+// app user, so these functions never need to filter by user themselves.
+
+const ANALYTICS_RUN_ADVICE_META_COLUMNS =
+  'id, analytics_run_id, user_id, revision_number, status, provider, model, advice_schema_version, prompt_template_version, canonical_input_hash, generated_at, error_code, error_message, created_at, updated_at';
+
+const ANALYTICS_RUN_ADVICE_FULL_COLUMNS =
+  `${ANALYTICS_RUN_ADVICE_META_COLUMNS}, advice, source_refs`;
+
+// Bulk, lightweight lookup for the History list — never loads `advice`/
+// `source_refs` JSON for every row. Fetches every revision for the given
+// run ids and reduces client-side to the single highest revision_number
+// per run (the "latest revision is authoritative for status/headline
+// display" convention used throughout this feature) — the run id list a
+// History page passes is always small (one page of runs), so this never
+// approaches needing a dedicated DISTINCT ON view.
+export async function getLatestAdviceMetaForRuns(
+  runIds: number[],
+): Promise<{ data: Record<number, AnalyticsRunAdviceMeta> | null; error: unknown }> {
+  if (runIds.length === 0) return { data: {}, error: null };
+
+  const { data, error } = await supabase
+    .from('analytics_run_advice')
+    .select(ANALYTICS_RUN_ADVICE_META_COLUMNS)
+    .in('analytics_run_id', runIds)
+    .order('revision_number', { ascending: false });
+
+  if (error) return { data: null, error };
+
+  const latestByRun: Record<number, AnalyticsRunAdviceMeta> = {};
+  for (const row of (data ?? []) as unknown as AnalyticsRunAdviceMeta[]) {
+    // Rows arrive revision_number DESC within each run id, but runs are
+    // interleaved — only keep the first (highest-revision) row seen per
+    // analytics_run_id.
+    if (!(row.analytics_run_id in latestByRun)) {
+      latestByRun[row.analytics_run_id] = row;
+    }
+  }
+  return { data: latestByRun, error: null };
+}
+
+// Every revision for one run, newest first, WITH the full structured
+// advice + source_refs — for Run Detail's revision selector.
+export async function getAdviceRevisionsForRun(runId: number) {
+  return supabase
+    .from('analytics_run_advice')
+    .select(ANALYTICS_RUN_ADVICE_FULL_COLUMNS)
+    .eq('analytics_run_id', runId)
+    .order('revision_number', { ascending: false });
+}
+
+// Latest revision only, WITH full advice — for the Dashboard's "Latest
+// Analytics Advice" section.
+export async function getLatestAdviceForRun(runId: number) {
+  return supabase
+    .from('analytics_run_advice')
+    .select(ANALYTICS_RUN_ADVICE_FULL_COLUMNS)
+    .eq('analytics_run_id', runId)
+    .order('revision_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 }
 

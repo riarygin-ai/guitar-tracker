@@ -4,6 +4,7 @@ import {
   runAnalyticsForCurrentUser,
   AnalyticsRunError,
 } from '@/lib/analytics/runAnalytics';
+import { generateAdviceForRun } from '@/lib/analytics/advice/generateAdvice';
 
 const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
@@ -59,6 +60,26 @@ export async function POST(req: NextRequest) {
       appUserId: appUser.id as number,
       serviceClient,
     });
+
+    // ── Auditable AI Advice v1.0 — automatic, idempotent initial
+    // generation ──────────────────────────────────────────────────────
+    // Preserves the existing successful run completion flow above exactly
+    // (this block runs strictly AFTER the run is already saved as
+    // completed) and can never fail or roll back the run response: any
+    // failure here — network, OpenAI, validation — is already captured as
+    // a 'failed' analytics_run_advice row by generateAdviceForRun itself,
+    // and this defensive try/catch exists only in case something outside
+    // that function's own contract throws (it is not expected to).
+    try {
+      await generateAdviceForRun({
+        runId: run.id,
+        requestingUserId: appUser.id as number,
+        serviceClient,
+        mode: 'auto',
+      });
+    } catch (adviceError) {
+      console.error('[api/analytics/runs] advice generation threw unexpectedly for run', run.id, ':', adviceError instanceof Error ? adviceError.message : String(adviceError));
+    }
 
     return NextResponse.json({ run });
   } catch (err) {

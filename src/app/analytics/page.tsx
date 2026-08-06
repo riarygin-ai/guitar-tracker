@@ -1,12 +1,33 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import CompactPageHeader from '@/components/CompactPageHeader';
-import { supabase, getRecentAnalyticsRuns, getAnalyticsRunSnapshot } from '@/lib/supabase';
+import {
+  supabase,
+  getRecentAnalyticsRuns,
+  getAnalyticsRunSnapshot,
+  getLatestAdviceMetaForRuns,
+  getAdviceRevisionsForRun,
+} from '@/lib/supabase';
 import type { AnalyticsRun, AnalyticsRunMeta, AnalyticsRunStatus, AnalyticsSnapshot } from '@/types';
+import type { AnalyticsRunAdviceMeta, AnalyticsRunAdviceRow, SourceRegistryEntry } from '@/lib/analytics/advice/types';
+import {
+  formatAdviceStatus,
+  formatAdviceType,
+  formatConfidence,
+  formatDateTime as formatAdviceDateTime,
+  formatKeyMetrics,
+  formatPatternMetricEntry,
+  formatPriority,
+  formatSourceType,
+  humanizeCode,
+} from '@/lib/analytics/advice/presentation';
+import { sourceIdToDomId } from '@/lib/analytics/advice/buildInputPacket';
 
 const HISTORY_LIMIT = 10;
+const HIGHLIGHT_MS = 2600;
 
 // ─── Presentation helpers ───────────────────────────────────────────────────
 
@@ -33,6 +54,68 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span className={`inline-flex shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${known ? STATUS_BADGE_CLASSES[known] : STATUS_BADGE_CLASSES.pending}`}>
       {known ? STATUS_LABELS[known] : status}
+    </span>
+  );
+}
+
+// ─── Advice presentation helpers (Auditable AI Advice v1.0) ────────────────
+
+const ADVICE_STATUS_BADGE_CLASSES: Record<string, string> = {
+  pending:   'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600',
+  generating: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700',
+  completed: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700',
+  failed:    'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700',
+};
+
+function AdviceStatusBadge({ status }: { status: string | null }) {
+  if (!status) {
+    return (
+      <span className="inline-flex shrink-0 rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-500">
+        No advice
+      </span>
+    );
+  }
+  const cls = ADVICE_STATUS_BADGE_CLASSES[status] ?? ADVICE_STATUS_BADGE_CLASSES.pending;
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${cls}`}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="opacity-80">
+        <path d="M12 2 9.5 8.5 3 11l6.5 2.5L12 20l2.5-6.5L21 11l-6.5-2.5z" />
+      </svg>
+      {formatAdviceStatus(status)}
+    </span>
+  );
+}
+
+function PriorityBadge({ priority }: { priority: string }) {
+  const classes: Record<string, string> = {
+    high: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-700',
+    medium: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700',
+    low: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600',
+  };
+  return (
+    <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${classes[priority] ?? classes.low}`}>
+      {formatPriority(priority)}
+    </span>
+  );
+}
+
+function ConfidencePill({ confidence }: { confidence: string | null }) {
+  return (
+    <span className="inline-flex shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300">
+      Confidence: {formatConfidence(confidence)}
+    </span>
+  );
+}
+
+function SourceTypeBadge({ sourceType }: { sourceType: string }) {
+  const classes: Record<string, string> = {
+    deterministic_insight: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700',
+    confirmed_pattern: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-300 dark:border-teal-700',
+    preliminary_hypothesis: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700',
+  };
+  return (
+    <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${classes[sourceType] ?? classes.deterministic_insight}`}>
+      {formatSourceType(sourceType)}
     </span>
   );
 }
@@ -195,11 +278,110 @@ export default function AnalyticsPage() {
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
 
+  // ── Auditable AI Advice v1.0 ─────────────────────────────────────────
+  const [adviceMetaByRun, setAdviceMetaByRun] = useState<Record<number, AnalyticsRunAdviceMeta>>({});
+  const [adviceRevisions, setAdviceRevisions] = useState<AnalyticsRunAdviceRow[]>([]);
+  const [adviceRevisionsLoading, setAdviceRevisionsLoading] = useState(false);
+  const [selectedAdviceRevisionId, setSelectedAdviceRevisionId] = useState<number | null>(null);
+  const [generatingAdvice, setGeneratingAdvice] = useState(false);
+  const [adviceActionError, setAdviceActionError] = useState<string | null>(null);
+  const [highlightedSourceIds, setHighlightedSourceIds] = useState<Set<string>>(new Set());
+  const sourceCardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null;
+  const selectedAdvice = adviceRevisions.find((a) => a.id === selectedAdviceRevisionId) ?? adviceRevisions[0] ?? null;
+
+  // Deep-link support (e.g. from the Dashboard's "View Evidence" link):
+  // ?runId=123 auto-selects that run; &sourceIds=a,b,c (URI-encoded, comma
+  // separated) then scrolls to and highlights those exact source cards
+  // once advice has loaded — never just the top of a generic Raw Snapshot.
+  const searchParams = useSearchParams();
+  const runDeepLinkHandled = useRef(false);
+  const sourceDeepLinkHandled = useRef(false);
 
   useEffect(() => {
     loadHistory();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (runDeepLinkHandled.current || runs.length === 0) return;
+    const runIdParam = searchParams.get('runId');
+    runDeepLinkHandled.current = true;
+    if (!runIdParam) return;
+    const runId = Number(runIdParam);
+    if (!Number.isFinite(runId) || !runs.some((r) => r.id === runId)) return;
+    selectRun(runId);
+  }, [runs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (sourceDeepLinkHandled.current || adviceRevisions.length === 0) return;
+    const sourceIdsParam = searchParams.get('sourceIds');
+    sourceDeepLinkHandled.current = true;
+    if (!sourceIdsParam) return;
+    const ids = sourceIdsParam.split(',').map((s) => decodeURIComponent(s)).filter(Boolean);
+    // Source cards render after this same tick — defer one frame so the
+    // ref registry is populated before we try to scroll to it.
+    setTimeout(() => handleViewEvidence(ids), 300);
+  }, [adviceRevisions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadAdviceMetaForHistory(historyRuns: AnalyticsRunMeta[]) {
+    const runIds = historyRuns.map((r) => r.id);
+    const { data } = await getLatestAdviceMetaForRuns(runIds);
+    if (data) setAdviceMetaByRun(data);
+  }
+
+  async function loadAdviceRevisions(runId: number) {
+    setAdviceRevisionsLoading(true);
+    setAdviceActionError(null);
+    const { data, error } = await getAdviceRevisionsForRun(runId);
+    setAdviceRevisionsLoading(false);
+    if (error) {
+      setAdviceRevisions([]);
+      setSelectedAdviceRevisionId(null);
+      return;
+    }
+    const revisions = (data as unknown as AnalyticsRunAdviceRow[] | null) ?? [];
+    setAdviceRevisions(revisions);
+    setSelectedAdviceRevisionId(revisions[0]?.id ?? null);
+  }
+
+  async function handleGenerateAdvice(runId: number) {
+    setGeneratingAdvice(true);
+    setAdviceActionError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated — please sign in again.');
+
+      const res = await fetch(`/api/analytics/runs/${runId}/advice`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const payload = await res.json().catch(() => ({}));
+
+      // Whether it completed or failed, the attempt is now persisted —
+      // reload revisions either way so the UI reflects the real outcome.
+      await loadAdviceRevisions(runId);
+      await loadAdviceMetaForHistory(runs);
+
+      if (!res.ok && res.status !== 502) {
+        throw new Error(typeof payload.error === 'string' ? payload.error : `Server error (${res.status})`);
+      }
+    } catch (err) {
+      setAdviceActionError(err instanceof Error ? err.message : 'Could not generate advice.');
+    } finally {
+      setGeneratingAdvice(false);
+    }
+  }
+
+  function handleViewEvidence(sourceIds: string[]) {
+    if (sourceIds.length === 0) return;
+    setHighlightedSourceIds(new Set(sourceIds));
+    // Scroll to the first referenced source card — the rest are
+    // highlighted in place even if off-screen.
+    const firstEl = sourceCardRefs.current.get(sourceIds[0]);
+    firstEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => setHighlightedSourceIds(new Set()), HIGHLIGHT_MS);
+  }
 
   async function loadHistory() {
     setHistoryLoading(true);
@@ -219,7 +401,9 @@ export default function AnalyticsPage() {
       setHistoryError('Could not load your analytics history.');
       return;
     }
-    setRuns((data as AnalyticsRunMeta[] | null) ?? []);
+    const historyRuns = (data as AnalyticsRunMeta[] | null) ?? [];
+    setRuns(historyRuns);
+    loadAdviceMetaForHistory(historyRuns);
   }
 
   async function loadSnapshot(runId: number) {
@@ -238,6 +422,7 @@ export default function AnalyticsPage() {
 
   function selectRun(runId: number, snapshotAlreadyKnown?: AnalyticsSnapshot | null) {
     setSelectedRunId(runId);
+    loadAdviceRevisions(runId);
     if (snapshotAlreadyKnown !== undefined) {
       setSelectedSnapshot(snapshotAlreadyKnown);
       setSnapshotError(null);
@@ -277,7 +462,13 @@ export default function AnalyticsPage() {
       }
 
       const run = payload.run as AnalyticsRun;
-      setRuns((prev) => [toMetaFromRun(run), ...prev.filter((r) => r.id !== run.id)].slice(0, HISTORY_LIMIT));
+      const nextRuns = [toMetaFromRun(run), ...runs.filter((r) => r.id !== run.id)].slice(0, HISTORY_LIMIT);
+      setRuns(nextRuns);
+      // The API route already awaited automatic advice generation before
+      // responding — reload both the compact History status and the full
+      // revision list so the newly-generated (or newly-failed) advice
+      // shows up immediately, no extra polling required.
+      loadAdviceMetaForHistory(nextRuns);
       selectRun(run.id, run.snapshot ?? null);
     } catch (err) {
       setRunError(err instanceof Error ? err.message : 'Something went wrong running analytics.');
@@ -354,12 +545,14 @@ export default function AnalyticsPage() {
                     <th className="px-4 py-2.5 font-semibold">Status</th>
                     <th className="px-4 py-2.5 font-semibold">Duration</th>
                     <th className="px-4 py-2.5 font-semibold">Version</th>
+                    <th className="px-4 py-2.5 font-semibold">AI Advice</th>
                     <th className="px-4 py-2.5 font-semibold"><span className="sr-only">Action</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-700 dark:bg-slate-800">
                   {runs.map((run) => {
                     const isSelected = run.id === selectedRunId;
+                    const advice = adviceMetaByRun[run.id];
                     return (
                       <tr key={run.id} className={isSelected ? 'bg-slate-50 dark:bg-slate-700/50' : 'hover:bg-slate-50 dark:hover:bg-slate-700/40'}>
                         <td className="px-4 py-3 text-slate-700 dark:text-slate-200">{formatDateTime(run.created_at)}</td>
@@ -367,6 +560,17 @@ export default function AnalyticsPage() {
                         <td className="px-4 py-3 text-slate-700 dark:text-slate-200">{formatDuration(run.duration_ms)}</td>
                         <td className="px-4 py-3 text-slate-700 dark:text-slate-200">{run.analytics_version}</td>
                         <td className="px-4 py-3">
+                          <div className="flex flex-col gap-0.5">
+                            <AdviceStatusBadge status={advice?.status ?? null} />
+                            {advice && (
+                              <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                                Rev {advice.revision_number}{advice.model ? ` · ${advice.model}` : ''}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+
                           <button
                             type="button"
                             onClick={() => selectRun(run.id)}
@@ -386,6 +590,7 @@ export default function AnalyticsPage() {
             <div className="space-y-3 md:hidden">
               {runs.map((run) => {
                 const isSelected = run.id === selectedRunId;
+                const advice = adviceMetaByRun[run.id];
                 return (
                   <button
                     key={run.id}
@@ -404,6 +609,9 @@ export default function AnalyticsPage() {
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
                       <span>Duration {formatDuration(run.duration_ms)}</span>
                       <span>Version {run.analytics_version}</span>
+                    </div>
+                    <div className="mt-2">
+                      <AdviceStatusBadge status={advice?.status ?? null} />
                     </div>
                   </button>
                 );
@@ -459,6 +667,264 @@ export default function AnalyticsPage() {
               </div>
             )}
           </div>
+
+          {/* ── AI Advice ─────────────────────────────────────────────────── */}
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 dark:border-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 9.5 8.5 3 11l6.5 2.5L12 20l2.5-6.5L21 11l-6.5-2.5z" /></svg>
+                  AI Advice
+                </span>
+                {selectedAdvice && <AdviceStatusBadge status={selectedAdvice.status} />}
+              </div>
+              {adviceRevisions.length > 1 && (
+                <select
+                  value={selectedAdviceRevisionId ?? ''}
+                  onChange={(e) => setSelectedAdviceRevisionId(Number(e.target.value))}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                >
+                  {adviceRevisions.map((rev) => (
+                    <option key={rev.id} value={rev.id}>
+                      Revision {rev.revision_number}{rev.id === adviceRevisions[0].id ? ' (latest)' : ''} — {formatAdviceStatus(rev.status)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {adviceActionError && (
+              <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-400">
+                {adviceActionError}
+              </div>
+            )}
+
+            {adviceRevisionsLoading ? (
+              <p className="py-3 text-center text-sm text-slate-500 dark:text-slate-400">Loading advice…</p>
+            ) : !selectedAdvice ? (
+              <div className="flex flex-col items-start gap-2">
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {snapshotLoading
+                    ? 'Waiting on the stored snapshot…'
+                    : 'No AI advice has been generated for this run yet.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => selectedRun && handleGenerateAdvice(selectedRun.id)}
+                  disabled={generatingAdvice || selectedRun?.status !== 'completed'}
+                  className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+                >
+                  {generatingAdvice ? 'Generating…' : 'Generate AI Advice'}
+                </button>
+                {selectedRun?.status !== 'completed' && (
+                  <p className="text-xs text-slate-400 dark:text-slate-500">AI advice can only be generated for a completed run.</p>
+                )}
+              </div>
+            ) : selectedAdvice.status === 'pending' || selectedAdvice.status === 'generating' ? (
+              <div className="flex items-center gap-2 py-2">
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300" />
+                <p className="text-sm text-slate-600 dark:text-slate-300">
+                  Advice is being generated{selectedAdvice.status === 'pending' ? ' (queued)' : ''}… the deterministic Insights and Pattern Discovery above are already final and unaffected.
+                </p>
+              </div>
+            ) : selectedAdvice.status === 'failed' ? (
+              <div className="space-y-2">
+                <p className="text-sm text-rose-700 dark:text-rose-400">
+                  Advice generation did not complete for this revision. The run itself remains completed and its deterministic data above is unaffected.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => selectedRun && handleGenerateAdvice(selectedRun.id)}
+                  disabled={generatingAdvice}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+                >
+                  {generatingAdvice ? 'Retrying…' : 'Retry Advice'}
+                </button>
+                {(selectedAdvice.error_code || selectedAdvice.error_message) && (
+                  <CollapsibleSection title="Debug: failure detail">
+                    <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                      <p><span className="font-semibold">Error code:</span> {selectedAdvice.error_code ?? '—'}</p>
+                      <p className="break-words"><span className="font-semibold">Message:</span> {selectedAdvice.error_message ?? '—'}</p>
+                    </div>
+                  </CollapsibleSection>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400 dark:text-slate-500">
+                  <span>Generated {formatAdviceDateTime(selectedAdvice.generated_at)}</span>
+                  <span>{selectedAdvice.provider} / {selectedAdvice.model}</span>
+                  <span>Prompt {selectedAdvice.prompt_template_version}</span>
+                  {selectedAdvice.canonical_input_hash && (
+                    <span className="font-mono" title={selectedAdvice.canonical_input_hash}>
+                      Packet hash {selectedAdvice.canonical_input_hash.slice(0, 12)}…
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{selectedAdvice.advice?.run_summary.headline}</h3>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{selectedAdvice.advice?.run_summary.summary}</p>
+                  {(selectedAdvice.advice?.run_summary.source_ids.length ?? 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleViewEvidence(selectedAdvice.advice!.run_summary.source_ids)}
+                      className="mt-1.5 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                    >
+                      View Evidence ({selectedAdvice.advice!.run_summary.source_ids.length})
+                    </button>
+                  )}
+                </div>
+
+                {selectedAdvice.advice && selectedAdvice.advice.advice_cards.length === 0 ? (
+                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-700/40 dark:text-slate-400">
+                    No specific advice cards for this run — the evidence was neutral.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {selectedAdvice.advice?.advice_cards.map((card) => (
+                      <div key={card.advice_code} className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-700 dark:bg-slate-700/30">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{formatAdviceType(card.advice_type)}</span>
+                          <PriorityBadge priority={card.priority} />
+                          <ConfidencePill confidence={card.confidence_label} />
+                        </div>
+                        <h4 className="mt-1.5 text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
+                        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{card.advice}</p>
+                        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400"><span className="font-semibold">Why it matters:</span> {card.why_it_matters}</p>
+                        {card.limitations.length > 0 && (
+                          <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[11px] text-slate-400 dark:text-slate-500">
+                            {card.limitations.map((l) => <li key={l}>{humanizeCode(l)}</li>)}
+                          </ul>
+                        )}
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleViewEvidence(card.source_ids)}
+                            className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                          >
+                            View Evidence ({card.source_ids.length})
+                          </button>
+                          {card.item_id != null && (
+                            <Link href={`/inventory/${card.item_id}`} className="text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
+                              Open Item
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {selectedAdvice.advice && selectedAdvice.advice.limitations.length > 0 && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-700/30">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Limitations</p>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-slate-500 dark:text-slate-400">
+                      {selectedAdvice.advice.limitations.map((l) => <li key={l}>{humanizeCode(l)}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => selectedRun && handleGenerateAdvice(selectedRun.id)}
+                  disabled={generatingAdvice}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+                >
+                  {generatingAdvice ? 'Regenerating…' : 'Regenerate Advice'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── Deterministic Sources Used ───────────────────────────────── */}
+          {selectedAdvice?.status === 'completed' && selectedAdvice.source_refs && selectedAdvice.source_refs.length > 0 && (
+            <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800/60">
+              <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Deterministic Sources Used</h3>
+              <div className="space-y-2.5">
+                {selectedAdvice.source_refs.map((source: SourceRegistryEntry) => {
+                  const isHighlighted = highlightedSourceIds.has(source.source_id);
+                  const metricEntries = Array.isArray(source.key_metrics?.metrics)
+                    ? (source.key_metrics.metrics as Record<string, unknown>[]).flatMap((m) => formatPatternMetricEntry(m))
+                    : formatKeyMetrics(source.key_metrics ?? {});
+                  return (
+                    <div
+                      key={source.source_id}
+                      id={sourceIdToDomId(source.source_id)}
+                      ref={(el) => {
+                        if (el) sourceCardRefs.current.set(source.source_id, el);
+                        else sourceCardRefs.current.delete(source.source_id);
+                      }}
+                      className={`rounded-xl border p-3 transition ${
+                        isHighlighted
+                          ? 'border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300 dark:border-indigo-500 dark:bg-indigo-900/20 dark:ring-indigo-700'
+                          : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-700/30'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <SourceTypeBadge sourceType={source.source_type} />
+                        {source.source_type === 'preliminary_hypothesis' && (
+                          <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                            Preliminary
+                          </span>
+                        )}
+                        <ConfidencePill confidence={source.confidence} />
+                      </div>
+                      <h4 className="mt-1.5 text-sm font-semibold text-slate-900 dark:text-white">{source.headline}</h4>
+                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{source.summary}</p>
+
+                      {metricEntries.length > 0 && (
+                        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3">
+                          {metricEntries.map((m, i) => (
+                            <div key={`${m.label}-${i}`}>
+                              <dt className="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">{m.label}</dt>
+                              <dd className="text-xs font-medium text-slate-700 dark:text-slate-200">{m.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+
+                      {source.source_type === 'preliminary_hypothesis' && (source.confirmation_needed?.length || source.ineligibility_reasons?.length) ? (
+                        <div className="mt-2 space-y-1 border-t border-amber-200/60 pt-2 dark:border-amber-700/40">
+                          {source.confirmation_needed && source.confirmation_needed.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Confirmation needed</p>
+                              <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-slate-500 dark:text-slate-400">
+                                {source.confirmation_needed.map((c) => <li key={c}>{c}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                          {source.ineligibility_reasons && source.ineligibility_reasons.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Why not confirmed</p>
+                              <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-slate-500 dark:text-slate-400">
+                                {source.ineligibility_reasons.map((r) => <li key={r}>{humanizeCode(r)}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+
+                      {source.limitations.length > 0 && (
+                        <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
+                          {source.limitations.map((l) => humanizeCode(l)).join(' · ')}
+                        </p>
+                      )}
+
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500">{source.source_id}</span>
+                        {source.item_id != null && (
+                          <Link href={`/inventory/${source.item_id}`} className="text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
+                            Open Item
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* ── Snapshot sections ──────────────────────────────────────────── */}
           <div className="mt-5 space-y-3">

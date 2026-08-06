@@ -197,6 +197,141 @@ function getClient(): OpenAI {
   return _client;
 }
 
+// ── Auditable AI Advice v1.0 ─────────────────────────────────────────────────────
+// Second call surface on the SAME client singleton/model configuration above —
+// deliberately not a second OpenAI client architecture. See src/lib/analytics/
+// advice/ for packet construction, canonical hashing, response validation, and
+// the pending -> generating -> completed/failed persistence lifecycle; this
+// function only makes the API call and returns the raw JSON text.
+
+export const ADVICE_MODEL_ID = MODEL_ID;
+export const ADVICE_MAX_TOKENS = 1400;
+export const ADVICE_TEMPERATURE = 0.4;
+// Structured-output calls can run longer than the listing-generation path
+// (larger, schema-constrained response) — no existing timeout convention to
+// reuse (generateListing above sets none), so this establishes a first,
+// deliberate bound for this new, more failure-sensitive call site rather
+// than relying on the SDK's own default.
+const ADVICE_REQUEST_TIMEOUT_MS = 45_000;
+
+const ADVICE_JSON_SCHEMA = {
+  name: 'analytics_advice_v1',
+  strict: true,
+  schema: {
+    type: 'object',
+    properties: {
+      schema_version: { type: 'string', enum: ['1.0'] },
+      run_summary: {
+        type: 'object',
+        properties: {
+          headline: { type: 'string' },
+          summary: { type: 'string' },
+          source_ids: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['headline', 'summary', 'source_ids'],
+        additionalProperties: false,
+      },
+      advice_cards: {
+        type: 'array',
+        maxItems: 3,
+        items: {
+          type: 'object',
+          properties: {
+            advice_code: { type: 'string' },
+            advice_type: { type: 'string', enum: ['action', 'observation', 'watch', 'review'] },
+            priority: { type: 'string', enum: ['high', 'medium', 'low'] },
+            headline: { type: 'string' },
+            advice: { type: 'string' },
+            why_it_matters: { type: 'string' },
+            confidence_label: { type: 'string', enum: ['stronger', 'moderate', 'low', 'preliminary'] },
+            source_ids: { type: 'array', items: { type: 'string' } },
+            limitations: { type: 'array', items: { type: 'string' } },
+            item_id: { type: ['integer', 'null'] },
+          },
+          required: ['advice_code', 'advice_type', 'priority', 'headline', 'advice', 'why_it_matters', 'confidence_label', 'source_ids', 'limitations', 'item_id'],
+          additionalProperties: false,
+        },
+      },
+      limitations: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['schema_version', 'run_summary', 'advice_cards', 'limitations'],
+    additionalProperties: false,
+  },
+} as const;
+
+// AI behavior contract — every rule here is a hard constraint the model must
+// follow; validateAdviceResponse.ts independently re-enforces the source-ID
+// and structural rules server-side rather than trusting the prompt alone.
+export const ADVICE_SYSTEM_PROMPT = `You are an auditing assistant that writes concise, sourced advice summaries from a business inventory analytics run for a musical-instrument reseller.
+
+You will receive a JSON "Advice Input Packet" containing:
+- run metadata (versions, evidence scope);
+- deterministic_insights: findings already selected by a fixed, non-AI rules engine;
+- confirmed_patterns: patterns already selected by a deterministic pattern-discovery engine, meeting confirmed statistical sample/peer thresholds;
+- preliminary_hypotheses: patterns that meet only looser, exploratory thresholds — NOT confirmed;
+- pattern_selection_summary: aggregate counts only;
+- allowed_source_ids: the COMPLETE list of source IDs you are permitted to cite.
+
+Hard rules — follow every one exactly:
+1. Use ONLY the supplied packet. Do not inspect, infer, or assume any field, item, value, or pattern that is not explicitly present in the packet.
+2. Do not calculate new ROI, profit, days-on-market, realization rates, or peer baselines. Only quote or accurately paraphrase the numbers already given.
+3. Never invent item names, values, channels, dates, patterns, sample sizes, or any other detail not present in the packet.
+4. Clearly distinguish a Deterministic Insight (fixed rule, always true given the evidence) from a Confirmed Pattern (meets confirmed statistical thresholds) from a Preliminary Hypothesis (exploratory only). Label a Preliminary Hypothesis as preliminary in your own wording — never present it as confirmed or proven, and never convert a hypothesis into a stated fact.
+5. Treat every source as a statistical ASSOCIATION, never as proof of causation. Do not use causal language ("this caused", "because of this").
+6. Never promise or imply a specific financial outcome.
+7. Never recommend an automatic database change, and never recommend automatically changing a listing, price, Purpose, or any inventory record. You may describe what the evidence shows and suggest the user consider reviewing something — you may never instruct an automated system to act.
+8. Never pressure the user to sell Personal-purpose inventory. Personal inventory is not failed Business inventory — long personal holding time is not automatically negative.
+9. Treat Hybrid Purpose neutrally. A Hybrid review does not imply the item must become Business. KEEP_HYBRID, CHANGE_TO_BUSINESS, and CHANGE_TO_PERSONAL may all be valid outcomes — never push toward one.
+10. Every advice card must cite at least one source_id from allowed_source_ids. Never write a substantive claim without a source. A card whose claim is not backed by a cited source will be rejected.
+11. When confidence is low or a source is a preliminary hypothesis, explicitly say the evidence is preliminary/limited rather than sounding confident.
+12. Avoid generic motivational language ("take action now", "don't miss out", "this is huge"). Be concise, specific, and practical.
+13. Generate at most 3 advice_cards. When evidence supports it, prefer covering: (a) the single most important immediate Business inventory action, (b) the most useful confirmed performance insight or pattern, and (c) one watch/review item drawn from a preliminary hypothesis or a Hybrid-purpose finding. Do not force a category the evidence does not support — a neutral run summary with only one or two cards, or zero cards, is a valid and expected outcome when the evidence is thin or entirely neutral.
+14. item_id in an advice card must be null UNLESS the card is specifically about one target-user item already identified by item_id in a cited deterministic_insights source — never invent or guess an item_id.
+
+Purpose semantics (apply consistently):
+- Business: inventory actively managed for realization and turnover.
+- Hybrid: a genuine combination of realization and personal interest — reviewing it does not mean it should become Business.
+- Personal: held primarily for enjoyment, collection, or appreciation — not a failure state.
+
+Respond with ONLY the structured JSON object matching the required schema — no prose outside the JSON.`;
+
+export interface AnalyticsAdviceGenerationResult {
+  raw: string;
+  model: string;
+}
+
+/**
+ * Calls OpenAI with the Advice Input Packet as the user message and returns
+ * the raw JSON text the model produced. Never validates source IDs or
+ * business rules itself — see src/lib/analytics/advice/validateAdviceResponse.ts
+ * for that, applied by the caller after this returns. Throws on any OpenAI-
+ * level failure (network, auth, empty response) — the caller is responsible
+ * for catching this and persisting a 'failed' advice row; this function
+ * never touches the database.
+ */
+export async function generateAnalyticsAdvice(packet: unknown): Promise<AnalyticsAdviceGenerationResult> {
+  const client = getClient();
+
+  const response = await client.chat.completions.create(
+    {
+      model: ADVICE_MODEL_ID,
+      messages: [
+        { role: 'system', content: ADVICE_SYSTEM_PROMPT },
+        { role: 'user', content: `Advice Input Packet:\n${JSON.stringify(packet)}` },
+      ],
+      max_tokens: ADVICE_MAX_TOKENS,
+      temperature: ADVICE_TEMPERATURE,
+      response_format: { type: 'json_schema', json_schema: ADVICE_JSON_SCHEMA },
+    },
+    { timeout: ADVICE_REQUEST_TIMEOUT_MS },
+  );
+
+  const raw = response.choices[0]?.message?.content?.trim();
+  if (!raw) throw new Error('OpenAI returned an empty response');
+
+  return { raw, model: ADVICE_MODEL_ID };
+}
+
 // ── Main export ────────────────────────────────────────────────────────────────
 
 export async function generateListing(
