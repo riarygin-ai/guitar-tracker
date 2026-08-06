@@ -267,6 +267,8 @@ export interface InventoryItemPhoto {
   created_at: string;
 }
 
+export type ListingStatus = 'draft' | 'active' | 'ended' | 'cancelled';
+
 export interface ItemListing {
   id: number;
   user_id: number;
@@ -278,12 +280,19 @@ export interface ItemListing {
   trade_value: number | null;
   is_ai_generated: boolean;
   ai_prompt_id: number | null;
+  status: ListingStatus;
   listed_at: string | null;
+  ended_at: string | null;
+  cancelled_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export type UpsertItemListing = {
+// Draft-text fields only — never touches status/listed_at/ended_at/
+// cancelled_at. Used by saveListingDraftText, which always targets
+// whichever non-terminal (draft or active) row currently exists for the
+// item+channel, creating a fresh 'draft' row only if none exists at all.
+export type UpsertListingDraftText = {
   id?: number;
   inventory_item_id: number;
   deal_channel_id: number;
@@ -293,7 +302,6 @@ export type UpsertItemListing = {
   asking_price?: number;
   trade_value?: number;
   ai_prompt_id?: number;
-  listed_at?: string | null;
 };
 
 export interface AiPrompt {

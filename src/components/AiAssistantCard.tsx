@@ -1,35 +1,99 @@
 'use client';
 
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
-import { getDealChannels, getItemListings, getOrCreateAppUser, upsertItemListing } from '@/lib/supabase';
+import {
+  getDealChannels,
+  getItemListings,
+  getOrCreateAppUser,
+  saveListingDraftText,
+  startListing,
+  endListing,
+  cancelListing,
+} from '@/lib/supabase';
 import { supabase } from '@/lib/supabase';
-import type { DealChannel } from '@/types';
+import type { DealChannel, ItemListing } from '@/types';
 
 // ── State ──────────────────────────────────────────────────────────────────────
+// Multiple listing cycles are supported per (item, platform) — history is
+// never deleted (see 20260828000000_item_listings_lifecycle.sql). Each
+// channel's state below is derived from getItemListings' full row list:
+// `currentRow` is the single non-terminal (draft/active) row, if any — the
+// row text edits and Start Listing both act on; `lastTerminalRow` is the
+// most recently ended/cancelled row, shown for context only when there is
+// no current row.
 
-interface TabState {
-  listingId:     number | null;
+interface ChannelState {
+  currentRow:      ItemListing | null;
+  lastTerminalRow: ItemListing | null;
+
+  // Text/draft editing (bound to currentRow — empty/fresh once currentRow
+  // is null, e.g. right after a listing ends).
   content:       string;
   isAiGenerated: boolean;
   aiPromptId:    number | null;
-  listedAt:      string | null;
   savedAt:       string | null;
   isDirty:       boolean;
   lastSavedVia:  'ai' | 'manual' | null;
   errorMsg:      string;
+
+  // Platform status row — Start/End date pickers, action busy/error state,
+  // confirmation dialogs. Entirely independent of the text-editing fields
+  // above so switching text tabs never affects it and vice versa.
+  startDateInput:    string;
+  endDateInput:      string;
+  listingActionBusy: boolean;
+  listingActionError: string;
+  confirmEnd:        boolean;
+  confirmCancel:     boolean;
 }
 
-const EMPTY_TAB: TabState = {
-  listingId:     null,
-  content:       '',
-  isAiGenerated: false,
-  aiPromptId:    null,
-  listedAt:      null,
-  savedAt:       null,
-  isDirty:       false,
-  lastSavedVia:  null,
-  errorMsg:      '',
-};
+function emptyChannelState(): ChannelState {
+  return {
+    currentRow:      null,
+    lastTerminalRow: null,
+    content:         '',
+    isAiGenerated:   false,
+    aiPromptId:      null,
+    savedAt:         null,
+    isDirty:         false,
+    lastSavedVia:    null,
+    errorMsg:        '',
+    startDateInput:     todayDateString(),
+    endDateInput:       todayDateString(),
+    listingActionBusy:  false,
+    listingActionError: '',
+    confirmEnd:         false,
+    confirmCancel:      false,
+  };
+}
+
+// ── Date helpers ───────────────────────────────────────────────────────────────
+// Plain 'YYYY-MM-DD' strings throughout — lexicographic string comparison
+// is chronologically correct for this format, matching how listed_at/
+// ended_at/acquired dates are already compared elsewhere in this app.
+
+// Exported (not just used locally) so this exact validation logic — not a
+// reimplementation of it — is what scripts/test-item-listings.ts exercises.
+export function todayDateString(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function validateStartDate(dateStr: string, acquiredDate: string | null): string | null {
+  if (!dateStr) return 'Pick a listing date.';
+  const today = todayDateString();
+  if (dateStr > today) return 'Listing date cannot be in the future.';
+  if (acquiredDate && dateStr < acquiredDate) return 'Listing date cannot be before the item was acquired.';
+  return null;
+}
+
+export function validateEndDate(dateStr: string, listedAt: string | null): string | null {
+  if (!dateStr) return 'Pick an end date.';
+  const today = todayDateString();
+  if (dateStr > today) return 'End date cannot be in the future.';
+  if (listedAt && dateStr < listedAt) return 'End date cannot be before the listing date.';
+  return null;
+}
 
 // ── Debug payload type ─────────────────────────────────────────────────────────
 
@@ -56,14 +120,22 @@ interface DebugPayload {
 // ── Props / handle ─────────────────────────────────────────────────────────────
 
 export interface AiAssistantCardProps {
-  itemId:    number;
-  itemLabel: string;
+  itemId:       number;
+  itemLabel:    string;
+  /** The item's earliest 'in' deal_item date ('YYYY-MM-DD'), historical or
+   *  normal acquisition alike — null when unknown (e.g. still loading, or
+   *  no acquisition deal_item exists at all). Used to validate that a
+   *  listing's date can never predate when the item was actually
+   *  acquired. */
+  acquiredDate: string | null;
 }
 
 export interface AiAssistantCardHandle {
-  // Saves every platform tab with unsaved changes (text and/or listing date).
-  // Resolves to an error message (platforms joined) if any of them failed —
-  // tabs that did save are still marked clean, only the failed ones stay dirty.
+  // Saves every platform tab with unsaved TEXT changes. Resolves to an
+  // error message (platforms joined) if any of them failed — tabs that
+  // did save are still marked clean, only the failed ones stay dirty.
+  // Never touches listing status/dates — Start/End/Cancel are their own
+  // explicit actions, not part of the generic "save pending" sweep.
   savePending: () => Promise<{ error: string | null }>;
 }
 
@@ -92,7 +164,7 @@ function formatListedDate(dateStr: string): string {
   }
 }
 
-function getStatusDisplay(tab: TabState): { label: string; color: string } {
+function getStatusDisplay(tab: ChannelState): { label: string; color: string } {
   if (tab.isDirty) {
     return {
       label: 'Unsaved changes',
@@ -113,13 +185,44 @@ function getStatusDisplay(tab: TabState): { label: string; color: string } {
   };
 }
 
+type PlatformStatus = 'active' | 'ended' | 'cancelled' | 'not_listed';
+
+function derivePlatformStatus(state: ChannelState): PlatformStatus {
+  if (state.currentRow?.status === 'active') return 'active';
+  if (!state.currentRow && state.lastTerminalRow?.status === 'ended') return 'ended';
+  if (!state.currentRow && state.lastTerminalRow?.status === 'cancelled') return 'cancelled';
+  return 'not_listed';
+}
+
+const PLATFORM_STATUS_LABELS: Record<PlatformStatus, string> = {
+  active:      'Active',
+  ended:       'Ended',
+  cancelled:   'Cancelled',
+  not_listed:  'Not listed',
+};
+
+const PLATFORM_STATUS_CLASSES: Record<PlatformStatus, string> = {
+  active:     'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  ended:      'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+  cancelled:  'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
+  not_listed: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+};
+
+function PlatformStatusBadge({ status }: { status: PlatformStatus }) {
+  return (
+    <span className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${PLATFORM_STATUS_CLASSES[status]}`}>
+      {PLATFORM_STATUS_LABELS[status]}
+    </span>
+  );
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
 const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
-  function AiAssistantCard({ itemId, itemLabel }, ref) {
+  function AiAssistantCard({ itemId, itemLabel, acquiredDate }, ref) {
   const [channels,        setChannels]        = useState<DealChannel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
-  const [tabs,            setTabs]            = useState<Record<number, TabState>>({});
+  const [tabs,            setTabs]            = useState<Record<number, ChannelState>>({});
   const [loadingDrafts,   setLoadingDrafts]   = useState(true);
   const [generating,      setGenerating]      = useState(false);
   const [saving,          setSaving]          = useState(false);
@@ -138,7 +241,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
     getOrCreateAppUser().then((u) => { if (u) setIsAdmin(u.admin); });
   }, []);
 
-  // ── Load channels + existing drafts on mount ───────────────────────────────
+  // ── Load channels + full listing history on mount ─────────────────────────
 
   useEffect(() => {
     let cancelled = false;
@@ -157,30 +260,34 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       setChannels(platforms);
       if (platforms.length > 0) setActiveChannelId(platforms[0].id);
 
-      // Initialise one empty tab per channel, then overlay DB rows
-      const initialTabs: Record<number, TabState> = {};
-      for (const ch of platforms) {
-        initialTabs[ch.id] = { ...EMPTY_TAB };
+      // getItemListings returns every row for this item, newest first —
+      // group by channel and derive each channel's current/terminal row.
+      const rowsByChannel = new Map<number, ItemListing[]>();
+      if (!listingRes.error && listingRes.data) {
+        for (const row of listingRes.data as unknown as ItemListing[]) {
+          const arr = rowsByChannel.get(row.deal_channel_id) ?? [];
+          arr.push(row);
+          rowsByChannel.set(row.deal_channel_id, arr);
+        }
       }
 
-      if (!listingRes.error && listingRes.data) {
-        for (const row of listingRes.data) {
-          const chId = row.deal_channel_id;
-          if (chId in initialTabs) {
-            initialTabs[chId] = {
-              listingId:     row.id,
-              content:       row.description ?? '',
-              isAiGenerated: row.is_ai_generated,
-              aiPromptId:    row.ai_prompt_id ?? null,
-              listedAt:      row.listed_at    ?? null,
-              // A row can exist with only a listed_at date and no saved text.
-              savedAt:       row.description ? row.updated_at : null,
-              isDirty:       false,
-              lastSavedVia:  row.description ? (row.is_ai_generated ? 'ai' : 'manual') : null,
-              errorMsg:      '',
-            };
-          }
-        }
+      const initialTabs: Record<number, ChannelState> = {};
+      for (const ch of platforms) {
+        const rows = rowsByChannel.get(ch.id) ?? [];
+        const currentRow      = rows.find((r) => r.status === 'draft' || r.status === 'active') ?? null;
+        const lastTerminalRow = currentRow ? null : (rows.find((r) => r.status === 'ended' || r.status === 'cancelled') ?? null);
+
+        initialTabs[ch.id] = {
+          ...emptyChannelState(),
+          currentRow,
+          lastTerminalRow,
+          content:       currentRow?.description ?? '',
+          isAiGenerated: currentRow?.is_ai_generated ?? false,
+          aiPromptId:    currentRow?.ai_prompt_id ?? null,
+          savedAt:       currentRow?.description ? currentRow.updated_at : null,
+          lastSavedVia:  currentRow?.description ? (currentRow.is_ai_generated ? 'ai' : 'manual') : null,
+          endDateInput:  todayDateString(),
+        };
       }
 
       setTabs(initialTabs);
@@ -193,21 +300,23 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
 
   // ── Tab state updater ──────────────────────────────────────────────────────
 
-  function updateTab(id: number, patch: Partial<TabState>) {
+  function updateTab(id: number, patch: Partial<ChannelState>) {
     setTabs((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   }
 
-  // ── Upsert helper (shared by generate auto-save and manual Save Draft) ─────
+  // ── Text-draft save helper (shared by generate auto-save and manual
+  // Save Draft) — always targets the channel's current non-terminal row,
+  // creating a fresh draft only if none exists. ─────────────────────────
 
-  async function saveToDb(
+  async function saveDraftToDb(
     channelId:  number,
-    listingId:  number | null,
     content:    string,
     isAi:       boolean,
     aiPromptId: number | null,
-  ): Promise<{ savedAt: string | null; listingId: number | null; error: string | null }> {
-    const { data, error } = await upsertItemListing({
-      id:                listingId ?? undefined,
+  ): Promise<{ savedAt: string | null; row: ItemListing | null; error: string | null }> {
+    const existingId = tabs[channelId]?.currentRow?.id ?? null;
+    const { data, error } = await saveListingDraftText({
+      id:                existingId ?? undefined,
       inventory_item_id: itemId,
       deal_channel_id:   channelId,
       description:       content,
@@ -215,47 +324,40 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       ai_prompt_id:      aiPromptId ?? undefined,
     });
 
-    if (error) return { savedAt: null, listingId: null, error: error.message };
-    return { savedAt: data?.updated_at ?? new Date().toISOString(), listingId: data?.id ?? null, error: null };
+    if (error) return { savedAt: null, row: null, error: error.message };
+    return { savedAt: data?.updated_at ?? new Date().toISOString(), row: (data as ItemListing) ?? null, error: null };
   }
 
-  // ── Listing date (local only — persisted via Save Draft / Update item) ─────
-
-  function handleListedAtChange(channelId: number, value: string | null) {
-    updateTab(channelId, { listedAt: value, isDirty: true, errorMsg: '' });
-  }
-
-  // ── Imperative handle — parent (InventoryForm) saves all pending listings ──
+  // ── Imperative handle — parent (InventoryForm) saves all pending drafts ────
 
   useImperativeHandle(ref, () => ({
     async savePending() {
       const dirtyEntries = channels
         .map((ch) => ({ ch, tab: tabs[ch.id] }))
-        .filter((e): e is { ch: DealChannel; tab: TabState } => !!e.tab?.isDirty);
+        .filter((e): e is { ch: DealChannel; tab: ChannelState } => !!e.tab?.isDirty);
 
       if (dirtyEntries.length === 0) return { error: null };
 
       setSaving(true);
-      const updates: Record<number, Partial<TabState>> = {};
+      const updates: Record<number, Partial<ChannelState>> = {};
       const errors: string[] = [];
 
       for (const { ch, tab } of dirtyEntries) {
         const trimmedContent = tab.content.trim();
 
         // Never create a brand-new row that would be entirely empty.
-        if (!tab.listingId && !trimmedContent && !tab.listedAt) {
+        if (!tab.currentRow && !trimmedContent) {
           updates[ch.id] = { isDirty: false, errorMsg: '' };
           continue;
         }
 
-        const { data, error } = await upsertItemListing({
-          id:                tab.listingId ?? undefined,
+        const { data, error } = await saveListingDraftText({
+          id:                tab.currentRow?.id ?? undefined,
           inventory_item_id: itemId,
           deal_channel_id:   ch.id,
           description:       trimmedContent || null,
           is_ai_generated:   tab.isAiGenerated,
           ai_prompt_id:      tab.aiPromptId ?? undefined,
-          listed_at:         tab.listedAt,
         });
 
         if (error) {
@@ -264,11 +366,11 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
           continue;
         }
 
+        const row = data as ItemListing | null;
         updates[ch.id] = {
-          listingId:    data?.id ?? tab.listingId,
-          content:      data?.description ?? trimmedContent,
-          listedAt:     data?.listed_at ?? tab.listedAt,
-          savedAt:      data?.updated_at ?? new Date().toISOString(),
+          currentRow:   row ?? tab.currentRow,
+          content:      row?.description ?? trimmedContent,
+          savedAt:      row?.updated_at ?? new Date().toISOString(),
           isDirty:      false,
           lastSavedVia: tab.lastSavedVia ?? 'manual',
           errorMsg:     '',
@@ -288,7 +390,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
     },
   }), [channels, tabs, itemId]);
 
-  // ── Actions ────────────────────────────────────────────────────────────────
+  // ── Actions: AI generate / manual save / copy / clear (text only) ─────────
 
   async function handleGenerate() {
     if (activeChannelId === null || !current) return;
@@ -323,10 +425,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       const text       = payload.text as string;
       const aiPromptId = (payload.ai_prompt_id as number | null | undefined) ?? null;
 
-      const existingListingId = tabs[channelId]?.listingId ?? null;
-      const { savedAt, listingId: newListingId, error: saveError } = await saveToDb(
-        channelId, existingListingId, text, true, aiPromptId,
-      );
+      const { savedAt, row, error: saveError } = await saveDraftToDb(channelId, text, true, aiPromptId);
 
       if (saveError) {
         updateTab(channelId, {
@@ -339,7 +438,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
         });
       } else {
         updateTab(channelId, {
-          listingId:     newListingId,
+          currentRow:    row ?? tabs[channelId]?.currentRow ?? null,
           content:       text,
           isAiGenerated: true,
           aiPromptId,
@@ -362,36 +461,27 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
     if (activeChannelId === null || !current) return;
 
     const trimmedContent = current.content.trim();
-    if (!trimmedContent && !current.listedAt) {
-      updateTab(activeChannelId, { errorMsg: 'Add listing text or a listing date before saving.' });
+    if (!trimmedContent) {
+      updateTab(activeChannelId, { errorMsg: 'Add listing text before saving.' });
       return;
     }
 
     setSaving(true);
     updateTab(activeChannelId, { errorMsg: '' });
 
-    const { data, error } = await upsertItemListing({
-      id:                current.listingId ?? undefined,
-      inventory_item_id: itemId,
-      deal_channel_id:   activeChannelId,
-      description:       trimmedContent || null,
-      is_ai_generated:   current.isAiGenerated,
-      ai_prompt_id:      current.aiPromptId ?? undefined,
-      listed_at:         current.listedAt,
-    });
+    const { savedAt, row, error } = await saveDraftToDb(activeChannelId, trimmedContent, current.isAiGenerated, current.aiPromptId);
 
     setSaving(false);
 
     if (error) {
-      updateTab(activeChannelId, { errorMsg: `Save failed: ${error.message}` });
+      updateTab(activeChannelId, { errorMsg: `Save failed: ${error}` });
       return;
     }
 
     updateTab(activeChannelId, {
-      listingId:    data?.id ?? current.listingId,
-      content:      data?.description ?? trimmedContent,
-      listedAt:     data?.listed_at ?? current.listedAt,
-      savedAt:      data?.updated_at ?? new Date().toISOString(),
+      currentRow:   row ?? current.currentRow,
+      content:      row?.description ?? trimmedContent,
+      savedAt:      savedAt!,
       isDirty:      false,
       lastSavedVia: 'manual',
       errorMsg:     '',
@@ -416,6 +506,102 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       isAiGenerated: false,
       isDirty:       current.savedAt !== null,
       errorMsg:      '',
+    });
+  }
+
+  // ── Actions: listing lifecycle (Start / End / Cancel) ──────────────────────
+
+  async function handleStartListing(channelId: number) {
+    const tab = tabs[channelId];
+    if (!tab) return;
+
+    const validationError = validateStartDate(tab.startDateInput, acquiredDate);
+    if (validationError) {
+      updateTab(channelId, { listingActionError: validationError });
+      return;
+    }
+
+    updateTab(channelId, { listingActionBusy: true, listingActionError: '' });
+
+    const { data, error } = await startListing({
+      inventory_item_id: itemId,
+      deal_channel_id:   channelId,
+      listed_at:         tab.startDateInput,
+      existingDraftId:   tab.currentRow?.status === 'draft' ? tab.currentRow.id : null,
+    });
+
+    if (error || !data) {
+      updateTab(channelId, { listingActionBusy: false, listingActionError: error?.message ?? 'Could not start the listing.' });
+      return;
+    }
+
+    const row = data as ItemListing;
+    updateTab(channelId, {
+      currentRow:         row,
+      lastTerminalRow:    null,
+      content:            row.description ?? tab.content,
+      isAiGenerated:       row.is_ai_generated,
+      aiPromptId:          row.ai_prompt_id,
+      listingActionBusy:  false,
+      listingActionError: '',
+    });
+  }
+
+  async function handleEndListing(channelId: number) {
+    const tab = tabs[channelId];
+    if (!tab?.currentRow || tab.currentRow.status !== 'active') return;
+
+    const validationError = validateEndDate(tab.endDateInput, tab.currentRow.listed_at);
+    if (validationError) {
+      updateTab(channelId, { listingActionError: validationError, confirmEnd: false });
+      return;
+    }
+
+    updateTab(channelId, { listingActionBusy: true, listingActionError: '' });
+
+    const { data, error } = await endListing(tab.currentRow.id, tab.endDateInput);
+
+    if (error || !data) {
+      updateTab(channelId, { listingActionBusy: false, listingActionError: error?.message ?? 'Could not end the listing.', confirmEnd: false });
+      return;
+    }
+
+    const row = data as ItemListing;
+    updateTab(channelId, {
+      currentRow:         null,
+      lastTerminalRow:    row,
+      listingActionBusy:  false,
+      listingActionError: '',
+      confirmEnd:         false,
+    });
+  }
+
+  async function handleCancelListing(channelId: number) {
+    const tab = tabs[channelId];
+    if (!tab?.currentRow) return;
+
+    updateTab(channelId, { listingActionBusy: true, listingActionError: '' });
+
+    const { data, error } = await cancelListing(tab.currentRow.id);
+
+    if (error || !data) {
+      updateTab(channelId, { listingActionBusy: false, listingActionError: error?.message ?? 'Could not cancel this listing record.', confirmCancel: false });
+      return;
+    }
+
+    const row = data as ItemListing;
+    updateTab(channelId, {
+      currentRow:         null,
+      lastTerminalRow:    row,
+      content:            '',
+      isAiGenerated:      false,
+      aiPromptId:         null,
+      savedAt:            null,
+      isDirty:            false,
+      lastSavedVia:       null,
+      listingActionBusy:  false,
+      listingActionError: '',
+      confirmCancel:      false,
     });
   }
 
@@ -490,14 +676,166 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       <div>
         <h3 className="text-base font-semibold text-slate-900 dark:text-white">Listings</h3>
         <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-          Manage platform listing dates and text for{' '}
+          Manage platform listing status, dates, and text for{' '}
           <span className="font-medium text-slate-700 dark:text-slate-200">
             {itemLabel || 'this item'}
           </span>
         </p>
       </div>
 
-      {/* ── Tabs (dynamic listing platforms) ──────────────────────────────── */}
+      {/* ── Platform status (ABOVE the text tabs, deliberately) ─────────────
+          Shows listed/not-listed status per platform independent of which
+          text tab is selected below — switching tabs never hides or
+          changes anything in this section. ─────────────────────────────── */}
+      {channels.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {channels.map((ch) => {
+            const tab = tabs[ch.id];
+            if (!tab) return null;
+            const platformStatus = derivePlatformStatus(tab);
+            const isActive  = platformStatus === 'active';
+            const canCancel = !!tab.currentRow;
+
+            return (
+              <div key={ch.id} className="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span className="text-sm font-medium text-slate-900 dark:text-white">{ch.name}</span>
+                    <PlatformStatusBadge status={platformStatus} />
+                    {isActive && tab.currentRow?.listed_at && (
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                        Listed {formatListedDate(tab.currentRow.listed_at)}
+                      </span>
+                    )}
+                    {platformStatus === 'ended' && tab.lastTerminalRow?.ended_at && (
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                        Ended {formatListedDate(tab.lastTerminalRow.ended_at)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                    {!isActive && (
+                      <>
+                        <input
+                          type="date"
+                          value={tab.startDateInput}
+                          onChange={(e) => updateTab(ch.id, { startDateInput: e.target.value, listingActionError: '' })}
+                          disabled={tab.listingActionBusy || loadingDrafts}
+                          aria-label={`${ch.name} listing date`}
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleStartListing(ch.id)}
+                          disabled={tab.listingActionBusy || loadingDrafts}
+                          aria-busy={tab.listingActionBusy}
+                          className="inline-flex items-center rounded-lg bg-slate-950 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+                        >
+                          {tab.listingActionBusy ? 'Starting…' : tab.currentRow?.status === 'draft' ? 'Start Listing' : 'List'}
+                        </button>
+                      </>
+                    )}
+
+                    {isActive && (
+                      <>
+                        <input
+                          type="date"
+                          value={tab.endDateInput}
+                          onChange={(e) => updateTab(ch.id, { endDateInput: e.target.value, listingActionError: '' })}
+                          disabled={tab.listingActionBusy}
+                          aria-label={`${ch.name} end date`}
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateTab(ch.id, { confirmEnd: true })}
+                          disabled={tab.listingActionBusy}
+                          className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+                        >
+                          End Listing
+                        </button>
+                      </>
+                    )}
+
+                    {canCancel && (
+                      <button
+                        type="button"
+                        onClick={() => updateTab(ch.id, { confirmCancel: true })}
+                        disabled={tab.listingActionBusy}
+                        className="inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-800/50 dark:bg-slate-700 dark:text-rose-400 dark:hover:bg-rose-900/20"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {tab.listingActionError && (
+                  <div className="border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-300">
+                    {tab.listingActionError}
+                  </div>
+                )}
+
+                {tab.confirmEnd && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-800/40 dark:bg-amber-900/10">
+                    <p className="text-xs text-amber-800 dark:text-amber-300">
+                      End the {ch.name} listing dated {tab.endDateInput ? formatListedDate(tab.endDateInput) : 'today'}? It stays in this item&apos;s listing history.
+                    </p>
+                    <div className="flex shrink-0 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleEndListing(ch.id)}
+                        disabled={tab.listingActionBusy}
+                        className="rounded-lg bg-slate-950 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-900"
+                      >
+                        {tab.listingActionBusy ? 'Ending…' : 'Confirm End'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateTab(ch.id, { confirmEnd: false })}
+                        disabled={tab.listingActionBusy}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                      >
+                        Keep Active
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {tab.confirmCancel && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-rose-200 bg-rose-50 px-3 py-2 dark:border-rose-800/40 dark:bg-rose-900/10">
+                    <p className="text-xs text-rose-800 dark:text-rose-300">
+                      Cancel this listing record? It will be ignored in current listing status and analytics.
+                    </p>
+                    <div className="flex shrink-0 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleCancelListing(ch.id)}
+                        disabled={tab.listingActionBusy}
+                        className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {tab.listingActionBusy ? 'Cancelling…' : 'Confirm Cancel'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateTab(ch.id, { confirmCancel: false })}
+                        disabled={tab.listingActionBusy}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                      >
+                        Never Mind
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Tabs (dynamic listing platforms) — control ONLY the text editor
+          below, never the platform status area above. ────────────────────── */}
       {channels.length > 0 && (
         <div
           className="mt-4 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-700/60"
@@ -527,57 +865,6 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
               )}
             </button>
           ))}
-        </div>
-      )}
-
-      {/* ── Per-platform listing status ──────────────────────────────────── */}
-      {channels.length > 0 && (
-        <div className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-700 dark:border-slate-700">
-          {channels.map((ch) => {
-            const tab      = tabs[ch.id];
-            const listedAt = tab?.listedAt ?? null;
-            return (
-              <div key={ch.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <span className="text-sm font-medium text-slate-900 dark:text-white">{ch.name}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                    tab?.content
-                      ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300'
-                      : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'
-                  }`}>
-                    {tab?.content ? 'Text saved' : 'No text'}
-                  </span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                    listedAt
-                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                  }`}>
-                    {listedAt ? `Listed ${formatListedDate(listedAt)}` : 'Not listed'}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <input
-                    type="date"
-                    value={listedAt ?? ''}
-                    onChange={(e) => handleListedAtChange(ch.id, e.target.value || null)}
-                    disabled={saving || loadingDrafts}
-                    aria-label={`${ch.name} listing date`}
-                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600"
-                  />
-                  {listedAt && (
-                    <button
-                      type="button"
-                      onClick={() => handleListedAtChange(ch.id, null)}
-                      disabled={saving || loadingDrafts}
-                      className="text-xs font-medium text-slate-400 transition hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-500 dark:hover:text-slate-300"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
         </div>
       )}
 

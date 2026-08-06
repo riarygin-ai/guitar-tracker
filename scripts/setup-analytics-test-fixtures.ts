@@ -298,13 +298,24 @@ async function insertListing(
   listedAt: string | null,
 ): Promise<void> {
   // Fires the item_listings_sync_inventory_status trigger, which promotes
-  // owned -> listed automatically when listed_at IS NOT NULL — matches
-  // real app behavior, so items are inserted as 'owned' first. Note:
-  // item_listings enforces UNIQUE(inventory_item_id, deal_channel_id) —
-  // at most one listing record per item+channel pair, ever.
+  // owned -> listed automatically when a row's status is 'active' —
+  // matches real app behavior, so items are inserted as 'owned' first.
+  // status must agree with listedAt (see item_listings_status_fields_check
+  // in 20260828000000_item_listings_lifecycle.sql): 'active' requires
+  // listed_at set, 'draft' requires it NULL. Only one non-terminal
+  // (draft/active) row may exist per item+channel, ever — this fixture
+  // helper only ever creates the single initial cycle for a scenario, so
+  // that's always satisfied here.
   const { error } = await admin
     .from('item_listings')
-    .insert({ user_id: userId, inventory_item_id: itemId, deal_channel_id: channelId, listed_at: listedAt, is_ai_generated: false });
+    .insert({
+      user_id: userId,
+      inventory_item_id: itemId,
+      deal_channel_id: channelId,
+      listed_at: listedAt,
+      status: listedAt ? 'active' : 'draft',
+      is_ai_generated: false,
+    });
   if (error) throw new Error(`Failed to insert listing (item=${itemId}, channel=${channelId}): ${error.message}`);
 }
 

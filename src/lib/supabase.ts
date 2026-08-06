@@ -30,7 +30,7 @@ import type {
   UpsertAiPrompt,
   UpdateDeal,
   UpdateInventoryItem,
-  UpsertItemListing,
+  UpsertListingDraftText,
 } from '@/types';
 
 // ─── Item timeline types ──────────────────────────────────────────────────────
@@ -298,6 +298,30 @@ export async function getHistoricalImportByItemId(
     },
     error: null,
   };
+}
+
+// The date this item was actually acquired — the earliest 'in' deal_item
+// across ALL acquisition types (normal purchase/trade AND Historical
+// Import/Purchase/Trade alike, unlike getHistoricalImportByItemId above,
+// which only matches historical types). Used to validate that a listing's
+// listed_at can never predate when the item was actually acquired. Most
+// items have exactly one 'in' deal_item; the earliest is used defensively
+// in case more than one ever exists.
+export async function getAcquiredDateForItem(itemId: number): Promise<{ data: string | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from('deal_items')
+    .select('deals(deal_date)')
+    .eq('item_id', itemId)
+    .eq('direction', 'in');
+
+  if (error) return { data: null, error: error.message };
+
+  const dates = ((data as any[] | null) ?? [])
+    .map((row) => (row.deals as any)?.deal_date as string | undefined)
+    .filter((d): d is string => !!d);
+
+  if (dates.length === 0) return { data: null, error: null };
+  return { data: dates.sort()[0], error: null }; // ISO 'YYYY-MM-DD' strings sort correctly lexicographically
 }
 
 export interface CreateItemWithHistoricalImportParams {
@@ -646,23 +670,61 @@ export async function updateAiPromptById(id: number, updates: UpdateAiPrompt) {
 }
 
 // ─── Item listing functions ───────────────────────────────────────────────────
+// Multiple listing cycles are supported per (inventory_item_id,
+// deal_channel_id) — history (ended/cancelled rows) is never deleted; at
+// most one non-terminal row (status 'draft' or 'active') may exist per
+// item+channel at a time, enforced by a partial unique index (see
+// 20260828000000_item_listings_lifecycle.sql). These functions are the
+// only write path for item_listings — always go through the specific
+// action (saveListingDraftText / startListing / endListing /
+// cancelListing) that matches what the user actually did, never a
+// generic upsert, so each write only ever touches the fields that action
+// legitimately owns.
 
+// Full listing history for one item, newest first — used to render every
+// platform's current status AND its past cycles.
 export async function getItemListings(itemId: number) {
   return supabase
     .from('item_listings')
     .select('*')
-    .eq('inventory_item_id', itemId);
+    .eq('inventory_item_id', itemId)
+    .order('created_at', { ascending: false });
 }
 
-// Bulk listing dates for dashboard/analytics — one row per platform, RLS-scoped.
+// Bulk EARLIEST real listing dates for dashboard/analytics — one row per
+// platform, RLS-scoped. Cancelled records are excluded (a cancelled row's
+// listed_at, if it has one, was never a real listing); ended listings ARE
+// included, since their listed_at remains a genuine historical listing
+// date. See this session's Part 6 report for why this is a narrow,
+// contained fix rather than the larger analytics follow-up still needed.
 export async function getAllListedDates() {
   return supabase
     .from('item_listings')
     .select('inventory_item_id, listed_at')
-    .not('listed_at', 'is', null);
+    .not('listed_at', 'is', null)
+    .neq('status', 'cancelled');
 }
 
-export async function upsertItemListing(data: UpsertItemListing) {
+// The single non-terminal (draft or active) row for one item+channel, if
+// any — the partial unique index guarantees there is at most one. This is
+// the row draft text is read from/written to, and the row Start Listing
+// transitions in place rather than replacing.
+export async function getActiveOrDraftListing(itemId: number, channelId: number) {
+  return supabase
+    .from('item_listings')
+    .select('*')
+    .eq('inventory_item_id', itemId)
+    .eq('deal_channel_id', channelId)
+    .in('status', ['draft', 'active'])
+    .maybeSingle<ItemListing>();
+}
+
+// Saves draft/listing TEXT only — never touches status, listed_at,
+// ended_at, or cancelled_at. Updates the existing non-terminal row (draft
+// OR active — text for an active listing is edited in place, not forked
+// into a separate draft) if one exists; otherwise creates a fresh 'draft'
+// row.
+export async function saveListingDraftText(data: UpsertListingDraftText) {
   const { id, ...rest } = data;
   const payload = { ...rest, updated_at: new Date().toISOString() };
   if (id != null) {
@@ -673,11 +735,65 @@ export async function upsertItemListing(data: UpsertItemListing) {
       .select()
       .single<ItemListing>();
   }
-  // No id yet — upsert on the platform-uniqueness key so a second save for
-  // the same item+channel updates the existing row instead of duplicating it.
   return supabase
     .from('item_listings')
-    .upsert(payload, { onConflict: 'inventory_item_id,deal_channel_id' })
+    .insert({ ...payload, status: 'draft' as const })
+    .select()
+    .single<ItemListing>();
+}
+
+// Start/List — creates a new active listing cycle, or promotes an
+// existing draft row in place so its already-saved text/ai_prompt_id is
+// never lost. Only called when no active listing already exists for this
+// item+channel (the caller only shows this action then); the partial
+// unique index is the last-resort guard against a race.
+export async function startListing(params: {
+  inventory_item_id: number;
+  deal_channel_id: number;
+  listed_at: string;
+  existingDraftId?: number | null;
+}) {
+  const { inventory_item_id, deal_channel_id, listed_at, existingDraftId } = params;
+  const updated_at = new Date().toISOString();
+
+  if (existingDraftId != null) {
+    return supabase
+      .from('item_listings')
+      .update({ status: 'active', listed_at, updated_at })
+      .eq('id', existingDraftId)
+      .select()
+      .single<ItemListing>();
+  }
+
+  return supabase
+    .from('item_listings')
+    .insert({ inventory_item_id, deal_channel_id, status: 'active', listed_at, updated_at })
+    .select()
+    .single<ItemListing>();
+}
+
+// End Listing — the cycle remains stored; only its status/ended_at
+// change. `.eq('status', 'active')` is defense in depth against ending an
+// already-ended/cancelled row out from under a stale UI state.
+export async function endListing(id: number, endedAt: string) {
+  return supabase
+    .from('item_listings')
+    .update({ status: 'ended', ended_at: endedAt, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('status', 'active')
+    .select()
+    .single<ItemListing>();
+}
+
+// Cancel — soft-delete: the row is preserved but marked ignored. Valid
+// from either a draft or an active row (a record can be created by
+// mistake either before or after Start Listing).
+export async function cancelListing(id: number) {
+  return supabase
+    .from('item_listings')
+    .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .in('status', ['draft', 'active'])
     .select()
     .single<ItemListing>();
 }

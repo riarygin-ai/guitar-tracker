@@ -22,6 +22,7 @@ import {
   createBrand,
   createInventoryItem,
   createItemWithHistoricalImport,
+  getAcquiredDateForItem,
   getBrands,
   getHistoricalImportByItemId,
   getInventoryExpensesByItemIds,
@@ -149,6 +150,7 @@ export default function InventoryForm({
 
   // Edit mode: existing historical import record (read-only display)
   const [existingHistImport, setExistingHistImport] = useState<HistoricalImportInfo | null>(null);
+  const [acquiredDate, setAcquiredDate] = useState<string | null>(null);
 
   const existingBrand = useMemo(
     () => brands.find((b) => b.name.toLowerCase() === brandInput.trim().toLowerCase()),
@@ -198,7 +200,7 @@ export default function InventoryForm({
 
     async function loadItem() {
       setLoading(true);
-      const [itemResult, withValueResult, dealItemsResult, photosResult, histImportResult, expensesResult, itemTagsResult] = await Promise.all([
+      const [itemResult, withValueResult, dealItemsResult, photosResult, histImportResult, expensesResult, itemTagsResult, acquiredDateResult] = await Promise.all([
         getInventoryItemById(Number(itemId)),
         getInventoryItemWithValueById(Number(itemId)),
         getDealItemsByItemId(Number(itemId)),
@@ -206,6 +208,7 @@ export default function InventoryForm({
         getHistoricalImportByItemId(Number(itemId)),
         getInventoryExpensesByItemIds([Number(itemId)]),
         getItemTags(Number(itemId)),
+        getAcquiredDateForItem(Number(itemId)),
       ]);
       setLoading(false);
 
@@ -254,6 +257,12 @@ export default function InventoryForm({
       // Historical import (read-only display in edit mode)
       if (!histImportResult.error && histImportResult.data) {
         setExistingHistImport(histImportResult.data);
+      }
+
+      // Acquired date — for listing date validation (listed_at cannot
+      // predate when the item was actually acquired).
+      if (!acquiredDateResult.error) {
+        setAcquiredDate(acquiredDateResult.data);
       }
 
       // Total item-level expenses (reduces cost basis / profit)
@@ -1126,6 +1135,7 @@ export default function InventoryForm({
                   ref={aiAssistantRef}
                   itemId={Number(itemId)}
                   itemLabel={`${brandInput} ${model}`.trim()}
+                  acquiredDate={acquiredDate}
                 />
               )}
             </div>
