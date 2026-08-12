@@ -276,17 +276,6 @@ export default function InventoryPage() {
     [items, valueOutByItemId, acquiredDateByItemId]
   );
 
-  const summaryStats = useMemo(() => {
-    const activeItems = items.filter((i) => i.status === 'owned' || i.status === 'listed');
-    const totalValue = activeItems.reduce((sum, i) => sum + (i.estimated_sold_value ?? i.value_in ?? 0), 0);
-    const totalCost = activeItems.reduce((sum, i) => sum + (i.value_in ?? 0), 0);
-    return {
-      count: items.length,
-      totalValue,
-      equity: totalValue - totalCost,
-    };
-  }, [items]);
-
   const visibleSubtypes = useMemo(() => {
     if (selectedCategoryNames.length === 0) return allSubtypes;
     return allSubtypes.filter((s) => {
@@ -357,6 +346,25 @@ export default function InventoryPage() {
     });
   }, [brandMap, itemsWithComputedValues, search, selectedCategoryNames, selectedSubtypeNames, selectedStatuses, subtypeNameById, categoryNameBySubtypeId, selectedPurposeIds, selectedTagIds, tagsByItemId]);
 
+  // Same value/equity formula as always (owned+listed subset only — a
+  // sold/traded item contributes nothing to current portfolio value) —
+  // just scoped to the full filtered set (not the paginated slice) when
+  // filters/search are active, so this never undercounts against items
+  // not yet rendered. hasActiveFilters is the same flag that drives the
+  // "Clear Filters" button, so this switches back to the plain global
+  // summary at exactly the same moment that button disappears.
+  const summaryStats = useMemo(() => {
+    const sourceItems = hasActiveFilters ? filteredItems : items;
+    const activeItems = sourceItems.filter((i) => i.status === 'owned' || i.status === 'listed');
+    const totalValue = activeItems.reduce((sum, i) => sum + (i.estimated_sold_value ?? i.value_in ?? 0), 0);
+    const totalCost = activeItems.reduce((sum, i) => sum + (i.value_in ?? 0), 0);
+    return {
+      count: sourceItems.length,
+      totalValue,
+      equity: totalValue - totalCost,
+    };
+  }, [items, filteredItems, hasActiveFilters]);
+
   const sortedFilteredItems = useMemo(() => {
     return [...filteredItems].sort((a, b) => {
       const aDate = a.acquired_date ?? null;
@@ -422,11 +430,11 @@ export default function InventoryPage() {
 
         {/* Header: label + [+] button */}
         <div className="flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="page-overline">Inventory</p>
             {!loading && (
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                {summaryStats.count} items · Total Value {fmtCurrency(summaryStats.totalValue)} · Equity {fmtCurrency(summaryStats.equity)}
+              <p className="mt-1 break-words text-xs text-slate-500 dark:text-slate-400">
+                {summaryStats.count} {hasActiveFilters ? 'matching items' : 'items'} · Total Value {fmtCurrency(summaryStats.totalValue)} · Equity {fmtCurrency(summaryStats.equity)}
               </p>
             )}
           </div>
