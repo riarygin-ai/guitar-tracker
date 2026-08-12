@@ -440,8 +440,18 @@ export default function InventoryForm({
       status: existingItem?.status ?? 'new',
     };
 
+    // status/sold_date are lifecycle fields owned by the item_listings sync
+    // trigger and the sale/trade RPCs, not by this form — they're only in
+    // `payload` above because create mode needs a full NewInventoryItem.
+    // Re-sending them on update would overwrite whatever the DB/trigger has
+    // computed since `existingItem` was last fetched with a stale value
+    // (e.g. a listing started earlier in this same visit, before Update
+    // Item was clicked) — omit them so update() only ever touches the
+    // fields this form actually edits.
+    const { status: _status, sold_date: _soldDate, ...updatePayload } = payload;
+
     const result = itemId
-      ? await updateInventoryItem(Number(itemId), { id: Number(itemId), ...payload })
+      ? await updateInventoryItem(Number(itemId), { id: Number(itemId), ...updatePayload })
       : await createInventoryItem(payload);
 
     if (result.error || !result.data) {
