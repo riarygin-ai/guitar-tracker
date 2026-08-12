@@ -38,6 +38,8 @@ import {
   getActiveOrDraftListing,
   getItemListings,
   getAllListedDates,
+  createSellOperation,
+  createTradeOperation,
 } from '../src/lib/supabase';
 import { supabase } from '../src/lib/supabase';
 import { validateStartDate, validateEndDate, todayDateString } from '../src/components/AiAssistantCard';
@@ -390,11 +392,121 @@ async function main() {
   check('D15: no LISTING_PLATFORM segment for Kijiji (draft-only, never a real listing)', !kijijiSegment, kijijiSegment);
 
   // ══════════════════════════════════════════════════════════════════════
+  // Section E — create_sell_operation / create_trade_operation close open
+  // listings (20260831000000_close_listings_on_sale_trade.sql). Runs AFTER
+  // Section D on purpose: it creates real realized (sold/traded) items for
+  // this same test user, which would otherwise inflate Section D's
+  // pattern-discovery counts (those assertions assume exactly the realized
+  // items Section D itself set up).
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[E — sale/trade operations close open listings]');
+
+  const { error: signInError2 } = await supabase.auth.signInWithPassword({ email: EMAIL, password: 'Test-Item-Listings-Local-Only-1!' });
+  if (signInError2) throw new Error(`Failed to sign in as test user for Section E: ${signInError2.message}`);
+
+  // E1 — Sale closes active listings on multiple platforms, with the sale's
+  // own deal_date as ended_at.
+  const e1ItemId = await createTestItem();
+  {
+    await startListing({ inventory_item_id: e1ItemId, deal_channel_id: marketplaceId, listed_at: lastWeek });
+    await startListing({ inventory_item_id: e1ItemId, deal_channel_id: kijijiId, listed_at: lastWeek });
+
+    const { data: sellResult, error: sellError } = await createSellOperation({
+      dealDate: today,
+      cashReceived: 500,
+      channelId: marketplaceId,
+      itemId: e1ItemId,
+      cfDescription: 'E1 test sale',
+    });
+    check('E1: create_sell_operation succeeds', !sellError && !!sellResult?.deal_id, { sellResult, sellError });
+    if (sellResult?.deal_id) createdDealIds.push(sellResult.deal_id as number);
+
+    const { data: itemAfter } = await serviceClient.from('inventory_items').select('status').eq('id', e1ItemId).maybeSingle();
+    check('E1: item becomes sold', itemAfter?.status === 'sold', itemAfter);
+
+    const { data: listingsAfter } = await serviceClient.from('item_listings').select('deal_channel_id, status, ended_at').eq('inventory_item_id', e1ItemId);
+    const allEnded = (listingsAfter ?? []).every((l) => l.status === 'ended' && l.ended_at === today);
+    check('E1: every active listing (Marketplace + Kijiji) became ended with ended_at = sale date', allEnded && (listingsAfter?.length ?? 0) === 2, listingsAfter);
+  }
+
+  // E2 — Trade closes the OUTGOING item's active listing; the INCOMING
+  // item's own (unrelated) active listing is left untouched.
+  const e2OutItemId = await createTestItem();
+  const e2InItemId = await createTestItem();
+  {
+    await serviceClient.from('inventory_items').update({ status: 'new' }).eq('id', e2InItemId);
+
+    const { data: outListing } = await startListing({ inventory_item_id: e2OutItemId, deal_channel_id: marketplaceId, listed_at: lastWeek });
+    // Incoming item already carries its own active listing (e.g. from a
+    // previous ownership cycle) — trading it IN must never touch this row.
+    const { data: inListing } = await serviceClient
+      .from('item_listings')
+      .insert({ user_id: userId, inventory_item_id: e2InItemId, deal_channel_id: kijijiId, status: 'active', listed_at: lastWeek })
+      .select('id')
+      .single();
+
+    const { data: tradeResult, error: tradeError } = await createTradeOperation({
+      dealDate: today,
+      channelId: marketplaceId,
+      outgoingItems: [{ item_id: e2OutItemId, total_value: 200 }],
+      incomingItems: [{ item_id: e2InItemId, total_value: 200 }],
+    });
+    check('E2: create_trade_operation succeeds', !tradeError && !!tradeResult?.deal_id, { tradeResult, tradeError });
+    if (tradeResult?.deal_id) createdDealIds.push(tradeResult.deal_id as number);
+
+    const { data: outItemAfter } = await serviceClient.from('inventory_items').select('status').eq('id', e2OutItemId).maybeSingle();
+    const { data: inItemAfter } = await serviceClient.from('inventory_items').select('status').eq('id', e2InItemId).maybeSingle();
+    check('E2: outgoing item becomes traded', outItemAfter?.status === 'traded', outItemAfter);
+    check('E2: incoming item becomes owned', inItemAfter?.status === 'owned', inItemAfter);
+
+    const { data: outListingAfter } = await serviceClient.from('item_listings').select('status, ended_at').eq('id', outListing!.id).single();
+    check('E2: outgoing item\'s active listing becomes ended with ended_at = trade date', outListingAfter?.status === 'ended' && outListingAfter?.ended_at === today, outListingAfter);
+
+    const { data: inListingAfter } = await serviceClient.from('item_listings').select('status').eq('id', inListing!.id).single();
+    check('E2: incoming item\'s own listing is left untouched (still active)', inListingAfter?.status === 'active', inListingAfter);
+  }
+
+  // E3 — Draft listings on an item that sells are cancelled, not left open
+  // and not silently left as if still listed.
+  const e3ItemId = await createTestItem();
+  {
+    const { data: draft } = await saveListingDraftText({
+      inventory_item_id: e3ItemId,
+      deal_channel_id:   marketplaceId,
+      description:       'E3 draft text, never actually listed',
+      is_ai_generated:   false,
+    });
+    check('E3: draft listing created (status draft, no listed_at)', draft?.status === 'draft', draft);
+
+    const { data: sellResult, error: sellError } = await createSellOperation({
+      dealDate: today,
+      cashReceived: 100,
+      channelId: marketplaceId,
+      itemId: e3ItemId,
+      cfDescription: 'E3 test sale',
+    });
+    check('E3: create_sell_operation succeeds with only a draft listing present', !sellError && !!sellResult?.deal_id, { sellResult, sellError });
+    if (sellResult?.deal_id) createdDealIds.push(sellResult.deal_id as number);
+
+    const { data: draftAfter } = await serviceClient.from('item_listings').select('status, cancelled_at').eq('id', draft!.id).single();
+    check('E3: the draft row becomes cancelled (not deleted) with cancelled_at set', draftAfter?.status === 'cancelled' && !!draftAfter?.cancelled_at, draftAfter);
+
+    const { data: itemAfter } = await serviceClient.from('inventory_items').select('status').eq('id', e3ItemId).maybeSingle();
+    check('E3: item is sold, not stuck looking "listed"', itemAfter?.status === 'sold', itemAfter);
+  }
+
+  await supabase.auth.signOut();
+
+  // ══════════════════════════════════════════════════════════════════════
   // Cleanup + verification
   // ══════════════════════════════════════════════════════════════════════
   console.log('\n[cleanup] Removing item_listings test fixtures...');
 
   if (createdDealIds.length > 0) {
+    // cash_flow.deal_id has NO ACTION on delete (not cascade) — Section E's
+    // create_sell_operation/create_trade_operation calls each insert a
+    // cash_flow row, which would otherwise block deleting the deal.
+    await serviceClient.from('cash_flow').delete().in('deal_id', createdDealIds);
     // ON DELETE CASCADE removes each deal's deal_items rows with it — must
     // run before deleting inventory_items, since deal_items.item_id has no
     // ON DELETE CASCADE back to inventory_items.

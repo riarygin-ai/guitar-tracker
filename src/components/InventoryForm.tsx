@@ -314,6 +314,15 @@ export default function InventoryForm({
     }
   };
 
+  // Start/End/Cancel Listing (fired from AiAssistantCard) write immediately
+  // and can flip inventory_items.status via the DB sync trigger — refetch
+  // right away so the status badge doesn't wait for the form's own Save.
+  const handleListingStatusChange = async () => {
+    if (!itemId) return;
+    const refreshed = await getInventoryItemById(Number(itemId));
+    if (!refreshed.error && refreshed.data) setExistingItem(refreshed.data);
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
@@ -1136,6 +1145,7 @@ export default function InventoryForm({
                   itemId={Number(itemId)}
                   itemLabel={`${brandInput} ${model}`.trim()}
                   acquiredDate={acquiredDate}
+                  onListingStatusChange={handleListingStatusChange}
                 />
               )}
             </div>

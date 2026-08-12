@@ -128,6 +128,14 @@ export interface AiAssistantCardProps {
    *  listing's date can never predate when the item was actually
    *  acquired. */
   acquiredDate: string | null;
+  /** Called after Start/End/Cancel Listing succeeds — these write
+   *  immediately (unlike text edits, which wait for the form's Save), and
+   *  each one can flip inventory_items.status via the DB sync trigger
+   *  (owned<->listed). The parent's own copy of the item (e.g. the status
+   *  badge) is not re-derived from this component's state, so without this
+   *  callback it would keep showing the pre-action status until the whole
+   *  form is saved or the page is reloaded. */
+  onListingStatusChange?: () => void;
 }
 
 export interface AiAssistantCardHandle {
@@ -219,7 +227,7 @@ function PlatformStatusBadge({ status }: { status: PlatformStatus }) {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
-  function AiAssistantCard({ itemId, itemLabel, acquiredDate }, ref) {
+  function AiAssistantCard({ itemId, itemLabel, acquiredDate, onListingStatusChange }, ref) {
   const [channels,        setChannels]        = useState<DealChannel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
   const [tabs,            setTabs]            = useState<Record<number, ChannelState>>({});
@@ -545,6 +553,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       listingActionBusy:  false,
       listingActionError: '',
     });
+    onListingStatusChange?.();
   }
 
   async function handleEndListing(channelId: number) {
@@ -574,6 +583,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       listingActionError: '',
       confirmEnd:         false,
     });
+    onListingStatusChange?.();
   }
 
   async function handleCancelListing(channelId: number) {
@@ -603,6 +613,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       listingActionError: '',
       confirmCancel:      false,
     });
+    onListingStatusChange?.();
   }
 
   async function handleDebugPrompt() {

@@ -1,0 +1,26 @@
+-- Incidental fix, discovered while testing 20260831000000: every 1-arg call
+-- to recalculate_cash_flow_balances_from(v_cf_id) — used throughout
+-- create_buy_operation, create_sell_operation, create_trade_operation,
+-- edit_buy_operation, edit_trade_operation, create_expense_operation —
+-- currently raises "function ... is not unique" and aborts the whole
+-- operation. Confirmed live:
+--   SELECT recalculate_cash_flow_balances_from(1::bigint);
+--   ERROR: function recalculate_cash_flow_balances_from(bigint) is not
+--   unique
+--
+-- Root cause: 20260620000001_recalculate_seed_balance.sql added a second
+-- overload, recalculate_cash_flow_balances_from(bigint, numeric DEFAULT
+-- NULL), without dropping the original recalculate_cash_flow_balances_from
+-- (bigint) it was meant to extend. Postgres treats them as two distinct,
+-- equally-valid candidates for a 1-arg call (the second one's default
+-- parameter makes it callable with just one arg too) and refuses to pick
+-- between them rather than silently preferring one.
+--
+-- Fix: drop the original 1-arg overload. No code in this repo calls the
+-- 2-arg form with an explicit p_seed_balance (grep confirms every call site
+-- passes exactly one arg) — its default (NULL -> seed 0) reproduces the
+-- dropped function's exact behavior, so every existing call site keeps
+-- working unchanged and the seed-balance feature added in
+-- 20260620000001 is preserved for direct/manual use.
+
+DROP FUNCTION IF EXISTS public.recalculate_cash_flow_balances_from(bigint);
