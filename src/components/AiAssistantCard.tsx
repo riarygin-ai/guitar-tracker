@@ -20,11 +20,17 @@ import type { DealChannel, ItemListing } from '@/types';
 // `currentRow` is the single non-terminal (draft/active) row, if any — the
 // row text edits and Start Listing both act on; `lastTerminalRow` is the
 // most recently ended/cancelled row, shown for context only when there is
-// no current row.
+// no current row. `lastEndedAt` is separate from both: it is the latest
+// ended_at among ALL 'ended' rows for this channel (never 'cancelled',
+// never 'draft'), independent of whether there's a current row — so the
+// "previous listing cycle" note can show even while a new cycle is active,
+// and even when the most recent terminal row is a cancellation that came
+// after a real ended cycle.
 
 interface ChannelState {
   currentRow:      ItemListing | null;
   lastTerminalRow: ItemListing | null;
+  lastEndedAt:     string | null;
 
   // Text/draft editing (bound to currentRow — empty/fresh once currentRow
   // is null, e.g. right after a listing ends).
@@ -51,6 +57,7 @@ function emptyChannelState(): ChannelState {
   return {
     currentRow:      null,
     lastTerminalRow: null,
+    lastEndedAt:     null,
     content:         '',
     isAiGenerated:   false,
     aiPromptId:      null,
@@ -172,6 +179,41 @@ function formatListedDate(dateStr: string): string {
   }
 }
 
+// Whole-calendar-day difference between two 'YYYY-MM-DD' strings, computed
+// via Date.UTC so it can never drift by ±1 day from a local/UTC boundary
+// mismatch (unlike `new Date(dateStr) - new Date(dateStr)`, which would).
+// Exported so scripts/test-item-listings.ts exercises this exact function.
+export function daysBetweenDateStrings(fromDateStr: string, toDateStr: string): number {
+  const [fy, fm, fd] = fromDateStr.split('-').map(Number);
+  const [ty, tm, td] = toDateStr.split('-').map(Number);
+  const from = Date.UTC(fy, fm - 1, fd);
+  const to = Date.UTC(ty, tm - 1, td);
+  return Math.round((to - from) / 86_400_000);
+}
+
+// Latest ended_at among rows with status 'ended' for a single item+channel
+// — never 'cancelled', never 'draft', and independent of whether a
+// draft/active row also currently exists for that channel. Exported so
+// scripts/test-item-listings.ts can verify the cancelled/draft exclusion
+// directly, without mounting the component.
+export function computeLastEndedAt(rows: ItemListing[]): string | null {
+  return rows.reduce<string | null>((latest, r) => {
+    if (r.status !== 'ended' || !r.ended_at) return latest;
+    return !latest || r.ended_at > latest ? r.ended_at : latest;
+  }, null);
+}
+
+// "Last listing ended today" / "...yesterday" / "...N days ago" — the
+// small muted note shown per platform for a previous real (ended) listing
+// cycle. `endedAt` must already be filtered to status 'ended' rows only —
+// cancelled/draft rows are never passed in here.
+export function formatPreviousCycleText(endedAt: string): string {
+  const days = daysBetweenDateStrings(endedAt, todayDateString());
+  if (days <= 0) return 'Last listing ended today';
+  if (days === 1) return 'Last listing ended yesterday';
+  return `Last listing ended ${days} days ago`;
+}
+
 function getStatusDisplay(tab: ChannelState): { label: string; color: string } {
   if (tab.isDirty) {
     return {
@@ -284,11 +326,16 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
         const rows = rowsByChannel.get(ch.id) ?? [];
         const currentRow      = rows.find((r) => r.status === 'draft' || r.status === 'active') ?? null;
         const lastTerminalRow = currentRow ? null : (rows.find((r) => r.status === 'ended' || r.status === 'cancelled') ?? null);
+        // Latest ended_at across ALL 'ended' rows (not just the most recent
+        // terminal row, and never a 'cancelled' row) — independent of
+        // currentRow so it still shows while a new cycle is active.
+        const lastEndedAt = computeLastEndedAt(rows);
 
         initialTabs[ch.id] = {
           ...emptyChannelState(),
           currentRow,
           lastTerminalRow,
+          lastEndedAt,
           content:       currentRow?.description ?? '',
           isAiGenerated: currentRow?.is_ai_generated ?? false,
           aiPromptId:    currentRow?.ai_prompt_id ?? null,
@@ -579,6 +626,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
     updateTab(channelId, {
       currentRow:         null,
       lastTerminalRow:    row,
+      lastEndedAt:        row.ended_at ?? tab.lastEndedAt,
       listingActionBusy:  false,
       listingActionError: '',
       confirmEnd:         false,
@@ -708,77 +756,92 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
             const canCancel = !!tab.currentRow;
 
             return (
-              <div key={ch.id} className="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700">
-                <div className="flex flex-wrap items-center justify-between gap-2 p-3">
+              <div key={ch.id} className="min-w-0 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
+                {/* Mobile: name+badge, then listed/previous-cycle text, then
+                    date field, then action buttons — each on its own line
+                    (flex-col). Desktop (sm+): unchanged single wrapping row,
+                    restored via sm:flex-row/sm:contents below. */}
+                <div className="flex flex-col gap-3 p-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <span className="text-sm font-medium text-slate-900 dark:text-white">{ch.name}</span>
                     <PlatformStatusBadge status={platformStatus} />
                     {isActive && tab.currentRow?.listed_at && (
-                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                      <span className="block w-full text-xs text-slate-500 dark:text-slate-400 sm:inline sm:w-auto">
                         Listed {formatListedDate(tab.currentRow.listed_at)}
                       </span>
                     )}
-                    {platformStatus === 'ended' && tab.lastTerminalRow?.ended_at && (
-                      <span className="text-xs text-slate-500 dark:text-slate-400">
-                        Ended {formatListedDate(tab.lastTerminalRow.ended_at)}
+                    {tab.lastEndedAt && (
+                      <span className="block w-full text-xs text-slate-400 dark:text-slate-500 sm:inline sm:w-auto">
+                        {formatPreviousCycleText(tab.lastEndedAt)}
                       </span>
                     )}
                   </div>
 
-                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  <div className="flex flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
                     {!isActive && (
-                      <>
-                        <input
-                          type="date"
-                          value={tab.startDateInput}
-                          onChange={(e) => updateTab(ch.id, { startDateInput: e.target.value, listingActionError: '' })}
-                          disabled={tab.listingActionBusy || loadingDrafts}
-                          aria-label={`${ch.name} listing date`}
-                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600"
-                        />
+                      <input
+                        type="date"
+                        value={tab.startDateInput}
+                        onChange={(e) => updateTab(ch.id, { startDateInput: e.target.value, listingActionError: '' })}
+                        disabled={tab.listingActionBusy || loadingDrafts}
+                        aria-label={`${ch.name} listing date`}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600 sm:w-auto sm:py-1"
+                      />
+                    )}
+
+                    {isActive && (
+                      <input
+                        type="date"
+                        value={tab.endDateInput}
+                        onChange={(e) => updateTab(ch.id, { endDateInput: e.target.value, listingActionError: '' })}
+                        disabled={tab.listingActionBusy}
+                        aria-label={`${ch.name} end date`}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600 sm:w-auto sm:py-1"
+                      />
+                    )}
+
+                    {/* Action buttons: on mobile this is a real flex-wrap
+                        row so End Listing/List + Cancel sit side by side
+                        when they fit (min-w guard) and stack when they
+                        don't. At sm+, `sm:contents` removes this wrapper
+                        from the box model entirely so its children become
+                        direct items of the row above — identical DOM
+                        layout to before this change. */}
+                    <div className="flex flex-wrap gap-2 sm:contents">
+                      {!isActive && (
                         <button
                           type="button"
                           onClick={() => handleStartListing(ch.id)}
                           disabled={tab.listingActionBusy || loadingDrafts}
                           aria-busy={tab.listingActionBusy}
-                          className="inline-flex items-center rounded-lg bg-slate-950 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+                          className="inline-flex min-w-[7.5rem] flex-1 items-center justify-center rounded-lg bg-slate-950 px-2.5 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 sm:flex-none sm:py-1"
                         >
                           {tab.listingActionBusy ? 'Starting…' : tab.currentRow?.status === 'draft' ? 'Start Listing' : 'List'}
                         </button>
-                      </>
-                    )}
+                      )}
 
-                    {isActive && (
-                      <>
-                        <input
-                          type="date"
-                          value={tab.endDateInput}
-                          onChange={(e) => updateTab(ch.id, { endDateInput: e.target.value, listingActionError: '' })}
-                          disabled={tab.listingActionBusy}
-                          aria-label={`${ch.name} end date`}
-                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600"
-                        />
+                      {isActive && (
                         <button
                           type="button"
                           onClick={() => updateTab(ch.id, { confirmEnd: true })}
                           disabled={tab.listingActionBusy}
-                          className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+                          className="inline-flex min-w-[7.5rem] flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600 sm:flex-none sm:py-1"
                         >
                           End Listing
                         </button>
-                      </>
-                    )}
+                      )}
 
-                    {canCancel && (
-                      <button
-                        type="button"
-                        onClick={() => updateTab(ch.id, { confirmCancel: true })}
-                        disabled={tab.listingActionBusy}
-                        className="inline-flex items-center rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-800/50 dark:bg-slate-700 dark:text-rose-400 dark:hover:bg-rose-900/20"
-                      >
-                        Cancel
-                      </button>
-                    )}
+                      {canCancel && (
+                        <button
+                          type="button"
+                          onClick={() => updateTab(ch.id, { confirmCancel: true })}
+                          disabled={tab.listingActionBusy}
+                          className="inline-flex min-w-[7.5rem] flex-1 items-center justify-center rounded-lg border border-rose-200 bg-white px-2.5 py-2 text-xs font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-800/50 dark:bg-slate-700 dark:text-rose-400 dark:hover:bg-rose-900/20 sm:flex-none sm:py-1"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 

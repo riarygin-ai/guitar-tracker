@@ -42,7 +42,7 @@ import {
   createTradeOperation,
 } from '../src/lib/supabase';
 import { supabase } from '../src/lib/supabase';
-import { validateStartDate, validateEndDate, todayDateString } from '../src/components/AiAssistantCard';
+import { validateStartDate, validateEndDate, todayDateString, formatPreviousCycleText, computeLastEndedAt } from '../src/components/AiAssistantCard';
 import type { ItemListing } from '../src/types';
 
 let passed = 0;
@@ -93,6 +93,11 @@ async function main() {
   check('ended_at before listed_at is rejected', validateEndDate(yesterday, today) !== null, validateEndDate(yesterday, today));
   check('ended_at on/after listed_at is valid', validateEndDate(today, yesterday) === null);
   check('empty ended_at is rejected', validateEndDate('', today) !== null);
+
+  check('formatPreviousCycleText: ended today', formatPreviousCycleText(today) === 'Last listing ended today', formatPreviousCycleText(today));
+  check('formatPreviousCycleText: ended yesterday', formatPreviousCycleText(yesterday) === 'Last listing ended yesterday', formatPreviousCycleText(yesterday));
+  check('formatPreviousCycleText: ended 7 days ago', formatPreviousCycleText(lastWeek) === 'Last listing ended 7 days ago', formatPreviousCycleText(lastWeek));
+  check('formatPreviousCycleText: ended 24 days ago', formatPreviousCycleText(daysFromToday(-24)) === 'Last listing ended 24 days ago', formatPreviousCycleText(daysFromToday(-24)));
 
   // ══════════════════════════════════════════════════════════════════════
   // Section B — DB-level constraint/trigger correctness (real schema)
@@ -193,6 +198,44 @@ async function main() {
 
     const { data: itemAfter } = await serviceClient.from('inventory_items').select('status').eq('id', itemId).maybeSingle();
     check('B4: ending a listing on a SOLD item does not move it back to owned/listed', itemAfter?.status === 'sold', itemAfter);
+  }
+
+  // B5 — computeLastEndedAt (the "previous listing cycle" note): cancelled
+  // and draft rows never count, an ended row does, and it's found even
+  // when a NEW active cycle exists for the same item+channel.
+  {
+    const itemId = await createTestItem();
+
+    // A cancelled row with no ended_at at all — must never count.
+    await serviceClient.from('item_listings').insert({ user_id: userId, inventory_item_id: itemId, deal_channel_id: marketplaceId, status: 'cancelled', cancelled_at: new Date().toISOString() });
+    // A draft row — must never count.
+    await serviceClient.from('item_listings').insert({ user_id: userId, inventory_item_id: itemId, deal_channel_id: marketplaceId, status: 'draft' });
+
+    const { data: rowsCancelledDraftOnly } = await serviceClient.from('item_listings').select('*').eq('inventory_item_id', itemId).eq('deal_channel_id', marketplaceId);
+    check('B5: cancelled + draft rows only -> no previous cycle', computeLastEndedAt((rowsCancelledDraftOnly ?? []) as unknown as ItemListing[]) === null, rowsCancelledDraftOnly);
+
+    // Separate channel (Kijiji) for the ended-cycle checks below, so this
+    // doesn't collide with the still-open draft row left on Marketplace
+    // above (the partial unique index allows only one draft/active row per
+    // item+channel at a time).
+    const { data: endedRow } = await serviceClient.from('item_listings').insert({ user_id: userId, inventory_item_id: itemId, deal_channel_id: kijijiId, status: 'active', listed_at: daysFromToday(-30) }).select('id').single();
+    const day24Ago = daysFromToday(-24);
+    await serviceClient.from('item_listings').update({ status: 'ended', ended_at: day24Ago }).eq('id', endedRow!.id);
+
+    const { data: rowsWithEnded } = await serviceClient.from('item_listings').select('*').eq('inventory_item_id', itemId).eq('deal_channel_id', kijijiId);
+    const lastEndedAfterEnd = computeLastEndedAt((rowsWithEnded ?? []) as unknown as ItemListing[]);
+    check('B5: an ended row IS found as the previous cycle', lastEndedAfterEnd === day24Ago, { lastEndedAfterEnd, day24Ago });
+    check('B5: formats as "Last listing ended 24 days ago"', formatPreviousCycleText(lastEndedAfterEnd!) === 'Last listing ended 24 days ago', formatPreviousCycleText(lastEndedAfterEnd!));
+
+    // A brand-new active cycle on top (same channel) — the previous ended
+    // cycle must still be found (it's independent of the current row).
+    await serviceClient.from('item_listings').insert({ user_id: userId, inventory_item_id: itemId, deal_channel_id: kijijiId, status: 'active', listed_at: today });
+
+    const { data: rowsWithActiveOnTop } = await serviceClient.from('item_listings').select('*').eq('inventory_item_id', itemId).eq('deal_channel_id', kijijiId);
+    const rows = (rowsWithActiveOnTop ?? []) as unknown as ItemListing[];
+    const currentRow = rows.find((r) => r.status === 'active');
+    const lastEndedWithActive = computeLastEndedAt(rows);
+    check('B5: previous ended cycle is still found while a NEW cycle is active', currentRow?.status === 'active' && lastEndedWithActive === day24Ago, { currentRow, lastEndedWithActive });
   }
 
   // ══════════════════════════════════════════════════════════════════════
