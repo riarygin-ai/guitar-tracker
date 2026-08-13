@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Expense">
+  <defs>
+    <linearGradient id="expense-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1e293b"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="expense-badge" x1="37" y1="37" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fb7185"/>
+      <stop offset="1" stop-color="#e11d48"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#expense-bg)"/>
+
+  <!-- Receipt -->
+  <path
+    d="M20,13 L44,13 L44,38 L41,41 L38,38 L35,41 L32,38 L29,41 L26,38 L23,41 L20,38 Z"
+    fill="#e2e8f0"
+  />
+  <rect x="24" y="18.5" width="16" height="2.4" rx="1.2" fill="#94a3b8"/>
+  <rect x="24" y="24"   width="16" height="2.4" rx="1.2" fill="#94a3b8"/>
+  <rect x="24" y="29.5" width="10" height="2.4" rx="1.2" fill="#94a3b8"/>
+
+  <!-- Cash-out accent badge -->
+  <circle cx="46" cy="46" r="10" fill="url(#expense-badge)"/>
+  <path
+    d="M46,41.5 V50.5 M42.5,46.5 L46,50 L49.5,46.5"
+    fill="none" stroke="#fff1f2" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+  />
+</svg>

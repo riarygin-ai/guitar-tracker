@@ -24,7 +24,7 @@ const defaultDealTypes = ['sale', 'purchase', 'trade', 'expense'];
 type TradeItemVisual = { photoUrl?: string; alt: string };
 
 type DealVisual =
-  | { kind: 'single'; photoUrl?: string; alt: string; title: string }
+  | { kind: 'single'; photoUrl?: string; alt: string; title: string; isUnlinkedExpense: boolean }
   | { kind: 'trade'; outItems: TradeItemVisual[]; outMore: number; inItems: TradeItemVisual[]; inMore: number; title: string };
 
 function computeDealVisual(
@@ -89,6 +89,7 @@ function computeDealVisual(
     alt: item ? brandModel(item) : (deal.notes || '—'),
     // Expense title is always the expense description, never the item name
     title: deal.deal_type === 'expense' ? (deal.notes || '—') : (item ? yearBrandModel(item) : (deal.notes || '—')),
+    isUnlinkedExpense: deal.deal_type === 'expense' && !item,
   };
 }
 
@@ -724,6 +725,8 @@ export default function OperationsPage() {
                         <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700 sm:h-20 sm:w-20">
                           {visual.photoUrl
                             ? <Image src={visual.photoUrl} alt={visual.alt} fill className="object-cover" sizes="80px" unoptimized />
+                            : visual.isUnlinkedExpense
+                            ? <img src="/placeholders/expense-default.svg" alt="Expense" className="h-full w-full object-cover" />
                             : photoPlaceholder}
                         </div>
                       )}
