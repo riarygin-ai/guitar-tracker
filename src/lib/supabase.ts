@@ -16,6 +16,7 @@ import type {
   InventoryItem,
   InventoryItemPhoto,
   InventoryItemWithValue,
+  InventorySearchItem,
   ItemCategory,
   ItemListing,
   ItemPurpose,
@@ -239,6 +240,15 @@ export async function searchInventoryItems(query: string, allowedStatuses?: stri
 
 export async function getInventoryItemById(id: number) {
   return supabase.from('inventory_items').select('*').eq('id', id).single();
+}
+
+// Search-view shaped lookup by id — used to pre-fill edit forms with the
+// InventorySearchItem shape (brand_name/item_subtype_name included) the
+// create/edit form components expect, regardless of current item status
+// (unlike searchInventoryItems, which excludes sold/traded by default).
+export async function getInventorySearchItemsByIds(ids: number[]) {
+  if (ids.length === 0) return { data: [] as InventorySearchItem[], error: null };
+  return supabase.from('inventory_items_search').select('*').in('id', ids);
 }
 
 export async function getInventoryItemWithValueById(id: number) {
@@ -638,6 +648,42 @@ export async function editBuyOperation(params: {
     p_channel_id:     params.channelId,
     p_notes:          params.notes,
     p_incoming_items: params.incomingItems,
+    p_cf_description: params.cfDescription ?? null,
+  });
+}
+
+export async function editSellOperation(params: {
+  dealId: number;
+  dealDate: string;
+  cashReceived: number;
+  channelId: number | null;
+  notes?: string | null;
+  cfDescription?: string | null;
+}) {
+  return supabase.rpc('edit_sell_operation', {
+    p_deal_id:        params.dealId,
+    p_deal_date:      params.dealDate,
+    p_cash_received:  params.cashReceived,
+    p_channel_id:     params.channelId,
+    p_notes:          params.notes ?? null,
+    p_cf_description: params.cfDescription ?? null,
+  });
+}
+
+export async function editExpenseOperation(params: {
+  dealId: number;
+  expenseDate: string;
+  amount: number;
+  notes: string;
+  itemId?: number | null;
+  cfDescription?: string | null;
+}) {
+  return supabase.rpc('edit_expense_operation', {
+    p_deal_id:        params.dealId,
+    p_expense_date:   params.expenseDate,
+    p_amount:         params.amount,
+    p_notes:          params.notes,
+    p_item_id:        params.itemId ?? null,
     p_cf_description: params.cfDescription ?? null,
   });
 }

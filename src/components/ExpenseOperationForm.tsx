@@ -3,15 +3,30 @@
 import Image from 'next/image';
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createExpenseOperation, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase';
+import { createExpenseOperation, editExpenseOperation, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase';
 import type { InventorySearchItem } from '@/types';
 import { todayLocalDate } from '@/lib/dateUtils';
 
-export default function ExpenseOperationForm() {
+interface ExpenseOperationFormProps {
+    dealId?: number;
+    initialExpenseDate?: string;
+    initialAmount?: number;
+    initialNotes?: string;
+    initialItem?: InventorySearchItem | null;
+}
+
+export default function ExpenseOperationForm({
+    dealId,
+    initialExpenseDate,
+    initialAmount,
+    initialNotes,
+    initialItem,
+}: ExpenseOperationFormProps = {}) {
     const router = useRouter();
-    const [expenseDate, setExpenseDate] = useState('');
-    const [amount, setAmount] = useState('');
-    const [notes, setNotes] = useState('');
+    const isEdit = dealId != null;
+    const [expenseDate, setExpenseDate] = useState(initialExpenseDate ?? '');
+    const [amount, setAmount] = useState(initialAmount != null ? String(initialAmount) : '');
+    const [notes, setNotes] = useState(initialNotes ?? '');
 
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -20,7 +35,7 @@ export default function ExpenseOperationForm() {
 
     const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const [selectedItem, setSelectedItem] = useState<InventorySearchItem | null>(null)
+    const [selectedItem, setSelectedItem] = useState<InventorySearchItem | null>(initialItem ?? null)
 
     const [searchQuery, setSearchQuery] = useState('')
     const [searchResults, setSearchResults] = useState<InventorySearchItem[]>([])
@@ -86,18 +101,32 @@ export default function ExpenseOperationForm() {
         const parsedAmount = Number(amount)
         const expenseDateValue = expenseDate || today
 
-        const result = await createExpenseOperation({
-            expenseDate: expenseDateValue,
-            amount: parsedAmount,
-            notes: notes.trim(),
-            itemId: selectedItem?.id ?? null,
-            cfDescription: `Expense: ${notes.trim()}`,
-        })
+        const result = isEdit
+            ? await editExpenseOperation({
+                dealId: dealId!,
+                expenseDate: expenseDateValue,
+                amount: parsedAmount,
+                notes: notes.trim(),
+                itemId: selectedItem?.id ?? null,
+                cfDescription: `Expense: ${notes.trim()}`,
+            })
+            : await createExpenseOperation({
+                expenseDate: expenseDateValue,
+                amount: parsedAmount,
+                notes: notes.trim(),
+                itemId: selectedItem?.id ?? null,
+                cfDescription: `Expense: ${notes.trim()}`,
+            })
 
         setSaving(false);
 
         if (result.error) {
-            setError(result.error.message || 'Could not save expense.');
+            setError(result.error.message || (isEdit ? 'Could not update expense.' : 'Could not save expense.'));
+            return;
+        }
+
+        if (isEdit) {
+            router.push(`/operations/${dealId}?updated=1`);
             return;
         }
 
@@ -316,8 +345,17 @@ export default function ExpenseOperationForm() {
                         disabled={saving}
                         className="rounded-2xl bg-slate-950 px-5 py-3 font-medium text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                     >
-                        {saving ? 'Saving...' : 'Save Expense'}
+                        {saving ? 'Saving...' : isEdit ? 'Update Expense' : 'Save Expense'}
                     </button>
+                    {isEdit && (
+                        <button
+                            type="button"
+                            onClick={() => router.push(`/operations/${dealId}`)}
+                            className="rounded-2xl border border-slate-200 bg-white px-5 py-3 font-medium text-slate-900 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+                        >
+                            Cancel
+                        </button>
+                    )}
                 </div>
             </section>
         </form>

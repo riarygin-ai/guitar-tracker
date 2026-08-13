@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import InventoryForm from '@/components/InventoryForm';
 import {
   createBuyOperation,
+  editBuyOperation,
   getBrands,
   getDealChannels,
   searchInventoryItems,
@@ -19,19 +20,34 @@ interface LineItem {
   cost: number;
 }
 
-export default function BuyOperationForm() {
+interface BuyOperationFormProps {
+  dealId?: number;
+  initialDealDate?: string;
+  initialChannelId?: number | null;
+  initialNotes?: string;
+  initialItems?: LineItem[];
+}
+
+export default function BuyOperationForm({
+  dealId,
+  initialDealDate,
+  initialChannelId,
+  initialNotes,
+  initialItems,
+}: BuyOperationFormProps = {}) {
   const router = useRouter();
+  const isEdit = dealId != null;
   const [brands, setBrands] = useState<Brand[]>([]);
   const [channels, setChannels] = useState<DealChannel[]>([]);
-  const [items, setItems] = useState<LineItem[]>([]);
+  const [items, setItems] = useState<LineItem[]>(initialItems ?? []);
   const [showNewItemForm, setShowNewItemForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<InventorySearchItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [dealDate, setDealDate] = useState('');
-  const [channelId, setChannelId] = useState<number | null>(null);
-  const [notes, setNotes] = useState('');
+  const [dealDate, setDealDate] = useState(initialDealDate ?? '');
+  const [channelId, setChannelId] = useState<number | null>(initialChannelId ?? null);
+  const [notes, setNotes] = useState(initialNotes ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -165,21 +181,30 @@ export default function BuyOperationForm() {
     const cfDescription = `Purchase: ${descParts.join(', ')}`;
 
     setSaving(true);
-    const result = await createBuyOperation({
-      dealDate: dealDateValue,
-      channelId: channelId!,
-      incomingItems: items.map((li) => ({ item_id: li.item.id, total_value: li.cost })),
-      notes: notes.trim() || null,
-      cfDescription,
-    });
+    const result = isEdit
+      ? await editBuyOperation({
+          dealId: dealId!,
+          dealDate: dealDateValue,
+          channelId: channelId!,
+          incomingItems: items.map((li) => ({ item_id: li.item.id, total_value: li.cost })),
+          notes: notes.trim() || null,
+          cfDescription,
+        })
+      : await createBuyOperation({
+          dealDate: dealDateValue,
+          channelId: channelId!,
+          incomingItems: items.map((li) => ({ item_id: li.item.id, total_value: li.cost })),
+          notes: notes.trim() || null,
+          cfDescription,
+        });
     setSaving(false);
 
     if (result.error) {
-      setError(result.error.message || 'Could not save purchase.');
+      setError(result.error.message || (isEdit ? 'Could not update purchase.' : 'Could not save purchase.'));
       return;
     }
 
-    router.push('/operations');
+    router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations');
   };
 
   const fmt = (v: number | null) => (v != null ? `$${v.toFixed(2)}` : '—');
@@ -501,6 +526,15 @@ export default function BuyOperationForm() {
         )}
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+          {isEdit ? (
+            <button
+              type="button"
+              onClick={() => router.push(`/operations/${dealId}`)}
+              className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+            >
+              Cancel
+            </button>
+          ) : (
           <button
             type="button"
             onClick={() => {
@@ -517,12 +551,13 @@ export default function BuyOperationForm() {
           >
             Reset
           </button>
+          )}
           <button
             type="submit"
             disabled={saving}
             className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
-            {saving ? 'Saving...' : 'Save purchase'}
+            {saving ? 'Saving...' : isEdit ? 'Update Purchase' : 'Save purchase'}
           </button>
         </div>
       </form>

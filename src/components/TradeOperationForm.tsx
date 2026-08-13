@@ -4,7 +4,7 @@ import Image from 'next/image'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import InventoryForm from '@/components/InventoryForm'
-import { createTradeOperation, getBrands, getDealChannels, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase'
+import { createTradeOperation, editTradeOperation, getBrands, getDealChannels, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase'
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types'
 import { todayLocalDate } from '@/lib/dateUtils'
 
@@ -13,15 +13,36 @@ type TradeItem = {
     value: string
 }
 
-export default function TradeOperationForm() {
+interface TradeOperationFormProps {
+    dealId?: number
+    initialDealDate?: string
+    initialChannelId?: number | null
+    initialNotes?: string
+    initialCashPaid?: number
+    initialCashReceived?: number
+    initialOutgoingItems?: TradeItem[]
+    initialIncomingItems?: TradeItem[]
+}
+
+export default function TradeOperationForm({
+    dealId,
+    initialDealDate,
+    initialChannelId,
+    initialNotes,
+    initialCashPaid,
+    initialCashReceived,
+    initialOutgoingItems,
+    initialIncomingItems,
+}: TradeOperationFormProps = {}) {
     const router = useRouter()
+    const isEdit = dealId != null
     const [brands, setBrands] = useState<Brand[]>([])
     const [channels, setChannels] = useState<DealChannel[]>([])
 
-    const [outgoingItems, setOutgoingItems] = useState<TradeItem[]>([])
+    const [outgoingItems, setOutgoingItems] = useState<TradeItem[]>(initialOutgoingItems ?? [])
     const [showOutgoingForm, setShowOutgoingForm] = useState(false)
 
-    const [incomingItems, setIncomingItems] = useState<TradeItem[]>([])
+    const [incomingItems, setIncomingItems] = useState<TradeItem[]>(initialIncomingItems ?? [])
     const [showIncomingForm, setShowIncomingForm] = useState(false)
 
     const [incomingSearchQuery, setIncomingSearchQuery] = useState('')
@@ -36,9 +57,9 @@ export default function TradeOperationForm() {
     const [searching, setSearching] = useState(false)
     const [hasSearched, setHasSearched] = useState(false)
 
-    const [dealDate, setDealDate] = useState('')
-    const [channelId, setChannelId] = useState<number | null>(null)
-    const [notes, setNotes] = useState('')
+    const [dealDate, setDealDate] = useState(initialDealDate ?? '')
+    const [channelId, setChannelId] = useState<number | null>(initialChannelId ?? null)
+    const [notes, setNotes] = useState(initialNotes ?? '')
     const [error, setError] = useState<string | null>(null)
     const [successMessage, setSuccessMessage] = useState<string | null>(null)
     const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({})
@@ -47,8 +68,8 @@ export default function TradeOperationForm() {
 
     const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-    const [cashOut, setCashOut] = useState('')
-    const [cashIn, setCashIn] = useState('')
+    const [cashOut, setCashOut] = useState(initialCashPaid != null ? String(initialCashPaid) : '')
+    const [cashIn, setCashIn] = useState(initialCashReceived != null ? String(initialCashReceived) : '')
 
     const brandMap = useMemo(
         () => Object.fromEntries(brands.map((brand) => [brand.id, brand.name])),
@@ -269,31 +290,48 @@ export default function TradeOperationForm() {
                     ? `Trade: ${describeItem(firstOutgoingItem.item)}`
                     : 'Trade cash adjustment'
 
-        const result = await createTradeOperation({
-            dealDate: dealDateValue,
-            channelId: channelId,
-            notes: notes.trim() || null,
-            cashPaid: parsedCashOut,
-            cashReceived: parsedCashIn,
-            outgoingItems: outgoingItems.map((ti) => ({
-                item_id: ti.item.id,
-                total_value: Number(ti.value || 0),
-            })),
-            incomingItems: incomingItems.map((ti) => ({
-                item_id: ti.item.id,
-                total_value: Number(ti.value || 0),
-            })),
-            cfDescription: parsedCashOut > 0 || parsedCashIn > 0 ? cfDescription : null,
-        })
+        const outgoingItemsPayload = outgoingItems.map((ti) => ({
+            item_id: ti.item.id,
+            total_value: Number(ti.value || 0),
+        }))
+        const incomingItemsPayload = incomingItems.map((ti) => ({
+            item_id: ti.item.id,
+            total_value: Number(ti.value || 0),
+        }))
+        const cfDescriptionValue = parsedCashOut > 0 || parsedCashIn > 0 ? cfDescription : null
+
+        const result = isEdit
+            ? await editTradeOperation({
+                dealId: dealId!,
+                dealDate: dealDateValue,
+                channelId: channelId,
+                notes: notes.trim() || null,
+                cashPaid: parsedCashOut,
+                cashReceived: parsedCashIn,
+                outgoingItems: outgoingItemsPayload,
+                incomingItems: incomingItemsPayload,
+                cfTransactionDate: null,
+                cfDescription: cfDescriptionValue,
+            })
+            : await createTradeOperation({
+                dealDate: dealDateValue,
+                channelId: channelId,
+                notes: notes.trim() || null,
+                cashPaid: parsedCashOut,
+                cashReceived: parsedCashIn,
+                outgoingItems: outgoingItemsPayload,
+                incomingItems: incomingItemsPayload,
+                cfDescription: cfDescriptionValue,
+            })
 
         setSaving(false)
 
         if (result.error) {
-            setError(result.error.message || 'Could not save trade.')
+            setError(result.error.message || (isEdit ? 'Could not update trade.' : 'Could not save trade.'))
             return
         }
 
-        router.push('/operations')
+        router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations')
     }
 
     return (
@@ -859,6 +897,15 @@ export default function TradeOperationForm() {
                 )}
 
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                    {isEdit ? (
+                        <button
+                            type="button"
+                            onClick={() => router.push(`/operations/${dealId}`)}
+                            className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+                        >
+                            Cancel
+                        </button>
+                    ) : (
                     <button
                         type="button"
                         onClick={() => {
@@ -884,6 +931,7 @@ export default function TradeOperationForm() {
                     >
                         Reset
                     </button>
+                    )}
 
                     <button
                         type="button"
@@ -891,7 +939,7 @@ export default function TradeOperationForm() {
                         disabled={saving || !isBalanced}
                         className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                     >
-                        {saving ? 'Saving...' : 'Save trade'}
+                        {saving ? 'Saving...' : isEdit ? 'Update Trade' : 'Save trade'}
                     </button>
                 </div>
             </form>

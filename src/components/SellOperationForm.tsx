@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import InventoryForm from '@/components/InventoryForm';
 import {
   createSellOperation,
+  editSellOperation,
   getBrands,
   getDealChannels,
   getInventoryItemWithValueById,
@@ -16,20 +17,37 @@ import {
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types';
 import { todayLocalDate } from '@/lib/dateUtils';
 
-export default function SellOperationForm() {
+interface SellOperationFormProps {
+  dealId?: number;
+  initialDealDate?: string;
+  initialCashReceived?: number;
+  initialChannelId?: number | null;
+  initialNotes?: string;
+  initialItem?: InventorySearchItem;
+}
+
+export default function SellOperationForm({
+  dealId,
+  initialDealDate,
+  initialCashReceived,
+  initialChannelId,
+  initialNotes,
+  initialItem,
+}: SellOperationFormProps = {}) {
   const router = useRouter();
+  const isEdit = dealId != null;
   const [brands, setBrands] = useState<Brand[]>([]);
   const [channels, setChannels] = useState<DealChannel[]>([]);
-  const [selectedItem, setSelectedItem] = useState<InventorySearchItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<InventorySearchItem | null>(initialItem ?? null);
   const [showItemForm, setShowItemForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<InventorySearchItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [dealDate, setDealDate] = useState('');
-  const [cashReceived, setCashReceived] = useState('');
-  const [channelId, setChannelId] = useState<number | null>(null);
-  const [notes, setNotes] = useState('');
+  const [dealDate, setDealDate] = useState(initialDealDate ?? '');
+  const [cashReceived, setCashReceived] = useState(initialCashReceived != null ? String(initialCashReceived) : '');
+  const [channelId, setChannelId] = useState<number | null>(initialChannelId ?? null);
+  const [notes, setNotes] = useState(initialNotes ?? '');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,23 +173,32 @@ export default function SellOperationForm() {
     const description = [brandName, selectedItem.model].filter(Boolean).join(' ');
     const cfDescription = description ? `Sale: ${description}` : 'Sale';
 
-    const result = await createSellOperation({
-      dealDate: dealDateValue,
-      cashReceived: parsedCashReceived,
-      channelId: channelId!,
-      itemId: selectedItem.id,
-      notes: notes.trim() || null,
-      cfDescription,
-    });
+    const result = isEdit
+      ? await editSellOperation({
+          dealId: dealId!,
+          dealDate: dealDateValue,
+          cashReceived: parsedCashReceived,
+          channelId: channelId!,
+          notes: notes.trim() || null,
+          cfDescription,
+        })
+      : await createSellOperation({
+          dealDate: dealDateValue,
+          cashReceived: parsedCashReceived,
+          channelId: channelId!,
+          itemId: selectedItem.id,
+          notes: notes.trim() || null,
+          cfDescription,
+        });
 
     setSaving(false);
 
     if (result.error) {
-      setError(result.error.message || 'Could not save sale.');
+      setError(result.error.message || (isEdit ? 'Could not update sale.' : 'Could not save sale.'));
       return;
     }
 
-    router.push('/operations');
+    router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations');
   };
 
   const valueOutNum = Number(cashReceived) || 0;
@@ -191,7 +218,7 @@ export default function SellOperationForm() {
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <div className="mb-4 flex items-center justify-between gap-2">
           <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Item</h3>
-          {!selectedItem && !showItemForm && (
+          {!isEdit && !selectedItem && !showItemForm && (
             <button
               type="button"
               onClick={() => setShowItemForm(true)}
@@ -255,6 +282,12 @@ export default function SellOperationForm() {
                 </div>
               </div>
             </div>
+            {isEdit && (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                The item on a sale can&apos;t be changed after the fact — create a new sale to sell a different item.
+              </p>
+            )}
+            {!isEdit && (
             <button
               type="button"
               onClick={() => {
@@ -268,6 +301,7 @@ export default function SellOperationForm() {
             >
               Change item
             </button>
+            )}
           </div>
         ) : showItemForm ? (
           /* ── Add new item form ── */
@@ -460,6 +494,15 @@ export default function SellOperationForm() {
         )}
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+          {isEdit ? (
+            <button
+              type="button"
+              onClick={() => router.push(`/operations/${dealId}`)}
+              className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+            >
+              Cancel
+            </button>
+          ) : (
           <button
             type="button"
             onClick={() => {
@@ -479,12 +522,13 @@ export default function SellOperationForm() {
           >
             Reset
           </button>
+          )}
           <button
             type="submit"
             disabled={saving}
             className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
-            {saving ? 'Saving...' : 'Save sale'}
+            {saving ? 'Saving...' : isEdit ? 'Update Sale' : 'Save sale'}
           </button>
         </div>
       </form>
