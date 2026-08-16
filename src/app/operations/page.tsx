@@ -25,7 +25,7 @@ type TradeItemVisual = { photoUrl?: string; alt: string };
 
 type DealVisual =
   | { kind: 'single'; photoUrl?: string; alt: string; title: string; isUnlinkedExpense: boolean }
-  | { kind: 'trade'; outItems: TradeItemVisual[]; outMore: number; inItems: TradeItemVisual[]; inMore: number; title: string };
+  | { kind: 'trade'; outItems: TradeItemVisual[]; outMore: number; inItems: TradeItemVisual[]; inMore: number; title: string; singleSide?: 'out' | 'in' };
 
 function computeDealVisual(
   deal: Deal,
@@ -73,6 +73,33 @@ function computeDealVisual(
     const title = `${bestOut ? brandModel(bestOut) : '—'} → ${bestIn ? brandModel(bestIn) : '—'}`;
 
     return { kind: 'trade', outItems, outMore, inItems, inMore, title };
+  }
+
+  // Multi-item purchase (direction 'in') or sale (direction 'out') — reuse
+  // the trade rendering (thumbnail row + "+N" badge) with only the relevant
+  // side populated, since it already handles a single side gracefully. Only
+  // kicks in above 1 item; single-item purchase/sale falls through to the
+  // 'single' path below exactly as before.
+  if (deal.deal_type === 'purchase' || deal.deal_type === 'sale') {
+    const direction = deal.deal_type === 'purchase' ? 'in' : 'out';
+    const sideItems = items
+      .filter((di) => di.direction === direction)
+      .sort((a, b) => Number(b.total_value ?? 0) - Number(a.total_value ?? 0));
+
+    if (sideItems.length > 1) {
+      const toVisual = (di: DealItem): TradeItemVisual => {
+        const item = itemMap[di.item_id];
+        return { photoUrl: item ? photoByItemId[item.id] : undefined, alt: item ? brandModel(item) : '—' };
+      };
+      const shown = sideItems.slice(0, 3).map(toVisual);
+      const more = Math.max(0, sideItems.length - 3);
+      const bestItem = itemMap[sideItems[0].item_id];
+      const title = bestItem ? yearBrandModel(bestItem) : (deal.notes || '—');
+
+      return direction === 'in'
+        ? { kind: 'trade', outItems: [], outMore: 0, inItems: shown, inMore: more, title, singleSide: 'in' }
+        : { kind: 'trade', outItems: shown, outMore: more, inItems: [], inMore: 0, title, singleSide: 'out' };
+    }
   }
 
   // purchase, sale, expense: single item
@@ -747,12 +774,19 @@ export default function OperationsPage() {
                         {/* Title */}
                         {visual.kind === 'trade' ? (
                           <>
-                            {/* Mobile: given → received as two separate truncated lines */}
-                            <div className="mt-1 md:hidden">
-                              <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{topOut?.alt || '—'}</p>
-                              <p className="my-0.5 text-xs text-slate-400 dark:text-slate-500">↓</p>
-                              <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{topIn?.alt || '—'}</p>
-                            </div>
+                            {/* Mobile: given → received as two separate truncated lines
+                                (multi-item Purchase/Sale has only one side — just the title) */}
+                            {visual.singleSide ? (
+                              <div className="mt-1 md:hidden">
+                                <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{visual.title}</p>
+                              </div>
+                            ) : (
+                              <div className="mt-1 md:hidden">
+                                <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{topOut?.alt || '—'}</p>
+                                <p className="my-0.5 text-xs text-slate-400 dark:text-slate-500">↓</p>
+                                <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{topIn?.alt || '—'}</p>
+                              </div>
+                            )}
                             {/* Desktop: single-line combined title */}
                             <h3 className="mt-1 hidden truncate text-base font-semibold text-slate-900 dark:text-white md:block">
                               {visual.title}

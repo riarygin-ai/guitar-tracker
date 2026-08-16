@@ -456,9 +456,8 @@ async function main() {
 
     const { data: sellResult, error: sellError } = await createSellOperation({
       dealDate: today,
-      cashReceived: 500,
       channelId: marketplaceId,
-      itemId: e1ItemId,
+      items: [{ item_id: e1ItemId, total_value: 500 }],
       cfDescription: 'E1 test sale',
     });
     check('E1: create_sell_operation succeeds', !sellError && !!sellResult?.deal_id, { sellResult, sellError });
@@ -523,9 +522,8 @@ async function main() {
 
     const { data: sellResult, error: sellError } = await createSellOperation({
       dealDate: today,
-      cashReceived: 100,
       channelId: marketplaceId,
-      itemId: e3ItemId,
+      items: [{ item_id: e3ItemId, total_value: 100 }],
       cfDescription: 'E3 test sale',
     });
     check('E3: create_sell_operation succeeds with only a draft listing present', !sellError && !!sellResult?.deal_id, { sellResult, sellError });

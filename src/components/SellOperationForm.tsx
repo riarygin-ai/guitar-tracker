@@ -16,44 +16,47 @@ import {
 } from '@/lib/supabase';
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types';
 import { todayLocalDate } from '@/lib/dateUtils';
+import { truncateDescription } from '@/lib/text';
+
+interface SoldLineItem {
+  item: InventorySearchItem;
+  value: number;
+}
 
 interface SellOperationFormProps {
   dealId?: number;
   initialDealDate?: string;
-  initialCashReceived?: number;
   initialChannelId?: number | null;
   initialNotes?: string;
-  initialItem?: InventorySearchItem;
+  initialItems?: SoldLineItem[];
 }
 
 export default function SellOperationForm({
   dealId,
   initialDealDate,
-  initialCashReceived,
   initialChannelId,
   initialNotes,
-  initialItem,
+  initialItems,
 }: SellOperationFormProps = {}) {
   const router = useRouter();
   const isEdit = dealId != null;
   const [brands, setBrands] = useState<Brand[]>([]);
   const [channels, setChannels] = useState<DealChannel[]>([]);
-  const [selectedItem, setSelectedItem] = useState<InventorySearchItem | null>(initialItem ?? null);
-  const [showItemForm, setShowItemForm] = useState(false);
+  const [items, setItems] = useState<{ item: InventorySearchItem; value: string }[]>(
+    (initialItems ?? []).map((li) => ({ item: li.item, value: li.value > 0 ? String(li.value) : '' }))
+  );
+  const [showNewItemForm, setShowNewItemForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<InventorySearchItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [dealDate, setDealDate] = useState(initialDealDate ?? '');
-  const [cashReceived, setCashReceived] = useState(initialCashReceived != null ? String(initialCashReceived) : '');
   const [channelId, setChannelId] = useState<number | null>(initialChannelId ?? null);
   const [notes, setNotes] = useState(initialNotes ?? '');
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [valueIn, setValueIn] = useState<number | null>(null);
-  const [totalExpenses, setTotalExpenses] = useState(0);
+  const [itemMetrics, setItemMetrics] = useState<Record<number, { valueIn: number | null; expenses: number }>>({});
   const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -76,33 +79,58 @@ export default function SellOperationForm({
 
   useEffect(() => {
     async function loadData() {
-      setLoading(true);
       const [brandResult, channelResult] = await Promise.all([getBrands(), getDealChannels()]);
-      setLoading(false);
-
       if (brandResult.error) {
         setError('Could not load brands. Please try again.');
         return;
       }
-
       setBrands(brandResult.data || []);
       setChannels((channelResult.data as DealChannel[] | null) ?? []);
     }
-
     loadData();
   }, []);
 
+  const itemIdsKey = items.map((li) => li.item.id).join(',');
+
   useEffect(() => {
-    if (!selectedItem) { setValueIn(null); setTotalExpenses(0); return; }
-    getInventoryItemWithValueById(selectedItem.id).then((r) => {
-      if (!r.error && r.data) setValueIn((r.data as any).value_in ?? null);
-      else setValueIn(null);
+    const ids = items.map((li) => li.item.id);
+    if (ids.length === 0) {
+      setItemMetrics({});
+      return;
+    }
+
+    Promise.all(ids.map((id) => getInventoryItemWithValueById(id))).then((results) => {
+      setItemMetrics((prev) => {
+        const next = { ...prev };
+        results.forEach((r, i) => {
+          const valueIn = !r.error && r.data ? ((r.data as any).value_in ?? null) : null;
+          next[ids[i]] = { valueIn, expenses: next[ids[i]]?.expenses ?? 0 };
+        });
+        return next;
+      });
     });
-    getInventoryExpensesByItemIds([selectedItem.id]).then((r) => {
-      if (!r.error && r.data) setTotalExpenses(r.data.reduce((sum, exp) => sum + exp.amount, 0));
-      else setTotalExpenses(0);
+
+    getInventoryExpensesByItemIds(ids).then((r) => {
+      if (r.error || !r.data) return;
+      const expByItem: Record<number, number> = {};
+      r.data.forEach((exp) => {
+        if (exp.item_id != null) expByItem[exp.item_id] = (expByItem[exp.item_id] ?? 0) + exp.amount;
+      });
+      setItemMetrics((prev) => {
+        const next = { ...prev };
+        ids.forEach((id) => {
+          next[id] = { valueIn: next[id]?.valueIn ?? null, expenses: expByItem[id] ?? 0 };
+        });
+        return next;
+      });
     });
-  }, [selectedItem]);
+  }, [itemIdsKey]);
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    setSearchResults([]);
+    setHasSearched(false);
+  };
 
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
@@ -129,12 +157,28 @@ export default function SellOperationForm({
     }, 300);
   };
 
+  const handleSelectItem = (item: InventorySearchItem) => {
+    if (items.some((li) => li.item.id === item.id)) return;
+    setItems((prev) => [...prev, { item, value: '' }]);
+    clearSearch();
+    setSuccessMessage(null);
+    setError(null);
+  };
+
+  const handleRemoveItem = (itemId: number) => {
+    setItems((prev) => prev.filter((li) => li.item.id !== itemId));
+  };
+
+  const handleValueChange = (itemId: number, value: string) => {
+    setItems((prev) => prev.map((li) => (li.item.id === itemId ? { ...li, value } : li)));
+  };
+
   const handleItemCreated = async (item: InventoryItem) => {
     const brandResult = await getBrands();
     if (!brandResult.error) setBrands(brandResult.data || []);
-    setSelectedItem(item as unknown as InventorySearchItem);
-    setShowItemForm(false);
-    setSuccessMessage('New inventory item created and selected.');
+    handleSelectItem(item as unknown as InventorySearchItem);
+    setShowNewItemForm(false);
+    setSuccessMessage('New inventory item created and added.');
     setError(null);
   };
 
@@ -143,18 +187,23 @@ export default function SellOperationForm({
     setError(null);
     setSuccessMessage(null);
 
-    const parsedCashReceived = Number(cashReceived);
-    const today = todayLocalDate();
-    const dealDateValue = dealDate || today;
+    if (items.length === 0) {
+      setError('At least one item is required.');
+      return;
+    }
 
+    const today = todayLocalDate();
     if (dealDate && dealDate > today) {
       setError('Date cannot be in the future.');
       return;
     }
 
-    if (!cashReceived || Number.isNaN(parsedCashReceived) || parsedCashReceived <= 0) {
-      setError('Cash received is required and must be greater than 0.');
-      return;
+    for (const li of items) {
+      const parsed = Number(li.value);
+      if (!li.value || Number.isNaN(parsed) || parsed <= 0) {
+        setError(`Sale value for ${formatItemLabel(li.item)} must be greater than 0.`);
+        return;
+      }
     }
 
     if (!channelId) {
@@ -162,31 +211,26 @@ export default function SellOperationForm({
       return;
     }
 
-    if (!selectedItem) {
-      setError('Inventory item is required.');
-      return;
-    }
-
     setSaving(true);
 
-    const brandName = brandMap[selectedItem.brand_id] ?? '';
-    const description = [brandName, selectedItem.model].filter(Boolean).join(' ');
-    const cfDescription = description ? `Sale: ${description}` : 'Sale';
+    const dealDateValue = dealDate || today;
+    const descParts = items.map((li) => [brandMap[li.item.brand_id], li.item.model].filter(Boolean).join(' '));
+    const cfDescription = truncateDescription(`Sale: ${descParts.join(', ')}`);
+    const itemsPayload = items.map((li) => ({ item_id: li.item.id, total_value: Number(li.value) }));
 
     const result = isEdit
       ? await editSellOperation({
           dealId: dealId!,
           dealDate: dealDateValue,
-          cashReceived: parsedCashReceived,
           channelId: channelId!,
+          items: itemsPayload,
           notes: notes.trim() || null,
           cfDescription,
         })
       : await createSellOperation({
           dealDate: dealDateValue,
-          cashReceived: parsedCashReceived,
           channelId: channelId!,
-          itemId: selectedItem.id,
+          items: itemsPayload,
           notes: notes.trim() || null,
           cfDescription,
         });
@@ -201,131 +245,142 @@ export default function SellOperationForm({
     router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations');
   };
 
-  const valueOutNum = Number(cashReceived) || 0;
-  const realizedGain = valueIn != null ? valueOutNum - valueIn - totalExpenses : null;
-  const realizedRoi =
-    realizedGain != null && valueIn === 0 ? (realizedGain > 0 ? 100 : null) :
-    realizedGain != null && valueIn != null && valueIn > 0 ? (realizedGain / valueIn) * 100 :
-    null;
-  const fmt = (v: number | null) => v != null ? `$${v.toFixed(2)}` : '—';
-  const fmtPct = (v: number | null) => v != null ? `${v.toFixed(2)}%` : '—';
+  const totalCashReceived = items.reduce((sum, li) => sum + (Number(li.value) || 0), 0);
+  const totalCostBasis = items.reduce((sum, li) => sum + (itemMetrics[li.item.id]?.valueIn ?? 0), 0);
+  const totalItemExpenses = items.reduce((sum, li) => sum + (itemMetrics[li.item.id]?.expenses ?? 0), 0);
+  const totalRealizedProfit = items.length > 0 ? totalCashReceived - totalCostBasis - totalItemExpenses : null;
+  const totalRealizedRoi =
+    totalRealizedProfit == null ? null :
+    totalCostBasis === 0 ? (totalRealizedProfit > 0 ? 100 : null) :
+    (totalRealizedProfit / totalCostBasis) * 100;
+
+  const fmt = (v: number | null) => (v != null ? `$${v.toFixed(2)}` : '—');
+  const fmtPct = (v: number | null) => (v != null ? `${v.toFixed(2)}%` : '—');
   const metricColor = (v: number | null) =>
     v == null ? 'text-slate-900 dark:text-slate-100' : v > 0 ? 'text-emerald-600' : v < 0 ? 'text-rose-600' : 'text-slate-900 dark:text-slate-100';
 
   return (
     <div className="space-y-6">
-      {/* Item Section */}
+      {/* Items section */}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <div className="mb-4 flex items-center justify-between gap-2">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Item</h3>
-          {!isEdit && !selectedItem && !showItemForm && (
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+            Items{items.length > 0 && (
+              <span className="ml-1.5 text-slate-500 dark:text-slate-400">({items.length})</span>
+            )}
+          </h3>
+          {!isEdit && !showNewItemForm && (
             <button
               type="button"
-              onClick={() => setShowItemForm(true)}
+              onClick={() => setShowNewItemForm(true)}
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
-              <span className="hidden sm:inline">Add item</span>
+              Create new
             </button>
           )}
         </div>
 
-        {selectedItem ? (
-          /* ── Selected item read-only display ── */
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-700 dark:bg-emerald-900/20">
-              <div className="flex gap-4">
-                {photoByItemId[selectedItem.id] && (
-                  <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-700">
-                    <Image src={photoByItemId[selectedItem.id]} alt={formatItemLabel(selectedItem)} fill className="object-cover" unoptimized sizes="80px" />
+        {isEdit && (
+          <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+            Items on a sale can&apos;t be added or removed after the fact — create a new sale to sell a different item. Sale values below can still be edited.
+          </p>
+        )}
+
+        {/* Selected items list */}
+        {items.length > 0 && (
+          <div className="mb-4 space-y-3">
+            {items.map((li) => (
+              <div
+                key={li.item.id}
+                className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-900/20"
+              >
+                <div className="flex gap-4">
+                  <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
+                    {photoByItemId[li.item.id] ? (
+                      <Image
+                        src={photoByItemId[li.item.id]}
+                        alt={formatItemLabel(li.item)}
+                        fill
+                        className="object-cover"
+                        unoptimized
+                        sizes="64px"
+                      />
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-6 w-6 text-slate-300 dark:text-slate-500">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                      </svg>
+                    )}
                   </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400">Selected item</p>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{formatItemLabel(selectedItem)}</p>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Brand</p>
-                      <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{brandMap[selectedItem.brand_id] ?? 'Unknown'}</p>
+
+                  <div className="min-w-0 flex-1 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                        {formatItemLabel(li.item)}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {li.item.condition && (
+                          <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
+                            {li.item.condition}
+                          </span>
+                        )}
+                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
+                          {li.item.item_subtype_name ?? ''}
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Model</p>
-                      <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.model}</p>
+
+                    <div className="flex w-full gap-2 sm:w-48">
+                      <div className="flex-1">
+                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                          Sale price
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={li.value}
+                          onChange={(e) => handleValueChange(li.item.id, e.target.value)}
+                          placeholder="0.00"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
+                        />
+                      </div>
+                      {!isEdit && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItem(li.item.id)}
+                          aria-label="Remove item"
+                          className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-rose-50 hover:text-rose-600 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-rose-900/20 dark:hover:text-rose-400"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
-                    {selectedItem.year && (
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Year</p>
-                        <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.year}</p>
-                      </div>
-                    )}
-                    {selectedItem.color && (
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Color</p>
-                        <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.color}</p>
-                      </div>
-                    )}
-                    {selectedItem.condition && (
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Condition</p>
-                        <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{selectedItem.condition}</p>
-                      </div>
-                    )}
-                    {selectedItem.estimated_sold_value != null && (
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Est. Value</p>
-                        <p className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">${selectedItem.estimated_sold_value.toFixed(2)}</p>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
-            </div>
-            {isEdit && (
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                The item on a sale can&apos;t be changed after the fact — create a new sale to sell a different item.
-              </p>
-            )}
-            {!isEdit && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedItem(null);
-                setShowItemForm(false);
-                setSearchQuery('');
-                setSearchResults([]);
-                setHasSearched(false);
-              }}
-              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-            >
-              Change item
-            </button>
-            )}
+            ))}
           </div>
-        ) : showItemForm ? (
-          /* ── Add new item form ── */
+        )}
+
+        {/* Search stays visible after adding items; only replaced by inline create form */}
+        {!isEdit && (showNewItemForm ? (
           <div className="space-y-4">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-600 dark:bg-slate-700">
-              <InventoryForm
-                onCreated={handleItemCreated}
-                onClose={() => setShowItemForm(false)}
-                hideHeader
-                hideSidebar
-              />
+              <InventoryForm onCreated={handleItemCreated} onClose={() => setShowNewItemForm(false)} hideHeader hideSidebar />
             </div>
             <button
               type="button"
-              onClick={() => setShowItemForm(false)}
+              onClick={() => setShowNewItemForm(false)}
               className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
             >
               Cancel
             </button>
           </div>
         ) : (
-          /* ── Search + Add New ── */
-          <div className="space-y-4">
-            {/* Search input */}
+          <div className="space-y-3">
             <div className="relative">
               <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -334,71 +389,90 @@ export default function SellOperationForm({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => handleSearchChange(e.target.value)}
-                placeholder="Search inventory..."
-                  className={`w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600 ${searchQuery || searching ? 'pr-9' : 'pr-4'}`}
-                />
-                {searching ? (
-                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                  </div>
-                ) : searchQuery ? (
-                  <button
-                    type="button"
-                    onClick={() => handleSearchChange('')}
-                    aria-label="Clear search"
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                  </button>
-                ) : null}
+                placeholder={items.length === 0 ? 'Search inventory to add item...' : 'Search to add another item...'}
+                className={`w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600 ${searchQuery || searching ? 'pr-9' : 'pr-4'}`}
+              />
+              {searching ? (
+                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                </div>
+              ) : searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => clearSearch()}
+                  aria-label="Clear search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              ) : null}
             </div>
 
-            {/* Search results */}
             {hasSearched && searchResults.length === 0 && (
-              <p className="text-sm text-slate-500 dark:text-slate-400">No items found matching &ldquo;{searchQuery}&rdquo;</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                No items found matching &ldquo;{searchQuery}&rdquo;
+              </p>
             )}
 
             {searchResults.length > 0 && (
               <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-700">
-                {searchResults.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedItem(item);
-                      setSearchQuery('');
-                      setSearchResults([]);
-                      setHasSearched(false);
-                      setSuccessMessage(null);
-                    }}
-                    className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500"
-                  >
-                    <div className="flex items-center gap-3">
-                      {photoByItemId[item.id] && (
-                        <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-600">
-                          <Image src={photoByItemId[item.id]} alt={formatItemLabel(item)} fill className="object-cover" unoptimized sizes="48px" />
-                        </div>
-                      )}
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-900 dark:text-white">{formatItemLabel(item)}</p>
-                        <div className="mt-1 flex flex-wrap gap-2">
-                          {item.condition && (
-                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.condition}</span>
-                          )}
-                          <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.item_subtype_name ?? ''}</span>
-                          <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">{item.status}</span>
+                {searchResults.map((res) => {
+                  const alreadyAdded = items.some((li) => li.item.id === res.id);
+                  return (
+                    <button
+                      key={res.id}
+                      type="button"
+                      disabled={alreadyAdded}
+                      onClick={() => handleSelectItem(res)}
+                      className={`w-full rounded-xl border p-3 text-left transition ${
+                        alreadyAdded
+                          ? 'cursor-not-allowed border-slate-100 bg-slate-50 opacity-50 dark:border-slate-600 dark:bg-slate-700'
+                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {photoByItemId[res.id] && (
+                          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-slate-100">
+                            <Image
+                              src={photoByItemId[res.id]}
+                              alt={formatItemLabel(res)}
+                              fill
+                              className="object-cover"
+                              unoptimized
+                              sizes="40px"
+                            />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-slate-900 dark:text-white">
+                            {formatItemLabel(res)}
+                          </p>
+                          <div className="mt-0.5 flex flex-wrap gap-1.5">
+                            {res.condition && (
+                              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                                {res.condition}
+                              </span>
+                            )}
+                            <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600 dark:bg-slate-500 dark:text-slate-200">
+                              {res.item_subtype_name ?? ''}
+                            </span>
+                            {alreadyAdded && (
+                              <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                already added
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             )}
-
           </div>
-        )}
+        ))}
       </div>
 
       <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
@@ -414,22 +488,6 @@ export default function SellOperationForm({
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
               />
               <p className="text-xs text-slate-500 dark:text-slate-400">Optional. If empty, today&apos;s date will be used.</p>
-            </div>
-
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Sold for</label>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400">$</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={cashReceived}
-                  onChange={(event) => setCashReceived(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pl-10 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
-                  placeholder="0.00"
-                />
-              </div>
             </div>
 
             <div className="space-y-3">
@@ -462,20 +520,26 @@ export default function SellOperationForm({
             <p className="text-sm font-semibold text-slate-900 dark:text-white">Value metrics</p>
             <div className="grid gap-3">
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Value In</p>
-                <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{fmt(valueIn)}</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Items</p>
+                <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">
+                  {items.length === 0 ? '—' : items.length}
+                </p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Value Out</p>
-                <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{valueOutNum > 0 ? fmt(valueOutNum) : '—'}</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Cash Received</p>
+                <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{totalCashReceived > 0 ? fmt(totalCashReceived) : '—'}</p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Realized Profit</p>
-                <p className={`mt-2 text-sm font-semibold ${metricColor(realizedGain)}`}>{fmt(realizedGain)}</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Cost Basis</p>
+                <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{items.length > 0 ? fmt(totalCostBasis) : '—'}</p>
+              </div>
+              <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Realized Profit</p>
+                <p className={`mt-2 text-sm font-semibold ${metricColor(totalRealizedProfit)}`}>{fmt(totalRealizedProfit)}</p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Realized ROI</p>
-                <p className={`mt-2 text-sm font-semibold ${metricColor(realizedRoi)}`}>{fmtPct(realizedRoi)}</p>
+                <p className={`mt-2 text-sm font-semibold ${metricColor(totalRealizedRoi)}`}>{fmtPct(totalRealizedRoi)}</p>
               </div>
             </div>
           </div>
@@ -507,14 +571,11 @@ export default function SellOperationForm({
             type="button"
             onClick={() => {
               setDealDate('');
-              setCashReceived('');
               setChannelId(null);
               setNotes('');
-              setSelectedItem(null);
-              setShowItemForm(false);
-              setSearchQuery('');
-              setSearchResults([]);
-              setHasSearched(false);
+              setItems([]);
+              setShowNewItemForm(false);
+              clearSearch();
               setError(null);
               setSuccessMessage(null);
             }}

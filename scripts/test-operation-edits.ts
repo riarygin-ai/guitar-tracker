@@ -22,6 +22,14 @@
  * components (mirrors the create forms — none of the create/edit RPCs
  * validate dates server-side), so it isn't exercised here.
  *
+ * Also covers multi-item Purchase/Sale
+ * (supabase/migrations/20260903000000_multi_item_sell_operation.sql):
+ * multiple deal_items under one deal_id/cash_flow row, per-item cost basis
+ * / sale value / realized profit, item-set-immutable-on-edit enforcement
+ * for Sale, and the create_sell_operation/edit_sell_operation validation
+ * (empty items array, duplicate item_id, non-positive per-item value,
+ * selling an already-sold item).
+ *
  * Usage:
  *   npx tsx scripts/test-operation-edits.ts
  */
@@ -43,6 +51,7 @@ import {
   editSellOperation,
   editTradeOperation,
   editExpenseOperation,
+  startListing,
 } from '../src/lib/supabase';
 
 let passed = 0;
@@ -242,27 +251,26 @@ async function main() {
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // Sale edit
+  // Sale edit (single item — backward compatibility)
   // ══════════════════════════════════════════════════════════════════════
-  console.log('\n[Sale edit]');
+  console.log('\n[Sale edit — single item]');
   {
     const itemId = await createTestItem();
     const { data: created, error: createErr } = await createSellOperation({
       dealDate: yesterday,
-      cashReceived: 500,
       channelId: marketplaceId,
-      itemId,
+      items: [{ item_id: itemId, total_value: 500 }],
       cfDescription: 'Sale: original',
     });
-    check('setup: create_sell_operation succeeds', !createErr && !!created?.deal_id, { created, createErr });
+    check('setup: create_sell_operation succeeds (single item)', !createErr && !!created?.deal_id, { created, createErr });
     const dealId = created?.deal_id as number;
     if (dealId) createdDealIds.push(dealId);
 
     const { error: editErr } = await editSellOperation({
       dealId,
       dealDate: yesterday,
-      cashReceived: 650,
       channelId: kijijiId,
+      items: [{ item_id: itemId, total_value: 650 }],
       notes: 'Sold for more than expected',
       cfDescription: 'Sale: updated',
     });
@@ -281,8 +289,167 @@ async function main() {
     const { data: itemAfter } = await serviceClient.from('inventory_items').select('status').eq('id', itemId).maybeSingle();
     check('item remains sold after sale edit', itemAfter?.status === 'sold', itemAfter);
 
-    const { error: badAmountErr } = await editSellOperation({ dealId, dealDate: yesterday, cashReceived: 0, channelId: kijijiId });
-    check('edit_sell_operation rejects cashReceived <= 0', !!badAmountErr, badAmountErr);
+    const { error: badAmountErr } = await editSellOperation({ dealId, dealDate: yesterday, channelId: kijijiId, items: [{ item_id: itemId, total_value: 0 }] });
+    check('edit_sell_operation rejects total_value <= 0', !!badAmountErr, badAmountErr);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Multi-item purchase (sanity — backend already supported this; confirms
+  // nothing in this session's Sale changes regressed it)
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[Multi-item purchase]');
+  {
+    const guitarId = await createTestItem('new');
+    const bridgeId = await createTestItem('new');
+    const { data: created, error: createErr } = await createBuyOperation({
+      dealDate: yesterday,
+      channelId: marketplaceId,
+      incomingItems: [
+        { item_id: guitarId, total_value: 800 },
+        { item_id: bridgeId, total_value: 150 },
+      ],
+      cfDescription: 'Purchase: guitar + bridge',
+    });
+    check('create_buy_operation succeeds with 2 items', !createErr && !!created?.deal_id, { created, createErr });
+    const dealId = created?.deal_id as number;
+    if (dealId) createdDealIds.push(dealId);
+
+    const { data: dealItemsAfter } = await serviceClient.from('deal_items').select('item_id, total_value, direction').eq('deal_id', dealId);
+    check('exactly 2 deal_items rows with direction=in', (dealItemsAfter ?? []).length === 2 && (dealItemsAfter ?? []).every((di) => di.direction === 'in'), dealItemsAfter);
+
+    const cfAfter = await getCashFlowForDeal(dealId);
+    check('one cash_flow row with total cash paid (950)', Number(cfAfter?.cash_out) === 950, cfAfter);
+
+    const { data: guitarAfter } = await serviceClient.from('inventory_items').select('status').eq('id', guitarId).maybeSingle();
+    const { data: bridgeAfter } = await serviceClient.from('inventory_items').select('status').eq('id', bridgeId).maybeSingle();
+    check('both items become owned', guitarAfter?.status === 'owned' && bridgeAfter?.status === 'owned', { guitarAfter, bridgeAfter });
+
+    const guitarItem = (dealItemsAfter ?? []).find((di) => di.item_id === guitarId);
+    const bridgeItem = (dealItemsAfter ?? []).find((di) => di.item_id === bridgeId);
+    check('each item has its own correct cost basis', Number(guitarItem?.total_value) === 800 && Number(bridgeItem?.total_value) === 150, { guitarItem, bridgeItem });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Multi-item sale
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[Multi-item sale]');
+  {
+    const itemAId = await createTestItem();
+    const itemBId = await createTestItem();
+    await startListing({ inventory_item_id: itemAId, deal_channel_id: marketplaceId, listed_at: twoDaysAgo });
+    await startListing({ inventory_item_id: itemBId, deal_channel_id: marketplaceId, listed_at: twoDaysAgo });
+
+    const { data: created, error: createErr } = await createSellOperation({
+      dealDate: today,
+      channelId: marketplaceId,
+      items: [
+        { item_id: itemAId, total_value: 400 },
+        { item_id: itemBId, total_value: 600 },
+      ],
+      cfDescription: 'Sale: item A + item B',
+    });
+    check('create_sell_operation succeeds with 2 items', !createErr && !!created?.deal_id, { created, createErr });
+    const dealId = created?.deal_id as number;
+    if (dealId) createdDealIds.push(dealId);
+
+    const { data: dealItemsAfter } = await serviceClient.from('deal_items').select('item_id, total_value, direction').eq('deal_id', dealId);
+    check('exactly 2 deal_items rows with direction=out', (dealItemsAfter ?? []).length === 2 && (dealItemsAfter ?? []).every((di) => di.direction === 'out'), dealItemsAfter);
+
+    const cfAfter = await getCashFlowForDeal(dealId);
+    check('one cash_flow row with total cash received (1000)', Number(cfAfter?.cash_in) === 1000, cfAfter);
+
+    const { data: itemAAfter } = await serviceClient.from('inventory_items').select('status').eq('id', itemAId).maybeSingle();
+    const { data: itemBAfter } = await serviceClient.from('inventory_items').select('status').eq('id', itemBId).maybeSingle();
+    check('both items become sold', itemAAfter?.status === 'sold' && itemBAfter?.status === 'sold', { itemAAfter, itemBAfter });
+
+    const { data: listingsAfter } = await serviceClient.from('item_listings').select('inventory_item_id, status, ended_at').in('inventory_item_id', [itemAId, itemBId]);
+    const bothEnded = (listingsAfter ?? []).every((l) => l.status === 'ended' && l.ended_at === today);
+    check('active listings for both items ended with ended_at = sale date', bothEnded && (listingsAfter ?? []).length === 2, listingsAfter);
+
+    // Per-item and total profit correctness — value_in for a freshly-created
+    // test item (no purchase deal) is null/0, so realized profit == sale value.
+    const itemA = (dealItemsAfter ?? []).find((di) => di.item_id === itemAId);
+    const itemB = (dealItemsAfter ?? []).find((di) => di.item_id === itemBId);
+    check('per-item sale value correct (A=400, B=600)', Number(itemA?.total_value) === 400 && Number(itemB?.total_value) === 600, { itemA, itemB });
+
+    // Edit: per-item value change recalculates cash_flow correctly.
+    const { error: editErr } = await editSellOperation({
+      dealId,
+      dealDate: today,
+      channelId: marketplaceId,
+      items: [
+        { item_id: itemAId, total_value: 450 },
+        { item_id: itemBId, total_value: 600 },
+      ],
+      cfDescription: 'Sale: item A + item B (updated)',
+    });
+    check('edit_sell_operation succeeds for multi-item sale', !editErr, editErr);
+
+    const cfAfterEdit = await getCashFlowForDeal(dealId);
+    check('cash_flow.cash_in recalculated to new total (1050)', Number(cfAfterEdit?.cash_in) === 1050, cfAfterEdit);
+
+    // Edit rejecting an item-set mismatch — the item set is immutable.
+    const itemCId = await createTestItem();
+    const { error: mismatchErr } = await editSellOperation({
+      dealId,
+      dealDate: today,
+      channelId: marketplaceId,
+      items: [
+        { item_id: itemAId, total_value: 450 },
+        { item_id: itemCId, total_value: 600 }, // itemC was never part of this sale
+      ],
+    });
+    check('edit_sell_operation rejects changing which items are part of the sale', !!mismatchErr, mismatchErr);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Sale validation
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[Sale validation]');
+  {
+    const itemId = await createTestItem();
+
+    const { error: emptyItemsErr } = await createSellOperation({ dealDate: today, channelId: marketplaceId, items: [], cfDescription: 'test' });
+    check('create_sell_operation rejects an empty items array', !!emptyItemsErr, emptyItemsErr);
+
+    const { error: dupErr } = await createSellOperation({
+      dealDate: today,
+      channelId: marketplaceId,
+      items: [
+        { item_id: itemId, total_value: 100 },
+        { item_id: itemId, total_value: 200 },
+      ],
+      cfDescription: 'test',
+    });
+    check('create_sell_operation rejects selling the same item twice', !!dupErr, dupErr);
+
+    const { error: zeroValueErr } = await createSellOperation({
+      dealDate: today,
+      channelId: marketplaceId,
+      items: [{ item_id: itemId, total_value: 0 }],
+      cfDescription: 'test',
+    });
+    check('create_sell_operation rejects a zero-value item', !!zeroValueErr, zeroValueErr);
+
+    const { error: negativeValueErr } = await createSellOperation({
+      dealDate: today,
+      channelId: marketplaceId,
+      items: [{ item_id: itemId, total_value: -50 }],
+      cfDescription: 'test',
+    });
+    check('create_sell_operation rejects a negative-value item', !!negativeValueErr, negativeValueErr);
+
+    // Sell it for real, then try to sell the now-sold item again.
+    const { data: firstSale } = await createSellOperation({ dealDate: today, channelId: marketplaceId, items: [{ item_id: itemId, total_value: 300 }], cfDescription: 'test' });
+    if (firstSale?.deal_id) createdDealIds.push(firstSale.deal_id as number);
+
+    const { error: alreadySoldErr } = await createSellOperation({
+      dealDate: today,
+      channelId: marketplaceId,
+      items: [{ item_id: itemId, total_value: 100 }],
+      cfDescription: 'test',
+    });
+    check('create_sell_operation rejects an already-sold item', !!alreadySoldErr, alreadySoldErr);
   }
 
   // ══════════════════════════════════════════════════════════════════════

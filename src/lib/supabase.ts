@@ -568,17 +568,15 @@ export async function createBuyOperation(params: {
 
 export async function createSellOperation(params: {
   dealDate: string;
-  cashReceived: number;
   channelId: number;
-  itemId: number;
+  items: { item_id: number; total_value: number }[];
   notes?: string | null;
   cfDescription: string;
 }) {
   return supabase.rpc('create_sell_operation', {
     p_deal_date:      params.dealDate,
-    p_cash_received:  params.cashReceived,
     p_channel_id:     params.channelId,
-    p_item_id:        params.itemId,
+    p_items:          params.items,
     p_notes:          params.notes ?? null,
     p_cf_description: params.cfDescription,
   });
@@ -655,17 +653,17 @@ export async function editBuyOperation(params: {
 export async function editSellOperation(params: {
   dealId: number;
   dealDate: string;
-  cashReceived: number;
   channelId: number | null;
+  items: { item_id: number; total_value: number }[];
   notes?: string | null;
   cfDescription?: string | null;
 }) {
   return supabase.rpc('edit_sell_operation', {
     p_deal_id:        params.dealId,
     p_deal_date:      params.dealDate,
-    p_cash_received:  params.cashReceived,
     p_channel_id:     params.channelId,
     p_notes:          params.notes ?? null,
+    p_items:          params.items,
     p_cf_description: params.cfDescription ?? null,
   });
 }

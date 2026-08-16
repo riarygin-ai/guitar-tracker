@@ -146,10 +146,11 @@ export default function EditOperationPage() {
             <SellOperationForm
               dealId={deal.id}
               initialDealDate={deal.deal_date}
-              initialCashReceived={Number(deal.cash_received ?? 0)}
               initialChannelId={deal.deal_channel_id}
               initialNotes={deal.notes ?? ''}
-              initialItem={outgoing.length > 0 ? itemById[outgoing[0].item_id] : undefined}
+              initialItems={outgoing
+                .filter((di) => itemById[di.item_id] != null)
+                .map((di) => ({ item: itemById[di.item_id], value: Number(di.total_value ?? 0) }))}
             />
           )}
 

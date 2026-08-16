@@ -14,6 +14,7 @@ import {
 } from '@/lib/supabase';
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types';
 import { todayLocalDate } from '@/lib/dateUtils';
+import { truncateDescription } from '@/lib/text';
 
 interface LineItem {
   item: InventorySearchItem;
@@ -178,7 +179,7 @@ export default function BuyOperationForm({
     const descParts = items.map((li) =>
       [brandMap[li.item.brand_id], li.item.model].filter(Boolean).join(' ')
     );
-    const cfDescription = `Purchase: ${descParts.join(', ')}`;
+    const cfDescription = truncateDescription(`Purchase: ${descParts.join(', ')}`);
 
     setSaving(true);
     const result = isEdit
