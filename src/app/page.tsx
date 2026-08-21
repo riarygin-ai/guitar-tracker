@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase, getBrands, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getAllListedDates, getLatestCompletedAdviceForCurrentUser } from '@/lib/supabase'
+import { supabase, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getLatestCompletedAdviceForCurrentUser } from '@/lib/supabase'
 import type { AnalyticsRunMeta } from '@/types'
 import type { AnalyticsRunAdviceRow } from '@/lib/analytics/advice/types'
 import { formatDateTime as formatAdviceDateTime } from '@/lib/analytics/advice/presentation'
@@ -15,9 +15,6 @@ export default function HomePage() {
   const [deals, setDeals] = useState<any[]>([])
   const [dealItems, setDealItems] = useState<any[]>([])
   const [inventoryExpenses, setInventoryExpenses] = useState<any[]>([])
-  // Earliest platform listing date per item, across all deal_channels — id -> 'YYYY-MM-DD'
-  const [earliestListedById, setEarliestListedById] = useState<Record<number, string>>({})
-  const [brands, setBrands] = useState<any[]>([])
   const [itemSubtypes, setItemSubtypes] = useState<any[]>([])
   const [itemCategoriesData, setItemCategoriesData] = useState<any[]>([])
   const [itemPurposes, setItemPurposes] = useState<any[]>([])
@@ -60,17 +57,15 @@ export default function HomePage() {
       console.groupEnd()
       // ────────────────────────────────────────────────────────────────────────
 
-      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, brandsResult, catsResult, subsResult, purposesResult, listedDatesResult] = await Promise.all([
+      const [cashFlowResult, inventoryResult, dealsResult, dealItemsResult, inventoryExpensesResult, catsResult, subsResult, purposesResult] = await Promise.all([
         getCashFlows(),
         getInventoryItemsWithValue(),
         getDeals(),
         getDealItems(),
         getInventoryExpenses(),
-        getBrands(),
         getItemCategories(),
         getItemSubtypes(),
         getItemPurposes(),
-        getAllListedDates(),
       ])
 
       // ── DIAGNOSTICS (temporary) ──────────────────────────────────────────────
@@ -87,7 +82,7 @@ export default function HomePage() {
       console.groupEnd()
       // ────────────────────────────────────────────────────────────────────────
 
-      if (cashFlowResult.error || inventoryResult.error || dealsResult.error || dealItemsResult.error || inventoryExpensesResult.error || brandsResult.error) {
+      if (cashFlowResult.error || inventoryResult.error || dealsResult.error || dealItemsResult.error || inventoryExpensesResult.error) {
         setError('Could not load dashboard data.')
         setLoading(false)
         return
@@ -98,19 +93,9 @@ export default function HomePage() {
       setDeals(dealsResult.data || [])
       setDealItems(dealItemsResult.data || [])
       setInventoryExpenses(inventoryExpensesResult.data || [])
-      setBrands(brandsResult.data || [])
       setItemCategoriesData(catsResult.data || [])
       setItemSubtypes(subsResult.data || [])
       if (!purposesResult.error) setItemPurposes(purposesResult.data || [])
-      if (!listedDatesResult.error) {
-        const earliest: Record<number, string> = {}
-        for (const row of listedDatesResult.data || []) {
-          const itemId = row.inventory_item_id as number
-          const listedAt = row.listed_at as string
-          if (!earliest[itemId] || listedAt < earliest[itemId]) earliest[itemId] = listedAt
-        }
-        setEarliestListedById(earliest)
-      }
       setLoading(false)
     }
 
@@ -118,7 +103,6 @@ export default function HomePage() {
   }, [])
 
   const activeInventory = inventoryItems.filter((item) => item.status === 'owned' || item.status === 'listed')
-  const businessInventory = inventoryItems.filter((item) => item.purpose_name === 'Business' || item.purpose_name === 'Hybrid')
 
   const latestCashFlow = [...cashFlows].sort((a, b) => {
     const dateDiff = b.transaction_date.localeCompare(a.transaction_date)
@@ -227,10 +211,6 @@ export default function HomePage() {
     router.push(`/operations?from=${month}-01&to=${month}-${String(lastDay).padStart(2, '0')}&dealTypes=sale,trade,purchase`)
   }
 
-  const navigateToBrandOperations = (brandId: number) => {
-    router.push(`/operations?brand_id=${brandId}`)
-  }
-
   const navigateToInventory = (key: string) => {
     const params = new URLSearchParams({ status: 'owned,listed' })
     if (inventoryGroupView === 'category') params.set('category', key)
@@ -317,27 +297,12 @@ export default function HomePage() {
     return values
   }, [activeInventory])
 
-  const businessInventoryByType = useMemo(() => {
-    const counts: Record<string, { listed: number; unlisted: number }> = {}
-    businessInventory.forEach((item) => {
-      const cat = getItemCategoryName(item)
-      if (!counts[cat]) counts[cat] = { listed: 0, unlisted: 0 }
-      if (item.status === 'listed') counts[cat].listed += 1
-      else counts[cat].unlisted += 1
-    })
-    return counts
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [businessInventory, categoryNameBySubtypeId])
-
   const inventoryCountTypes = Object.keys(inventoryCountByType).sort()
   const inventoryValueTypes = Object.keys(inventoryValueByType).sort()
-  const businessInventoryTypes = Object.keys(businessInventoryByType).sort()
 
   const totalInventoryCount = Object.values(inventoryCountByType).reduce((a, b) => a + b, 0)
   const totalCostBasis = Object.values(inventoryValueByType).reduce((sum, v) => sum + v.costBasis, 0)
   const totalEstimatedValue = Object.values(inventoryValueByType).reduce((sum, v) => sum + v.estimatedValue, 0)
-  const totalBusinessListed = Object.values(businessInventoryByType).reduce((sum, v) => sum + v.listed, 0)
-  const totalBusinessUnlisted = Object.values(businessInventoryByType).reduce((sum, v) => sum + v.unlisted, 0)
 
   // Active group data for the segmented inventory table
   const activeGroupData =
@@ -354,85 +319,6 @@ export default function HomePage() {
     { count: 0, costBasis: 0, estimatedValue: 0 },
   )
 
-  const brandPerformance = useMemo(() => {
-    const brandNameById: Record<number, string> = Object.fromEntries(
-      brands.map((b: any) => [b.id, b.name])
-    )
-
-    const inDealItemByItemId: Record<number, any> = {}
-    dealItems.forEach((di) => {
-      if (di.direction !== 'in') return
-      const existing = inDealItemByItemId[di.item_id]
-      if (!existing || di.deal_id > existing.deal_id) inDealItemByItemId[di.item_id] = di
-    })
-
-    const outDealItemByItemId: Record<number, any> = {}
-    dealItems.forEach((di) => {
-      if (di.direction !== 'out') return
-      const existing = outDealItemByItemId[di.item_id]
-      if (!existing || di.deal_id > existing.deal_id) outDealItemByItemId[di.item_id] = di
-    })
-
-    const dealById: Record<number, any> = Object.fromEntries(deals.map((d) => [d.id, d]))
-
-    const brandData: Record<number, {
-      id: number
-      name: string
-      items: { roi: number; profit: number; daysOnMarket: number | null }[]
-    }> = {}
-
-    inventoryItems.forEach((item) => {
-      if (item.status !== 'sold' && item.status !== 'traded') return
-
-      const valueIn = Number(item.value_in ?? 0)
-
-      const outDi = outDealItemByItemId[item.id]
-      if (!outDi) return
-      const valueOut = Number(outDi.total_value ?? 0)
-
-      const inDi = inDealItemByItemId[item.id]
-      if (!inDi) return
-
-      if (!item.sold_date) return
-
-      // days on market = sold_date - earliest platform listed_at; null when no platform date exists
-      const listedAt = earliestListedById[item.id]
-      const daysOnMarket = listedAt
-        ? Math.round(
-            (new Date(item.sold_date).getTime() - new Date(listedAt).getTime()) /
-            (1000 * 60 * 60 * 24)
-          )
-        : null
-      if (daysOnMarket !== null && daysOnMarket < 0) return
-
-      const itemExpenses = expensesByItemId[item.id] ?? 0
-      const profit = valueOut - valueIn - itemExpenses
-      const roi = valueIn === 0 ? (profit > 0 ? 100 : 0) : (profit / valueIn) * 100
-      const brandId = item.brand_id
-
-      if (!brandData[brandId]) {
-        brandData[brandId] = { id: brandId, name: brandNameById[brandId] ?? `Brand ${brandId}`, items: [] }
-      }
-      brandData[brandId].items.push({ roi, profit, daysOnMarket })
-    })
-
-    return Object.values(brandData)
-      .filter((b) => b.items.length >= 2)
-      .map((b) => {
-        const soldQty = b.items.length
-        const avgRoi = b.items.reduce((sum, i) => sum + i.roi, 0) / soldQty
-        const avgProfit = b.items.reduce((sum, i) => sum + i.profit, 0) / soldQty
-        // Only average items that have a listed_date; items without are excluded entirely
-        const marketItems = b.items.filter((i) => i.daysOnMarket !== null)
-        const avgDaysOnMarket = marketItems.length > 0
-          ? Math.round(marketItems.reduce((sum, i) => sum + i.daysOnMarket!, 0) / marketItems.length)
-          : null
-        return { id: b.id, name: b.name, soldQty, avgRoi, avgProfit, avgDaysOnMarket }
-      })
-      .sort((a, b) => b.avgRoi - a.avgRoi)
-      .slice(0, 15)
-  }, [inventoryItems, dealItems, deals, brands, inventoryExpenses, earliestListedById])
-
   return (
     <div className="space-y-6">
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
@@ -442,37 +328,6 @@ export default function HomePage() {
           Track cash, inventory, and business performance.
         </p>
       </section>
-
-      {/* ── Latest Analytics Advice (Auditable AI Advice v1.0) ───────────
-          Display-only: no Generate/Retry control and no "View Analytics
-          History" link live here — Analytics History is the only place
-          Advice generation starts (see src/app/analytics/page.tsx). The
-          section renders nothing at all — not even an empty-state message
-          — until a completed Advice revision is actually found; a user
-          with no Advice history simply sees the rest of the Dashboard. */}
-      {!adviceLoading && latestCompletedAdvice && (
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-          <p className="page-overline">Latest Analytics Advice</p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            From the Analytics Run generated {formatAdviceDateTime(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at)}.
-          </p>
-
-          <div className="mt-4">
-            {(latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 ? (
-              <div className="min-w-0">
-                <p className="break-words text-sm font-semibold text-slate-900 dark:text-white">{latestCompletedAdvice.advice.advice?.run_summary.headline}</p>
-                <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{latestCompletedAdvice.advice.advice?.run_summary.summary}</p>
-              </div>
-            ) : (
-              <div className="grid gap-3 lg:grid-cols-3">
-                {latestCompletedAdvice.advice.advice!.advice_cards.map((card) => (
-                  <AdviceCardView key={card.advice_code} card={card} variant="compact" />
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
 
       {loading ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">Loading dashboard...</div>
@@ -852,179 +707,38 @@ export default function HomePage() {
             </div>
           </section>
 
-          {/* ── Brand Performance section ───────────────────────────────── */}
-          {brandPerformance.length > 0 && (
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-              <div>
-                <p className="page-overline">Brand Performance</p>
-                <h2 className="mt-2 section-title">Top brands by ROI</h2>
-              </div>
+        </>
+      )}
 
-              {/* Desktop table */}
-              <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-                    <tr>
-                      <th className="px-4 py-3">Brand</th>
-                      <th className="px-4 py-3 text-center">Sold</th>
-                      <th className="px-4 py-3 text-right">Avg ROI</th>
-                      <th className="px-4 py-3 text-right">Avg Profit</th>
-                      <th className="px-4 py-3 text-right" title="Average number of days between listing and sale.">Avg Days on Market</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                    {brandPerformance.map((row, index) => (
-                      <tr
-                        key={row.name}
-                        role="button"
-                        tabIndex={0}
-                        className="cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-700/60"
-                        onClick={() => navigateToBrandOperations(row.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateToBrandOperations(row.id) }
-                        }}
-                      >
-                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">
-                          <span className="flex items-center gap-1.5">
-                            <span className="mr-1 text-xs font-normal text-slate-400 dark:text-slate-500">#{index + 1}</span>
-                            {row.name}
-                            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400 dark:text-slate-500">
-                              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-                            </svg>
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                            {row.soldQty}
-                          </span>
-                        </td>
-                        <td className={`px-4 py-3 text-right font-semibold tabular-nums ${row.avgRoi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                          {row.avgRoi >= 0 ? '+' : ''}{row.avgRoi.toFixed(1)}%
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums text-slate-900 dark:text-slate-100">{formatMoney(row.avgProfit)}</td>
-                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">
-                          {row.avgDaysOnMarket !== null ? row.avgDaysOnMarket : <span className="text-slate-400 dark:text-slate-500">—</span>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+      {/* ── Latest Analytics Advice (Auditable AI Advice v1.0) ───────────
+          Display-only: no Generate/Retry control and no "View Analytics
+          History" link live here — Analytics History is the only place
+          Advice generation starts (see src/app/analytics/page.tsx). The
+          section renders nothing at all — not even an empty-state message
+          — until a completed Advice revision is actually found; a user
+          with no Advice history simply sees the rest of the Dashboard. */}
+      {!adviceLoading && latestCompletedAdvice && (
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+          <p className="page-overline">Latest Analytics Advice</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            From the Analytics Run generated {formatAdviceDateTime(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at)}.
+          </p>
 
-              {/* Mobile */}
-              <div className="mt-5 space-y-3 md:hidden">
-                {brandPerformance.map((row, index) => (
-                  <button
-                    key={row.name}
-                    type="button"
-                    onClick={() => navigateToBrandOperations(row.id)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700/60"
-                  >
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-400 dark:text-slate-500">#{index + 1}</span>
-                        <span className="flex items-center gap-1.5 font-semibold text-slate-900 dark:text-white">
-                          {row.name}
-                          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-slate-400 dark:text-slate-500">
-                            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-                          </svg>
-                        </span>
-                      </div>
-                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                        {row.soldQty} sold
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-3 text-xs">
-                      <div>
-                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg ROI</span>
-                        <span className={`mt-0.5 block font-semibold tabular-nums ${row.avgRoi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                          {row.avgRoi >= 0 ? '+' : ''}{row.avgRoi.toFixed(1)}%
-                        </span>
-                      </div>
-                      <div>
-                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg Profit</span>
-                        <span className="mt-0.5 block font-medium tabular-nums text-slate-700 dark:text-slate-300">{formatMoney(row.avgProfit)}</span>
-                      </div>
-                      <div title="Average number of days between listing and sale.">
-                        <span className="block uppercase tracking-wide text-slate-400 dark:text-slate-500">Avg Days on Mkt</span>
-                        <span className="mt-0.5 block font-medium text-slate-700 dark:text-slate-300">
-                          {row.avgDaysOnMarket !== null ? row.avgDaysOnMarket : <span className="text-slate-400 dark:text-slate-500">—</span>}
-                        </span>
-                      </div>
-                    </div>
-                  </button>
+          <div className="mt-4">
+            {(latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 ? (
+              <div className="min-w-0">
+                <p className="break-words text-sm font-semibold text-slate-900 dark:text-white">{latestCompletedAdvice.advice.advice?.run_summary.headline}</p>
+                <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{latestCompletedAdvice.advice.advice?.run_summary.summary}</p>
+              </div>
+            ) : (
+              <div className="grid gap-3 lg:grid-cols-3">
+                {latestCompletedAdvice.advice.advice!.advice_cards.map((card) => (
+                  <AdviceCardView key={card.advice_code} card={card} variant="compact" />
                 ))}
               </div>
-            </section>
-          )}
-
-          {/* ── Business Inventory section ──────────────────────────────── */}
-          {businessInventoryTypes.length > 0 && (
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-              <div>
-                <p className="page-overline">Business Inventory</p>
-                <h2 className="mt-2 section-title">Status by category</h2>
-              </div>
-              <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 md:block">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-xs uppercase tracking-[0.18em] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-                    <tr>
-                      <th className="px-4 py-3">Category</th>
-                      <th className="px-4 py-3 text-right">Listed</th>
-                      <th className="px-4 py-3 text-right">Unlisted</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                    {businessInventoryTypes.map((type) => {
-                      const v = businessInventoryByType[type]
-                      return (
-                        <tr key={type}>
-                          <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{type}</td>
-                          <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{v.listed}</td>
-                          <td className={`px-4 py-3 text-right font-semibold ${v.unlisted > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-slate-100'}`}>
-                            {v.unlisted}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                    <tr className="bg-slate-50 font-semibold dark:bg-slate-700">
-                      <td className="px-4 py-3 text-slate-900 dark:text-white">Total</td>
-                      <td className="px-4 py-3 text-right text-slate-900 dark:text-white">{totalBusinessListed}</td>
-                      <td className={`px-4 py-3 text-right ${totalBusinessUnlisted > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}>
-                        {totalBusinessUnlisted}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-5 space-y-3 md:hidden">
-                {businessInventoryTypes.map((type) => {
-                  const v = businessInventoryByType[type]
-                  return (
-                    <div key={type} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-slate-900 dark:text-white">{type}</span>
-                        <div className="flex gap-3 text-sm">
-                          <span className="text-slate-500 dark:text-slate-400">Listed: <span className="font-semibold text-slate-900 dark:text-white">{v.listed}</span></span>
-                          <span className={`font-semibold ${v.unlisted > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}>Unlisted: {v.unlisted}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-slate-900 dark:text-white">Total</span>
-                    <div className="flex gap-3 text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Listed: <span className="font-semibold text-slate-900 dark:text-white">{totalBusinessListed}</span></span>
-                      <span className={`font-semibold ${totalBusinessUnlisted > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}>Unlisted: {totalBusinessUnlisted}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-          )}
-        </>
+            )}
+          </div>
+        </section>
       )}
     </div>
   )

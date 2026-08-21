@@ -735,12 +735,10 @@ export async function getItemListings(itemId: number) {
     .order('created_at', { ascending: false });
 }
 
-// Bulk EARLIEST real listing dates for dashboard/analytics — one row per
-// platform, RLS-scoped. Cancelled records are excluded (a cancelled row's
-// listed_at, if it has one, was never a real listing); ended listings ARE
-// included, since their listed_at remains a genuine historical listing
-// date. See this session's Part 6 report for why this is a narrow,
-// contained fix rather than the larger analytics follow-up still needed.
+// Bulk real listing dates — one row per platform, RLS-scoped. Cancelled
+// records are excluded (a cancelled row's listed_at, if it has one, was
+// never a real listing); ended listings ARE included, since their
+// listed_at remains a genuine historical listing date.
 export async function getAllListedDates() {
   return supabase
     .from('item_listings')
