@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import AdviceCardView from '@/components/AdviceCardView';
-import CopyListingEvidenceButton from '@/components/CopyListingEvidenceButton';
 import {
   supabase,
   getRecentAnalyticsRuns,
@@ -634,26 +633,21 @@ export default function AnalyticsPage() {
           </p>
         }
         action={
-          <div className="flex max-w-full flex-wrap items-start justify-end gap-2">
-            {/* Temporary/internal tooling — review real Listing Evidence
-                v1.0 output before the Listing Dashboard is built. */}
-            <CopyListingEvidenceButton />
-            <button
-              type="button"
-              onClick={handleRunAnalytics}
-              disabled={runningAnalytics || sessionMissing}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
-            >
-              {runningAnalytics ? (
-                <>
-                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white dark:border-slate-900/40 dark:border-t-slate-900" />
-                  Running analytics…
-                </>
-              ) : (
-                'Run Analytics'
-              )}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleRunAnalytics}
+            disabled={runningAnalytics || sessionMissing}
+            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 dark:disabled:text-slate-400"
+          >
+            {runningAnalytics ? (
+              <>
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white dark:border-slate-900/40 dark:border-t-slate-900" />
+                Running analytics…
+              </>
+            ) : (
+              'Run Analytics'
+            )}
+          </button>
         }
       />
 

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AiPromptsCard from '@/components/AiPromptsCard';
 import CompactPageHeader from '@/components/CompactPageHeader';
+import CopyListingEvidenceButton from '@/components/CopyListingEvidenceButton';
 import {
   createBrand,
   createDealChannel,
@@ -792,6 +793,23 @@ export default function AdminPage() {
           <Link href="/analytics" className={btnPrimary}>
             Open Analytics
           </Link>
+        </div>
+      </div>
+
+      {/* ── Debug Tools ───────────────────────────────────────────────── */}
+      {/* Raw Listing Evidence JSON — internal/debugging only. The normal
+          user-facing GPT export is the Listing Dashboard's Copy Analysis
+          Data control (src/app/listings/page.tsx); this stays here for
+          comparing the Analysis Packet against its raw evidence source. */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Debug Tools</h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Internal-only. Copies the complete raw Listing Evidence v1.0 JSON — the deterministic source the Listing Dashboard and Listing Analysis Packet are built from.
+            </p>
+          </div>
+          <CopyListingEvidenceButton />
         </div>
       </div>
 

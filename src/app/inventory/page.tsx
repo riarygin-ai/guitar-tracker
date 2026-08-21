@@ -10,6 +10,35 @@ import InventoryCard from '@/components/InventoryCard';
 import MoreFiltersToggle from '@/components/MoreFiltersToggle';
 import TagsFilter from '@/components/TagsFilter';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
+import { fetchListingEvidence } from '@/lib/analytics/listingEvidenceClient';
+import type { ListingAgeBucketCode, ListingEvidence } from '@/lib/analytics/listingEvidence';
+import {
+  buildListingLookups,
+  hasAnyListingFilter,
+  matchesListingFilters,
+  LISTING_FILTER_VALUES,
+  AGE_BUCKET_VALUES,
+  AGE_BUCKET_LABELS,
+  type ListingFilterValue,
+} from '@/lib/inventoryListingFilters';
+
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-200">
+      {label}
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label={`Remove ${label} filter`}
+        className="rounded-full p-0.5 text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+    </span>
+  );
+}
 
 const BATCH_SIZE = 30;
 const SESSION_KEY = 'inventory-list-state';
@@ -65,6 +94,17 @@ export default function InventoryPage() {
   const [selectedPurposeIds, setSelectedPurposeIds] = useState<number[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
 
+  // ── Listing-oriented drill-down filters (Listing Dashboard v1.0) ───────
+  // URL-driven like every other filter here; matching logic is sourced
+  // from Listing Evidence v1.0 (buildListingLookups), never recalculated.
+  const [listingFilter, setListingFilter] = useState<ListingFilterValue | null>(null);
+  const [selectedChannelIds, setSelectedChannelIds] = useState<number[]>([]);
+  const [selectedAgeBuckets, setSelectedAgeBuckets] = useState<ListingAgeBucketCode[]>([]);
+  const [selectedChannelCounts, setSelectedChannelCounts] = useState<string[]>([]);
+  const [listingEvidence, setListingEvidence] = useState<ListingEvidence | null>(null);
+  const [listingEvidenceLoading, setListingEvidenceLoading] = useState(false);
+  const [listingEvidenceError, setListingEvidenceError] = useState<string | null>(null);
+
   const [renderCount, setRenderCount] = useState(BATCH_SIZE);
   const [isRestoring, setIsRestoring] = useState(false);
   const restoredAnchorIdRef = useRef<number | null>(null);
@@ -107,14 +147,22 @@ export default function InventoryPage() {
     const purposeParam = searchParams.get('purpose_id');
     const tagParam = searchParams.get('tag_id');
     const q = searchParams.get('search');
+    const listingParam = searchParams.get('listing');
+    const channelParam = searchParams.get('channel_id');
+    const ageBucketParam = searchParams.get('age_bucket');
+    const channelCountParam = searchParams.get('channel_count');
     setSearch(q ?? '');
     setSelectedStatuses(s ? (s.split(',').filter(Boolean) as Status[]) : ['owned', 'listed']);
-    // When drilling in via type/subtype/purpose_id without an explicit category, clear the default
-    const hasDrilldown = !cat && (searchParams.has('type') || searchParams.has('subtype') || searchParams.has('purpose_id'));
+    // When drilling in via type/subtype/purpose_id/listing filters without an explicit category, clear the default
+    const hasDrilldown = !cat && (searchParams.has('type') || searchParams.has('subtype') || searchParams.has('purpose_id') || searchParams.has('listing') || searchParams.has('channel_id') || searchParams.has('age_bucket') || searchParams.has('channel_count'));
     setSelectedCategoryNames(cat ? cat.split(',').filter(Boolean) : (hasDrilldown ? [] : ['Guitars']));
     setSelectedSubtypeNames(sub ? sub.split(',').filter(Boolean) : []);
     setSelectedPurposeIds(purposeParam ? purposeParam.split(',').map(Number).filter(Boolean) : []);
     setSelectedTagIds(tagParam ? tagParam.split(',').map(Number).filter(Boolean) : []);
+    setListingFilter(listingParam && LISTING_FILTER_VALUES.includes(listingParam as ListingFilterValue) ? (listingParam as ListingFilterValue) : null);
+    setSelectedChannelIds(channelParam ? channelParam.split(',').map(Number).filter((n) => Number.isFinite(n)) : []);
+    setSelectedAgeBuckets(ageBucketParam ? (ageBucketParam.split(',').filter((v) => AGE_BUCKET_VALUES.includes(v as ListingAgeBucketCode)) as ListingAgeBucketCode[]) : []);
+    setSelectedChannelCounts(channelCountParam ? channelCountParam.split(',').filter(Boolean) : []);
     if (purposeParam || tagParam) setShowMoreFilters(true);
     isInitializedRef.current = true;
   }, [searchParams]);
@@ -128,9 +176,13 @@ export default function InventoryPage() {
     if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
     if (selectedPurposeIds.length > 0) params.set('purpose_id', [...selectedPurposeIds].sort((a, b) => a - b).join(','));
     if (selectedTagIds.length > 0) params.set('tag_id', [...selectedTagIds].sort((a, b) => a - b).join(','));
+    if (listingFilter) params.set('listing', listingFilter);
+    if (selectedChannelIds.length > 0) params.set('channel_id', [...selectedChannelIds].sort((a, b) => a - b).join(','));
+    if (selectedAgeBuckets.length > 0) params.set('age_bucket', [...selectedAgeBuckets].sort().join(','));
+    if (selectedChannelCounts.length > 0) params.set('channel_count', [...selectedChannelCounts].sort().join(','));
     const qs = params.toString();
     router.replace(`/inventory${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds, router]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds, listingFilter, selectedChannelIds, selectedAgeBuckets, selectedChannelCounts, router]);
 
   const backQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -140,11 +192,15 @@ export default function InventoryPage() {
     if (selectedSubtypeNames.length > 0) params.set('subtype', [...selectedSubtypeNames].sort().join(','));
     if (selectedPurposeIds.length > 0) params.set('purpose_id', [...selectedPurposeIds].sort((a, b) => a - b).join(','));
     if (selectedTagIds.length > 0) params.set('tag_id', [...selectedTagIds].sort((a, b) => a - b).join(','));
+    if (listingFilter) params.set('listing', listingFilter);
+    if (selectedChannelIds.length > 0) params.set('channel_id', [...selectedChannelIds].sort((a, b) => a - b).join(','));
+    if (selectedAgeBuckets.length > 0) params.set('age_bucket', [...selectedAgeBuckets].sort().join(','));
+    if (selectedChannelCounts.length > 0) params.set('channel_count', [...selectedChannelCounts].sort().join(','));
     return params.toString();
-  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds]);
+  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds, listingFilter, selectedChannelIds, selectedAgeBuckets, selectedChannelCounts]);
 
   // Reset display window when any filter changes (skip the very first run and any run during restoration)
-  const filterSig = `${search}|${selectedStatuses.join(',')}|${selectedCategoryNames.join(',')}|${selectedSubtypeNames.join(',')}|${selectedPurposeIds.join(',')}|${selectedTagIds.join(',')}`;
+  const filterSig = `${search}|${selectedStatuses.join(',')}|${selectedCategoryNames.join(',')}|${selectedSubtypeNames.join(',')}|${selectedPurposeIds.join(',')}|${selectedTagIds.join(',')}|${listingFilter ?? ''}|${selectedChannelIds.join(',')}|${selectedAgeBuckets.join(',')}|${selectedChannelCounts.join(',')}`;
   useEffect(() => {
     if (isFirstFilterRef.current) { isFirstFilterRef.current = false; return; }
     // Do not cancel restoration when URL-param initialization triggers a filterSig change on mount
@@ -288,13 +344,21 @@ export default function InventoryPage() {
 
   const hiddenFilterCount = selectedPurposeIds.length + selectedTagIds.length;
 
+  const hasAnyListingFilterActive = hasAnyListingFilter({
+    listingFilter,
+    channelIds: selectedChannelIds,
+    ageBuckets: selectedAgeBuckets,
+    channelCounts: selectedChannelCounts,
+  });
+
   const hasActiveFilters =
     search.length > 0 ||
     selectedStatuses.length > 0 ||
     selectedCategoryNames.length > 0 ||
     selectedSubtypeNames.length > 0 ||
     selectedPurposeIds.length > 0 ||
-    selectedTagIds.length > 0;
+    selectedTagIds.length > 0 ||
+    hasAnyListingFilterActive;
 
   function clearFilters() {
     setSearch('');
@@ -303,7 +367,39 @@ export default function InventoryPage() {
     setSelectedSubtypeNames([]);
     setSelectedPurposeIds([]);
     setSelectedTagIds([]);
+    setListingFilter(null);
+    setSelectedChannelIds([]);
+    setSelectedAgeBuckets([]);
+    setSelectedChannelCounts([]);
   }
+
+  // ── Listing Evidence: fetched lazily, only once a listing-oriented
+  // filter is actually present in the URL — a plain Inventory visit never
+  // pays this extra request. Sourced from Listing Evidence v1.0 exclusively
+  // (fetchListingEvidence -> GET /api/listing-evidence); never recalculated
+  // here (see buildListingLookups above and the Listing Evidence migration's
+  // own "single authoritative source" header note). ─────────────────────
+  useEffect(() => {
+    if (!hasAnyListingFilterActive || listingEvidence || listingEvidenceLoading) return;
+    let cancelled = false;
+    setListingEvidenceLoading(true);
+    setListingEvidenceError(null);
+    fetchListingEvidence().then((result) => {
+      if (cancelled) return;
+      if (result.status === 'success') {
+        setListingEvidence(result.data);
+      } else {
+        setListingEvidenceError(result.message);
+      }
+      setListingEvidenceLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [hasAnyListingFilterActive, listingEvidence, listingEvidenceLoading]);
+
+  const listingLookup = useMemo(
+    () => (listingEvidence ? buildListingLookups(listingEvidence) : null),
+    [listingEvidence],
+  );
 
   const filteredItems = useMemo(() => {
     const searchTerms = splitSearchTerms(search);
@@ -342,9 +438,26 @@ export default function InventoryPage() {
         selectedTagIds.length === 0 ||
         selectedTagIds.every((tid) => itemTagIds.includes(tid));
 
-      return matchesSearch && matchesStatus && matchesCategory && matchesSubtype && matchesPurpose && matchesTags;
+      // Listing-oriented filters (Listing Dashboard v1.0 drill-down) —
+      // matched entirely via matchesListingFilters against listingLookup,
+      // derived from Listing Evidence v1.0 (see src/lib/
+      // inventoryListingFilters.ts). While evidence hasn't loaded yet,
+      // every item is provisionally excluded rather than shown unfiltered
+      // (the loading/error UI below covers that window so nothing
+      // misleading flashes).
+      const matchesListing = !hasAnyListingFilterActive || (
+        listingLookup != null &&
+        matchesListingFilters(item.id, listingLookup, {
+          listingFilter,
+          channelIds: selectedChannelIds,
+          ageBuckets: selectedAgeBuckets,
+          channelCounts: selectedChannelCounts,
+        })
+      );
+
+      return matchesSearch && matchesStatus && matchesCategory && matchesSubtype && matchesPurpose && matchesTags && matchesListing;
     });
-  }, [brandMap, itemsWithComputedValues, search, selectedCategoryNames, selectedSubtypeNames, selectedStatuses, subtypeNameById, categoryNameBySubtypeId, selectedPurposeIds, selectedTagIds, tagsByItemId]);
+  }, [brandMap, itemsWithComputedValues, search, selectedCategoryNames, selectedSubtypeNames, selectedStatuses, subtypeNameById, categoryNameBySubtypeId, selectedPurposeIds, selectedTagIds, tagsByItemId, hasAnyListingFilterActive, listingLookup, listingFilter, selectedChannelIds, selectedAgeBuckets, selectedChannelCounts]);
 
   // Same value/equity formula as always (owned+listed subset only — a
   // sold/traded item contributes nothing to current portfolio value) —
@@ -472,6 +585,38 @@ export default function InventoryPage() {
             </button>
           )}
         </div>
+
+        {/* Listing-oriented drill-down filters — read-only chips, arrived
+            here via a Listing Dashboard link (or a hand-edited URL). Each
+            is individually clearable; "Clear listing filters" removes all
+            of them at once without touching Status/Category/etc. */}
+        {hasAnyListingFilterActive && (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {listingFilter && (
+              <FilterChip label={listingFilter === 'listed' ? 'Listed' : 'Unlisted'} onClear={() => setListingFilter(null)} />
+            )}
+            {selectedChannelIds.map((id) => (
+              <FilterChip
+                key={`ch-${id}`}
+                label={listingLookup?.channelNameById.get(id) ?? `Channel #${id}`}
+                onClear={() => setSelectedChannelIds((cur) => cur.filter((v) => v !== id))}
+              />
+            ))}
+            {selectedAgeBuckets.map((b) => (
+              <FilterChip key={`age-${b}`} label={AGE_BUCKET_LABELS[b]} onClear={() => setSelectedAgeBuckets((cur) => cur.filter((v) => v !== b))} />
+            ))}
+            {selectedChannelCounts.map((c) => (
+              <FilterChip key={`cc-${c}`} label={c === '3_plus' ? '3+ channels' : `${c} channel${c === '1' ? '' : 's'}`} onClear={() => setSelectedChannelCounts((cur) => cur.filter((v) => v !== c))} />
+            ))}
+            <button
+              type="button"
+              onClick={() => { setListingFilter(null); setSelectedChannelIds([]); setSelectedAgeBuckets([]); setSelectedChannelCounts([]); }}
+              className="text-xs font-medium text-slate-500 underline-offset-2 transition hover:text-slate-700 hover:underline dark:text-slate-400 dark:hover:text-slate-200"
+            >
+              Clear listing filters
+            </button>
+          </div>
+        )}
 
         {/* Filters — Status + Category in one card */}
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700/50">
@@ -650,6 +795,14 @@ export default function InventoryPage() {
         ) : error ? (
           <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-700 shadow-sm">
             {error}
+          </div>
+        ) : hasAnyListingFilterActive && listingEvidenceLoading ? (
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+            Loading listing filters...
+          </div>
+        ) : hasAnyListingFilterActive && listingEvidenceError ? (
+          <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-700 shadow-sm">
+            {listingEvidenceError}
           </div>
         ) : sortedFilteredItems.length === 0 ? (
           <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
