@@ -789,19 +789,28 @@ export async function saveListingDraftText(data: UpsertListingDraftText) {
 // never lost. Only called when no active listing already exists for this
 // item+channel (the caller only shows this action then); the partial
 // unique index is the last-resort guard against a race.
+//
+// asking_price is optional — when the caller passes it (including
+// explicit `null` to intentionally leave/clear it blank), it's written in
+// the SAME statement as status/listed_at, so the item_listings_track_
+// price_history trigger (20260905000000) sees it as part of the same row
+// version and logs history atomically; a caller that omits the key
+// entirely leaves any existing draft price untouched.
 export async function startListing(params: {
   inventory_item_id: number;
   deal_channel_id: number;
   listed_at: string;
   existingDraftId?: number | null;
+  asking_price?: number | null;
 }) {
   const { inventory_item_id, deal_channel_id, listed_at, existingDraftId } = params;
   const updated_at = new Date().toISOString();
+  const priceField = 'asking_price' in params ? { asking_price: params.asking_price } : {};
 
   if (existingDraftId != null) {
     return supabase
       .from('item_listings')
-      .update({ status: 'active', listed_at, updated_at })
+      .update({ status: 'active', listed_at, updated_at, ...priceField })
       .eq('id', existingDraftId)
       .select()
       .single<ItemListing>();
@@ -809,9 +818,38 @@ export async function startListing(params: {
 
   return supabase
     .from('item_listings')
-    .insert({ inventory_item_id, deal_channel_id, status: 'active', listed_at, updated_at })
+    .insert({ inventory_item_id, deal_channel_id, status: 'active', listed_at, updated_at, ...priceField })
     .select()
     .single<ItemListing>();
+}
+
+// Update Price — the ONLY thing this ever touches is asking_price (+
+// updated_at). Never status/listed_at/ended_at/cancelled_at/description/
+// AI fields, by construction — see Part 4's own rule that a price update
+// must never change listing text or lifecycle state. Valid from a draft
+// OR active row (both can carry a price); ended/cancelled rows are
+// deliberately excluded so a stale price can never be "updated" on a
+// closed listing cycle (End/Cancel already preserve whatever price was
+// last set — see their own comments below).
+export async function updateListingPrice(id: number, askingPrice: number | null) {
+  return supabase
+    .from('item_listings')
+    .update({ asking_price: askingPrice, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .in('status', ['draft', 'active'])
+    .select()
+    .single<ItemListing>();
+}
+
+// Full price-change audit trail for one listing cycle, newest first —
+// read-only (the table is insert-only via the DB trigger; see
+// 20260905000000_item_listing_price_history.sql).
+export async function getItemListingPriceHistory(itemListingId: number) {
+  return supabase
+    .from('item_listing_price_history')
+    .select('*')
+    .eq('item_listing_id', itemListingId)
+    .order('changed_at', { ascending: false });
 }
 
 // End Listing — the cycle remains stored; only its status/ended_at

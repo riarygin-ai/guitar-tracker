@@ -288,6 +288,19 @@ export interface ItemListing {
   updated_at: string;
 }
 
+// Append-only audit row for item_listings.asking_price changes — written
+// exclusively by the item_listings_track_price_history DB trigger
+// (20260905000000), never inserted into directly by application code.
+export interface ItemListingPriceHistory {
+  id: number;
+  user_id: number;
+  item_listing_id: number;
+  old_asking_price: number | null;
+  new_asking_price: number;
+  changed_at: string;
+  created_at: string;
+}
+
 // Draft-text fields only — never touches status/listed_at/ended_at/
 // cancelled_at. Used by saveListingDraftText, which always targets
 // whichever non-terminal (draft or active) row currently exists for the
