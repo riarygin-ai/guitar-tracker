@@ -381,6 +381,57 @@ export default function HomePage() {
         </p>
       </section>
 
+      {/* ── Latest Analytics Advice (Auditable AI Advice v1.0) ───────────
+          Display-only: no Generate/Retry control and no "View Analytics
+          History" link live here — Analytics History is the only place
+          Advice generation starts (see src/app/analytics/page.tsx). The
+          section renders nothing at all — not even an empty-state message
+          — until a completed Advice revision is actually found; a user
+          with no Advice history simply sees the rest of the Dashboard.
+          Advice Dismissal / Resurface v1: when the revision HAS cards but
+          every one of them is currently dismissed, the section is hidden
+          the same way — never a large empty panel. */}
+      {!adviceLoading && !dismissalsLoading && latestCompletedAdvice && (
+        (latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 || visibleAdviceCards.length > 0
+      ) && (
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="page-overline">Latest Analytics Advice</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                From the Analytics Run generated {formatAdviceDateTime(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at)}.
+              </p>
+            </div>
+            {dismissToast && (
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-400">
+                {dismissToast}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-4">
+            {(latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 ? (
+              <div className="min-w-0">
+                <p className="break-words text-sm font-semibold text-slate-900 dark:text-white">{latestCompletedAdvice.advice.advice?.run_summary.headline}</p>
+                <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{latestCompletedAdvice.advice.advice?.run_summary.summary}</p>
+              </div>
+            ) : (
+              <div className="grid gap-3 lg:grid-cols-3">
+                {visibleAdviceCards.map((card) => (
+                  <AdviceCardView
+                    key={card.advice_code}
+                    card={card}
+                    variant="compact"
+                    onDismiss={() => handleDismissAdvice(card)}
+                    dismissing={dismissingCodes.has(card.advice_code)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {loading ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">Loading dashboard...</div>
       ) : error ? (
@@ -760,57 +811,6 @@ export default function HomePage() {
           </section>
 
         </>
-      )}
-
-      {/* ── Latest Analytics Advice (Auditable AI Advice v1.0) ───────────
-          Display-only: no Generate/Retry control and no "View Analytics
-          History" link live here — Analytics History is the only place
-          Advice generation starts (see src/app/analytics/page.tsx). The
-          section renders nothing at all — not even an empty-state message
-          — until a completed Advice revision is actually found; a user
-          with no Advice history simply sees the rest of the Dashboard.
-          Advice Dismissal / Resurface v1: when the revision HAS cards but
-          every one of them is currently dismissed, the section is hidden
-          the same way — never a large empty panel. */}
-      {!adviceLoading && !dismissalsLoading && latestCompletedAdvice && (
-        (latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 || visibleAdviceCards.length > 0
-      ) && (
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <p className="page-overline">Latest Analytics Advice</p>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                From the Analytics Run generated {formatAdviceDateTime(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at)}.
-              </p>
-            </div>
-            {dismissToast && (
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-400">
-                {dismissToast}
-              </span>
-            )}
-          </div>
-
-          <div className="mt-4">
-            {(latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 ? (
-              <div className="min-w-0">
-                <p className="break-words text-sm font-semibold text-slate-900 dark:text-white">{latestCompletedAdvice.advice.advice?.run_summary.headline}</p>
-                <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{latestCompletedAdvice.advice.advice?.run_summary.summary}</p>
-              </div>
-            ) : (
-              <div className="grid gap-3 lg:grid-cols-3">
-                {visibleAdviceCards.map((card) => (
-                  <AdviceCardView
-                    key={card.advice_code}
-                    card={card}
-                    variant="compact"
-                    onDismiss={() => handleDismissAdvice(card)}
-                    dismissing={dismissingCodes.has(card.advice_code)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
       )}
     </div>
   )
