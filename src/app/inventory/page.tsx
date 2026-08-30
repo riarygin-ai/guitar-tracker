@@ -138,6 +138,20 @@ export default function InventoryPage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isInitializedRef = useRef(false);
+  // Real STATE (not just the ref above) that only becomes true on the
+  // render AFTER initialization actually applied — the write-to-URL effect
+  // below gates on this instead of the ref. This was a confirmed bug: a
+  // plain ref flips synchronously, so when the write-effect ran in the SAME
+  // effect-flush as this init effect (declared right after it), it read
+  // isInitializedRef.current as already true but the FILTER STATE itself
+  // (search/category/channelIds/etc.) was still last render's defaults —
+  // producing one spurious router.replace() with the wrong (default)
+  // params on every URL-driven arrival (e.g. a Listing Dashboard drill-down
+  // briefly writing back /inventory?category=Guitars, stripping channel_id,
+  // before self-correcting one render later). Gating on state instead of a
+  // ref means the write-effect's closure only sees `readyForUrlSync: true`
+  // once React has actually committed the synced filter values too.
+  const [readyForUrlSync, setReadyForUrlSync] = useState(false);
   useEffect(() => {
     if (isInitializedRef.current) return;
     const s = searchParams.get('status');
@@ -165,10 +179,11 @@ export default function InventoryPage() {
     setSelectedChannelCounts(channelCountParam ? channelCountParam.split(',').filter(Boolean) : []);
     if (purposeParam || tagParam) setShowMoreFilters(true);
     isInitializedRef.current = true;
+    setReadyForUrlSync(true);
   }, [searchParams]);
 
   useEffect(() => {
-    if (!isInitializedRef.current) return;
+    if (!readyForUrlSync) return;
     const params = new URLSearchParams();
     if (search) params.set('search', search);
     if (selectedStatuses.length > 0) params.set('status', [...selectedStatuses].sort().join(','));
@@ -182,7 +197,7 @@ export default function InventoryPage() {
     if (selectedChannelCounts.length > 0) params.set('channel_count', [...selectedChannelCounts].sort().join(','));
     const qs = params.toString();
     router.replace(`/inventory${qs ? `?${qs}` : ''}`, { scroll: false });
-  }, [search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds, listingFilter, selectedChannelIds, selectedAgeBuckets, selectedChannelCounts, router]);
+  }, [readyForUrlSync, search, selectedStatuses, selectedCategoryNames, selectedSubtypeNames, selectedPurposeIds, selectedTagIds, listingFilter, selectedChannelIds, selectedAgeBuckets, selectedChannelCounts, router]);
 
   const backQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -342,7 +357,13 @@ export default function InventoryPage() {
 
   const activePurposes = useMemo(() => allPurposes.filter((p) => p.is_active), [allPurposes]);
 
-  const hiddenFilterCount = selectedPurposeIds.length + selectedTagIds.length;
+  // Dynamic Listing Channel options — sourced from Listing Evidence's own
+  // channel_summary (listing-capable channels that actually have active
+  // listings for this user), never a hardcoded channel list.
+  const listingChannelOptions = useMemo(
+    () => (listingEvidence ? listingEvidence.channel_summary.map((c) => ({ id: c.channel_id, name: c.channel_name })) : []),
+    [listingEvidence],
+  );
 
   const hasAnyListingFilterActive = hasAnyListingFilter({
     listingFilter,
@@ -350,6 +371,14 @@ export default function InventoryPage() {
     ageBuckets: selectedAgeBuckets,
     channelCounts: selectedChannelCounts,
   });
+
+  const hiddenFilterCount =
+    selectedPurposeIds.length +
+    selectedTagIds.length +
+    (listingFilter ? 1 : 0) +
+    selectedChannelIds.length +
+    selectedAgeBuckets.length +
+    selectedChannelCounts.length;
 
   const hasActiveFilters =
     search.length > 0 ||
@@ -373,14 +402,56 @@ export default function InventoryPage() {
     setSelectedChannelCounts([]);
   }
 
-  // ── Listing Evidence: fetched lazily, only once a listing-oriented
-  // filter is actually present in the URL — a plain Inventory visit never
-  // pays this extra request. Sourced from Listing Evidence v1.0 exclusively
+  // ── Listing filter conflict handling (More Filters -> Listing) ─────────
+  // Unlisted (zero active listings, by definition) is mutually exclusive
+  // with Channel/Listing Age/Active Channel Count (all only meaningful for
+  // a LISTED item's active listing(s)) — the cleaner of the two options
+  // the task allows: CLEAR the conflicting control rather than disable it,
+  // mirroring this same page's own existing Category -> Type pattern
+  // (selecting a category already clears now-invalid Type selections,
+  // see the Category button's onClick above).
+  function selectListingStatus(value: ListingFilterValue) {
+    setListingFilter((cur) => (cur === value ? null : value));
+    if (value === 'unlisted') {
+      setSelectedChannelIds([]);
+      setSelectedAgeBuckets([]);
+      setSelectedChannelCounts([]);
+    }
+  }
+  function toggleListingChannel(id: number) {
+    setSelectedChannelIds((cur) => (cur.includes(id) ? cur.filter((v) => v !== id) : [...cur, id]));
+    if (listingFilter === 'unlisted') setListingFilter(null);
+  }
+  function toggleListingAgeBucket(bucket: ListingAgeBucketCode) {
+    setSelectedAgeBuckets((cur) => (cur.includes(bucket) ? cur.filter((v) => v !== bucket) : [...cur, bucket]));
+    if (listingFilter === 'unlisted') setListingFilter(null);
+  }
+  function toggleListingChannelCount(count: string) {
+    setSelectedChannelCounts((cur) => (cur.includes(count) ? cur.filter((v) => v !== count) : [...cur, count]));
+    if (listingFilter === 'unlisted') setListingFilter(null);
+  }
+
+  // ── Listing Evidence: fetched lazily — either a listing-oriented filter
+  // is already present in the URL, or the user has opened More Filters
+  // (needed there to populate the dynamic Listing Channel list) — a plain
+  // Inventory visit with More Filters closed never pays this extra
+  // request. Sourced from Listing Evidence v1.0 exclusively
   // (fetchListingEvidence -> GET /api/listing-evidence); never recalculated
   // here (see buildListingLookups above and the Listing Evidence migration's
-  // own "single authoritative source" header note). ─────────────────────
+  // own "single authoritative source" header note).
+  //
+  // listingEvidenceLoading is deliberately OMITTED from the dependency
+  // array (still read in the guard) — including it here was a confirmed
+  // bug: this effect setting listingEvidenceLoading(true) is itself a
+  // dependency change, so the effect immediately re-ran, its own cleanup
+  // marked the in-flight request's `cancelled` flag true, and the ORIGINAL
+  // fetch's `.then()` then discarded a successful response because
+  // `cancelled` was already true — permanently stuck on "Loading listing
+  // filters..." (listingEvidenceLoading never returned to false) even
+  // though the request itself succeeded. See scripts/test-inventory-listing-
+  // drilldown.ts's source-guard regression tests for this. ───────────────
   useEffect(() => {
-    if (!hasAnyListingFilterActive || listingEvidence || listingEvidenceLoading) return;
+    if ((!hasAnyListingFilterActive && !showMoreFilters) || listingEvidence || listingEvidenceLoading) return;
     let cancelled = false;
     setListingEvidenceLoading(true);
     setListingEvidenceError(null);
@@ -394,7 +465,7 @@ export default function InventoryPage() {
       setListingEvidenceLoading(false);
     });
     return () => { cancelled = true; };
-  }, [hasAnyListingFilterActive, listingEvidence, listingEvidenceLoading]);
+  }, [hasAnyListingFilterActive, showMoreFilters, listingEvidence]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const listingLookup = useMemo(
     () => (listingEvidence ? buildListingLookups(listingEvidence) : null),
@@ -783,6 +854,157 @@ export default function InventoryPage() {
               selectedTagIds={selectedTagIds}
               onTagIdsChange={setSelectedTagIds}
             />
+
+            {/* Listing (Listing Evidence v1.0 drill-down filters) — same
+                pill styling/toggle pattern as Purpose above. Selecting
+                Unlisted clears Channel/Age/Channel Count (mutually
+                exclusive — an unlisted item has no active listing to have
+                a channel, age, or channel count); picking any of those
+                three while Unlisted is active clears Unlisted back to All. */}
+            <div>
+              <p className="mb-2 section-label">Listing</p>
+              <div className="space-y-3">
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">Status</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setListingFilter(null)}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                        listingFilter === null
+                          ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                      }`}
+                    >
+                      All
+                    </button>
+                    {(['listed', 'unlisted'] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => selectListingStatus(value)}
+                        className={`rounded-full px-3 py-1.5 text-sm font-medium capitalize transition ${
+                          listingFilter === value
+                            ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                        }`}
+                      >
+                        {value}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Channel{listingEvidenceLoading && <span className="ml-1.5 font-normal normal-case text-slate-400 dark:text-slate-500">Loading…</span>}
+                  </p>
+                  {listingFilter === 'unlisted' ? (
+                    <p className="text-xs text-slate-400 dark:text-slate-500">Not applicable — Unlisted items have no active listing.</p>
+                  ) : listingEvidenceError && !hasAnyListingFilterActive ? (
+                    <p className="text-xs text-rose-500 dark:text-rose-400">{listingEvidenceError}</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedChannelIds([])}
+                        className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                          selectedChannelIds.length === 0
+                            ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                        }`}
+                      >
+                        All
+                      </button>
+                      {listingChannelOptions.map((channel) => (
+                        <button
+                          key={channel.id}
+                          type="button"
+                          onClick={() => toggleListingChannel(channel.id)}
+                          className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                            selectedChannelIds.includes(channel.id)
+                              ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                          }`}
+                        >
+                          {channel.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">Listing Age</p>
+                  {listingFilter === 'unlisted' ? (
+                    <p className="text-xs text-slate-400 dark:text-slate-500">Not applicable — Unlisted items have no active listing.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAgeBuckets([])}
+                        className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                          selectedAgeBuckets.length === 0
+                            ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                        }`}
+                      >
+                        All
+                      </button>
+                      {AGE_BUCKET_VALUES.map((bucket) => (
+                        <button
+                          key={bucket}
+                          type="button"
+                          onClick={() => toggleListingAgeBucket(bucket)}
+                          className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                            selectedAgeBuckets.includes(bucket)
+                              ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                          }`}
+                        >
+                          {AGE_BUCKET_LABELS[bucket]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">Active Channel Count</p>
+                  {listingFilter === 'unlisted' ? (
+                    <p className="text-xs text-slate-400 dark:text-slate-500">Not applicable — Unlisted items have no active listing.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedChannelCounts([])}
+                        className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                          selectedChannelCounts.length === 0
+                            ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                        }`}
+                      >
+                        All
+                      </button>
+                      {(['1', '2', '3_plus'] as const).map((count) => (
+                        <button
+                          key={count}
+                          type="button"
+                          onClick={() => toggleListingChannelCount(count)}
+                          className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                            selectedChannelCounts.includes(count)
+                              ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+                          }`}
+                        >
+                          {count === '3_plus' ? '3+' : count}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </MoreFiltersToggle>
         </div>
       </div>
