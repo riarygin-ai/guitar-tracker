@@ -7,11 +7,15 @@ import { useRouter } from 'next/navigation';
 import ItemPhotos, { type ItemPhotosHandle } from '@/components/ItemPhotos';
 import AiAssistantCard, { type AiAssistantCardHandle } from '@/components/AiAssistantCard';
 import TagsSelector from '@/components/TagsSelector';
+import CopyItemContextButton from '@/components/CopyItemContextButton';
 import type {
   Brand,
   Condition,
+  DealChannel,
   HistoricalAcquisitionMethod,
   InventoryTag,
+  ItemCategory,
+  ItemListing,
   ItemPurpose,
   ItemSubtype,
   InventoryItem,
@@ -24,13 +28,16 @@ import {
   createItemWithHistoricalImport,
   getAcquiredDateForItem,
   getBrands,
+  getDealChannels,
   getHistoricalImportByItemId,
   getInventoryExpensesByItemIds,
   getInventoryItemById,
   getInventoryItemWithValueById,
+  getItemCategories,
   getItemPurposes,
   getItemSubtypes,
   getDealItemsByItemId,
+  getItemListings,
   getItemTags,
   getMainPhotosForItems,
   getPhotoUrl,
@@ -40,6 +47,7 @@ import {
   type HistoricalImportInfo,
 } from '@/lib/supabase';
 import { calculateItemProfitMetrics } from '@/lib/profit';
+import { buildItemContext, type ItemContextListingSummary } from '@/lib/itemContext';
 
 
 const conditionOptions: Array<{ label: string; value: Condition }> = [
@@ -118,6 +126,13 @@ export default function InventoryForm({
   const [allTags,        setAllTags]        = useState<InventoryTag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
 
+  // Reference data + per-item listings for "Copy Item Context" (see
+  // src/lib/itemContext.ts) — categories/channels are loaded once alongside
+  // the other reference data, listings alongside the rest of the item load.
+  const [allCategories, setAllCategories] = useState<ItemCategory[]>([]);
+  const [dealChannels,  setDealChannels]  = useState<DealChannel[]>([]);
+  const [itemListings,  setItemListings]  = useState<ItemListing[]>([]);
+
   // Scroll to photo card when opened, scroll back to form when closed.
   // Runs after React commits DOM changes so layout is stable.
   useEffect(() => {
@@ -161,11 +176,13 @@ export default function InventoryForm({
   useEffect(() => {
     async function loadFormData() {
       setLoading(true);
-      const [brandsResult, subsResult, tagsResult, purposesResult] = await Promise.all([
+      const [brandsResult, subsResult, tagsResult, purposesResult, categoriesResult, channelsResult] = await Promise.all([
         getBrands(),
         getItemSubtypes(),
         getTags(),
         getItemPurposes(),
+        getItemCategories(),
+        getDealChannels(),
       ]);
       setLoading(false);
       if (brandsResult.error) { setError('Could not load brands.'); return; }
@@ -176,6 +193,8 @@ export default function InventoryForm({
       setAllSubtypes(fetchedSubs);
       if (!tagsResult.error) setAllTags((tagsResult.data ?? []) as InventoryTag[]);
       if (!purposesResult.error) setAllPurposes((purposesResult.data ?? []) as ItemPurpose[]);
+      if (!categoriesResult.error) setAllCategories((categoriesResult.data ?? []) as ItemCategory[]);
+      if (!channelsResult.error) setDealChannels((channelsResult.data ?? []) as DealChannel[]);
       setFormDataReady(true);
     }
     loadFormData();
@@ -200,7 +219,7 @@ export default function InventoryForm({
 
     async function loadItem() {
       setLoading(true);
-      const [itemResult, withValueResult, dealItemsResult, photosResult, histImportResult, expensesResult, itemTagsResult, acquiredDateResult] = await Promise.all([
+      const [itemResult, withValueResult, dealItemsResult, photosResult, histImportResult, expensesResult, itemTagsResult, acquiredDateResult, listingsResult] = await Promise.all([
         getInventoryItemById(Number(itemId)),
         getInventoryItemWithValueById(Number(itemId)),
         getDealItemsByItemId(Number(itemId)),
@@ -209,6 +228,7 @@ export default function InventoryForm({
         getInventoryExpensesByItemIds([Number(itemId)]),
         getItemTags(Number(itemId)),
         getAcquiredDateForItem(Number(itemId)),
+        getItemListings(Number(itemId)),
       ]);
       setLoading(false);
 
@@ -275,6 +295,11 @@ export default function InventoryForm({
       if (!itemTagsResult.error && itemTagsResult.data) {
         setSelectedTagIds((itemTagsResult.data as { tag_id: number }[]).map((r) => r.tag_id));
       }
+
+      // Listing history, for the "Copy Item Context" per-platform summary
+      if (!listingsResult.error && listingsResult.data) {
+        setItemListings(listingsResult.data as unknown as ItemListing[]);
+      }
     }
 
     loadItem();
@@ -319,8 +344,14 @@ export default function InventoryForm({
   // right away so the status badge doesn't wait for the form's own Save.
   const handleListingStatusChange = async () => {
     if (!itemId) return;
-    const refreshed = await getInventoryItemById(Number(itemId));
+    const [refreshed, listingsResult] = await Promise.all([
+      getInventoryItemById(Number(itemId)),
+      getItemListings(Number(itemId)),
+    ]);
     if (!refreshed.error && refreshed.data) setExistingItem(refreshed.data);
+    if (!listingsResult.error && listingsResult.data) {
+      setItemListings(listingsResult.data as unknown as ItemListing[]);
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -543,6 +574,65 @@ export default function InventoryForm({
     estimatedSoldValue: parsedEstimated,
     totalExpenses: totalItemExpenses,
   });
+  // "Copy Item Context" derived data — reuses everything this form already
+  // loaded/computed (see src/lib/itemContext.ts for the actual formatting).
+  const tagNames = useMemo(
+    () => allTags.filter((t) => selectedTagIds.includes(t.id)).map((t) => t.name),
+    [allTags, selectedTagIds],
+  );
+  const categoryName = useMemo(
+    () => (selectedSubtype ? allCategories.find((c) => c.id === selectedSubtype.category_id)?.name ?? null : null),
+    [selectedSubtype, allCategories],
+  );
+  const purposeName = useMemo(
+    () => allPurposes.find((p) => p.id === purposeId)?.name ?? null,
+    [allPurposes, purposeId],
+  );
+  const listingContextSummary = useMemo<ItemContextListingSummary[]>(() => {
+    const byChannel = new Map<number, ItemListing[]>();
+    for (const row of itemListings) {
+      const rows = byChannel.get(row.deal_channel_id) ?? [];
+      rows.push(row);
+      byChannel.set(row.deal_channel_id, rows);
+    }
+    const summaries: ItemContextListingSummary[] = [];
+    for (const [channelId, rows] of Array.from(byChannel.entries())) {
+      const channel = dealChannels.find((c) => c.id === channelId);
+      if (!channel) continue;
+      // Newest row (by created_at) that isn't a cancelled cycle and actually
+      // has a listed_at — mirrors getAllListedDates' cancelled-exclusion rule.
+      const display = [...rows]
+        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+        .find((r) => r.status !== 'cancelled' && r.listed_at);
+      if (!display) continue;
+      summaries.push({
+        platformName: channel.name,
+        status: display.status,
+        listedAt: display.listed_at,
+        endedAt: display.ended_at,
+      });
+    }
+    return summaries;
+  }, [itemListings, dealChannels]);
+  const getItemContextText = () => existingItem
+    ? buildItemContext(existingItem, {
+        brandName: brandInput.trim() || null,
+        categoryName,
+        typeName: selectedSubtype?.name ?? null,
+        purposeName,
+        tagNames,
+        valueIn,
+        valueOut,
+        totalExpenses: totalItemExpenses,
+        potentialReward,
+        potentialRoi,
+        realizedGain,
+        realizedRoi,
+        acquiredDate,
+        listings: listingContextSummary,
+      })
+    : '';
+
   const isOwned = existingItem?.status === 'owned' || existingItem?.status === 'listed';
   const isSoldOrTraded = existingItem?.status === 'sold' || existingItem?.status === 'traded';
   const showMetrics = !!itemId && !!existingItem && !hideSidebar;
@@ -1098,8 +1188,9 @@ export default function InventoryForm({
                       </div>
                     )}
 
-                    {/* View Chain — bottom-right of summary card */}
-                    <div className="mt-4 flex justify-end border-t border-slate-100 pt-4 dark:border-slate-700">
+                    {/* Copy Item Context + View Chain — bottom of summary card */}
+                    <div className="mt-4 flex flex-wrap items-start justify-between gap-3 border-t border-slate-100 pt-4 dark:border-slate-700">
+                      <CopyItemContextButton getText={getItemContextText} />
                       <Link
                         href={`/inventory/${itemId}/chain`}
                         className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
