@@ -185,30 +185,70 @@ async function main() {
 
   // ══════════════════════════════════════════════════════════════════════
   // Section A — computeAdviceKey (pure, no DB)
+  //
+  // v2 regression coverage (post-ship audit of commit 6a24a73's v1
+  // algorithm found two fragility bugs, both fixed here — see
+  // src/lib/analytics/advice/adviceKey.ts's own header for the full
+  // rationale):
+  //   1. advice_type is LLM-chosen, not deterministic -> must never affect
+  //      the key.
+  //   2. the full source_ids set is not guaranteed stable across runs (the
+  //      model may add/drop a non-primary supporting source while the core
+  //      condition is unchanged) -> only a single mechanically-selected
+  //      PRIMARY source may affect the key.
   // ══════════════════════════════════════════════════════════════════════
   console.log('\n[A — computeAdviceKey identity rules]');
 
   const heritageV1 = card({ advice_code: 'C1', headline: 'Heritage review', advice: 'Please review Heritage.', source_ids: ['insight:LONG_DOM:item:42'], item_id: 42 });
   const heritageV2Reworded = card({ advice_code: 'C7', headline: 'Consider Heritage', advice: 'Totally different wording this week.', why_it_matters: 'New phrasing.', confidence_label: 'stronger', priority: 'high', source_ids: ['insight:LONG_DOM:item:42'], item_id: 42 });
-  check('same advice_type/item_id/source_ids -> identical advice_key even when advice_code/headline/advice/why_it_matters/confidence_label/priority all differ (wording changes never affect identity)', computeAdviceKey(heritageV1) === computeAdviceKey(heritageV2Reworded));
+  check('same item_id/primary source -> identical advice_key even when advice_code/headline/advice/why_it_matters/confidence_label/priority all differ (wording changes never affect identity)', computeAdviceKey(heritageV1) === computeAdviceKey(heritageV2Reworded));
 
   const differentItem = card({ item_id: 99, source_ids: ['insight:LONG_DOM:item:99'] });
   check('a different item_id produces a different advice_key', computeAdviceKey(heritageV1) !== computeAdviceKey(differentItem));
 
-  const differentSources = card({ source_ids: ['insight:OTHER_FINDING:item:42'] });
-  check('a different source_ids set produces a different advice_key', computeAdviceKey(heritageV1) !== computeAdviceKey(differentSources));
+  const differentItemJustifyingFinding = card({ source_ids: ['insight:OTHER_FINDING:item:42'] });
+  check('a genuinely different item-justifying finding_code (same item) produces a different advice_key', computeAdviceKey(heritageV1) !== computeAdviceKey(differentItemJustifyingFinding));
 
-  const differentType = card({ advice_type: 'action' });
-  check('a different advice_type produces a different advice_key', computeAdviceKey(heritageV1) !== computeAdviceKey(differentType));
+  // ── Regression: advice_type must NEVER affect identity (audit finding 1) ──
+  for (const type of ['action', 'observation', 'watch', 'review'] as const) {
+    check(`advice_type "${type}" alone never changes the advice_key (LLM-chosen, excluded from identity)`, computeAdviceKey(card({ advice_type: type, source_ids: heritageV1.source_ids, item_id: heritageV1.item_id })) === computeAdviceKey(heritageV1));
+  }
+
+  // ── Regression: priority/confidence_label alone must never affect identity ──
+  check('priority alone never changes the advice_key', computeAdviceKey(card({ priority: 'low', source_ids: heritageV1.source_ids, item_id: heritageV1.item_id })) === computeAdviceKey(heritageV1));
+  check('confidence_label alone never changes the advice_key', computeAdviceKey(card({ confidence_label: 'preliminary', source_ids: heritageV1.source_ids, item_id: heritageV1.item_id })) === computeAdviceKey(heritageV1));
 
   const sameSourcesDifferentOrder = card({ source_ids: ['insight:B:item:42', 'insight:A:item:42'] });
   const sameSourcesOriginalOrder = card({ source_ids: ['insight:A:item:42', 'insight:B:item:42'] });
   check('source_ids order never affects advice_key (sorted before keying)', computeAdviceKey(sameSourcesDifferentOrder) === computeAdviceKey(sameSourcesOriginalOrder));
 
+  // ── Regression: an item-level card gaining or losing a NON-primary
+  // supporting source (the model citing an extra corroborating pattern
+  // one week, or not, while the item's own justifying finding is
+  // unchanged) must never affect the key (audit finding 2). ───────────────
+  const itemCardWithOnlyItsOwnSource = card({ item_id: 42, source_ids: ['insight:LONG_DOM:item:42'] });
+  const itemCardWithExtraSupportingPattern = card({ item_id: 42, source_ids: ['insight:LONG_DOM:item:42', 'pattern:DISCOVERY|CATEGORY|category_id=9'] });
+  check('an item-level card citing an EXTRA non-primary supporting pattern still keys identically to the same card without it', computeAdviceKey(itemCardWithOnlyItsOwnSource) === computeAdviceKey(itemCardWithExtraSupportingPattern));
+  const itemCardWithExtraHypothesis = card({ item_id: 42, source_ids: ['insight:LONG_DOM:item:42', 'hypothesis:CATEGORY|category_id=9'] });
+  check('an item-level card citing an extra supporting HYPOTHESIS also keys identically (still anchored on the item-justifying source)', computeAdviceKey(itemCardWithOnlyItsOwnSource) === computeAdviceKey(itemCardWithExtraHypothesis));
+
   const portfolioLevel = card({ item_id: null, source_ids: ['pattern:DISCOVERY|CATEGORY|category_id=1'] });
   const portfolioLevelSameSources = card({ item_id: null, source_ids: ['pattern:DISCOVERY|CATEGORY|category_id=1'], headline: 'Reworded portfolio advice' });
   check('portfolio-level advice (item_id null) is stable across wording changes too', computeAdviceKey(portfolioLevel) === computeAdviceKey(portfolioLevelSameSources));
   check('portfolio-level advice_key differs from an item-specific one citing the same source', computeAdviceKey(portfolioLevel) !== computeAdviceKey(card({ item_id: 5, source_ids: portfolioLevel.source_ids })));
+
+  // ── Regression: a portfolio-level card gaining a NON-primary supporting
+  // hypothesis alongside its already-cited confirmed pattern must not
+  // change the key (pattern outranks hypothesis in the fixed priority). ──
+  const portfolioWithExtraHypothesis = card({ item_id: null, source_ids: ['pattern:DISCOVERY|CATEGORY|category_id=1', 'hypothesis:CHANNEL|channel_id=7'] });
+  check('a portfolio-level card citing an extra supporting hypothesis alongside its confirmed pattern keys identically to the pattern alone', computeAdviceKey(portfolioLevel) === computeAdviceKey(portfolioWithExtraHypothesis));
+
+  // ── Regression: swapping which pattern is actually cited (a genuinely
+  // different confirmed pattern, not an added extra) DOES change the key —
+  // "genuinely different deterministic conditions still produce a
+  // different key" must keep holding under the new algorithm too. ────────
+  const portfolioDifferentPattern = card({ item_id: null, source_ids: ['pattern:DISCOVERY|CHANNEL|channel_id=3'] });
+  check('a genuinely different confirmed pattern (not an addition) produces a different advice_key', computeAdviceKey(portfolioLevel) !== computeAdviceKey(portfolioDifferentPattern));
 
   // ══════════════════════════════════════════════════════════════════════
   // Section B — cross-run resurface simulation (pure filter logic, mirrors
