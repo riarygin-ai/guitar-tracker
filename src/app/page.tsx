@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getLatestCompletedAdviceForCurrentUser } from '@/lib/supabase'
+import { supabase, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getLatestCompletedAdviceForCurrentUser, getActiveAdviceDismissalKeysForCurrentUser } from '@/lib/supabase'
 import type { AnalyticsRunMeta } from '@/types'
-import type { AnalyticsRunAdviceRow } from '@/lib/analytics/advice/types'
+import type { AnalyticsRunAdviceRow, AdviceCard } from '@/lib/analytics/advice/types'
 import { formatDateTime as formatAdviceDateTime } from '@/lib/analytics/advice/presentation'
+import { computeAdviceKey } from '@/lib/analytics/advice/adviceKey'
 import AdviceCardView from '@/components/AdviceCardView'
 
 export default function HomePage() {
@@ -32,6 +33,16 @@ export default function HomePage() {
   const [latestCompletedAdvice, setLatestCompletedAdvice] = useState<{ run: AnalyticsRunMeta; advice: AnalyticsRunAdviceRow } | null>(null)
   const [adviceLoading, setAdviceLoading] = useState(true)
 
+  // ── Advice Dismissal / Resurface v1 ────────────────────────────────────
+  // Independent fetch of the caller's currently-active dismissal keys
+  // (resurface_after in the future), loaded alongside the advice itself.
+  // Rendering waits on BOTH before showing any card, so a dismissed card
+  // never flashes on screen before being filtered out.
+  const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set())
+  const [dismissalsLoading, setDismissalsLoading] = useState(true)
+  const [dismissingCodes, setDismissingCodes] = useState<Set<string>>(new Set())
+  const [dismissToast, setDismissToast] = useState<string | null>(null)
+
   useEffect(() => {
     async function loadLatestCompletedAdvice() {
       setAdviceLoading(true)
@@ -40,7 +51,48 @@ export default function HomePage() {
       setAdviceLoading(false)
     }
     loadLatestCompletedAdvice()
+
+    async function loadDismissals() {
+      setDismissalsLoading(true)
+      const { data } = await getActiveAdviceDismissalKeysForCurrentUser()
+      setDismissedKeys(data ?? new Set())
+      setDismissalsLoading(false)
+    }
+    loadDismissals()
   }, [])
+
+  const visibleAdviceCards = useMemo(() => {
+    const cards = latestCompletedAdvice?.advice.advice?.advice_cards ?? []
+    return cards.filter((card) => !dismissedKeys.has(computeAdviceKey(card)))
+  }, [latestCompletedAdvice, dismissedKeys])
+
+  async function handleDismissAdvice(card: AdviceCard) {
+    if (dismissingCodes.has(card.advice_code) || !latestCompletedAdvice) return
+    setDismissingCodes((prev) => new Set(prev).add(card.advice_code))
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('Not authenticated')
+
+      const res = await fetch('/api/analytics/advice/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ analyticsRunAdviceId: latestCompletedAdvice.advice.id, adviceCode: card.advice_code }),
+      })
+      if (!res.ok) throw new Error('Failed to dismiss advice')
+
+      setDismissedKeys((prev) => new Set(prev).add(computeAdviceKey(card)))
+      setDismissToast('Hidden for 30 days')
+      setTimeout(() => setDismissToast(null), 2500)
+    } catch (err) {
+      console.error('[Dashboard] dismiss advice failed:', err)
+    } finally {
+      setDismissingCodes((prev) => {
+        const next = new Set(prev)
+        next.delete(card.advice_code)
+        return next
+      })
+    }
+  }
 
   useEffect(() => {
     async function loadData() {
@@ -716,13 +768,27 @@ export default function HomePage() {
           Advice generation starts (see src/app/analytics/page.tsx). The
           section renders nothing at all — not even an empty-state message
           — until a completed Advice revision is actually found; a user
-          with no Advice history simply sees the rest of the Dashboard. */}
-      {!adviceLoading && latestCompletedAdvice && (
+          with no Advice history simply sees the rest of the Dashboard.
+          Advice Dismissal / Resurface v1: when the revision HAS cards but
+          every one of them is currently dismissed, the section is hidden
+          the same way — never a large empty panel. */}
+      {!adviceLoading && !dismissalsLoading && latestCompletedAdvice && (
+        (latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 || visibleAdviceCards.length > 0
+      ) && (
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-          <p className="page-overline">Latest Analytics Advice</p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            From the Analytics Run generated {formatAdviceDateTime(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at)}.
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="page-overline">Latest Analytics Advice</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                From the Analytics Run generated {formatAdviceDateTime(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at)}.
+              </p>
+            </div>
+            {dismissToast && (
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-400">
+                {dismissToast}
+              </span>
+            )}
+          </div>
 
           <div className="mt-4">
             {(latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 ? (
@@ -732,8 +798,14 @@ export default function HomePage() {
               </div>
             ) : (
               <div className="grid gap-3 lg:grid-cols-3">
-                {latestCompletedAdvice.advice.advice!.advice_cards.map((card) => (
-                  <AdviceCardView key={card.advice_code} card={card} variant="compact" />
+                {visibleAdviceCards.map((card) => (
+                  <AdviceCardView
+                    key={card.advice_code}
+                    card={card}
+                    variant="compact"
+                    onDismiss={() => handleDismissAdvice(card)}
+                    dismissing={dismissingCodes.has(card.advice_code)}
+                  />
                 ))}
               </div>
             )}

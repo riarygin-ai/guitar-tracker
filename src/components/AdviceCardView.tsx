@@ -53,9 +53,15 @@ export interface AdviceCardViewProps {
    *  mode, since compact never renders a View Evidence control. */
   evidence?: AdviceCardEvidenceAction;
   variant?: AdviceCardVariant;
+  /** Compact-only, Dashboard-only (Advice Dismissal / Resurface v1). When
+   *  provided, renders a low-emphasis "Dismiss" action. Ignored in 'full'
+   *  mode — Run Detail never offers dismissal, it always shows the
+   *  complete original Advice for a run. */
+  onDismiss?: () => void;
+  dismissing?: boolean;
 }
 
-export default function AdviceCardView({ card, evidence, variant = 'full' }: AdviceCardViewProps) {
+export default function AdviceCardView({ card, evidence, variant = 'full', onDismiss, dismissing = false }: AdviceCardViewProps) {
   if (variant === 'compact') {
     return (
       <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-700 dark:bg-slate-700/30">
@@ -66,11 +72,24 @@ export default function AdviceCardView({ card, evidence, variant = 'full' }: Adv
         </div>
         <h4 className="mt-1.5 break-words text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
         <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{card.advice}</p>
-        {card.item_id != null && (
-          <div className="mt-2">
-            <Link href={`/inventory/${card.item_id}`} className="text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
-              Open Item
-            </Link>
+        {(card.item_id != null || onDismiss) && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            {onDismiss ? (
+              <button
+                type="button"
+                onClick={onDismiss}
+                disabled={dismissing}
+                aria-busy={dismissing}
+                className="text-xs font-medium text-slate-400 transition hover:text-slate-600 hover:underline disabled:cursor-not-allowed disabled:opacity-60 dark:text-slate-500 dark:hover:text-slate-300"
+              >
+                {dismissing ? 'Hiding…' : 'Dismiss'}
+              </button>
+            ) : <span />}
+            {card.item_id != null && (
+              <Link href={`/inventory/${card.item_id}`} className="shrink-0 text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
+                Open Item
+              </Link>
+            )}
           </div>
         )}
       </div>

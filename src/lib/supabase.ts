@@ -1448,3 +1448,25 @@ export async function getLatestCompletedAdviceForCurrentUser(): Promise<{
   };
 }
 
+// ── Advice Dismissal / Resurface v1 ────────────────────────────────────────
+// Read-only: which advice_key values are CURRENTLY suppressed (resurface_
+// after in the future) for the caller. RLS on analytics_advice_dismissals
+// scopes this to the caller's own rows alone — never another user's. The
+// Dashboard uses this set to filter cards client-side by the same
+// computeAdviceKey() the dismiss API route recomputes server-side; this
+// function never writes — dismissing goes through POST /api/analytics/
+// advice/dismiss exclusively (service_role — this table has no
+// authenticated write grant at all).
+export async function getActiveAdviceDismissalKeysForCurrentUser(): Promise<{
+  data: Set<string> | null;
+  error: unknown;
+}> {
+  const { data, error } = await supabase
+    .from('analytics_advice_dismissals')
+    .select('advice_key')
+    .gt('resurface_after', new Date().toISOString());
+
+  if (error) return { data: null, error };
+  return { data: new Set((data ?? []).map((row) => row.advice_key as string)), error: null };
+}
+
