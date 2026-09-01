@@ -121,12 +121,12 @@ export default function CopyAnalysisDataControl({ channels }: CopyAnalysisDataCo
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <select
           value={selectedKey}
           onChange={(e) => setSelectedKey(e.target.value)}
           aria-label="Analysis data scope"
-          className="h-9 max-w-[200px] rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200"
+          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 sm:w-auto sm:max-w-[200px]"
         >
           <option value="all">All Inventory</option>
           {channels.map((c) => (
@@ -141,7 +141,7 @@ export default function CopyAnalysisDataControl({ channels }: CopyAnalysisDataCo
           type="button"
           onClick={handleCopy}
           disabled={copyState === 'loading'}
-          className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-slate-950 px-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600"
+          className="inline-flex h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-slate-950 px-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 sm:w-auto sm:shrink-0"
         >
           {copyState === 'loading' && (
             <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white dark:border-slate-900/40 dark:border-t-slate-900" />
@@ -152,7 +152,7 @@ export default function CopyAnalysisDataControl({ channels }: CopyAnalysisDataCo
         <button
           type="button"
           onClick={handlePreview}
-          className="h-9 shrink-0 rounded-lg px-2 text-xs font-medium text-slate-500 underline-offset-2 transition hover:text-slate-700 hover:underline dark:text-slate-400 dark:hover:text-slate-200"
+          className="h-9 shrink-0 self-start rounded-lg px-2 text-xs font-medium text-slate-500 underline-offset-2 transition hover:text-slate-700 hover:underline dark:text-slate-400 dark:hover:text-slate-200 sm:self-auto"
         >
           Preview JSON
         </button>

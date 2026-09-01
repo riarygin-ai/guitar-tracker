@@ -133,7 +133,7 @@ function OverviewSection({ evidence }: { evidence: ListingEvidence }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
       <p className="section-title">Overview</p>
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 md:grid-cols-3 lg:grid-cols-6">
         <StatTile label="Listed Items" value={String(p.distinct_listed_item_count)} caption={`of ${p.open_item_count} open`} href={inventoryUrl({ listing: 'listed' })} />
         <StatTile label="Active Channel Listings" value={String(p.active_channel_listing_count)} caption="item/channel exposures" />
         <StatTile label="Cross-listed Items" value={String(p.cross_listed_item_count)} caption="2+ channels" href={inventoryUrl({ channel_count: '2,3_plus' })} />
@@ -339,13 +339,13 @@ function CrossListingSection({ evidence }: { evidence: ListingEvidence }) {
             {cl.combinations.map((combo) => (
               <li key={combo.label} className="flex items-center justify-between gap-2">
                 {combo.channel_ids.length === 1 ? (
-                  <Link href={inventoryUrl({ channel_id: combo.channel_ids[0] })} className="text-slate-700 hover:underline dark:text-slate-200">
+                  <Link href={inventoryUrl({ channel_id: combo.channel_ids[0] })} className="min-w-0 break-words text-slate-700 hover:underline dark:text-slate-200">
                     {combo.label}
                   </Link>
                 ) : (
-                  <span className="text-slate-700 dark:text-slate-200">{combo.label}</span>
+                  <span className="min-w-0 break-words text-slate-700 dark:text-slate-200">{combo.label}</span>
                 )}
-                <span className="tabular-nums text-slate-500 dark:text-slate-400">{combo.item_count}</span>
+                <span className="shrink-0 tabular-nums text-slate-500 dark:text-slate-400">{combo.item_count}</span>
               </li>
             ))}
           </ul>
@@ -430,9 +430,9 @@ function CategoryChannelSection({ evidence, open, onToggle }: { evidence: Listin
           <div className="space-y-3 md:hidden">
             {matrix.category_totals.map((cat) => (
               <div key={`${cat.category_id}`} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                <div className="flex items-center justify-between">
-                  <p className="font-medium text-slate-900 dark:text-white">{cat.category_name ?? 'Uncategorized'}</p>
-                  <Link href={inventoryUrl({ listing: 'listed', category: cat.category_name ?? undefined })} className="text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="min-w-0 break-words font-medium text-slate-900 dark:text-white">{cat.category_name ?? 'Uncategorized'}</p>
+                  <Link href={inventoryUrl({ listing: 'listed', category: cat.category_name ?? undefined })} className="shrink-0 text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
                     {cat.distinct_listed_item_count} distinct
                   </Link>
                 </div>
