@@ -796,6 +796,21 @@ export default function AdminPage() {
         </div>
       </div>
 
+      {/* ── Lead Log Import ───────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Lead Log Import</h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Configure each user&apos;s GT Lead Log Google Sheet and preview an import. Read-only for now.
+            </p>
+          </div>
+          <Link href="/admin/lead-import" className={btnPrimary}>
+            Open
+          </Link>
+        </div>
+      </div>
+
       {/* ── Debug Tools ───────────────────────────────────────────────── */}
       {/* Raw Listing Evidence JSON — internal/debugging only. The normal
           user-facing GPT export is the Listing Dashboard's Copy Analysis

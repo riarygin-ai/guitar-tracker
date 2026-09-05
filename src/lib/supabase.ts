@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { splitSearchTerms } from '@/lib/search';
 import type { AnalyticsRunAdviceMeta, AnalyticsRunAdviceRow } from '@/lib/analytics/advice/types';
+import type { LeadImportSource, NewLeadImportSource } from '@/lib/leadImport/types';
 import type {
   AiPrompt,
   AnalyticsRunMeta,
@@ -1446,6 +1447,28 @@ export async function getLatestCompletedAdviceForCurrentUser(): Promise<{
     data: { run: winner.run, advice: adviceRow as unknown as AnalyticsRunAdviceRow },
     error: null,
   };
+}
+
+// ─── Lead Import (GT Lead Log) — Phase 1 source configuration ─────────────────
+// Admin-managed only: RLS restricts INSERT/UPDATE to get_app_user_is_admin()
+// (see supabase/migrations/20260908000000_lead_import_sources.sql). SELECT
+// is allowed for the owning user OR an admin. Preview itself never runs
+// through this file — it needs service-role for cross-user reads RLS can't
+// grant, so it goes through POST /api/admin/lead-import/preview instead.
+
+export async function getLeadImportSources() {
+  return supabase.from('lead_import_sources').select('*').order('created_at', { ascending: false });
+}
+
+export async function upsertLeadImportSource(data: NewLeadImportSource) {
+  return supabase
+    .from('lead_import_sources')
+    .upsert(
+      { ...data, source_code: 'GT_LEAD_LOG' as const, provider: 'GOOGLE_SHEETS' as const },
+      { onConflict: 'user_id,source_code' },
+    )
+    .select()
+    .single<LeadImportSource>();
 }
 
 // ── Advice Dismissal / Resurface v1 ────────────────────────────────────────
