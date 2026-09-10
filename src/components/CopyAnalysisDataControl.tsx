@@ -1,59 +1,70 @@
 'use client';
 
-// "Copy Analysis Data" — the normal user-facing GPT export control for the
-// Listing Dashboard. Reuses the exact Bearer-token auth pattern already
-// established for Listing Evidence copying (src/components/
-// CopyListingEvidenceButton.tsx): resolve the current Supabase session at
-// click time, send its access token, never accept/derive a user id
-// client-side. GET /api/listing-analysis-packet resolves the target user
-// from that token server-side.
+// "Copy Analysis Data" / "Download Analysis Data" — the primary
+// user-facing export controls for the Listing Dashboard. Always exports
+// the complete dataset: every currently-open inventory item (listed AND
+// unlisted), each with its full listing history and price history — no
+// scope selector, since there is only one export now (see analysisExport
+// Clipboard.ts / buildAnalysisExportData). Reuses the exact Bearer-token
+// auth pattern already established for Listing Evidence copying (src/
+// components/CopyListingEvidenceButton.tsx): resolve the current Supabase
+// session at click time, send its access token, never accept/derive a
+// user id client-side. GET /api/listing-analysis-export resolves the
+// target user from that token server-side.
+//
+// Per-channel "Copy {Channel} Analysis" quick-copy buttons elsewhere on
+// the page are a separate, narrower feature (src/components/
+// CopyAnalysisScopeButton.tsx) and are unaffected by this control.
 
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
-  createAnalysisPacketCopier,
-  fetchAnalysisPacket,
-  type AnalysisPacketScopeSelection,
-} from '@/lib/analysisPacketClipboard';
-import { formatPacketConfirmationMessage, type ListingAnalysisPacket } from '@/lib/analytics/listingAnalysisPacket';
+  createAnalysisExportCopier,
+  createAnalysisExportDownloader,
+  type AnalysisExportDeps,
+} from '@/lib/analysisExportClipboard';
+import { formatAnalysisExportConfirmationMessage } from '@/lib/analytics/listingAnalysisPacket';
 
-export interface CopyAnalysisDataControlProps {
-  channels: { channel_id: number; channel_name: string }[];
-}
-
-type CopyState = 'idle' | 'loading' | 'success' | 'error';
-type PreviewState = 'idle' | 'loading' | 'error';
+type ActionState = 'idle' | 'loading' | 'success' | 'error';
 
 const RESET_DELAY_MS = 4000;
 
-function selectionKey(selection: AnalysisPacketScopeSelection): string {
-  return selection.scope === 'channel' ? `channel:${selection.channelId}` : selection.scope;
+// Standard Blob + anchor-click download — works in every modern desktop
+// and mobile browser (this is *why* the button exists: pasting a large
+// JSON payload out of a modal on a phone is painful, downloading a file
+// is not). Some older mobile Safari versions open the file in a new tab
+// instead of saving it directly; that's a platform limitation, not
+// something fixable from here.
+function triggerBrowserDownload(filename: string, json: string) {
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
 }
 
-function parseSelectionKey(key: string): AnalysisPacketScopeSelection {
-  if (key === 'all' || key === 'unlisted') return { scope: key };
-  const [, idStr] = key.split(':');
-  return { scope: 'channel', channelId: Number(idStr) };
-}
-
-export default function CopyAnalysisDataControl({ channels }: CopyAnalysisDataControlProps) {
-  const [selectedKey, setSelectedKey] = useState('all');
-
-  const [copyState, setCopyState] = useState<CopyState>('idle');
+export default function CopyAnalysisDataControl() {
+  const [copyState, setCopyState] = useState<ActionState>('idle');
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
 
-  const [previewState, setPreviewState] = useState<PreviewState>('idle');
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [previewPacket, setPreviewPacket] = useState<ListingAnalysisPacket | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [downloadState, setDownloadState] = useState<ActionState>('idle');
+  const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
-  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (resetTimerRef.current) clearTimeout(resetTimerRef.current); }, []);
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const downloadResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+    if (downloadResetTimerRef.current) clearTimeout(downloadResetTimerRef.current);
+  }, []);
 
-  const deps = useRef({
+  const deps = useRef<AnalysisExportDeps>({
     getAccessToken: async () => {
       const { data: { session } } = await supabase.auth.getSession();
       return session?.access_token ?? null;
@@ -65,82 +76,74 @@ export default function CopyAnalysisDataControl({ channels }: CopyAnalysisDataCo
       }
       await navigator.clipboard.writeText(text);
     },
+    downloadFile: triggerBrowserDownload,
   });
 
-  const copierRef = useRef(createAnalysisPacketCopier(deps.current));
+  const copierRef = useRef(createAnalysisExportCopier(deps.current));
+  const downloaderRef = useRef(createAnalysisExportDownloader(deps.current));
 
-  function scheduleReset() {
-    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
-    resetTimerRef.current = setTimeout(() => {
+  const anyLoading = copyState === 'loading' || downloadState === 'loading';
+
+  async function handleCopy() {
+    if (anyLoading) return;
+    setCopyState('loading');
+    setCopyMessage(null);
+
+    const result = await copierRef.current.copy();
+    if (!mountedRef.current) return;
+    if (result.status === 'already_in_progress') { setCopyState('idle'); return; }
+
+    if (result.status === 'success') {
+      setCopyState('success');
+      setCopyMessage(formatAnalysisExportConfirmationMessage(result.data));
+    } else {
+      setCopyState('error');
+      setCopyMessage(result.message);
+    }
+
+    if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+    copyResetTimerRef.current = setTimeout(() => {
       if (!mountedRef.current) return;
       setCopyState('idle');
       setCopyMessage(null);
     }, RESET_DELAY_MS);
   }
 
-  async function handleCopy() {
-    if (copyState === 'loading') return;
-    setCopyState('loading');
-    setCopyMessage(null);
+  async function handleDownload() {
+    if (anyLoading) return;
+    setDownloadState('loading');
+    setDownloadMessage(null);
 
-    const result = await copierRef.current.copy(parseSelectionKey(selectedKey));
+    const result = await downloaderRef.current.download();
     if (!mountedRef.current) return;
-
-    if (result.status === 'already_in_progress') return;
+    if (result.status === 'already_in_progress') { setDownloadState('idle'); return; }
 
     if (result.status === 'success') {
-      setCopyState('success');
-      setCopyMessage(formatPacketConfirmationMessage(result.packet));
-      scheduleReset();
-      return;
-    }
-
-    setCopyState('error');
-    setCopyMessage(result.message);
-    scheduleReset();
-  }
-
-  async function handlePreview() {
-    setPreviewState('loading');
-    setPreviewError(null);
-    setPreviewOpen(true);
-
-    const result = await fetchAnalysisPacket(deps.current, parseSelectionKey(selectedKey));
-    if (!mountedRef.current) return;
-
-    if (result.status === 'success') {
-      setPreviewPacket(result.packet);
-      setPreviewState('idle');
+      setDownloadState('success');
+      setDownloadMessage(`Downloaded ${result.filename}`);
     } else {
-      setPreviewError(result.message);
-      setPreviewState('error');
+      setDownloadState('error');
+      setDownloadMessage(result.message);
     }
+
+    if (downloadResetTimerRef.current) clearTimeout(downloadResetTimerRef.current);
+    downloadResetTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current) return;
+      setDownloadState('idle');
+      setDownloadMessage(null);
+    }, RESET_DELAY_MS);
   }
 
   const copyLabel = copyState === 'loading' ? 'Copying…' : copyState === 'success' ? 'Copied' : 'Copy Analysis Data';
+  const downloadLabel = downloadState === 'loading' ? 'Preparing…' : downloadState === 'success' ? 'Downloaded' : 'Download Analysis Data';
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-        <select
-          value={selectedKey}
-          onChange={(e) => setSelectedKey(e.target.value)}
-          aria-label="Analysis data scope"
-          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 sm:w-auto sm:max-w-[200px]"
-        >
-          <option value="all">All Inventory</option>
-          {channels.map((c) => (
-            <option key={c.channel_id} value={selectionKey({ scope: 'channel', channelId: c.channel_id })}>
-              {c.channel_name}
-            </option>
-          ))}
-          <option value="unlisted">Unlisted Inventory</option>
-        </select>
-
         <button
           type="button"
           onClick={handleCopy}
-          disabled={copyState === 'loading'}
+          disabled={anyLoading}
           className="inline-flex h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-slate-950 px-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:disabled:bg-slate-600 sm:w-auto sm:shrink-0"
         >
           {copyState === 'loading' && (
@@ -151,10 +154,14 @@ export default function CopyAnalysisDataControl({ channels }: CopyAnalysisDataCo
 
         <button
           type="button"
-          onClick={handlePreview}
-          className="h-9 shrink-0 self-start rounded-lg px-2 text-xs font-medium text-slate-500 underline-offset-2 transition hover:text-slate-700 hover:underline dark:text-slate-400 dark:hover:text-slate-200 sm:self-auto"
+          onClick={handleDownload}
+          disabled={anyLoading}
+          className="inline-flex h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 sm:w-auto sm:shrink-0"
         >
-          Preview JSON
+          {downloadState === 'loading' && (
+            <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-slate-400/40 border-t-slate-500 dark:border-slate-300/30 dark:border-t-slate-300" />
+          )}
+          {downloadLabel}
         </button>
       </div>
 
@@ -163,68 +170,11 @@ export default function CopyAnalysisDataControl({ channels }: CopyAnalysisDataCo
           {copyMessage}
         </p>
       )}
-
-      {previewOpen && (
-        <PreviewModal
-          state={previewState}
-          error={previewError}
-          packet={previewPacket}
-          onClose={() => setPreviewOpen(false)}
-        />
+      {downloadMessage && (
+        <p className={`text-xs ${downloadState === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+          {downloadMessage}
+        </p>
       )}
-    </div>
-  );
-}
-
-function PreviewModal({
-  state,
-  error,
-  packet,
-  onClose,
-}: {
-  state: PreviewState;
-  error: string | null;
-  packet: ListingAnalysisPacket | null;
-  onClose: () => void;
-}) {
-  const json = packet ? JSON.stringify(packet, null, 2) : null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4"
-      onClick={onClose}
-      role="presentation"
-    >
-      <div
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-t-2xl border border-slate-200 bg-white shadow-xl sm:rounded-2xl dark:border-slate-700 dark:bg-slate-800"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Analysis data preview"
-      >
-        <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-700">
-          <p className="text-sm font-semibold text-slate-900 dark:text-white">Preview JSON</p>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close preview"
-            className="rounded-lg p-1 text-slate-500 transition hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto p-4">
-          {state === 'loading' ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400">Loading preview…</p>
-          ) : state === 'error' ? (
-            <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
-          ) : (
-            <pre className="whitespace-pre-wrap break-words text-xs text-slate-700 dark:text-slate-300">{json}</pre>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

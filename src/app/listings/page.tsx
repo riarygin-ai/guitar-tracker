@@ -8,7 +8,7 @@
 // for current listing state; Dashboard/Analysis Packet/drill-down must
 // never recompute it independently).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import CopyAnalysisDataControl from '@/components/CopyAnalysisDataControl';
@@ -52,11 +52,6 @@ export default function ListingsPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const channels = useMemo(
-    () => (evidence ? evidence.channel_summary.map((c) => ({ channel_id: c.channel_id, channel_name: c.channel_name })) : []),
-    [evidence],
-  );
-
   const businessPurposeId = evidence ? findPurposeId(evidence, 'Business') : null;
   const hybridPurposeId = evidence ? findPurposeId(evidence, 'Hybrid') : null;
 
@@ -69,7 +64,7 @@ export default function ListingsPage() {
             Current listing state, sourced from Listing Evidence v1.0 — visibility and drill-down only, no recommendations.
           </p>
         }
-        action={evidence ? <CopyAnalysisDataControl channels={channels} /> : undefined}
+        action={evidence ? <CopyAnalysisDataControl /> : undefined}
       />
 
       {loading && (
@@ -522,10 +517,6 @@ function UnlistedSection({
           <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{personal.open} open · {personal.listed} listed · {personal.unlisted} unlisted</p>
           <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">Not a listing-optimization target — informational only.</p>
         </div>
-      </div>
-
-      <div className="mt-4">
-        <CopyAnalysisScopeButton selection={{ scope: 'unlisted' }} label="Copy Unlisted Analysis" />
       </div>
     </div>
   );
