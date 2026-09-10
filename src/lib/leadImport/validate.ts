@@ -7,6 +7,12 @@
 // go). Classification is INVALID whenever any 'error'-severity issue
 // exists; SOURCE_OLDER is a warning, never an error, and never blocks a
 // row from being otherwise well-formed.
+//
+// Phase 2 note: this function additionally returns the row's `normalized`
+// payload (non-null only for rows with no error-severity issue), so the
+// importer applies exactly the values this validation pass accepted rather
+// than re-parsing the sheet through a second set of rules. Preview strips
+// that field before anything reaches a browser — see preview.ts.
 
 import {
   KNOWN_CHANNEL_NAMES,
@@ -16,10 +22,13 @@ import {
   OFFER_TYPE_VALUES,
   OUTCOME_REASON_VALUES,
   type LeadQuality,
+  type LeadStatus,
+  type NormalizedLeadRow,
   type OfferType,
+  type OutcomeReason,
   type RawSheetRow,
   type RowClassification,
-  type RowPreviewResult,
+  type RowValidationResult,
   type ValidationIssue,
 } from './types';
 import { ROW_ISSUE, ROW_WARNING } from './errorCodes';
@@ -63,7 +72,7 @@ function isKnownEnumValue<T extends string>(values: readonly T[], value: string)
   return (values as readonly string[]).includes(value);
 }
 
-export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext): RowPreviewResult {
+export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext): RowValidationResult {
   const { rowNumber, cells } = raw;
   const issues: ValidationIssue[] = [];
 
@@ -238,17 +247,27 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
 
   // ── status ─────────────────────────────────────────────────────────────
   const statusRaw = cellToTrimmedStringOrNull(cells.status);
+  let leadStatus: LeadStatus | null = null;
   if (statusRaw === null) {
     issues.push(issue('error', ROW_ISSUE.MISSING_STATUS, 'status is required.', at2()));
   } else if (!isKnownEnumValue(LEAD_STATUS_VALUES, statusRaw)) {
     issues.push(issue('error', ROW_ISSUE.INVALID_STATUS, `status "${statusRaw}" is not a recognized value.`, at2()));
+  } else {
+    leadStatus = statusRaw;
   }
 
   // ── outcome_reason (nullable) ──────────────────────────────────────────
   const outcomeReasonRaw = cellToTrimmedStringOrNull(cells.outcome_reason);
+  let outcomeReason: OutcomeReason | null = null;
   if (outcomeReasonRaw !== null && !isKnownEnumValue(OUTCOME_REASON_VALUES, outcomeReasonRaw)) {
     issues.push(issue('error', ROW_ISSUE.INVALID_OUTCOME_REASON, `outcome_reason "${outcomeReasonRaw}" is not a recognized value.`, at2()));
+  } else {
+    outcomeReason = outcomeReasonRaw as OutcomeReason | null;
   }
+
+  // ── free-text passthrough fields (never validated beyond blank -> NULL) ─
+  const tradeItem = cellToTrimmedStringOrNull(cells.trade_item);
+  const notes = cellToTrimmedStringOrNull(cells.notes);
 
   // ── item ownership (Part 5) — runs whenever item_id parsed, regardless
   // of other field errors ───────────────────────────────────────────────
@@ -311,5 +330,51 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
 
   const finalIssues = issues.map((i) => ({ ...i, classification }));
 
-  return { rowNumber, leadId, itemId, classification, issues: finalIssues };
+  // ── Normalized payload (Phase 2) ──────────────────────────────────────
+  // Built only from values this very pass accepted, and only when the row
+  // carries no error-severity issue — so an INVALID row can never produce
+  // something writable. Every non-null assertion below is guarded by
+  // `!hasErrors`: each of these fields raises an error-severity issue when
+  // it fails to parse or is missing.
+  const normalized: NormalizedLeadRow | null =
+    hasErrors ||
+    leadId === null ||
+    itemId === null ||
+    sourceUpdatedAt === null ||
+    leadQuality === null ||
+    offerType === null ||
+    leadStatus === null
+      ? null
+      : {
+          sheetRowNumber: rowNumber,
+          leadId,
+          inventoryItemId: itemId,
+          firstContactAt: firstContactParsed.ok ? firstContactParsed.value : null,
+          lastContactAt: lastContactParsed.ok ? lastContactParsed.value : null,
+          sourceChannel,
+          dealChannelId,
+          buyerMessageCount: buyerCountParsed.ok ? buyerCountParsed.value : null,
+          ourMessageCount: ourCountParsed.ok ? ourCountParsed.value : null,
+          leadQuality,
+          offerType,
+          initialCashOffer: initialCashParsed.ok ? initialCashParsed.value : null,
+          bestCashOffer: bestCashParsed.ok ? bestCashParsed.value : null,
+          tradeItem,
+          cashComponent: cashComponentParsed.ok ? cashComponentParsed.value : null,
+          tradeEstValue: tradeEstValueParsed.ok ? tradeEstValueParsed.value : null,
+          status: leadStatus,
+          outcomeReason,
+          notes,
+          sourceUpdatedAt,
+        };
+
+  return {
+    rowNumber,
+    leadId,
+    itemId,
+    classification,
+    issues: finalIssues,
+    normalized,
+    parsedSourceUpdatedAt: sourceUpdatedAt,
+  };
 }

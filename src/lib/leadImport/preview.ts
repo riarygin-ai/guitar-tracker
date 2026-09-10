@@ -9,8 +9,16 @@ import { fetchSheetValues, GoogleSheetsError } from './googleSheets';
 import { buildRawRows, parseHeaders } from './normalize';
 import { validateAndClassifyRow, type ExistingLeadInfo, type ValidationContext } from './validate';
 import { KNOWN_CHANNEL_NAMES } from './types';
-import { ROW_ISSUE, SOURCE_FATAL } from './errorCodes';
-import type { LeadImportSource, PreviewResult, RowPreviewResult, SheetCellValue, ValidationIssue } from './types';
+import { SOURCE_FATAL } from './errorCodes';
+import type { LeadImportSource, PreviewResult, RowValidationResult, SheetCellValue, ValidationIssue } from './types';
+
+// One classification pass over a whole sheet: `preview` is the
+// browser-safe summary, `rows` the server-only detail (including each
+// valid row's normalized payload) the importer applies from.
+export interface DetailedClassification {
+  preview: PreviewResult;
+  rows: RowValidationResult[];
+}
 
 function emptyCounts() {
   return { rowsScanned: 0, valid: 0, new: 0, updates: 0, unchanged: 0, sourceOlder: 0, invalid: 0, warnings: 0 };
@@ -108,39 +116,71 @@ export interface RunPreviewParams {
   source: LeadImportSource;
 }
 
-export async function runLeadImportPreview({ serviceClient, source }: RunPreviewParams): Promise<PreviewResult> {
-  let values: SheetCellValue[][];
+// Reads one source's whole sheet, mapping a GoogleSheetsError into the same
+// source-level fatal issue Preview reports rather than throwing. Shared by
+// Preview and Import so both hit the source exactly the same way — Import
+// re-reads through this too, never trusting a Preview result the browser
+// sends back (see src/lib/leadImport/importRun.ts).
+export type SourceReadResult =
+  | { ok: true; values: SheetCellValue[][] }
+  | { ok: false; fatalIssue: ValidationIssue };
+
+export async function readSourceSheet(source: LeadImportSource): Promise<SourceReadResult> {
   try {
-    values = await fetchSheetValues(source.spreadsheet_id, source.sheet_name);
+    return { ok: true, values: await fetchSheetValues(source.spreadsheet_id, source.sheet_name) };
   } catch (err) {
     if (err instanceof GoogleSheetsError) {
-      return fatalResult([
-        { rowNumber: null, leadId: null, itemId: null, classification: null, severity: 'error', code: err.code, message: err.message },
-      ]);
+      return {
+        ok: false,
+        fatalIssue: {
+          rowNumber: null, leadId: null, itemId: null, classification: null,
+          severity: 'error', code: err.code, message: err.message,
+        },
+      };
     }
     throw err;
   }
-
-  return classifySheetValues(values, source, serviceClient);
 }
 
-// The classification core, split out from runLeadImportPreview so tests can
-// drive it with an in-memory `values` array (no real Google Sheets call —
-// see scripts/test-lead-import.ts) while production always goes through
-// runLeadImportPreview's fetchSheetValues() call above.
+export async function runLeadImportPreview({ serviceClient, source }: RunPreviewParams): Promise<PreviewResult> {
+  const read = await readSourceSheet(source);
+  if (!read.ok) return fatalResult([read.fatalIssue]);
+  return classifySheetValues(read.values, source, serviceClient);
+}
+
+// Preview's browser-facing view of a classification pass: identical to
+// classifySheetValuesDetailed() with every row's server-only `normalized`
+// payload (which carries sheet `notes`) stripped off.
+//
+// Split out from runLeadImportPreview so tests can drive it with an
+// in-memory `values` array (no real Google Sheets call — see
+// scripts/test-lead-import.ts) while production always goes through
+// runLeadImportPreview's readSourceSheet() call above.
 export async function classifySheetValues(
   values: SheetCellValue[][],
   source: LeadImportSource,
   serviceClient: SupabaseClient,
 ): Promise<PreviewResult> {
+  const { preview } = await classifySheetValuesDetailed(values, source, serviceClient);
+  return preview;
+}
+
+// The single classification core. Import calls this directly for the
+// normalized payloads; Preview calls it through classifySheetValues()
+// above. There is deliberately no second parsing/validation path.
+export async function classifySheetValuesDetailed(
+  values: SheetCellValue[][],
+  source: LeadImportSource,
+  serviceClient: SupabaseClient,
+): Promise<DetailedClassification> {
   const headerRow = values[0] ?? [];
   const { headerIndex, fatalIssues: headerFatalIssues, warnings: headerWarnings } = parseHeaders(headerRow);
-  if (headerFatalIssues.length > 0) return fatalResult(headerFatalIssues);
+  if (headerFatalIssues.length > 0) return { preview: fatalResult(headerFatalIssues), rows: [] };
 
   const rawRows = buildRawRows(values.slice(1), headerIndex);
 
   const dupIssues = detectDuplicateLeadIds(rawRows);
-  if (dupIssues.length > 0) return fatalResult(dupIssues);
+  if (dupIssues.length > 0) return { preview: fatalResult(dupIssues), rows: [] };
 
   const itemIds = Array.from(new Set(
     rawRows
@@ -162,7 +202,7 @@ export async function classifySheetValues(
     itemOwnerByItemId,
   };
 
-  const rows: RowPreviewResult[] = rawRows.map((raw) => validateAndClassifyRow(raw, ctx));
+  const rows: RowValidationResult[] = rawRows.map((raw) => validateAndClassifyRow(raw, ctx));
 
   const counts = emptyCounts();
   counts.rowsScanned = rows.length;
@@ -178,24 +218,31 @@ export async function classifySheetValues(
     }
     counts.warnings += row.issues.filter((i) => i.severity === 'warning').length;
 
-    const rowUpdatedAtIssue = row.issues.find((i) => i.code === ROW_ISSUE.INVALID_UPDATED_AT || i.code === ROW_ISSUE.MISSING_UPDATED_AT);
-    if (!rowUpdatedAtIssue) {
-      const cellsRow = rawRows.find((r) => r.rowNumber === row.rowNumber);
-      const updatedAtCell = cellsRow?.cells.updated_at;
-      if (typeof updatedAtCell === 'string' || typeof updatedAtCell === 'number') {
-        const iso = new Date(updatedAtCell).toISOString();
-        if (!maxSourceUpdatedAtObserved || iso > maxSourceUpdatedAtObserved) maxSourceUpdatedAtObserved = iso;
+    // MAX over every row whose updated_at itself parsed — a row that is
+    // INVALID for some *other* reason still contributes an observed source
+    // timestamp. Read from the validation pass's own normalized value
+    // rather than re-derived from the raw cell, so a Sheets date serial is
+    // interpreted by the same rule cellToUtcTimestampOrNull() applied.
+    if (row.parsedSourceUpdatedAt !== null) {
+      if (!maxSourceUpdatedAtObserved || row.parsedSourceUpdatedAt > maxSourceUpdatedAtObserved) {
+        maxSourceUpdatedAtObserved = row.parsedSourceUpdatedAt;
       }
     }
   }
   counts.warnings += headerWarnings.length;
 
-  return {
+  const preview: PreviewResult = {
     fatal: false,
     fatalIssues: [],
     sourceWarnings: headerWarnings,
     counts,
-    rows,
+    // Strip the server-only fields — this object is what the Preview API
+    // returns to the browser.
+    rows: rows.map(({ rowNumber, leadId, itemId, classification, issues }) => ({
+      rowNumber, leadId, itemId, classification, issues,
+    })),
     maxSourceUpdatedAtObserved,
   };
+
+  return { preview, rows };
 }

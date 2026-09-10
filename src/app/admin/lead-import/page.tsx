@@ -1,12 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import { getLeadImportSources, getOrCreateAppUser, supabase, upsertLeadImportSource } from '@/lib/supabase';
 import { extractSpreadsheetId } from '@/lib/leadImport/spreadsheetId';
 import type { AppUser } from '@/types';
-import type { LeadImportSource, PreviewResult, RowClassification } from '@/lib/leadImport/types';
+import type {
+  ImportRowResult,
+  ImportRunOutcome,
+  ImportRunStatus,
+  LeadImportRunRow,
+  LeadImportRunSummary,
+  LeadImportSource,
+  PreviewResult,
+  RowClassification,
+} from '@/lib/leadImport/types';
 
 interface PickerUser {
   id: number;
@@ -26,6 +35,37 @@ const CLASSIFICATION_STYLES: Record<RowClassification, string> = {
   SOURCE_OLDER: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
   INVALID: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
 };
+
+const RUN_STATUS_STYLES: Record<ImportRunStatus, string> = {
+  RUNNING: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
+  COMPLETED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  COMPLETED_WITH_ERRORS: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  FAILED: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
+};
+
+const RUN_STATUS_LABELS: Record<ImportRunStatus, string> = {
+  RUNNING: 'Running',
+  COMPLETED: 'Completed',
+  COMPLETED_WITH_ERRORS: 'Completed with errors',
+  FAILED: 'Failed',
+};
+
+const ROW_RESULT_LABELS: Record<ImportRowResult, string> = {
+  INSERTED: 'Inserted',
+  UPDATED: 'Updated',
+  SKIPPED_UNCHANGED: 'Skipped — unchanged',
+  SKIPPED_SOURCE_OLDER: 'Skipped — source older',
+  SKIPPED_INVALID: 'Skipped — invalid',
+  SKIPPED_NOT_APPLIED: 'Not applied',
+  FAILED: 'Failed',
+};
+
+function formatDuration(startedAt: string, completedAt: string | null): string {
+  if (!completedAt) return '—';
+  const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
 
 export default function LeadImportAdminPage() {
   const router = useRouter();
@@ -52,7 +92,28 @@ export default function LeadImportAdminPage() {
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
   const [issueFilter, setIssueFilter] = useState<'all' | RowClassification>('INVALID');
 
+  const [importing, setImporting] = useState(false);
+  const [confirmingImport, setConfirmingImport] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importOutcome, setImportOutcome] = useState<ImportRunOutcome | null>(null);
+
+  const [runs, setRuns] = useState<LeadImportRunSummary[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
+  const [runRows, setRunRows] = useState<Record<number, LeadImportRunRow[]>>({});
+  const [runRowsLoading, setRunRowsLoading] = useState(false);
+
   const currentSource = selectedUserId != null ? sources.find((s) => s.user_id === selectedUserId) ?? null : null;
+
+  // The number of rows an Import would actually write. "Changes" rather
+  // than "leads" because a run can carry inserts and updates together.
+  const pendingChangeCount =
+    previewResult && !previewResult.fatal ? previewResult.counts.new + previewResult.counts.updates : 0;
+
+  async function accessToken(): Promise<string | null> {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  }
 
   // ── Auth guard ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -103,7 +164,38 @@ export default function LeadImportAdminPage() {
     setSavedAt(null);
     setPreviewResult(null);
     setPreviewError(null);
+    setImportOutcome(null);
+    setImportError(null);
+    setConfirmingImport(false);
+    setExpandedRunId(null);
   }, [selectedUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Import history for the selected source ───────────────────────────────
+  const currentSourceId = currentSource?.id ?? null;
+
+  const loadRuns = useCallback(async (sourceId: number) => {
+    setRunsLoading(true);
+    try {
+      const token = await accessToken();
+      if (!token) return;
+      const res = await fetch(`/api/admin/lead-import/runs?sourceId=${sourceId}&limit=10`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const payload = (await res.json()) as { runs: LeadImportRunSummary[] };
+      setRuns(payload.runs ?? []);
+    } catch {
+      // History is supplementary — a failed fetch never blocks the page.
+    } finally {
+      setRunsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user?.admin) return;
+    if (currentSourceId == null) { setRuns([]); return; }
+    loadRuns(currentSourceId);
+  }, [user, currentSourceId, loadRuns]);
 
   async function handleSave() {
     if (selectedUserId == null) return;
@@ -140,14 +232,14 @@ export default function LeadImportAdminPage() {
     setPreviewResult(null);
   }
 
-  async function handlePreview() {
-    if (!currentSource) return;
+  async function runPreview(sourceId: number) {
     setPreviewLoading(true);
     setPreviewError(null);
     setPreviewResult(null);
+    setConfirmingImport(false);
 
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
+    const token = await accessToken();
+    if (!token) {
       setPreviewLoading(false);
       setPreviewError('Not authenticated — please sign in again.');
       return;
@@ -156,8 +248,8 @@ export default function LeadImportAdminPage() {
     try {
       const res = await fetch('/api/admin/lead-import/preview', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ sourceId: currentSource.id }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ sourceId }),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -170,6 +262,78 @@ export default function LeadImportAdminPage() {
       setPreviewError('Preview failed (network error).');
     } finally {
       setPreviewLoading(false);
+    }
+  }
+
+  async function handlePreview() {
+    if (!currentSource) return;
+    setImportOutcome(null);
+    setImportError(null);
+    await runPreview(currentSource.id);
+  }
+
+  // Sends nothing but the source id: the server re-reads the sheet,
+  // re-validates and re-classifies before writing anything, so the Preview
+  // shown above is never the thing that gets imported.
+  async function handleImport() {
+    if (!currentSource || importing) return;
+    setConfirmingImport(false);
+    setImporting(true);
+    setImportError(null);
+    setImportOutcome(null);
+
+    const token = await accessToken();
+    if (!token) {
+      setImporting(false);
+      setImportError('Not authenticated — please sign in again.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin/lead-import/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ sourceId: currentSource.id }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setImportError(payload.error || 'Import failed.');
+        return;
+      }
+      setImportOutcome(payload.result as ImportRunOutcome);
+    } catch {
+      setImportError('Import failed (network error).');
+    } finally {
+      setImporting(false);
+      // Re-run Preview straight away so the page shows the post-import
+      // state (a clean second run should report every row UNCHANGED), and
+      // refresh the history plus the source's own last-import timestamp.
+      const refreshedSources = await getLeadImportSources();
+      if (!refreshedSources.error) setSources((refreshedSources.data as LeadImportSource[]) ?? []);
+      await loadRuns(currentSource.id);
+      await runPreview(currentSource.id);
+    }
+  }
+
+  async function toggleRunDetail(runId: number) {
+    if (expandedRunId === runId) { setExpandedRunId(null); return; }
+    setExpandedRunId(runId);
+    if (runRows[runId]) return;
+
+    setRunRowsLoading(true);
+    try {
+      const token = await accessToken();
+      if (!token) return;
+      const res = await fetch(`/api/admin/lead-import/runs/${runId}/rows`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const payload = (await res.json()) as { rows: LeadImportRunRow[] };
+      setRunRows((prev) => ({ ...prev, [runId]: payload.rows ?? [] }));
+    } catch {
+      // Leave the row list empty — the run header still tells the story.
+    } finally {
+      setRunRowsLoading(false);
     }
   }
 
@@ -212,7 +376,8 @@ export default function LeadImportAdminPage() {
         overline="Admin · Lead Log Import"
         summary={
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Configure each user&apos;s GT Lead Log spreadsheet and preview what an import would do. Read-only — no leads are written yet.
+            Configure each user&apos;s GT Lead Log spreadsheet, preview what an import would do, then import. Importing re-reads
+            the whole sheet server-side and only writes new or genuinely newer rows — it never deletes a lead.
           </p>
         }
       />
@@ -285,16 +450,20 @@ export default function LeadImportAdminPage() {
           <button
             type="button"
             onClick={handlePreview}
-            disabled={previewLoading || !currentSource}
+            disabled={previewLoading || importing || !currentSource}
             className={btnSecondary}
             title={!currentSource ? 'Save the source configuration first' : undefined}
           >
             {previewLoading ? 'Running Preview…' : 'Preview Lead Import'}
           </button>
         </div>
-        <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-          Import will be enabled after preview validation is reviewed.
-        </p>
+        {currentSource && (
+          <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+            {currentSource.last_successful_import_at
+              ? `Last successful import ${new Date(currentSource.last_successful_import_at).toLocaleString()}.`
+              : 'This source has never been imported.'}
+          </p>
+        )}
       </div>
 
       {/* ── Preview result ────────────────────────────────────────────── */}
@@ -314,6 +483,55 @@ export default function LeadImportAdminPage() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* ── Import result ─────────────────────────────────────────────── */}
+      {importError && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-300">
+          {importError}
+        </div>
+      )}
+
+      {importOutcome && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Import result</h2>
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${RUN_STATUS_STYLES[importOutcome.status]}`}>
+              {RUN_STATUS_LABELS[importOutcome.status]}
+            </span>
+            <span className="text-xs text-slate-400 dark:text-slate-500">Run #{importOutcome.runId}</span>
+          </div>
+
+          {importOutcome.errorSummary && (
+            <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{importOutcome.errorSummary}</p>
+          )}
+          {importOutcome.fatalIssues.map((issue, i) => (
+            <p key={i} className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+              <span className="font-mono">{issue.code}</span> — {issue.message}
+            </p>
+          ))}
+
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {([
+              ['Inserted', importOutcome.counts.inserted, CLASSIFICATION_STYLES.NEW],
+              ['Updated', importOutcome.counts.updated, CLASSIFICATION_STYLES.UPDATE],
+              ['Unchanged', importOutcome.counts.unchanged, CLASSIFICATION_STYLES.UNCHANGED],
+              ['Invalid skipped', importOutcome.counts.invalid, CLASSIFICATION_STYLES.INVALID],
+              ['Source older skipped', importOutcome.counts.sourceOlder, CLASSIFICATION_STYLES.SOURCE_OLDER],
+            ] as [string, number, string][]).map(([label, value, style]) => (
+              <div key={label} className={`rounded-xl border border-slate-200 p-3 text-center dark:border-slate-700 ${style}`}>
+                <p className="text-lg font-semibold">{value}</p>
+                <p className="text-xs opacity-80">{label}</p>
+              </div>
+            ))}
+          </div>
+
+          {importOutcome.counts.failed > 0 && (
+            <p className="mt-3 text-xs text-rose-600 dark:text-rose-400">
+              {importOutcome.counts.failed} eligible row(s) were not applied. Nothing was partially written — see the run detail below.
+            </p>
+          )}
         </div>
       )}
 
@@ -344,6 +562,52 @@ export default function LeadImportAdminPage() {
                 <p className="text-xs opacity-80">{label}</p>
               </div>
             ))}
+          </div>
+
+          {/* ── Import action ──────────────────────────────────────── */}
+          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700/30">
+            {pendingChangeCount === 0 ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <button type="button" disabled className={btnPrimary}>No changes to import</button>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Every scanned row already matches what is stored.
+                </p>
+              </div>
+            ) : confirmingImport ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                  Import {pendingChangeCount} {pendingChangeCount === 1 ? 'change' : 'changes'} from {currentSource?.source_name}?
+                </p>
+                <button type="button" onClick={handleImport} disabled={importing} className={btnPrimary}>
+                  {importing ? 'Importing…' : 'Yes, import'}
+                </button>
+                <button type="button" onClick={() => setConfirmingImport(false)} disabled={importing} className={btnSecondary}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingImport(true)}
+                  disabled={importing || previewLoading}
+                  className={btnPrimary}
+                >
+                  {importing ? (
+                    <span className="flex items-center gap-2">
+                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                      Importing…
+                    </span>
+                  ) : (
+                    `Import ${pendingChangeCount} ${pendingChangeCount === 1 ? 'change' : 'changes'}`
+                  )}
+                </button>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {previewResult.counts.new} new · {previewResult.counts.updates} updated
+                  {previewResult.counts.invalid > 0 && ` · ${previewResult.counts.invalid} invalid row(s) will be skipped`}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-1.5">
@@ -391,6 +655,115 @@ export default function LeadImportAdminPage() {
               </ul>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── Import history ────────────────────────────────────────────── */}
+      {currentSource && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Recent imports</h2>
+            <button
+              type="button"
+              onClick={() => loadRuns(currentSource.id)}
+              disabled={runsLoading || importing}
+              className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline disabled:opacity-50 dark:text-slate-400"
+            >
+              {runsLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+
+          {runs.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+              {runsLoading ? 'Loading…' : 'No imports have been run for this source yet.'}
+            </p>
+          ) : (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[46rem] text-left text-sm">
+                <thead>
+                  <tr className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                    <th className="py-2 pr-3 font-medium">When</th>
+                    <th className="py-2 pr-3 font-medium">Source / user</th>
+                    <th className="py-2 pr-3 font-medium">Status</th>
+                    <th className="py-2 pr-3 text-right font-medium">Scanned</th>
+                    <th className="py-2 pr-3 text-right font-medium">Inserted</th>
+                    <th className="py-2 pr-3 text-right font-medium">Updated</th>
+                    <th className="py-2 pr-3 text-right font-medium">Invalid</th>
+                    <th className="py-2 pr-3 text-right font-medium">Took</th>
+                    <th className="py-2 font-medium" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                  {runs.map((run) => (
+                    <Fragment key={run.id}>
+                      <tr className="text-slate-700 dark:text-slate-200">
+                        <td className="py-2 pr-3 whitespace-nowrap">{new Date(run.started_at).toLocaleString()}</td>
+                        <td className="py-2 pr-3">
+                          <span className="block truncate">{run.source_name}</span>
+                          {run.user_display_name && (
+                            <span className="block text-xs text-slate-400 dark:text-slate-500">{run.user_display_name}</span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${RUN_STATUS_STYLES[run.status]}`}>
+                            {RUN_STATUS_LABELS[run.status]}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{run.source_row_count}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{run.inserted_count}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{run.updated_count}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{run.invalid_count}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{formatDuration(run.started_at, run.completed_at)}</td>
+                        <td className="py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() => toggleRunDetail(run.id)}
+                            className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline dark:text-slate-400"
+                          >
+                            {expandedRunId === run.id ? 'Hide' : 'Issues'}
+                          </button>
+                        </td>
+                      </tr>
+                      {expandedRunId === run.id && (
+                        <tr>
+                          <td colSpan={9} className="bg-slate-50 px-3 py-3 dark:bg-slate-700/30">
+                            {run.error_summary && (
+                              <p className="mb-2 text-xs text-rose-600 dark:text-rose-400">{run.error_summary}</p>
+                            )}
+                            {runRowsLoading && !runRows[run.id] ? (
+                              <p className="text-xs text-slate-500 dark:text-slate-400">Loading run detail…</p>
+                            ) : (runRows[run.id]?.length ?? 0) === 0 ? (
+                              <p className="text-xs text-slate-500 dark:text-slate-400">
+                                No invalid, source-older or unapplied rows in this run.
+                              </p>
+                            ) : (
+                              <ul className="max-h-72 space-y-1.5 overflow-y-auto">
+                                {runRows[run.id].map((rr) => (
+                                  <li key={rr.id} className="text-xs">
+                                    <span className="font-mono text-slate-400 dark:text-slate-500">Row {rr.sheet_row_number}</span>
+                                    <span className={`ml-2 rounded-full px-2 py-0.5 font-medium ${CLASSIFICATION_STYLES[rr.classification]}`}>
+                                      {rr.classification}
+                                    </span>
+                                    <span className="ml-2 text-slate-500 dark:text-slate-400">{ROW_RESULT_LABELS[rr.result]}</span>
+                                    {rr.issue_codes.length > 0 && (
+                                      <span className="ml-2 font-mono text-rose-600 dark:text-rose-400">{rr.issue_codes.join(', ')}</span>
+                                    )}
+                                    {rr.issue_message && (
+                                      <span className="ml-2 text-slate-500 dark:text-slate-400">{rr.issue_message}</span>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>

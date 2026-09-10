@@ -142,3 +142,132 @@ export interface PreviewResult {
   rows: RowPreviewResult[];
   maxSourceUpdatedAtObserved: string | null;
 }
+
+// ── Phase 2: normalized lead payload ───────────────────────────────────────
+// The fully parsed, validated form of one sheet row, produced by the SAME
+// validateAndClassifyRow() pass that Preview uses (never a second parsing
+// path) and only ever non-null when that row has no error-severity issues.
+// Field names are camelCase here and mapped to their item_leads column
+// names once, in src/lib/leadImport/importRun.ts, on the way into
+// apply_lead_import_batch().
+export interface NormalizedLeadRow {
+  sheetRowNumber: number;
+  leadId: string;
+  inventoryItemId: number;
+  firstContactAt: string | null;
+  lastContactAt: string | null;
+  sourceChannel: string | null;
+  dealChannelId: number | null;
+  buyerMessageCount: number | null;
+  ourMessageCount: number | null;
+  leadQuality: LeadQuality;
+  offerType: OfferType;
+  initialCashOffer: number | null;
+  bestCashOffer: number | null;
+  tradeItem: string | null;
+  cashComponent: number | null;
+  tradeEstValue: number | null;
+  status: LeadStatus;
+  outcomeReason: OutcomeReason | null;
+  notes: string | null;
+  sourceUpdatedAt: string;
+}
+
+// Preview's browser-facing RowPreviewResult plus the server-only extras the
+// importer needs. `normalized` carries sheet `notes` content, so this type
+// must never be returned from an API route — Preview strips it down to
+// RowPreviewResult before responding.
+export interface RowValidationResult extends RowPreviewResult {
+  normalized: NormalizedLeadRow | null;
+  // The row's updated_at whenever it parsed, even if the row is INVALID for
+  // some other reason — this is what feeds
+  // lead_import_sources.last_source_updated_at_seen.
+  parsedSourceUpdatedAt: string | null;
+}
+
+// ── Phase 2: import runs ───────────────────────────────────────────────────
+
+export type ImportRunStatus = 'RUNNING' | 'COMPLETED' | 'COMPLETED_WITH_ERRORS' | 'FAILED';
+
+export const IMPORT_RUN_STATUS_VALUES: readonly ImportRunStatus[] = [
+  'RUNNING', 'COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED',
+];
+
+export type ImportRowResult =
+  | 'INSERTED'
+  | 'UPDATED'
+  | 'SKIPPED_UNCHANGED'
+  | 'SKIPPED_SOURCE_OLDER'
+  | 'SKIPPED_INVALID'
+  | 'SKIPPED_NOT_APPLIED'
+  | 'FAILED';
+
+// Mirrors public.lead_import_runs.
+export interface LeadImportRun {
+  id: number;
+  source_id: number;
+  user_id: number;
+  requested_by_user_id: number;
+  status: ImportRunStatus;
+  started_at: string;
+  completed_at: string | null;
+  source_row_count: number;
+  new_count: number;
+  update_count: number;
+  unchanged_count: number;
+  source_older_count: number;
+  invalid_count: number;
+  inserted_count: number;
+  updated_count: number;
+  failed_count: number;
+  source_max_updated_at: string | null;
+  error_summary: string | null;
+  created_at: string;
+}
+
+// Mirrors public.lead_import_run_rows. Deliberately carries no lead payload
+// and no `notes`.
+export interface LeadImportRunRow {
+  id: number;
+  import_run_id: number;
+  sheet_row_number: number;
+  lead_id: string | null;
+  inventory_item_id: number | null;
+  source_updated_at: string | null;
+  classification: RowClassification;
+  result: ImportRowResult;
+  issue_codes: string[];
+  issue_message: string | null;
+  created_at: string;
+}
+
+// A run row decorated for the history UI (the source/user labels the admin
+// page shows next to each run).
+export interface LeadImportRunSummary extends LeadImportRun {
+  source_name: string;
+  user_display_name: string | null;
+}
+
+// What POST /api/admin/lead-import/import returns on a run that actually
+// started (a refused start — conflict, disabled source — is an HTTP error
+// instead).
+export interface ImportRunOutcome {
+  runId: number;
+  status: ImportRunStatus;
+  counts: {
+    sourceRowCount: number;
+    new: number;
+    updates: number;
+    unchanged: number;
+    sourceOlder: number;
+    invalid: number;
+    inserted: number;
+    updated: number;
+    failed: number;
+  };
+  sourceMaxUpdatedAt: string | null;
+  errorSummary: string | null;
+  // Populated only when the sheet itself could not be read/parsed at all
+  // (the same fatal issues Preview reports).
+  fatalIssues: ValidationIssue[];
+}
