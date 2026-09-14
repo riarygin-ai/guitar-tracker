@@ -1,12 +1,14 @@
 /**
  * test-listing-demand-evidence.ts
  *
- * Focused validation for Listing Demand Evidence v1.0:
+ * Focused validation for Listing Demand Evidence v1.0 — completely
+ * Purpose-agnostic (patched before its first production deployment; see
+ * supabase/migrations/20260914000000_build_listing_demand_evidence_v1_0.sql
+ * for the full rationale):
  *   - public.listing_exposure_days_v1_0            (exposure grain/clipping)
- *   - public._listing_demand_period_metrics_v1_0   (Business+Hybrid summary)
+ *   - public._listing_demand_period_metrics_v1_0   (all-inventory summary)
  *   - public._listing_demand_channel_metrics_v1_0  (per-channel)
  *   - public._listing_demand_item_evidence_v1_0    (currently-listed items)
- *   - public._listing_demand_personal_summary_v1_0 (Personal informational)
  *   - public._listing_demand_numeric_change_v1_0   (change helper)
  *   - public.build_listing_demand_evidence_v1_0    (top-level orchestrator)
  *   - src/lib/analytics/listingDemandEvidence.ts   (TS wrapper/shape guard)
@@ -108,7 +110,7 @@ async function channelId(admin: SupabaseClient, name: string): Promise<number> {
 async function insertItem(
   admin: SupabaseClient,
   key: string,
-  spec: { userId: number; brandId: number; subtypeId: number; purposeId: number; model: string },
+  spec: { userId: number; brandId: number; subtypeId: number; purposeId: number | null; model: string },
   createdItemIds: number[],
 ): Promise<number> {
   const { data, error } = await admin.from('inventory_items').insert({
@@ -287,11 +289,25 @@ async function main() {
     await acquireItem(admin, userA, hybridItem, '2019-11-01', 550, createdDealIds);
     await insertListingCycle(admin, { userId: userA, itemId: hybridItem, channelId: reverbId, status: 'active', listedAt: '2019-12-01' }, createdListingIds);
 
-    // Personal item — must be excluded from primary metrics entirely.
+    // Personal item — v1.0 is completely Purpose-agnostic, so this
+    // contributes to exposure/lead metrics exactly like any other item.
     const personalItem = await insertItem(admin, 'personal-item', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: personalId, model: 'Personal Guitar' }, createdItemIds);
     await acquireItem(admin, userA, personalItem, '2019-11-01', 300, createdDealIds);
     await insertListingCycle(admin, { userId: userA, itemId: personalItem, channelId: marketplaceId, status: 'active', listedAt: '2019-12-01' }, createdListingIds);
     await insertLead(admin, { userId: userA, sourceId, itemId: personalItem, firstContactAt: '2020-01-10', dealChannelId: marketplaceId, leadQuality: 'SERIOUS' }, createdLeadIds);
+
+    // Unmapped/unclassified-purpose item (purpose_id NULL) — also
+    // participates identically; v1.0 has no fourth Purpose bucket at all.
+    const unclassifiedItem = await insertItem(admin, 'unclassified-item', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: null, model: 'Unclassified Guitar' }, createdItemIds);
+    await acquireItem(admin, userA, unclassifiedItem, '2019-11-01', 320, createdDealIds);
+    await insertListingCycle(admin, { userId: userA, itemId: unclassifiedItem, channelId: reverbId, status: 'active', listedAt: '2019-12-01' }, createdListingIds);
+    await insertLead(admin, { userId: userA, sourceId, itemId: unclassifiedItem, firstContactAt: '2020-01-11', dealChannelId: reverbId, leadQuality: 'ENGAGED' }, createdLeadIds);
+
+    // A REALIZED Personal item — proves realized activity is not
+    // Purpose-filtered either.
+    const personalRealizedItem = await insertItem(admin, 'personal-realized', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: personalId, model: 'Personal Realized Guitar' }, createdItemIds);
+    await acquireItem(admin, userA, personalRealizedItem, '2019-11-01', 280, createdDealIds);
+    await realizeItemDirectly(admin, userA, personalRealizedItem, '2020-01-12', 350, createdDealIds);
 
     // ── Leads ────────────────────────────────────────────────────────────
     const leadItemChannelAttributed = await insertLead(admin, {
@@ -326,7 +342,7 @@ async function main() {
     const exposureRows = async (itemId: number, start = PERIOD_START, end = PERIOD_END) => {
       const { data, error } = await admin.rpc('listing_exposure_days_v1_0', { p_target_user_id: userA, p_period_start: start, p_period_end: end });
       if (error) throw new Error(`listing_exposure_days_v1_0 failed: ${error.message}`);
-      return (data as { inventory_item_id: number; deal_channel_id: number; activity_date: string; purpose_bucket: string }[]).filter((r) => r.inventory_item_id === itemId);
+      return (data as { inventory_item_id: number; deal_channel_id: number; activity_date: string }[]).filter((r) => r.inventory_item_id === itemId);
     };
 
     {
@@ -379,6 +395,19 @@ async function main() {
       check('1.10 stale active listing clips at exit_date, not p_end_date (Jan1-15 = 15 days)', rows.length === 15, rows.length);
       check('1.10 no exposure day after the realized exit_date', rows.every((r) => r.activity_date <= '2020-01-15'), rows.map((r) => r.activity_date).sort());
     }
+    {
+      // Purpose-agnostic: a Personal listing produces exposure exactly
+      // like any other item — 30 item-listing-days AND 30 channel-
+      // listing-days (single channel), never zero, never excluded.
+      const rows = await exposureRows(personalItem);
+      check('1.11 Personal listing contributes to item_listing_days (30)', new Set(rows.map((r) => r.activity_date)).size === 30, rows.length);
+      check('1.11 Personal listing contributes to channel_listing_days (30)', rows.length === 30, rows.length);
+    }
+    {
+      // Unmapped/unclassified purpose behaves identically too.
+      const rows = await exposureRows(unclassifiedItem);
+      check('1.12 unmapped-purpose listing contributes to exposure normally (30 days)', rows.length === 30, rows.length);
+    }
 
     // ═══════════════════════════════════════════════════════════════════
     console.log('\n=== Section 2: build_listing_demand_evidence_v1_0 (full pipeline) ===');
@@ -400,9 +429,10 @@ async function main() {
     check('2.2 comparison_period is the correct equal-length previous period', evidence.comparison_period.start_date === PREV_START && evidence.comparison_period.end_date === PREV_END, evidence.comparison_period);
     check('2.2 comparison_period.days equals period.days', evidence.comparison_period.days === evidence.period.days);
 
-    console.log('\n[analysis_context]');
-    check('2.3 primary_purposes is exactly [Business, Hybrid]', JSON.stringify(evidence.analysis_context.primary_purposes) === JSON.stringify(['Business', 'Hybrid']));
+    console.log('\n[analysis_context — no Purpose filtering remains]');
     check('2.3 deal_linkage_semantics states no direct link', /not directly linked/i.test(evidence.analysis_context.deal_linkage_semantics));
+    check('2.3 no primary_purposes field exists in analysis_context', !('primary_purposes' in evidence.analysis_context), Object.keys(evidence.analysis_context));
+    check('2.3 no personal_policy field exists in analysis_context', !('personal_policy' in evidence.analysis_context), Object.keys(evidence.analysis_context));
 
     console.log('\n[Lead attribution]');
     check('2.4 item + channel attributed lead counted in leads_started', evidence.summary.current.leads_started >= 1);
@@ -446,30 +476,38 @@ async function main() {
       check('2.13 previous period all-zero -> absolute_change is still a real number (0)', emptyEvidence.summary.change.leads_started.absolute_change === 0);
     }
 
-    console.log('\n[Personal exclusion]');
-    check('2.14 Personal item exposure/leads excluded from primary summary distinct_listed_item_count', evidence.summary.current.distinct_listed_item_count > 0);
-    check('2.14 personal_summary.listed_item_count counts the Personal item', evidence.personal_summary.listed_item_count >= 1, evidence.personal_summary);
-    check('2.14 personal_summary.leads_started counts the Personal lead', evidence.personal_summary.leads_started >= 1, evidence.personal_summary);
+    console.log('\n[Purpose-agnostic: no personal_summary, no exclusion of any Purpose]');
+    check('2.14 there is no personal_summary key anywhere in the output', !('personal_summary' in evidence), Object.keys(evidence));
+    check('2.14 distinct_listed_item_count includes Business, Hybrid, Personal, and unmapped-purpose items (>= 11)', evidence.summary.current.distinct_listed_item_count >= 11, evidence.summary.current.distinct_listed_item_count);
     {
-      const totalStr = JSON.stringify(evidence.summary) + JSON.stringify(evidence.channels) + JSON.stringify(evidence.items);
-      check('2.14 the Personal item id never appears anywhere in primary summary/channels/items', !totalStr.includes(String(personalItem)), personalItem);
+      // Direct proof the Personal lead is attributed exactly like any
+      // other lead — same item + same channel active that date.
+      const totalStr = JSON.stringify(evidence.summary);
+      check('2.14a the Personal lead contributed to item_attributed_leads/channel_attributed_leads (not silently dropped)', evidence.summary.current.item_attributed_leads >= 2 && evidence.summary.current.channel_attributed_leads >= 2, evidence.summary.current);
+      check('2.14b the Personal item id DOES appear in items[] (currently listed, all Purposes included)', evidence.items.some((i) => i.item_id === personalItem), totalStr.length);
     }
+    check('2.15 Hybrid item is included in distinct_listed_item_count', evidence.summary.current.distinct_listed_item_count >= 11, evidence.summary.current.distinct_listed_item_count);
+    check('2.15b unclassified (unmapped-purpose) item is included in distinct_listed_item_count', evidence.items.some((i) => i.item_id === unclassifiedItem), evidence.items.map((i) => i.item_id));
 
-    console.log('\n[Hybrid inclusion]');
-    check('2.15 Hybrid item IS included in the primary distinct_listed_item_count (not excluded like Personal)', evidence.summary.current.distinct_listed_item_count >= 8, evidence.summary.current.distinct_listed_item_count);
-
-    console.log('\n[Realized deals]');
-    check('2.16 realized_deal_count reflects the single realized sale in period', evidence.summary.current.realized_deal_count === 1, evidence.summary.current);
-    check('2.16 realized_item_count reflects the single realized item in period', evidence.summary.current.realized_item_count === 1, evidence.summary.current);
+    console.log('\n[Realized deals — not Purpose-filtered]');
+    check('2.16 realized_deal_count reflects BOTH realized sales in period (stale-active item + Personal item)', evidence.summary.current.realized_deal_count === 2, evidence.summary.current);
+    check('2.16 realized_item_count reflects both realized items in period', evidence.summary.current.realized_item_count === 2, evidence.summary.current);
 
     console.log('\n[Channels — dynamic, every canonical platform present]');
     check('2.17 exactly 3 canonical listing-platform channels present', evidence.channels.length === 3, evidence.channels.map((c) => c.channel_name));
     check('2.17 Marketplace, Kijiji, Reverb all present', ['Marketplace', 'Kijiji', 'Reverb'].every((n) => evidence.channels.some((c) => c.channel_name === n)));
     check('2.18 Marketplace channel_listing_days > 0 (has real activity)', marketplaceChannel.current.channel_listing_days > 0, marketplaceChannel);
 
-    console.log('\n[Items — currently listed Business+Hybrid only]');
+    console.log('\n[Items — currently listed, ALL Purposes]');
     check('2.19 items array is non-empty', evidence.items.length > 0);
-    check('2.19 no Personal item present in items[]', !evidence.items.some((i) => i.item_id === personalItem));
+    check('2.19 Personal item IS present in items[] (Purpose never gates inclusion)', evidence.items.some((i) => i.item_id === personalItem));
+    check('2.19b unclassified/unmapped-purpose item IS present in items[]', evidence.items.some((i) => i.item_id === unclassifiedItem));
+    {
+      const personalEntry = evidence.items.find((i) => i.item_id === personalItem);
+      check('2.19c Personal item entry still carries purpose_name informationally', personalEntry?.purpose_name === 'Personal', personalEntry);
+      const unclassifiedEntry = evidence.items.find((i) => i.item_id === unclassifiedItem);
+      check('2.19d unclassified item entry has purpose_id/purpose_name null but is otherwise a normal entry', unclassifiedEntry?.purpose_id === null && (unclassifiedEntry?.item_listing_days_in_period ?? 0) === 30, unclassifiedEntry);
+    }
     check('2.19 never-listed item is NOT present (has no active listing)', !evidence.items.some((i) => i.item_id === neverListedItem));
     const singleChannelItemEntry = evidence.items.find((i) => i.item_id === singleChannelItem);
     check('2.19 currently-listed single-channel item is present', !!singleChannelItemEntry);
@@ -522,6 +560,38 @@ async function main() {
       const sqlText = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/20260914000000_build_listing_demand_evidence_v1_0.sql'), 'utf-8');
       const keyLikeConversionPattern = /'[a-z0-9_]*(conversion|funnel)[a-z0-9_]*'\s*,/i;
       check('2.29 no jsonb key in the SQL is named like a conversion/funnel metric', !keyLikeConversionPattern.test(sqlText), sqlText.match(keyLikeConversionPattern));
+
+      check('2.29a no "personal_summary" key anywhere in the output', !keys.has('personal_summary'), Array.from(keys));
+      check('2.29b no "primary_purposes" key anywhere in the output', !keys.has('primary_purposes'), Array.from(keys));
+      check('2.29c no "personal_policy" key anywhere in the output', !keys.has('personal_policy'), Array.from(keys));
+    }
+
+    console.log('\n[No Purpose filtering remains in the SQL itself]');
+    {
+      // Structural check directly on the migration file (the single
+      // source of truth this suite is already gated on reading, e.g. the
+      // conversion/funnel check above): none of the three functions that
+      // build primary metrics/channels/items may reference
+      // current_purpose_name/purpose_policy_status in a filtering
+      // position. Prose in comments never matches this shape.
+      const sqlText = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/20260914000000_build_listing_demand_evidence_v1_0.sql'), 'utf-8');
+      const purposeFilterPattern = /current_purpose_name\s+IN\s*\(|purpose_policy_status\s*=\s*'mapped'/i;
+      const fnNames = [
+        '_listing_demand_period_metrics_v1_0',
+        '_listing_demand_channel_metrics_v1_0',
+        '_listing_demand_item_evidence_v1_0',
+      ];
+      for (const fnName of fnNames) {
+        const fnStart = sqlText.indexOf(`FUNCTION public.${fnName}(`);
+        check(`function ${fnName} exists in the migration`, fnStart >= 0, fnName);
+        const fnEnd = sqlText.indexOf('\n$$;', fnStart);
+        const fnBody = fnStart >= 0 && fnEnd > fnStart ? sqlText.slice(fnStart, fnEnd) : '';
+        check(`2.30-${fnName} body contains no Purpose-filtering predicate`, !purposeFilterPattern.test(fnBody), fnBody.match(purposeFilterPattern));
+      }
+      // And confirm the retired function is dropped, never recreated
+      // (the migration legitimately still mentions its name in a DROP
+      // FUNCTION IF EXISTS statement and in prose explaining why).
+      check('2.30 _listing_demand_personal_summary_v1_0 is DROPped, never CREATEd', sqlText.includes('DROP FUNCTION IF EXISTS public._listing_demand_personal_summary_v1_0') && !sqlText.includes('CREATE OR REPLACE FUNCTION public._listing_demand_personal_summary_v1_0'), 'unexpected');
     }
 
     console.log('\n[Validation errors]');

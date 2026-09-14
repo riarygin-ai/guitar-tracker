@@ -14,6 +14,22 @@
 -- relationship exists in this schema — see analysis_context.
 -- deal_linkage_semantics and the limitations array in the output).
 --
+-- ── PURPOSE (Business/Hybrid/Personal): COMPLETELY AGNOSTIC ──────────────
+-- Before this migration was ever applied to production, v1.0 was patched
+-- to remove Purpose from every calculation. Every exposure day, every
+-- lead, every attribution, every realized deal, and every currently-listed
+-- item participates identically regardless of Business/Hybrid/Personal/
+-- unmapped Purpose — the user's current goal is simply exposure -> leads
+-- -> realized activity across ALL listed inventory, and Purpose is
+-- explicitly out of scope for v1.0 (it may be revisited in a later
+-- version, as its own dimension, never smuggled back in as a filter
+-- here). There is no personal_summary, no primary_purposes context, and
+-- no Purpose-based exclusion anywhere below. Item evidence still surfaces
+-- purpose_id/purpose_name as plain informational metadata (already free
+-- on the same analytics_item_lifecycle_v2 row every item evidence query
+-- reads for its other display fields) — it never affects inclusion or any
+-- computed number.
+--
 -- ── CANONICAL RULES REUSED, NOT REINVENTED (audited before writing any of
 -- this SQL) ──────────────────────────────────────────────────────────────
 -- - "Open item" / is_realized: read directly from analytics_item_lifecycle_
@@ -21,10 +37,6 @@
 --   CTE (is_realized = latest outgoing deal_items row's deal.deal_type IN
 --   ('sale','trade'), computed in analytics_item_lifecycle's exit_deal
 --   CTE, 20260723000000 through 20260829000000). Never recomputed here.
--- - Purpose bucket resolution (business/hybrid/personal/unclassified):
---   the exact same CASE expression as build_listing_evidence_v1_0's own
---   base_items CTE, reading analytics_item_lifecycle_v2.purpose_policy_
---   status/current_purpose_name — never a second Purpose model.
 -- - item_listings lifecycle: status ('draft'/'active'/'ended'/'cancelled',
 --   20260828000000_item_listings_lifecycle.sql) is the sole source of
 --   listing-cycle truth. Cancelled rows are NEVER exposure (they were
@@ -52,7 +64,8 @@
 --   the exact same predicate analytics_item_lifecycle's exit_deal CTE
 --   uses for is_realized. Buy ('purchase'), Expense ('expense'), and every
 --   Historical* label are excluded, matching DealType in src/types/
---   index.d.ts and every analytics_item_lifecycle_* migration.
+--   index.d.ts and every analytics_item_lifecycle_* migration. Applies
+--   across ALL of the target user's inventory — never Purpose-filtered.
 -- - Lead cohort date: item_leads.first_contact_at only — never source_
 --   updated_at/updated_at/last_contact_at. NULL first_contact_at is never
 --   assigned to a period (SQL BETWEEN is NULL-safe: NULL BETWEEN x AND y
@@ -82,31 +95,33 @@
 -- unique_open_per_item_channel only prevents two concurrent non-terminal
 -- rows — it says nothing about historical/ended rows never overlapping).
 --
--- ── PURPOSE SCOPE ───────────────────────────────────────────────────────
--- Business + Hybrid only for every primary/normalized metric (summary,
--- channels, items). Personal gets its own separate, clearly-labeled
--- informational-only summary (never in the primary metrics, so it can
--- never distort them) with no recommendation. Items with no mapped
--- Purpose ("unclassified" — purpose_policy_status <> 'mapped') are
--- excluded from BOTH the primary metrics and personal_summary in this
--- version — v1.0 only asked for a Business/Hybrid/Personal split; adding
--- a fourth "unclassified" bucket is exactly the kind of new dimension
--- section 20 defers to a later version. This exclusion is stated in the
--- limitations array of every evidence payload.
---
 -- ── ARCHITECTURE ──────────────────────────────────────────────────────────
 -- One reusable, period-bounded table function (listing_exposure_days_v1_0)
 -- is the single daily-exposure foundation, called by every other piece
--- below — never a second lifecycle/exposure engine. Four small STABLE SQL
+-- below — never a second lifecycle/exposure engine. Three small STABLE SQL
 -- functions each compute one dimension for ONE period (period metrics,
--- per-channel metrics, item evidence, Personal summary); the top-level
--- plpgsql orchestrator (build_listing_demand_evidence_v1_0) validates the
--- input dates, derives the equal-length previous period, calls the
--- per-period functions once each for current/previous as needed, and
--- assembles the final deterministic JSON. All service_role EXECUTE only,
--- matching build_listing_evidence_v1_0's own security model exactly — the
--- caller always resolves its own app_users.id server-side and passes it as
+-- per-channel metrics, item evidence); the top-level plpgsql orchestrator
+-- (build_listing_demand_evidence_v1_0) validates the input dates, derives
+-- the equal-length previous period, calls the per-period functions once
+-- each for current/previous as needed, and assembles the final
+-- deterministic JSON. All service_role EXECUTE only, matching
+-- build_listing_evidence_v1_0's own security model exactly — the caller
+-- always resolves its own app_users.id server-side and passes it as
 -- p_target_user_id, never a client-suppliable value.
+--
+-- ── PATCH NOTE (pre-production, no data migration needed) ────────────────
+-- This migration was edited in place — never applied to production — to
+-- remove Purpose filtering entirely before its first real deployment.
+-- listing_exposure_days_v1_0's RETURNS TABLE dropped a column
+-- (purpose_bucket), which PostgreSQL cannot do via CREATE OR REPLACE
+-- FUNCTION alone, and _listing_demand_personal_summary_v1_0 no longer
+-- exists at all — both are explicitly DROPped below before being
+-- (re)created, so replaying this single migration file from a clean
+-- database, or over a local database that already ran an earlier version
+-- of it, both converge on the same end state.
+
+DROP FUNCTION IF EXISTS public.listing_exposure_days_v1_0(int, date, date);
+DROP FUNCTION IF EXISTS public._listing_demand_personal_summary_v1_0(int, date, date);
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 1. listing_exposure_days_v1_0 — the reusable daily exposure foundation
@@ -120,24 +135,16 @@ CREATE OR REPLACE FUNCTION public.listing_exposure_days_v1_0(
 RETURNS TABLE (
   inventory_item_id bigint,
   deal_channel_id   bigint,
-  activity_date     date,
-  purpose_bucket    text
+  activity_date     date
 )
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
 AS $$
   WITH item_lifecycle AS (
-    SELECT
-      ai.item_id,
-      ai.is_realized,
-      ai.exit_date,
-      CASE
-        WHEN ai.purpose_policy_status = 'mapped' AND ai.current_purpose_name = 'Business' THEN 'business'
-        WHEN ai.purpose_policy_status = 'mapped' AND ai.current_purpose_name = 'Hybrid'   THEN 'hybrid'
-        WHEN ai.purpose_policy_status = 'mapped' AND ai.current_purpose_name = 'Personal' THEN 'personal'
-        ELSE 'unclassified'
-      END AS purpose_bucket
+    -- Only is_realized/exit_date are needed here (the stale-active clip
+    -- below) — Purpose is deliberately never read/joined in this function.
+    SELECT ai.item_id, ai.is_realized, ai.exit_date
     FROM public.analytics_item_lifecycle_v2 ai
     WHERE ai.user_id = p_target_user_id
   ),
@@ -163,8 +170,7 @@ AS $$
             END
         END,
         p_period_end
-      ) AS cycle_end,
-      it.purpose_bucket
+      ) AS cycle_end
     FROM public.item_listings il
     JOIN public.deal_channels dc ON dc.id = il.deal_channel_id AND dc.is_listing_platform = true
     JOIN item_lifecycle it ON it.item_id = il.inventory_item_id
@@ -175,13 +181,12 @@ AS $$
     SELECT
       ec.inventory_item_id,
       ec.deal_channel_id,
-      d::date AS activity_date,
-      ec.purpose_bucket
+      d::date AS activity_date
     FROM eligible_cycles ec
     CROSS JOIN LATERAL generate_series(ec.cycle_start, ec.cycle_end, interval '1 day') AS d
     WHERE ec.cycle_start <= ec.cycle_end
   )
-  SELECT DISTINCT inventory_item_id, deal_channel_id, activity_date, purpose_bucket
+  SELECT DISTINCT inventory_item_id, deal_channel_id, activity_date
   FROM exposure_rows;
 $$;
 
@@ -196,12 +201,13 @@ COMMENT ON FUNCTION public.listing_exposure_days_v1_0(int, date, date) IS
   'Cancelled cycles never generate exposure; an active cycle on an '
   'item that has since been realized (sold/traded) is clipped to that '
   'item''s own exit_date, never generating exposure after a genuine '
-  'disposition. Purpose-agnostic (returns purpose_bucket so callers can '
-  'filter/group) — reused by every other Listing Demand Evidence function '
-  'below. STABLE, SECURITY INVOKER, service_role EXECUTE only.';
+  'disposition. Completely Purpose-agnostic — every listing for the '
+  'target user participates regardless of Business/Hybrid/Personal/'
+  'unmapped Purpose. Reused by every other Listing Demand Evidence '
+  'function below. STABLE, SECURITY INVOKER, service_role EXECUTE only.';
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 2. _listing_demand_period_metrics_v1_0 — Business+Hybrid summary, one period
+-- 2. _listing_demand_period_metrics_v1_0 — all-inventory summary, one period
 -- ═══════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public._listing_demand_period_metrics_v1_0(
@@ -218,9 +224,7 @@ AS $$
     SELECT (p_period_end - p_period_start + 1) AS days
   ),
   exposure AS (
-    SELECT *
-    FROM public.listing_exposure_days_v1_0(p_target_user_id, p_period_start, p_period_end)
-    WHERE purpose_bucket IN ('business', 'hybrid')
+    SELECT * FROM public.listing_exposure_days_v1_0(p_target_user_id, p_period_start, p_period_end)
   ),
   item_days AS (
     SELECT COUNT(DISTINCT inventory_item_id) AS distinct_listed_item_count,
@@ -232,15 +236,14 @@ AS $$
     -- plain row count IS the channel-listing-day count.
     SELECT COUNT(*) AS channel_listing_days FROM exposure
   ),
+  -- Every lead whose first_contact_at falls in the period, for this user —
+  -- no Purpose check of any kind.
   cohort_leads AS (
     SELECT l.id, l.deal_channel_id, l.inventory_item_id, l.first_contact_at,
            l.lead_quality, l.status, l.offer_type, l.buyer_message_count, l.our_message_count
     FROM public.item_leads l
-    JOIN public.analytics_item_lifecycle_v2 ai ON ai.item_id = l.inventory_item_id AND ai.user_id = l.user_id
     WHERE l.user_id = p_target_user_id
       AND l.first_contact_at BETWEEN p_period_start AND p_period_end
-      AND ai.purpose_policy_status = 'mapped'
-      AND ai.current_purpose_name IN ('Business', 'Hybrid')
   ),
   lead_aggregates AS (
     SELECT
@@ -266,18 +269,17 @@ AS $$
       COALESCE(SUM(cl.our_message_count), 0)   AS our_messages_from_cohort
     FROM cohort_leads cl
   ),
+  -- Canonical realized Sell/Trade for this user in the period — no
+  -- Purpose check of any kind.
   realized AS (
     SELECT
       COUNT(DISTINCT d.id)      AS realized_deal_count,
       COUNT(DISTINCT di.item_id) AS realized_item_count
     FROM public.deals d
     JOIN public.deal_items di ON di.deal_id = d.id AND di.direction = 'out'
-    JOIN public.analytics_item_lifecycle_v2 ai ON ai.item_id = di.item_id AND ai.user_id = d.user_id
     WHERE d.user_id = p_target_user_id
       AND d.deal_type IN ('sale', 'trade')
       AND d.deal_date BETWEEN p_period_start AND p_period_end
-      AND ai.purpose_policy_status = 'mapped'
-      AND ai.current_purpose_name IN ('Business', 'Hybrid')
   )
   SELECT jsonb_build_object(
     'item_listing_days', id.item_listing_days,
@@ -311,13 +313,13 @@ REVOKE ALL ON FUNCTION public._listing_demand_period_metrics_v1_0(int, date, dat
 GRANT EXECUTE ON FUNCTION public._listing_demand_period_metrics_v1_0(int, date, date) TO service_role;
 
 COMMENT ON FUNCTION public._listing_demand_period_metrics_v1_0(int, date, date) IS
-  'Internal to Listing Demand Evidence v1.0. Business+Hybrid-scoped '
-  'exposure/lead/realized-deal summary metrics for exactly one period — '
-  'called twice (current, previous) by build_listing_demand_evidence_v1_0. '
-  'item_attributed_leads/channel_attributed_leads are ATTRIBUTED counts '
-  '(see listing_exposure_days_v1_0), never all leads_started. Ratio '
-  'fields are NULL, never 0 or a crash, when their denominator is zero. '
-  'service_role EXECUTE only.';
+  'Internal to Listing Demand Evidence v1.0. All-inventory (completely '
+  'Purpose-agnostic) exposure/lead/realized-deal summary metrics for '
+  'exactly one period — called twice (current, previous) by '
+  'build_listing_demand_evidence_v1_0. item_attributed_leads/channel_'
+  'attributed_leads are ATTRIBUTED counts (see listing_exposure_days_'
+  'v1_0), never all leads_started. Ratio fields are NULL, never 0 or a '
+  'crash, when their denominator is zero. service_role EXECUTE only.';
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- 3. _listing_demand_channel_metrics_v1_0 — per canonical channel, one period
@@ -354,9 +356,7 @@ AS $$
     WHERE is_listing_platform = true
   ),
   exposure AS (
-    SELECT *
-    FROM public.listing_exposure_days_v1_0(p_target_user_id, p_period_start, p_period_end)
-    WHERE purpose_bucket IN ('business', 'hybrid')
+    SELECT * FROM public.listing_exposure_days_v1_0(p_target_user_id, p_period_start, p_period_end)
   ),
   channel_exposure_agg AS (
     SELECT deal_channel_id,
@@ -365,15 +365,14 @@ AS $$
     FROM exposure
     GROUP BY deal_channel_id
   ),
+  -- Every lead with a normalized channel whose first_contact_at falls in
+  -- the period, for this user — no Purpose check of any kind.
   cohort_leads AS (
     SELECT l.id, l.deal_channel_id, l.inventory_item_id, l.first_contact_at,
            l.lead_quality, l.status, l.buyer_message_count, l.our_message_count
     FROM public.item_leads l
-    JOIN public.analytics_item_lifecycle_v2 ai ON ai.item_id = l.inventory_item_id AND ai.user_id = l.user_id
     WHERE l.user_id = p_target_user_id
       AND l.first_contact_at BETWEEN p_period_start AND p_period_end
-      AND ai.purpose_policy_status = 'mapped'
-      AND ai.current_purpose_name IN ('Business', 'Hybrid')
       AND l.deal_channel_id IS NOT NULL
   ),
   channel_attributed AS (
@@ -409,17 +408,14 @@ AS $$
   -- Section 15: grouped by the DEAL's own recorded deal_channel_id — a
   -- factual field on public.deals, never derived from lead attribution.
   -- Explicitly NOT lead-to-deal conversion; see this function's own
-  -- comment and the top-level limitations array.
+  -- comment and the top-level limitations array. No Purpose check.
   realized_by_channel AS (
     SELECT d.deal_channel_id, COUNT(DISTINCT d.id) AS realized_deal_count_by_recorded_channel
     FROM public.deals d
     JOIN public.deal_items di ON di.deal_id = d.id AND di.direction = 'out'
-    JOIN public.analytics_item_lifecycle_v2 ai ON ai.item_id = di.item_id AND ai.user_id = d.user_id
     WHERE d.user_id = p_target_user_id
       AND d.deal_type IN ('sale', 'trade')
       AND d.deal_date BETWEEN p_period_start AND p_period_end
-      AND ai.purpose_policy_status = 'mapped'
-      AND ai.current_purpose_name IN ('Business', 'Hybrid')
       AND d.deal_channel_id IS NOT NULL
     GROUP BY d.deal_channel_id
   )
@@ -455,13 +451,14 @@ COMMENT ON FUNCTION public._listing_demand_channel_metrics_v1_0(int, date, date)
   'Internal to Listing Demand Evidence v1.0. One row per canonical '
   '(is_listing_platform=true) deal_channels row, for exactly one period — '
   'every listing-capable channel always appears, even with zero activity '
-  '(never hardcoded to Marketplace/Kijiji/Reverb). '
-  'realized_deal_count_by_recorded_channel is grouped by deals.'
-  'deal_channel_id (a factual recorded field) and is explicitly NOT a '
-  'lead-attributed or lead-conversion figure. service_role EXECUTE only.';
+  '(never hardcoded to Marketplace/Kijiji/Reverb). Completely '
+  'Purpose-agnostic. realized_deal_count_by_recorded_channel is grouped '
+  'by deals.deal_channel_id (a factual recorded field) and is explicitly '
+  'NOT a lead-attributed or lead-conversion figure. service_role EXECUTE '
+  'only.';
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 4. _listing_demand_item_evidence_v1_0 — currently-listed Business+Hybrid items
+-- 4. _listing_demand_item_evidence_v1_0 — currently-listed items (all Purpose)
 -- ═══════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public._listing_demand_item_evidence_v1_0(
@@ -477,12 +474,13 @@ AS $$
   WITH currently_listed_items AS (
     SELECT ai.item_id, ai.item_display_name, ai.brand_id, ai.brand_name,
            ai.category_id, ai.category_name, ai.type_id, ai.type_name,
+           -- Informational metadata only — already free on this same row;
+           -- never used to include/exclude an item or affect any number
+           -- below.
            ai.purpose_id, ai.purpose_name
     FROM public.analytics_item_lifecycle_v2 ai
     WHERE ai.user_id = p_target_user_id
       AND NOT ai.is_realized
-      AND ai.purpose_policy_status = 'mapped'
-      AND ai.current_purpose_name IN ('Business', 'Hybrid')
       AND EXISTS (
         SELECT 1 FROM public.item_listings il
         WHERE il.inventory_item_id = ai.item_id AND il.user_id = p_target_user_id AND il.status = 'active'
@@ -621,61 +619,18 @@ GRANT EXECUTE ON FUNCTION public._listing_demand_item_evidence_v1_0(int, date, d
 COMMENT ON FUNCTION public._listing_demand_item_evidence_v1_0(int, date, date) IS
   'Internal to Listing Demand Evidence v1.0. Returns a jsonb array, one '
   'entry per currently-listed (status=active right now), open (NOT '
-  'is_realized), Business/Hybrid item. "_in_period"/"_from_cohort" fields '
-  'are scoped to [p_period_start, p_period_end]; current_active_channels '
-  'and last_lead_date are live/lifetime facts, not period-scoped. '
+  'is_realized) item, regardless of Purpose. purpose_id/purpose_name are '
+  'informational metadata only — they never affect inclusion or any '
+  'computed number. "_in_period"/"_from_cohort" fields are scoped to '
+  '[p_period_start, p_period_end]; current_active_channels and '
+  'last_lead_date are live/lifetime facts, not period-scoped. '
   'current_listing_cycle_leads counts leads whose first_contact_at falls '
   'within the item''s CURRENT active cycle(s) (from listed_at through '
   'CURRENT_DATE), independent of the requested period, counted at most '
   'once per item even when cross-listed. service_role EXECUTE only.';
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 5. _listing_demand_personal_summary_v1_0 — Personal informational summary
--- ═══════════════════════════════════════════════════════════════════════
-
-CREATE OR REPLACE FUNCTION public._listing_demand_personal_summary_v1_0(
-  p_target_user_id int,
-  p_period_start   date,
-  p_period_end     date
-)
-RETURNS jsonb
-LANGUAGE sql
-STABLE
-SECURITY INVOKER
-AS $$
-  WITH exposure AS (
-    SELECT *
-    FROM public.listing_exposure_days_v1_0(p_target_user_id, p_period_start, p_period_end)
-    WHERE purpose_bucket = 'personal'
-  ),
-  leads AS (
-    SELECT l.id
-    FROM public.item_leads l
-    JOIN public.analytics_item_lifecycle_v2 ai ON ai.item_id = l.inventory_item_id AND ai.user_id = l.user_id
-    WHERE l.user_id = p_target_user_id
-      AND l.first_contact_at BETWEEN p_period_start AND p_period_end
-      AND ai.purpose_policy_status = 'mapped'
-      AND ai.current_purpose_name = 'Personal'
-  )
-  SELECT jsonb_build_object(
-    'listed_item_count', (SELECT COUNT(DISTINCT inventory_item_id) FROM exposure),
-    'item_listing_days', (SELECT COUNT(DISTINCT (inventory_item_id, activity_date)) FROM exposure),
-    'channel_listing_days', (SELECT COUNT(*) FROM exposure),
-    'leads_started', (SELECT COUNT(*) FROM leads)
-  );
-$$;
-
-REVOKE ALL ON FUNCTION public._listing_demand_personal_summary_v1_0(int, date, date) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public._listing_demand_personal_summary_v1_0(int, date, date) TO service_role;
-
-COMMENT ON FUNCTION public._listing_demand_personal_summary_v1_0(int, date, date) IS
-  'Internal to Listing Demand Evidence v1.0. Compact Personal-purpose '
-  'informational summary for exactly one period — never included in the '
-  'primary Business+Hybrid metrics, never a recommendation. service_role '
-  'EXECUTE only.';
-
--- ═══════════════════════════════════════════════════════════════════════
--- 6. _listing_demand_numeric_change_v1_0 — {current, previous, absolute_
+-- 5. _listing_demand_numeric_change_v1_0 — {current, previous, absolute_
 --    change, percent_change} helper, reused for every compared metric.
 -- ═══════════════════════════════════════════════════════════════════════
 
@@ -709,7 +664,7 @@ COMMENT ON FUNCTION public._listing_demand_numeric_change_v1_0(numeric, numeric)
   'or current is NULL.';
 
 -- ═══════════════════════════════════════════════════════════════════════
--- 7. build_listing_demand_evidence_v1_0 — top-level orchestrator
+-- 6. build_listing_demand_evidence_v1_0 — top-level orchestrator
 -- ═══════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public.build_listing_demand_evidence_v1_0(
@@ -730,7 +685,6 @@ DECLARE
   v_previous_metrics            jsonb;
   v_channels                    jsonb;
   v_items                       jsonb;
-  v_personal                    jsonb;
   v_leads_started                numeric;
   v_item_attributed_leads        numeric;
   v_channel_attributed_leads     numeric;
@@ -739,7 +693,6 @@ DECLARE
   v_undated_lead_count           int;
   v_earliest_dated_lead          date;
   v_earliest_listing_exposure_date date;
-  v_personal_description         text;
   v_data_quality                 jsonb;
   v_limitations                  jsonb;
   v_result                       jsonb;
@@ -804,12 +757,9 @@ BEGIN
   FULL OUTER JOIN public._listing_demand_channel_metrics_v1_0(p_target_user_id, v_previous_start, v_previous_end) prev
     ON prev.deal_channel_id = cur.deal_channel_id;
 
-  -- ── Items: currently-listed Business+Hybrid items, CURRENT period only
+  -- ── Items: currently-listed items (all Purpose), CURRENT period only
   -- (section 16 — a live/current-state view, not a period comparison). ───
   v_items := public._listing_demand_item_evidence_v1_0(p_target_user_id, p_start_date, p_end_date);
-
-  -- ── Personal: informational only, CURRENT period only. ─────────────────
-  v_personal := public._listing_demand_personal_summary_v1_0(p_target_user_id, p_start_date, p_end_date);
 
   -- ── Data quality / coverage (section 18). Reuses the CURRENT period's
   -- already-computed lead counts rather than recomputing them. ───────────
@@ -843,19 +793,13 @@ BEGIN
     'earliest_listing_exposure_date', v_earliest_listing_exposure_date
   );
 
-  SELECT description INTO v_personal_description
-  FROM public.analytics_purpose_policy pp
-  JOIN public.item_purposes ip ON ip.id = pp.purpose_id
-  WHERE ip.name = 'Personal';
-
   v_limitations := to_jsonb(ARRAY[
     'lead_quality reflects the highest intent level a lead has ever reached, not its state on first_contact_at — serious_plus_leads_from_cohort and high_intent_leads_from_cohort describe leads that eventually/currently reached that quality, never that they started there.',
     'buyer_messages_from_cohort and our_messages_from_cohort are lifetime/current message-count totals belonging to leads whose first_contact_at fell in the period — never a claim about messages sent during the period itself.',
     'realized_deal_count and realized_item_count are factual Sell/Trade activity in the period and are explicitly NOT a lead-to-deal conversion metric — no canonical lead_id -> deal_id relationship exists in this schema yet. A deal in this period may originate from a lead that started in an earlier period, or from no logged lead at all.',
     'realized_deal_count_by_recorded_channel (channels[]) groups realized deals by the deal''s own recorded deal_channel_id and is independent of lead attribution — it is not evidence that a lead on that channel caused that deal.',
     'Historical Lead Log completeness varies by source and time period and must not be assumed complete merely because a first_contact_at date exists.',
-    'Personal-purpose items are excluded from every primary Business+Hybrid metric (summary, channels, items) — see personal_summary for their separate informational-only totals. No recommendation is made about Personal inventory.',
-    'Items with no mapped Purpose (purpose_policy_status <> ''mapped'') are excluded from both the primary metrics and personal_summary in this version.',
+    'This evidence is completely Purpose-agnostic — Business, Hybrid, Personal, and unmapped-Purpose listings, leads, and realized deals all participate identically. purpose_id/purpose_name on each item in items[] are informational metadata only and never affect any count here.',
     'item_listing_days/channel_listing_days are PERIOD exposure metrics, not a snapshot of current listing state — see Listing Evidence v1.0 (build_listing_evidence_v1_0) for that.'
   ]);
 
@@ -866,8 +810,6 @@ BEGIN
     'period', jsonb_build_object('start_date', p_start_date, 'end_date', p_end_date, 'days', v_days),
     'comparison_period', jsonb_build_object('start_date', v_previous_start, 'end_date', v_previous_end, 'days', v_days),
     'analysis_context', jsonb_build_object(
-      'primary_purposes', jsonb_build_array('Business', 'Hybrid'),
-      'personal_policy', COALESCE(v_personal_description, 'Personal inventory is informational only — no realization pressure is implied.'),
       'lead_quality_semantics', 'lead_quality is the highest intent level a lead has ever reached, not its quality on first_contact_at.',
       'deal_linkage_semantics', 'not directly linked — no canonical lead_id -> deal_id relationship exists; Lead Activity and Realized Deal Activity are reported side by side as separate, non-causal facts.'
     ),
@@ -891,7 +833,6 @@ BEGIN
     ),
     'channels', v_channels,
     'items', v_items,
-    'personal_summary', v_personal,
     'data_quality', v_data_quality,
     'limitations', v_limitations
   );
@@ -909,13 +850,14 @@ COMMENT ON FUNCTION public.build_listing_demand_evidence_v1_0(int, date, date) I
   'jobs, no materialized aggregates). p_start_date/p_end_date are explicit '
   'inclusive dates (validated start <= end); the equal-length previous '
   'period is derived by pure date arithmetic, never "last month" logic. '
-  'Primary metrics (summary/channels/items) are scoped to Business+Hybrid '
-  'purpose only; Personal gets a separate informational-only summary. '
-  'Built entirely from listing_exposure_days_v1_0 and canonical is_'
-  'realized/deal_type facts already established by analytics_item_'
-  'lifecycle_v2 and build_listing_evidence_v1_0 — no second lifecycle or '
-  'Purpose engine. Does not claim lead -> deal conversion (see analysis_'
-  'context.deal_linkage_semantics and the limitations array). STABLE, '
-  'SECURITY INVOKER, service_role EXECUTE only — the caller always passes '
-  'its own resolved app_users.id as p_target_user_id, never a client-'
-  'suppliable value. See src/lib/analytics/listingDemandEvidence.ts.';
+  'Completely Purpose-agnostic — every metric (summary/channels/items) '
+  'covers ALL of the target user''s inventory regardless of Business/'
+  'Hybrid/Personal/unmapped Purpose; there is no personal_summary and no '
+  'Purpose-based exclusion anywhere. Built entirely from listing_exposure_'
+  'days_v1_0 and canonical is_realized/deal_type facts already established '
+  'by analytics_item_lifecycle_v2 and build_listing_evidence_v1_0 — no '
+  'second lifecycle engine. Does not claim lead -> deal conversion (see '
+  'analysis_context.deal_linkage_semantics and the limitations array). '
+  'STABLE, SECURITY INVOKER, service_role EXECUTE only — the caller '
+  'always passes its own resolved app_users.id as p_target_user_id, never '
+  'a client-suppliable value. See src/lib/analytics/listingDemandEvidence.ts.';

@@ -1531,8 +1531,8 @@ async function main() {
   check('build_analytics_snapshot_v1_8 still callable after Purpose-Aware Foundation migrations', !v18AfterFixtureError, v18AfterFixtureError);
   const itemsAfterFixture: any[] = v18SnapshotAfterFixture?.target_user_evidence?.open_inventory_decision_support?.item_decision_evidence ?? [];
   check(
-    'items 100 and 101 (non-Business purpose) do not appear in v1.8 item_decision_evidence',
-    itemsAfterFixture.every((r) => r.item_id !== 100 && r.item_id !== 101),
+    'the missingPurposeItem/missingPolicyItem fixtures (non-Business purpose) do not appear in v1.8 item_decision_evidence',
+    itemsAfterFixture.every((r) => r.item_id !== fx.missingPurposeItem && r.item_id !== fx.missingPolicyItem),
     itemsAfterFixture.map((r) => r.item_id),
   );
   const { generated_at: _genA, ...v18SnapshotAWithoutTimestamp } = (v18SnapshotA ?? {}) as Record<string, unknown>;

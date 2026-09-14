@@ -37,14 +37,13 @@ export interface DemandPeriod {
 }
 
 export interface DemandAnalysisContext {
-  primary_purposes: ['Business', 'Hybrid'];
-  personal_policy: string;
   lead_quality_semantics: string;
   deal_linkage_semantics: string;
 }
 
-// Every field here is Business+Hybrid-scoped — see analysis_context and
-// the module's own limitations array.
+// Every field here is completely Purpose-agnostic: it covers ALL of the
+// target user's inventory (Business, Hybrid, Personal, and unmapped
+// Purpose alike) — see the module's own limitations array.
 export interface DemandPeriodMetrics {
   item_listing_days: number;
   channel_listing_days: number;
@@ -142,6 +141,9 @@ export interface DemandItemEntry {
   category_name: string | null;
   type_id: number | null;
   type_name: string | null;
+  // Informational metadata only — never affects inclusion in items[] or
+  // any computed number here (Listing Demand Evidence is completely
+  // Purpose-agnostic).
   purpose_id: number | null;
   purpose_name: string | null;
   // Live/current fact — not period-scoped.
@@ -165,13 +167,6 @@ export interface DemandItemEntry {
   // Leads attributable to the item's CURRENT active cycle(s) specifically
   // (from listed_at through today) — independent of the requested period.
   current_listing_cycle_leads: number;
-}
-
-export interface DemandPersonalSummary {
-  listed_item_count: number;
-  item_listing_days: number;
-  channel_listing_days: number;
-  leads_started: number;
 }
 
 export interface DemandDataQualityCurrentPeriod {
@@ -205,7 +200,6 @@ export interface ListingDemandEvidence {
   summary: DemandSummary;
   channels: DemandChannelEntry[];
   items: DemandItemEntry[];
-  personal_summary: DemandPersonalSummary;
   data_quality: DemandDataQuality;
   limitations: string[];
 }
@@ -223,7 +217,6 @@ export function isValidListingDemandEvidence(value: unknown): value is ListingDe
     typeof v.summary === 'object' && v.summary !== null &&
     Array.isArray(v.channels) &&
     Array.isArray(v.items) &&
-    typeof v.personal_summary === 'object' && v.personal_summary !== null &&
     typeof v.data_quality === 'object' && v.data_quality !== null &&
     Array.isArray(v.limitations)
   );
