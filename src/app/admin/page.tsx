@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import AiPromptsCard from '@/components/AiPromptsCard';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import CopyListingEvidenceButton from '@/components/CopyListingEvidenceButton';
+import ListingDemandEvidenceDebugControl from '@/components/ListingDemandEvidenceDebugControl';
 import {
   createBrand,
   createDealChannel,
@@ -825,6 +826,23 @@ export default function AdminPage() {
             </p>
           </div>
           <CopyListingEvidenceButton />
+        </div>
+      </div>
+
+      {/* Listing Demand Evidence v1.0 — TEMPORARY inspection utility only.
+          Data/evidence foundation for a future Listing Demand section of
+          /listings; not linked from there yet, and this control is not
+          polished analytics UI — see supabase/migrations/20260914000000_
+          build_listing_demand_evidence_v1_0.sql. */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Listing Demand Evidence</h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Internal-only, temporary. Exposure → leads → realized-deal evidence for a preset window, ending today. Not yet used by any dashboard.
+            </p>
+          </div>
+          <ListingDemandEvidenceDebugControl />
         </div>
       </div>
 
