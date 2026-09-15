@@ -740,6 +740,162 @@ async function main() {
       check('6.3 current period has no attributed leads but an older channel lead exists -> current.last_lead_date is NULL', reverbZero.current.last_lead_date === null, reverbZero.current);
       check('6.3b channel_attributed_leads is correctly 0 for the same channel/period', reverbZero.current.channel_attributed_leads === 0, reverbZero.current);
       check('6.3c previous period also has no attributed lead -> previous.last_lead_date is NULL too', reverbZero.previous.last_lead_date === null, reverbZero.previous);
+
+      // "current channel lead only -> previous.last_lead_date NULL":
+      // Marketplace is otherwise unused for attribution in this isolated
+      // window (unattributedKijijiItem is listed on Marketplace but its
+      // lead is tagged Kijiji, so it never attributes to Marketplace).
+      const currentOnlyItem = await insertItem(admin, 'current-only-lead', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: businessId, model: 'Current Only Lead Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, currentOnlyItem, '2020-12-01', 270, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: currentOnlyItem, channelId: marketplaceId, status: 'active', listedAt: '2021-01-01' }, createdListingIds);
+      const currentOnlyDate: string = '2021-06-10';
+      await insertLead(admin, { userId: userA, sourceId, itemId: currentOnlyItem, firstContactAt: currentOnlyDate, dealChannelId: marketplaceId }, createdLeadIds);
+
+      const currentOnlyEvidence = await getListingDemandEvidence({ appUserId: userA, serviceClient: admin, startDate: T6_CURRENT_START, endDate: T6_CURRENT_END });
+      const marketplaceCurrentOnly = currentOnlyEvidence.channels.find((c) => c.deal_channel_id === marketplaceId)!;
+      check('6.6 current-only channel lead -> current.last_lead_date is set', marketplaceCurrentOnly.current.last_lead_date === currentOnlyDate, marketplaceCurrentOnly.current);
+      check('6.6b current-only channel lead -> previous.last_lead_date is NULL', marketplaceCurrentOnly.previous.last_lead_date === null, marketplaceCurrentOnly.previous);
+
+      // "previous channel lead only -> current.last_lead_date NULL": added
+      // to Reverb AFTER 6.3's assertions above already ran, so it cannot
+      // retroactively affect them.
+      const previousOnlyDate: string = '2021-05-15';
+      await insertLead(admin, { userId: userA, sourceId, itemId: zeroLeadItem, firstContactAt: previousOnlyDate, dealChannelId: reverbId }, createdLeadIds);
+
+      const previousOnlyEvidence = await getListingDemandEvidence({ appUserId: userA, serviceClient: admin, startDate: T6_CURRENT_START, endDate: T6_CURRENT_END });
+      const reverbPreviousOnly = previousOnlyEvidence.channels.find((c) => c.deal_channel_id === reverbId)!;
+      check('6.7 previous-only channel lead -> previous.last_lead_date is set', reverbPreviousOnly.previous.last_lead_date === previousOnlyDate, reverbPreviousOnly.previous);
+      check('6.7b previous-only channel lead -> current.last_lead_date is NULL', reverbPreviousOnly.current.last_lead_date === null, reverbPreviousOnly.current);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log('\n=== Section 7: weekly_trend (20260916000000) ===');
+
+    console.log('\n[7a — pure date-window arithmetic, no fixtures needed]');
+    {
+      // Exercises the task's own worked example directly: a nonexistent
+      // user still gets exactly the right 4 week boundaries, since the
+      // window is pure arithmetic over p_end_date, independent of data.
+      const dateOnlyEvidence = await getListingDemandEvidence({
+        appUserId: 999999999, serviceClient: admin, startDate: '2026-09-08', endDate: '2026-09-14',
+      });
+      const weeks = dateOnlyEvidence.weekly_trend;
+      check('7a.1 exactly 4 weekly_trend rows', weeks.length === 4, weeks.length);
+      const expectedWindows = [
+        ['2026-08-18', '2026-08-24'],
+        ['2026-08-25', '2026-08-31'],
+        ['2026-09-01', '2026-09-07'],
+        ['2026-09-08', '2026-09-14'],
+      ];
+      check('7a.2 exact week boundaries match the worked example, oldest -> newest', weeks.every((w, i) => w.start_date === expectedWindows[i][0] && w.end_date === expectedWindows[i][1]), weeks.map((w) => [w.start_date, w.end_date]));
+      check('7a.3 every week is exactly 7 inclusive days', weeks.every((w) => w.days === 7));
+      check('7a.4 weeks are consecutive and non-overlapping', weeks.every((w, i) => i === 0 || new Date(w.start_date).getTime() - new Date(weeks[i - 1].end_date).getTime() === 24 * 60 * 60 * 1000));
+      check('7a.5 weekly_trend never depends on p_start_date — a completely different start_date with the same end_date yields identical windows', true /* verified below via a second call */);
+      const differentStartEvidence = await getListingDemandEvidence({
+        appUserId: 999999999, serviceClient: admin, startDate: '2026-01-01', endDate: '2026-09-14',
+      });
+      check('7a.5b confirmed: 90-day-style request produces the identical weekly_trend windows as the 7-day request', JSON.stringify(differentStartEvidence.weekly_trend.map((w) => [w.start_date, w.end_date])) === JSON.stringify(weeks.map((w) => [w.start_date, w.end_date])));
+    }
+
+    console.log('\n[7b — reconciliation + stale/cancelled clipping + Purpose-agnostic, real fixtures]');
+    {
+      const WT_END = '2018-11-14';
+      // weeks_ago 3,2,1,0 — computed the exact same way the SQL does, for
+      // hand-verification below.
+      const W1 = { start: '2018-10-18', end: '2018-10-24' }; // oldest
+      const W2 = { start: '2018-10-25', end: '2018-10-31' };
+      const W3 = { start: '2018-11-01', end: '2018-11-07' };
+      const W4 = { start: '2018-11-08', end: '2018-11-14' }; // newest
+
+      // Continuously active on Marketplace across the whole trend window
+      // and beyond — 7 full exposure days every week.
+      const wtItem = await insertItem(admin, 'weekly-trend-item', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: businessId, model: 'Weekly Trend Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, wtItem, '2018-08-01', 400, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: wtItem, channelId: marketplaceId, status: 'active', listedAt: '2018-09-01' }, createdListingIds);
+      await insertLead(admin, { userId: userA, sourceId, itemId: wtItem, firstContactAt: '2018-10-20', dealChannelId: marketplaceId }, createdLeadIds); // inside W1
+      await insertLead(admin, { userId: userA, sourceId, itemId: wtItem, firstContactAt: '2018-11-10', dealChannelId: marketplaceId }, createdLeadIds); // inside W4
+
+      // Realized (sold) mid-trend on Kijiji — proves stale-listing clipping
+      // still applies inside weekly_trend: full exposure in W1 (before
+      // realization), partial in W2 (realized mid-week), ZERO in W3/W4
+      // even though the row is still 'active' in the DB.
+      const wtStaleItem = await insertItem(admin, 'weekly-trend-stale', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: businessId, model: 'Weekly Trend Stale Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, wtStaleItem, '2018-08-01', 350, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: wtStaleItem, channelId: kijijiId, status: 'active', listedAt: '2018-09-01' }, createdListingIds);
+      await realizeItemDirectly(admin, userA, wtStaleItem, '2018-10-29', 500, createdDealIds); // inside W2, row stays 'active'
+
+      // Cancelled listing on Reverb — proves cancelled-listing exclusion
+      // still applies inside weekly_trend (zero exposure in every week).
+      const wtCancelledItem = await insertItem(admin, 'weekly-trend-cancelled', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: businessId, model: 'Weekly Trend Cancelled Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, wtCancelledItem, '2018-08-01', 300, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: wtCancelledItem, channelId: reverbId, status: 'cancelled', listedAt: '2018-10-20', cancelledAt: '2018-10-21T00:00:00Z' }, createdListingIds);
+
+      // Personal-purpose item, ALSO on Reverb — proves Purpose remains
+      // irrelevant inside weekly_trend (contributes normally alongside
+      // the cancelled item's zero contribution).
+      const wtPersonalItem = await insertItem(admin, 'weekly-trend-personal', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: personalId, model: 'Weekly Trend Personal Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, wtPersonalItem, '2018-08-01', 320, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: wtPersonalItem, channelId: reverbId, status: 'active', listedAt: '2018-09-01' }, createdListingIds);
+      await insertLead(admin, { userId: userA, sourceId, itemId: wtPersonalItem, firstContactAt: '2018-11-03', dealChannelId: reverbId }, createdLeadIds); // inside W3
+
+      const wtEvidence = await getListingDemandEvidence({ appUserId: userA, serviceClient: admin, startDate: WT_END, endDate: WT_END });
+      const weeks = wtEvidence.weekly_trend;
+      check('7b.0 exactly 4 weekly_trend rows', weeks.length === 4, weeks.length);
+      const [w1, w2, w3, w4] = weeks;
+
+      console.log('\n[7b — exact hand-computed values]');
+      check('7b.1 W1 (before any realization): Marketplace+Kijiji+Reverb(personal) each 7 days -> item_listing_days=21', w1.item_listing_days === 21, w1);
+      check('7b.1b W1 channel_listing_days === 21 (no cross-listed item in this fixture set)', w1.channel_listing_days === 21, w1);
+      check('7b.1c W1 leads_started/attributed = 1 (the Oct-20 Marketplace lead)', w1.leads_started === 1 && w1.item_attributed_leads === 1 && w1.channel_attributed_leads === 1, w1);
+      check('7b.2 W2 (realized mid-week on Oct-29): Kijiji clipped to 5 days, Marketplace+Reverb still 7 each -> item_listing_days=19', w2.item_listing_days === 19, w2);
+      check('7b.2b W2 realized_deal_count=1, realized_item_count=1 (the stale item sold this week)', w2.realized_deal_count === 1 && w2.realized_item_count === 1, w2);
+      check('7b.3 W3 (after realization): Kijiji contributes 0 days -> item_listing_days=14 (Marketplace+Reverb only)', w3.item_listing_days === 14, w3);
+      check('7b.3b W3 leads_started/attributed = 1 (the Personal-item Reverb lead on Nov-3 — Purpose is irrelevant)', w3.leads_started === 1 && w3.item_attributed_leads === 1 && w3.channel_attributed_leads === 1, w3);
+      check('7b.4 W4 (after realization): item_listing_days=14, one Marketplace lead attributed', w4.item_listing_days === 14 && w4.leads_started === 1 && w4.channel_attributed_leads === 1, w4);
+      check('7b.5 no week shows a realized deal except W2 (realized deals are not smeared across the whole trend)', w1.realized_deal_count === 0 && w3.realized_deal_count === 0 && w4.realized_deal_count === 0);
+
+      console.log('\n[7b — cancelled-listing exclusion still applies]');
+      for (const [label, w] of [['W1', w1], ['W2', w2], ['W3', w3], ['W4', w4]] as const) {
+        const reverbChannel = w.channels.find((c) => c.channel_name === 'Reverb')!;
+        // Reverb's only genuine contributor is the Personal item (7 days/week); the cancelled item must add nothing.
+        check(`7b.6 ${label} Reverb channel_listing_days === 7 (cancelled listing contributes 0, only the Personal item counts)`, reverbChannel.channel_listing_days === 7, reverbChannel);
+      }
+
+      console.log('\n[7b — dynamic reconciliation across every week (section 8)]');
+      for (const [label, w] of [['W1', w1], ['W2', w2], ['W3', w3], ['W4', w4]] as const) {
+        check(`7b.7 ${label} item_listing_days / 7 === avg_listed_items`, Math.abs(w.item_listing_days / 7 - (w.avg_listed_items ?? 0)) < 0.001, w);
+        check(`7b.7b ${label} channel_listing_days / 7 === avg_channel_exposure`, Math.abs(w.channel_listing_days / 7 - (w.avg_channel_exposure ?? 0)) < 0.001, w);
+        const sumChannelListingDays = w.channels.reduce((sum, c) => sum + c.channel_listing_days, 0);
+        check(`7b.7c ${label} SUM(channel.channel_listing_days) === weekly channel_listing_days`, sumChannelListingDays === w.channel_listing_days, { sumChannelListingDays, weekly: w.channel_listing_days });
+        const sumChannelAttributed = w.channels.reduce((sum, c) => sum + c.channel_attributed_leads, 0);
+        check(`7b.7d ${label} SUM(channel.channel_attributed_leads) === weekly channel_attributed_leads (each attributed lead maps to exactly one normalized channel)`, sumChannelAttributed === w.channel_attributed_leads, { sumChannelAttributed, weekly: w.channel_attributed_leads });
+        if (w.item_listing_days > 0) {
+          check(`7b.7e ${label} exposure_multiplier === channel_listing_days / item_listing_days`, Math.abs((w.exposure_multiplier ?? 0) - w.channel_listing_days / w.item_listing_days) < 0.001, w);
+        }
+        for (const c of w.channels) {
+          if (c.last_lead_date !== null) {
+            check(`7b.7f ${label}/${c.channel_name} last_lead_date is within [start_date, end_date]`, c.last_lead_date >= w.start_date && c.last_lead_date <= w.end_date, { week: [w.start_date, w.end_date], last_lead_date: c.last_lead_date });
+          }
+          check(`7b.7g ${label}/${c.channel_name} zero channel_listing_days -> leads_per_100_channel_listing_days is NULL`, c.channel_listing_days > 0 || c.leads_per_100_channel_listing_days === null, c);
+        }
+        check(`7b.7h ${label} zero item_listing_days would force leads_per_100_item_listing_days NULL (guard, not expected to trigger here)`, w.item_listing_days > 0 || w.leads_per_100_item_listing_days === null);
+      }
+
+      console.log('\n[7b — dynamic canonical channels, never hardcoded]');
+      check('7b.8 every week carries exactly the 3 canonical listing-platform channels', weeks.every((w) => w.channels.length === 3), weeks.map((w) => w.channels.length));
+      check('7b.8b Marketplace/Kijiji/Reverb all present in every week (looked up by name, not hardcoded in SQL)', weeks.every((w) => ['Marketplace', 'Kijiji', 'Reverb'].every((n) => w.channels.some((c) => c.channel_name === n))));
+
+      console.log('\n[7b — no message-count totals, no item-level evidence, no lead-conversion field]');
+      const weeklyKeys = new Set<string>();
+      const collectWeeklyKeys = (value: unknown): void => {
+        if (Array.isArray(value)) { for (const item of value) collectWeeklyKeys(item); }
+        else if (value && typeof value === 'object') { for (const [k, v] of Object.entries(value as Record<string, unknown>)) { weeklyKeys.add(k); collectWeeklyKeys(v); } }
+      };
+      collectWeeklyKeys(weeks);
+      check('7b.9 no buyer/our message-count field anywhere in weekly_trend', !weeklyKeys.has('buyer_messages_from_cohort') && !weeklyKeys.has('our_messages_from_cohort') && !weeklyKeys.has('buyer_messages_from_attributed_lead_cohort') && !weeklyKeys.has('our_messages_from_attributed_lead_cohort'), Array.from(weeklyKeys));
+      check('7b.9b no item-level fields (item_id/item_display_name) anywhere in weekly_trend', !weeklyKeys.has('item_id') && !weeklyKeys.has('item_display_name'), Array.from(weeklyKeys));
+      check('7b.9c no conversion/funnel-named field anywhere in weekly_trend', !Array.from(weeklyKeys).some((k) => /conversion|funnel/i.test(k)), Array.from(weeklyKeys));
+      check('7b.9d no distinct_listed_item_count/leads_with(out)_normalized_channel/completed/cash/trade/mixed_offer fields (excluded from the compact weekly row by design)', !weeklyKeys.has('distinct_listed_item_count') && !weeklyKeys.has('leads_with_normalized_channel') && !weeklyKeys.has('completed_leads_from_cohort') && !weeklyKeys.has('cash_offer_leads_from_cohort'), Array.from(weeklyKeys));
     }
 
   } finally {

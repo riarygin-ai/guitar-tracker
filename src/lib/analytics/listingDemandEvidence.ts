@@ -111,8 +111,11 @@ export interface DemandChannelPeriodSlice {
   buyer_messages_from_attributed_lead_cohort: number;
   our_messages_from_attributed_lead_cohort: number;
   leads_per_100_channel_listing_days: number | null;
-  // Lifetime fact (MAX over every dated lead for this channel), not
-  // bounded to the period.
+  // Latest first_contact_at among THIS channel's channel-attributed leads
+  // in THIS period slice only (never a lifetime value, never a date
+  // outside [period start, period end] this slice belongs to — fixed
+  // 20260915000000). NULL when no lead was attributed to this channel in
+  // this period.
   last_lead_date: string | null;
   // Grouped by deals.deal_channel_id (a factual recorded field) —
   // deliberately NOT lead-attributed; see limitations.
@@ -169,6 +172,50 @@ export interface DemandItemEntry {
   current_listing_cycle_leads: number;
 }
 
+// ── weekly_trend (20260916000000) — a fixed 4-consecutive-week window
+// ending on the requested end_date, independent of the requested
+// start_date/period length. Deliberately compact: every field here comes
+// straight from an ordinary _listing_demand_period_metrics_v1_0 / _listing_
+// demand_channel_metrics_v1_0 call for that one week — no reimplemented
+// formulas, no item-level evidence, no message-count totals. ─────────────
+
+export interface DemandWeeklyChannelEntry {
+  deal_channel_id: number;
+  channel_name: string;
+  channel_listing_days: number;
+  distinct_listed_items: number;
+  channel_attributed_leads: number;
+  serious_plus_attributed_leads_from_cohort: number;
+  high_intent_attributed_leads_from_cohort: number;
+  realized_deal_count_by_recorded_channel: number;
+  leads_per_100_channel_listing_days: number | null;
+  // Scoped to THIS week only — never a date outside [start_date, end_date]
+  // of the week this entry belongs to. NULL when no lead was attributed
+  // to this channel in this week.
+  last_lead_date: string | null;
+}
+
+export interface DemandWeeklyTrendEntry {
+  start_date: string;
+  end_date: string;
+  days: number;
+  item_listing_days: number;
+  channel_listing_days: number;
+  avg_listed_items: number | null;
+  avg_channel_exposure: number | null;
+  exposure_multiplier: number | null;
+  leads_started: number;
+  item_attributed_leads: number;
+  channel_attributed_leads: number;
+  serious_plus_leads_from_cohort: number;
+  high_intent_leads_from_cohort: number;
+  realized_deal_count: number;
+  realized_item_count: number;
+  leads_per_100_item_listing_days: number | null;
+  leads_per_100_channel_listing_days: number | null;
+  channels: DemandWeeklyChannelEntry[];
+}
+
 export interface DemandDataQualityCurrentPeriod {
   leads_started: number;
   item_attributed_leads: number;
@@ -200,6 +247,9 @@ export interface ListingDemandEvidence {
   summary: DemandSummary;
   channels: DemandChannelEntry[];
   items: DemandItemEntry[];
+  // Fixed 4-consecutive-week window ending on period.end_date, ordered
+  // oldest -> newest, independent of period.start_date/days.
+  weekly_trend: DemandWeeklyTrendEntry[];
   data_quality: DemandDataQuality;
   limitations: string[];
 }
@@ -217,6 +267,7 @@ export function isValidListingDemandEvidence(value: unknown): value is ListingDe
     typeof v.summary === 'object' && v.summary !== null &&
     Array.isArray(v.channels) &&
     Array.isArray(v.items) &&
+    Array.isArray(v.weekly_trend) &&
     typeof v.data_quality === 'object' && v.data_quality !== null &&
     Array.isArray(v.limitations)
   );
