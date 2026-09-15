@@ -5,15 +5,35 @@
 //
 // Listing Demand Evidence v1.0 is a pure, on-demand STABLE SQL function
 // (no writes, nothing persisted, no scheduled jobs, no materialized
-// aggregates) — this wrapper is a thin RPC call. The SQL migration
-// (20260914000000_build_listing_demand_evidence_v1_0.sql) carries the
+// aggregates) — this wrapper is a thin RPC call. The SQL migrations
+// (20260914000000_build_listing_demand_evidence_v1_0.sql,
+// 20260915000000_fix_listing_demand_channel_last_lead_date.sql,
+// 20260916000000_listing_demand_weekly_trend.sql,
+// 20260917000000_listing_demand_configurable_trend_weeks.sql) carry the
 // actual evidence logic; this file is the single TypeScript source of
 // truth for its JSON contract.
+//
+// build_listing_demand_evidence_v1_0 (the original 3-argument RPC name) is
+// kept in the database as a fixed-4-week compatibility wrapper so it never
+// breaks, but this app now always calls build_listing_demand_evidence_v1_1
+// directly with an explicit p_trend_weeks — never relying on the SQL
+// function's own default.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export const LISTING_DEMAND_EVIDENCE_SCHEMA_VERSION = '1.0';
-const BUILDER_RPC = 'build_listing_demand_evidence_v1_0';
+const BUILDER_RPC = 'build_listing_demand_evidence_v1_1';
+
+// Allowed weekly_trend window lengths (section: configurable trend_weeks).
+// Kept as a readonly tuple so TREND_WEEKS_OPTIONS[number] is the exact
+// TrendWeeks union below — one definition, no drift.
+export const TREND_WEEKS_OPTIONS = [4, 8, 12] as const;
+export type TrendWeeks = (typeof TREND_WEEKS_OPTIONS)[number];
+export const DEFAULT_TREND_WEEKS: TrendWeeks = 4;
+
+export function isValidTrendWeeks(value: unknown): value is TrendWeeks {
+  return typeof value === 'number' && (TREND_WEEKS_OPTIONS as readonly number[]).includes(value);
+}
 
 export class ListingDemandEvidenceError extends Error {
   readonly status: number;
@@ -172,12 +192,14 @@ export interface DemandItemEntry {
   current_listing_cycle_leads: number;
 }
 
-// ── weekly_trend (20260916000000) — a fixed 4-consecutive-week window
-// ending on the requested end_date, independent of the requested
-// start_date/period length. Deliberately compact: every field here comes
-// straight from an ordinary _listing_demand_period_metrics_v1_0 / _listing_
-// demand_channel_metrics_v1_0 call for that one week — no reimplemented
-// formulas, no item-level evidence, no message-count totals. ─────────────
+// ── weekly_trend (20260916000000, window length made configurable in
+// 20260917000000) — exactly trend_window_weeks consecutive, non-overlapping
+// 7-day periods ending on the requested end_date, independent of the
+// requested start_date/period length. Deliberately compact: every field
+// here comes straight from an ordinary _listing_demand_period_metrics_v1_0
+// / _listing_demand_channel_metrics_v1_0 call for that one week — no
+// reimplemented formulas, no item-level evidence, no message-count
+// totals. ───────────────────────────────────────────────────────────────
 
 export interface DemandWeeklyChannelEntry {
   deal_channel_id: number;
@@ -241,14 +263,19 @@ export interface ListingDemandEvidence {
   schema_version: string;
   generated_at: string;
   target_user_id: number;
+  // Resolved weekly_trend window length (4, 8, or 12) — controls ONLY
+  // weekly_trend below; period/comparison_period/summary/channels/items
+  // are governed solely by the requested start_date/end_date and are
+  // completely independent of this value (20260917000000).
+  trend_window_weeks: number;
   period: DemandPeriod;
   comparison_period: DemandPeriod;
   analysis_context: DemandAnalysisContext;
   summary: DemandSummary;
   channels: DemandChannelEntry[];
   items: DemandItemEntry[];
-  // Fixed 4-consecutive-week window ending on period.end_date, ordered
-  // oldest -> newest, independent of period.start_date/days.
+  // Exactly trend_window_weeks consecutive weeks ending on period.end_date,
+  // ordered oldest -> newest, independent of period.start_date/days.
   weekly_trend: DemandWeeklyTrendEntry[];
   data_quality: DemandDataQuality;
   limitations: string[];
@@ -261,6 +288,7 @@ export function isValidListingDemandEvidence(value: unknown): value is ListingDe
     v.schema_version === LISTING_DEMAND_EVIDENCE_SCHEMA_VERSION &&
     typeof v.generated_at === 'string' &&
     typeof v.target_user_id === 'number' &&
+    typeof v.trend_window_weeks === 'number' &&
     typeof v.period === 'object' && v.period !== null &&
     typeof v.comparison_period === 'object' && v.comparison_period !== null &&
     typeof v.analysis_context === 'object' && v.analysis_context !== null &&
@@ -278,6 +306,9 @@ export interface GetListingDemandEvidenceParams {
   serviceClient: SupabaseClient;
   startDate: string; // YYYY-MM-DD, inclusive
   endDate: string;   // YYYY-MM-DD, inclusive
+  // weekly_trend window length. Independent of startDate/endDate — see
+  // above. Defaults to DEFAULT_TREND_WEEKS (4) when omitted.
+  trendWeeks?: TrendWeeks;
 }
 
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -289,7 +320,7 @@ const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
  * getListingEvidenceForCurrentUser.
  */
 export async function getListingDemandEvidence(params: GetListingDemandEvidenceParams): Promise<ListingDemandEvidence> {
-  const { appUserId, serviceClient, startDate, endDate } = params;
+  const { appUserId, serviceClient, startDate, endDate, trendWeeks = DEFAULT_TREND_WEEKS } = params;
 
   if (!DATE_ONLY_RE.test(startDate) || !DATE_ONLY_RE.test(endDate)) {
     throw new ListingDemandEvidenceError('start_date and end_date must be YYYY-MM-DD', 400);
@@ -297,20 +328,24 @@ export async function getListingDemandEvidence(params: GetListingDemandEvidenceP
   if (startDate > endDate) {
     throw new ListingDemandEvidenceError('start_date must be on or before end_date', 400);
   }
+  if (!isValidTrendWeeks(trendWeeks)) {
+    throw new ListingDemandEvidenceError('trend_weeks must be one of 4, 8, 12', 400);
+  }
 
   const { data, error } = await serviceClient.rpc(BUILDER_RPC, {
     p_target_user_id: appUserId,
     p_start_date: startDate,
     p_end_date: endDate,
+    p_trend_weeks: trendWeeks,
   });
 
   if (error) {
-    console.error('[listingDemandEvidence] build_listing_demand_evidence_v1_0 failed:', error.message);
+    console.error('[listingDemandEvidence] build_listing_demand_evidence_v1_1 failed:', error.message);
     throw new ListingDemandEvidenceError('Failed to compute listing demand evidence', 500);
   }
 
   if (!isValidListingDemandEvidence(data)) {
-    console.error('[listingDemandEvidence] build_listing_demand_evidence_v1_0 returned an unexpected shape');
+    console.error('[listingDemandEvidence] build_listing_demand_evidence_v1_1 returned an unexpected shape');
     throw new ListingDemandEvidenceError('Listing demand evidence computation returned an unexpected shape', 500);
   }
 

@@ -3,6 +3,10 @@ import { createClient } from '@supabase/supabase-js';
 import {
   getListingDemandEvidence,
   ListingDemandEvidenceError,
+  TREND_WEEKS_OPTIONS,
+  DEFAULT_TREND_WEEKS,
+  isValidTrendWeeks,
+  type TrendWeeks,
 } from '@/lib/analytics/listingDemandEvidence';
 
 const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -11,7 +15,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-// GET /api/listing-demand-evidence?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+// GET /api/listing-demand-evidence?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&trend_weeks=4|8|12
 //
 // Read-only, deterministic Listing Demand Evidence v1.0 export — no DB
 // mutation of any kind. Same auth pattern as /api/listing-evidence: the
@@ -21,9 +25,17 @@ const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 // itself, which has no admin-target-user override either; see this
 // task's final report for why an admin target-user parameter was
 // deliberately NOT added in v1).
+//
+// trend_weeks is completely independent of start_date/end_date: it selects
+// ONLY the weekly_trend window length (4/8/12, default 4); it never affects
+// period/comparison_period/summary/channels/items, which are governed
+// solely by start_date/end_date. An invalid trend_weeks (anything other
+// than the literal string "4", "8", or "12") is a clear 400 — never
+// silently clamped or rounded to the nearest valid value.
 export async function GET(req: NextRequest) {
   const startDateParam = req.nextUrl.searchParams.get('start_date');
   const endDateParam = req.nextUrl.searchParams.get('end_date');
+  const trendWeeksParam = req.nextUrl.searchParams.get('trend_weeks');
 
   if (!startDateParam || !DATE_ONLY_RE.test(startDateParam)) {
     return NextResponse.json({ error: 'start_date is required and must be YYYY-MM-DD' }, { status: 400 });
@@ -33,6 +45,18 @@ export async function GET(req: NextRequest) {
   }
   if (startDateParam > endDateParam) {
     return NextResponse.json({ error: 'start_date must be on or before end_date' }, { status: 400 });
+  }
+
+  let trendWeeks: TrendWeeks = DEFAULT_TREND_WEEKS;
+  if (trendWeeksParam !== null) {
+    const parsed = Number(trendWeeksParam);
+    if (!/^\d+$/.test(trendWeeksParam) || !isValidTrendWeeks(parsed)) {
+      return NextResponse.json(
+        { error: `trend_weeks must be one of ${TREND_WEEKS_OPTIONS.join(', ')}` },
+        { status: 400 },
+      );
+    }
+    trendWeeks = parsed;
   }
 
   // ── Authenticate ─────────────────────────────────────────────────────────────
@@ -82,6 +106,7 @@ export async function GET(req: NextRequest) {
       serviceClient,
       startDate: startDateParam,
       endDate: endDateParam,
+      trendWeeks,
     });
 
     return NextResponse.json({ target_user_listing_demand_evidence: evidence });

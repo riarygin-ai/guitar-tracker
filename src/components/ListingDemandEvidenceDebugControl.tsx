@@ -16,6 +16,7 @@ import {
   resolveDayCountPreset,
   type ListingDemandEvidenceDeps,
 } from '@/lib/listingDemandEvidenceClipboard';
+import { TREND_WEEKS_OPTIONS, DEFAULT_TREND_WEEKS, type TrendWeeks } from '@/lib/analytics/listingDemandEvidence';
 
 type ActionState = 'idle' | 'loading' | 'success' | 'error';
 type DayPreset = 7 | 30 | 90;
@@ -37,6 +38,11 @@ function triggerBrowserDownload(filename: string, json: string) {
 
 export default function ListingDemandEvidenceDebugControl() {
   const [preset, setPreset] = useState<DayPreset>(30);
+  // weekly_trend window length — completely independent of `preset` above.
+  // `preset` controls only the summary period; `trendWeeks` controls only
+  // weekly_trend (see the module-level comment on this file and
+  // src/lib/analytics/listingDemandEvidence.ts).
+  const [trendWeeks, setTrendWeeks] = useState<TrendWeeks>(DEFAULT_TREND_WEEKS);
 
   const [copyState, setCopyState] = useState<ActionState>('idle');
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
@@ -79,13 +85,13 @@ export default function ListingDemandEvidenceDebugControl() {
     setCopyMessage(null);
 
     const range = resolveDayCountPreset(preset);
-    const result = await copierRef.current.copy(range);
+    const result = await copierRef.current.copy(range, trendWeeks);
     if (!mountedRef.current) return;
     if (result.status === 'already_in_progress') { setCopyState('idle'); return; }
 
     if (result.status === 'success') {
       setCopyState('success');
-      setCopyMessage(`Copied ${range.startDate} → ${range.endDate} (${preset}d)`);
+      setCopyMessage(`Copied ${range.startDate} → ${range.endDate} (${preset}d, trend ${trendWeeks}w)`);
     } else {
       setCopyState('error');
       setCopyMessage(result.message);
@@ -104,7 +110,7 @@ export default function ListingDemandEvidenceDebugControl() {
     setDownloadMessage(null);
 
     const range = resolveDayCountPreset(preset);
-    const result = await downloaderRef.current.download(range);
+    const result = await downloaderRef.current.download(range, trendWeeks);
     if (!mountedRef.current) return;
     if (result.status === 'already_in_progress') { setDownloadState('idle'); return; }
 
@@ -142,6 +148,27 @@ export default function ListingDemandEvidenceDebugControl() {
             }`}
           >
             {p} days
+          </button>
+        ))}
+      </div>
+
+      {/* Independent control: selects ONLY weekly_trend's window length —
+          never affects the summary period above. */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] text-slate-500 dark:text-slate-400">Trend:</span>
+        {TREND_WEEKS_OPTIONS.map((w) => (
+          <button
+            key={w}
+            type="button"
+            onClick={() => setTrendWeeks(w)}
+            disabled={anyLoading}
+            className={`rounded-lg px-2 py-0.5 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+              trendWeeks === w
+                ? 'bg-slate-700 text-white dark:bg-slate-300 dark:text-slate-900'
+                : 'border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-400 dark:hover:bg-slate-600'
+            }`}
+          >
+            {w} weeks
           </button>
         ))}
       </div>

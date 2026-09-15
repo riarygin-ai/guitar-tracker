@@ -40,7 +40,10 @@ import {
 import {
   getListingDemandEvidence,
   isValidListingDemandEvidence,
+  ListingDemandEvidenceError,
+  TREND_WEEKS_OPTIONS,
   type ListingDemandEvidence,
+  type TrendWeeks,
 } from '../src/lib/analytics/listingDemandEvidence';
 
 let passed = 0;
@@ -54,6 +57,29 @@ function check(label: string, condition: boolean, detail?: unknown) {
     failed++;
     console.log(`  FAIL: ${label}`, detail !== undefined ? detail : '');
   }
+}
+
+// Independently computes the expected weekly_trend window boundaries from
+// the task's own documented formula (weeks_ago = trendWeeks-1..0; week_end
+// = end_date - weeks_ago*7; week_start = week_end-6) — implemented here in
+// plain TS date-epoch arithmetic, never copy-pasted from the SQL body, so
+// it is a genuine independent check of the SQL's output, not a tautology.
+function toEpochDay(dateStr: string): number {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return Date.UTC(y, m - 1, d) / 86400000;
+}
+function fromEpochDay(epochDay: number): string {
+  const d = new Date(epochDay * 86400000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+function computeExpectedWeeklyWindows(endDate: string, trendWeeks: number): { start: string; end: string }[] {
+  const endEpoch = toEpochDay(endDate);
+  const out: { start: string; end: string }[] = [];
+  for (let weeksAgo = trendWeeks - 1; weeksAgo >= 0; weeksAgo--) {
+    const weekEnd = endEpoch - weeksAgo * 7;
+    out.push({ start: fromEpochDay(weekEnd - 6), end: fromEpochDay(weekEnd) });
+  }
+  return out;
 }
 
 function daysAgo(n: number): string {
@@ -896,6 +922,168 @@ async function main() {
       check('7b.9b no item-level fields (item_id/item_display_name) anywhere in weekly_trend', !weeklyKeys.has('item_id') && !weeklyKeys.has('item_display_name'), Array.from(weeklyKeys));
       check('7b.9c no conversion/funnel-named field anywhere in weekly_trend', !Array.from(weeklyKeys).some((k) => /conversion|funnel/i.test(k)), Array.from(weeklyKeys));
       check('7b.9d no distinct_listed_item_count/leads_with(out)_normalized_channel/completed/cash/trade/mixed_offer fields (excluded from the compact weekly row by design)', !weeklyKeys.has('distinct_listed_item_count') && !weeklyKeys.has('leads_with_normalized_channel') && !weeklyKeys.has('completed_leads_from_cohort') && !weeklyKeys.has('cash_offer_leads_from_cohort'), Array.from(weeklyKeys));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log('\n=== Section 8: configurable trend_weeks (20260917000000) ===');
+
+    console.log('\n[8a — pure date-window arithmetic for 8/12 weeks, no fixtures needed]');
+    {
+      for (const trendWeeks of [4, 8, 12] as const) {
+        const evidence = await getListingDemandEvidence({
+          appUserId: 999999999, serviceClient: admin, startDate: '2026-09-08', endDate: '2026-09-14', trendWeeks,
+        });
+        const weeks = evidence.weekly_trend;
+        const expected = computeExpectedWeeklyWindows('2026-09-14', trendWeeks);
+        check(`8a.1 trend_weeks=${trendWeeks} -> trend_window_weeks field matches`, evidence.trend_window_weeks === trendWeeks, evidence.trend_window_weeks);
+        check(`8a.2 trend_weeks=${trendWeeks} -> exactly ${trendWeeks} weekly_trend rows`, weeks.length === trendWeeks, weeks.length);
+        check(`8a.3 trend_weeks=${trendWeeks} -> boundaries match independently-computed windows, oldest -> newest`, weeks.every((w, i) => w.start_date === expected[i].start && w.end_date === expected[i].end), weeks.map((w) => [w.start_date, w.end_date]));
+        check(`8a.4 trend_weeks=${trendWeeks} -> every week is exactly 7 inclusive days`, weeks.every((w) => w.days === 7));
+        check(`8a.5 trend_weeks=${trendWeeks} -> weeks are consecutive and non-overlapping`, weeks.every((w, i) => i === 0 || new Date(w.start_date).getTime() - new Date(weeks[i - 1].end_date).getTime() === 24 * 60 * 60 * 1000));
+        check(`8a.6 trend_weeks=${trendWeeks} -> newest week's end_date matches the requested end_date`, weeks[weeks.length - 1].end_date === '2026-09-14', weeks[weeks.length - 1]);
+
+        // Independence from p_start_date: a completely different start_date
+        // with the same end_date/trend_weeks must yield identical weeks.
+        const differentStart = await getListingDemandEvidence({
+          appUserId: 999999999, serviceClient: admin, startDate: '2026-01-01', endDate: '2026-09-14', trendWeeks,
+        });
+        check(`8a.7 trend_weeks=${trendWeeks} -> weekly_trend is independent of p_start_date`, JSON.stringify(differentStart.weekly_trend.map((w) => [w.start_date, w.end_date])) === JSON.stringify(weeks.map((w) => [w.start_date, w.end_date])));
+      }
+
+      // Nesting invariant: 8-week's last 4 === 4-week's weeks; 12-week's last 8 === 8-week's weeks.
+      const e4 = await getListingDemandEvidence({ appUserId: 999999999, serviceClient: admin, startDate: '2026-09-08', endDate: '2026-09-14', trendWeeks: 4 });
+      const e8 = await getListingDemandEvidence({ appUserId: 999999999, serviceClient: admin, startDate: '2026-09-08', endDate: '2026-09-14', trendWeeks: 8 });
+      const e12 = await getListingDemandEvidence({ appUserId: 999999999, serviceClient: admin, startDate: '2026-09-08', endDate: '2026-09-14', trendWeeks: 12 });
+      check('8a.8 8-week trend\'s last 4 weeks are byte-identical to the 4-week trend', JSON.stringify(e8.weekly_trend.slice(-4)) === JSON.stringify(e4.weekly_trend));
+      check('8a.9 12-week trend\'s last 8 weeks are byte-identical to the 8-week trend', JSON.stringify(e12.weekly_trend.slice(-8)) === JSON.stringify(e8.weekly_trend));
+    }
+
+    console.log('\n[8b — API-level trend_weeks validation (TS wrapper, same guard the route uses)]');
+    {
+      check('8b.1 omitted trendWeeks defaults to 4', (await getListingDemandEvidence({ appUserId: 999999999, serviceClient: admin, startDate: '2026-09-08', endDate: '2026-09-14' })).trend_window_weeks === 4);
+      for (const invalid of [0, 3, 6, 20, -4, 4.5] as const) {
+        let threw = false;
+        let status: number | undefined;
+        try {
+          await getListingDemandEvidence({ appUserId: 999999999, serviceClient: admin, startDate: '2026-09-08', endDate: '2026-09-14', trendWeeks: invalid as unknown as TrendWeeks });
+        } catch (err) {
+          threw = err instanceof ListingDemandEvidenceError;
+          status = err instanceof ListingDemandEvidenceError ? err.status : undefined;
+        }
+        check(`8b.2 trendWeeks=${invalid} is rejected with a clear 400 (never silently clamped/rounded)`, threw && status === 400, { threw, status });
+      }
+      check('8b.3 TREND_WEEKS_OPTIONS is exactly [4, 8, 12]', JSON.stringify(TREND_WEEKS_OPTIONS) === JSON.stringify([4, 8, 12]));
+    }
+
+    console.log('\n[8b — HTTP route-level validation, verified manually against the live dev server]');
+    console.log('  GET /api/listing-demand-evidence?...&trend_weeks=0|3|6|20|abc -> 400 "trend_weeks must be one of 4, 8, 12"');
+    console.log('  GET /api/listing-demand-evidence?...&trend_weeks=4|8|12 -> 200, trend_window_weeks matches');
+    console.log('  GET /api/listing-demand-evidence?... (omitted) -> 200, trend_window_weeks=4');
+    console.log('  (see this task\'s final report for the exact curl transcript)');
+
+    console.log('\n[8c — SQL-level guard is independent of API validation]');
+    {
+      const { error: badTrendError } = await admin.rpc('build_listing_demand_evidence_v1_1', {
+        p_target_user_id: userA, p_start_date: PERIOD_START, p_end_date: PERIOD_END, p_trend_weeks: 6,
+      });
+      check('8c.1 build_listing_demand_evidence_v1_1 itself rejects p_trend_weeks=6 (SQL-level RAISE EXCEPTION, not just API validation)', !!badTrendError && /p_trend_weeks must be one of 4, 8, 12/.test(badTrendError.message), badTrendError);
+    }
+
+    console.log('\n[8d — backward-compatibility: build_listing_demand_evidence_v1_0 wrapper is byte-identical to v1_1 with p_trend_weeks=4]');
+    {
+      const { data: v0Data, error: v0Error } = await admin.rpc('build_listing_demand_evidence_v1_0', {
+        p_target_user_id: userA, p_start_date: PERIOD_START, p_end_date: PERIOD_END,
+      });
+      const { data: v1Data, error: v1Error } = await admin.rpc('build_listing_demand_evidence_v1_1', {
+        p_target_user_id: userA, p_start_date: PERIOD_START, p_end_date: PERIOD_END, p_trend_weeks: 4,
+      });
+      check('8d.1 both RPC calls succeed with no overload ambiguity', !v0Error && !v1Error, { v0Error, v1Error });
+      const stripVolatile = (v: unknown) => { const c = { ...(v as Record<string, unknown>) }; delete c.generated_at; return c; };
+      check('8d.2 build_listing_demand_evidence_v1_0(3 args) output is byte-identical to build_listing_demand_evidence_v1_1(..., 4) (ignoring generated_at)', JSON.stringify(stripVolatile(v0Data)) === JSON.stringify(stripVolatile(v1Data)));
+      check('8d.3 the legacy v1_0 wrapper still reports trend_window_weeks=4', (v0Data as { trend_window_weeks?: number })?.trend_window_weeks === 4, v0Data);
+    }
+
+    console.log('\n[8e — real fixtures: reconciliation for 8/12-week trends, isolated 2017 calendar window]');
+    {
+      const S8_END = '2017-11-14';
+
+      // Full exposure across the ENTIRE 12-week window and beyond, on
+      // Marketplace — listed well before the earliest possible week start
+      // (2017-08-23) so every one of the 12 weeks gets a clean, easily
+      // hand-verified 7-day exposure for this item.
+      const s8FullItem = await insertItem(admin, 's8-full-exposure', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: businessId, model: 'S8 Full Exposure Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, s8FullItem, '2017-06-01', 400, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: s8FullItem, channelId: marketplaceId, status: 'active', listedAt: '2017-07-01' }, createdListingIds);
+      await insertLead(admin, { userId: userA, sourceId, itemId: s8FullItem, firstContactAt: '2017-09-10', dealChannelId: marketplaceId }, createdLeadIds); // inside the extra 12-week-only window (weeks_ago=9), outside the 8-week window entirely
+      await insertLead(admin, { userId: userA, sourceId, itemId: s8FullItem, firstContactAt: '2017-11-10', dealChannelId: marketplaceId }, createdLeadIds); // inside the newest (4-week) window
+
+      // Listed partway INTO the 12-week window (2017-09-01, inside the
+      // week starting 2017-08-30) on Kijiji — creates one deliberately
+      // partial-exposure week to prove clipping still works at trend_weeks
+      // boundaries, not just at the 4-week case already proven in 7b.
+      const s8PartialItem = await insertItem(admin, 's8-partial-start', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: hybridId, model: 'S8 Partial Start Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, s8PartialItem, '2017-06-01', 350, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: s8PartialItem, channelId: kijijiId, status: 'active', listedAt: '2017-09-01' }, createdListingIds);
+
+      const e4 = await getListingDemandEvidence({ appUserId: userA, serviceClient: admin, startDate: S8_END, endDate: S8_END, trendWeeks: 4 });
+      const e8 = await getListingDemandEvidence({ appUserId: userA, serviceClient: admin, startDate: S8_END, endDate: S8_END, trendWeeks: 8 });
+      const e12 = await getListingDemandEvidence({ appUserId: userA, serviceClient: admin, startDate: S8_END, endDate: S8_END, trendWeeks: 12 });
+
+      check('8e.1 4/8/12-week calls return exactly 4/8/12 rows', e4.weekly_trend.length === 4 && e8.weekly_trend.length === 8 && e12.weekly_trend.length === 12, { l4: e4.weekly_trend.length, l8: e8.weekly_trend.length, l12: e12.weekly_trend.length });
+      check('8e.2 nesting invariant holds with real fixture data: 8-week last-4 === 4-week', JSON.stringify(e8.weekly_trend.slice(-4)) === JSON.stringify(e4.weekly_trend));
+      check('8e.3 nesting invariant holds with real fixture data: 12-week last-8 === 8-week', JSON.stringify(e12.weekly_trend.slice(-8)) === JSON.stringify(e8.weekly_trend));
+
+      // The 12-week window's OLDEST week (weeks_ago=11: 2017-08-23..2017-08-29)
+      // is entirely before s8FullItem's listed_at (2017-07-01 — wait, that's
+      // BEFORE this week, so s8FullItem DOES have exposure here) but
+      // entirely before s8PartialItem's listed_at (2017-09-01) — hand-verified below.
+      const oldestWeek = e12.weekly_trend[0];
+      check('8e.4 oldest (weeks_ago=11) week boundaries are 2017-08-23..2017-08-29', oldestWeek.start_date === '2017-08-23' && oldestWeek.end_date === '2017-08-29', oldestWeek);
+      check('8e.5 oldest week: s8FullItem already listed (2017-07-01) -> full 7-day exposure, s8PartialItem not yet listed -> item_listing_days=7 (Marketplace only)', oldestWeek.item_listing_days === 7 && oldestWeek.channel_listing_days === 7, oldestWeek);
+
+      // weeks_ago=10: 2017-08-30..2017-09-05 — s8PartialItem listed mid-week
+      // (2017-09-01), so it contributes Sep1-5 = 5 days; s8FullItem
+      // contributes its usual full 7 -> item_listing_days = 7 + 5 = 12.
+      const partialWeek = e12.weekly_trend[1];
+      check('8e.6 weeks_ago=10 boundaries are 2017-08-30..2017-09-05', partialWeek.start_date === '2017-08-30' && partialWeek.end_date === '2017-09-05', partialWeek);
+      check('8e.7 weeks_ago=10: s8PartialItem clips to its own listed_at mid-week -> item_listing_days=12 (7 Marketplace + 5 Kijiji)', partialWeek.item_listing_days === 12 && partialWeek.channel_listing_days === 12, partialWeek);
+      const partialKijiji = partialWeek.channels.find((c) => c.channel_name === 'Kijiji')!;
+      check('8e.7b weeks_ago=10 Kijiji channel_listing_days=5 (clipped to listed_at)', partialKijiji.channel_listing_days === 5, partialKijiji);
+
+      // From weeks_ago=9 onward (2017-09-06 and later), both items are
+      // fully listed all week -> item_listing_days=14 (7+7) every week.
+      for (let i = 2; i < e12.weekly_trend.length; i++) {
+        const w = e12.weekly_trend[i];
+        check(`8e.8 week[${i}] (${w.start_date}..${w.end_date}) both items fully listed -> item_listing_days=14`, w.item_listing_days === 14, w);
+      }
+
+      console.log('\n[8e — dynamic reconciliation across all 12 weeks]');
+      for (const w of e12.weekly_trend) {
+        check(`8e.9 ${w.start_date} item_listing_days/7 === avg_listed_items`, Math.abs(w.item_listing_days / 7 - (w.avg_listed_items ?? 0)) < 0.001, w);
+        check(`8e.9b ${w.start_date} channel_listing_days/7 === avg_channel_exposure`, Math.abs(w.channel_listing_days / 7 - (w.avg_channel_exposure ?? 0)) < 0.001, w);
+        const sumChannelListingDays = w.channels.reduce((sum, c) => sum + c.channel_listing_days, 0);
+        check(`8e.9c ${w.start_date} SUM(channel.channel_listing_days) === weekly channel_listing_days`, sumChannelListingDays === w.channel_listing_days, { sumChannelListingDays, weekly: w.channel_listing_days });
+        const sumChannelAttributed = w.channels.reduce((sum, c) => sum + c.channel_attributed_leads, 0);
+        check(`8e.9d ${w.start_date} SUM(channel.channel_attributed_leads) === weekly channel_attributed_leads`, sumChannelAttributed === w.channel_attributed_leads, { sumChannelAttributed, weekly: w.channel_attributed_leads });
+        for (const c of w.channels) {
+          if (c.last_lead_date !== null) {
+            check(`8e.9e ${w.start_date}/${c.channel_name} last_lead_date is within [start_date, end_date]`, c.last_lead_date >= w.start_date && c.last_lead_date <= w.end_date, { week: [w.start_date, w.end_date], last_lead_date: c.last_lead_date });
+          }
+          check(`8e.9f ${w.start_date}/${c.channel_name} zero channel_listing_days -> leads_per_100_channel_listing_days is NULL`, c.channel_listing_days > 0 || c.leads_per_100_channel_listing_days === null, c);
+        }
+      }
+      check('8e.10 total leads_started across all 12 weeks equals exactly the 2 fixture leads', e12.weekly_trend.reduce((sum, w) => sum + w.leads_started, 0) === 2, e12.weekly_trend.map((w) => w.leads_started));
+
+      console.log('\n[8f — CRITICAL differential: trend_weeks=4 vs trend_weeks=12 must not affect anything except trend_window_weeks/weekly_trend]');
+      const stripTrend = (e: ListingDemandEvidence) => { const c = { ...(e as unknown as Record<string, unknown>) }; delete c.generated_at; delete c.trend_window_weeks; delete c.weekly_trend; return c; };
+      check('8f.1 period is identical between trend_weeks=4 and trend_weeks=12', JSON.stringify(stripTrend(e4).period) === JSON.stringify(stripTrend(e12).period));
+      check('8f.2 comparison_period is identical between trend_weeks=4 and trend_weeks=12', JSON.stringify(stripTrend(e4).comparison_period) === JSON.stringify(stripTrend(e12).comparison_period));
+      check('8f.3 summary is identical between trend_weeks=4 and trend_weeks=12', JSON.stringify(stripTrend(e4).summary) === JSON.stringify(stripTrend(e12).summary));
+      check('8f.4 channels is identical between trend_weeks=4 and trend_weeks=12', JSON.stringify(stripTrend(e4).channels) === JSON.stringify(stripTrend(e12).channels));
+      check('8f.5 items is identical between trend_weeks=4 and trend_weeks=12', JSON.stringify(stripTrend(e4).items) === JSON.stringify(stripTrend(e12).items));
+      check('8f.6 data_quality is identical between trend_weeks=4 and trend_weeks=12', JSON.stringify(stripTrend(e4).data_quality) === JSON.stringify(stripTrend(e12).data_quality));
+      check('8f.7 the ENTIRE rest of the payload is byte-identical (single deep check)', JSON.stringify(stripTrend(e4)) === JSON.stringify(stripTrend(e12)));
+      check('8f.8 only trend_window_weeks/weekly_trend actually differ', e4.trend_window_weeks !== e12.trend_window_weeks && JSON.stringify(e4.weekly_trend) !== JSON.stringify(e12.weekly_trend));
     }
 
   } finally {

@@ -10,7 +10,8 @@
 // output can never drift; they only diverge in what they do with the same
 // JSON.stringify() result (clipboard.writeText vs a file download).
 
-import type { ListingDemandEvidence } from './analytics/listingDemandEvidence';
+import type { ListingDemandEvidence, TrendWeeks } from './analytics/listingDemandEvidence';
+import { DEFAULT_TREND_WEEKS } from './analytics/listingDemandEvidence';
 
 export interface ListingDemandEvidenceDeps {
   getAccessToken: () => Promise<string | null>;
@@ -60,14 +61,19 @@ export function resolveDayCountPreset(days: 7 | 30 | 90, today: Date = new Date(
   return { startDate: toDateOnly(start), endDate: toDateOnly(end) };
 }
 
-function buildEndpointUrl(range: ListingDemandDateRange): string {
-  const params = new URLSearchParams({ start_date: range.startDate, end_date: range.endDate });
+function buildEndpointUrl(range: ListingDemandDateRange, trendWeeks: TrendWeeks): string {
+  const params = new URLSearchParams({
+    start_date: range.startDate,
+    end_date: range.endDate,
+    trend_weeks: String(trendWeeks),
+  });
   return `${ENDPOINT}?${params.toString()}`;
 }
 
 export async function fetchListingDemandEvidence(
   deps: Pick<ListingDemandEvidenceDeps, 'getAccessToken' | 'fetchImpl'>,
   range: ListingDemandDateRange,
+  trendWeeks: TrendWeeks = DEFAULT_TREND_WEEKS,
 ): Promise<FetchListingDemandEvidenceResult> {
   const token = await deps.getAccessToken();
   if (!token) {
@@ -76,7 +82,7 @@ export async function fetchListingDemandEvidence(
 
   let res: Response;
   try {
-    res = await deps.fetchImpl(buildEndpointUrl(range), {
+    res = await deps.fetchImpl(buildEndpointUrl(range, trendWeeks), {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -111,8 +117,9 @@ export function buildListingDemandEvidenceFilename(range: ListingDemandDateRange
 export async function copyListingDemandEvidenceToClipboard(
   deps: Pick<ListingDemandEvidenceDeps, 'getAccessToken' | 'fetchImpl' | 'writeText'>,
   range: ListingDemandDateRange,
+  trendWeeks: TrendWeeks = DEFAULT_TREND_WEEKS,
 ): Promise<CopyListingDemandEvidenceResult> {
-  const result = await fetchListingDemandEvidence(deps, range);
+  const result = await fetchListingDemandEvidence(deps, range, trendWeeks);
   if (result.status !== 'success') return result;
 
   const text = JSON.stringify(result.evidence, null, 2);
@@ -128,8 +135,9 @@ export async function copyListingDemandEvidenceToClipboard(
 export async function downloadListingDemandEvidenceAsFile(
   deps: Pick<ListingDemandEvidenceDeps, 'getAccessToken' | 'fetchImpl' | 'downloadFile'>,
   range: ListingDemandDateRange,
+  trendWeeks: TrendWeeks = DEFAULT_TREND_WEEKS,
 ): Promise<DownloadListingDemandEvidenceResult> {
-  const result = await fetchListingDemandEvidence(deps, range);
+  const result = await fetchListingDemandEvidence(deps, range, trendWeeks);
   if (result.status !== 'success') return result;
 
   const filename = buildListingDemandEvidenceFilename(range);
@@ -150,11 +158,11 @@ export function createListingDemandEvidenceCopier(
   let inFlight = false;
 
   return {
-    async copy(range: ListingDemandDateRange): Promise<CopyListingDemandEvidenceResult> {
+    async copy(range: ListingDemandDateRange, trendWeeks: TrendWeeks = DEFAULT_TREND_WEEKS): Promise<CopyListingDemandEvidenceResult> {
       if (inFlight) return { status: 'already_in_progress' };
       inFlight = true;
       try {
-        return await copyListingDemandEvidenceToClipboard(deps, range);
+        return await copyListingDemandEvidenceToClipboard(deps, range, trendWeeks);
       } finally {
         inFlight = false;
       }
@@ -169,11 +177,11 @@ export function createListingDemandEvidenceDownloader(
   let inFlight = false;
 
   return {
-    async download(range: ListingDemandDateRange): Promise<DownloadListingDemandEvidenceResult> {
+    async download(range: ListingDemandDateRange, trendWeeks: TrendWeeks = DEFAULT_TREND_WEEKS): Promise<DownloadListingDemandEvidenceResult> {
       if (inFlight) return { status: 'already_in_progress' };
       inFlight = true;
       try {
-        return await downloadListingDemandEvidenceAsFile(deps, range);
+        return await downloadListingDemandEvidenceAsFile(deps, range, trendWeeks);
       } finally {
         inFlight = false;
       }
