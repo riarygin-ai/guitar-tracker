@@ -1,41 +1,59 @@
 'use client';
 
-// Listing Dashboard v1.0 — visibility, drill-down, and deterministic
-// export over Listing Evidence v1.0. This page never recalculates listing
-// state itself: every count and grouping rendered here comes straight out
-// of the single fetchListingEvidence() call below (see the Listing
-// Evidence migration's own header — it is the single authoritative source
-// for current listing state; Dashboard/Analysis Packet/drill-down must
-// never recompute it independently).
+// Listings + Demand Dashboard v1.0 — the primary operational Listings
+// page: current listing snapshot (Listing Evidence v1.0) plus historical
+// listing/demand activity (Listing Demand Evidence v1.0/v1.1). Neither
+// evidence source is recalculated here — every count, average, and rate
+// rendered on this page comes straight out of fetchListingEvidence() or
+// fetchListingDemandEvidenceForCurrentUser(); this page only reshapes/
+// formats those fields for display (see listingDashboardHelpers.ts and
+// listingDemandDashboardHelpers.ts).
+//
+// The two evidence sources are fetched independently and fail
+// independently: a Demand Evidence outage must never blank the snapshot
+// Overview or Unlisted Inventory sections, which stay fully usable off
+// Listing Evidence alone.
 
 import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import CopyAnalysisDataControl from '@/components/CopyAnalysisDataControl';
-import CopyAnalysisScopeButton from '@/components/CopyAnalysisScopeButton';
 import { fetchListingEvidence } from '@/lib/analytics/listingEvidenceClient';
-import type {
-  ListingEvidence,
-  ChannelSummaryEntry,
-  ListingAgeBucketCode,
-} from '@/lib/analytics/listingEvidence';
-import { fmtMoney, fmtDays, inventoryUrl, findPurposeId } from '@/lib/listingDashboardHelpers';
-
-const AGE_BUCKET_LABELS: Record<ListingAgeBucketCode, string> = {
-  LT_14: '< 14d',
-  D14_30: '14-30d',
-  D31_60: '31-60d',
-  D61_90: '61-90d',
-  D90_PLUS: '90+d',
-};
+import type { ListingEvidence } from '@/lib/analytics/listingEvidence';
+import { fetchListingDemandEvidenceForCurrentUser } from '@/lib/analytics/listingDemandEvidenceClient';
+import type { ListingDemandEvidence } from '@/lib/analytics/listingDemandEvidence';
+import { fmtMoney, inventoryUrl, findPurposeId } from '@/lib/listingDashboardHelpers';
+import { resolveDayCountPreset } from '@/lib/listingDemandEvidenceClipboard';
+import {
+  TREND_WEEKS_OPTIONS,
+  parseTrendWeeksParam,
+  trendWeeksUrl,
+  fmtRate,
+  buildMarketActivityRows,
+  buildChannelActivityRows,
+  type TrendWeeks,
+} from '@/lib/listingDemandDashboardHelpers';
 
 export default function ListingsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Trend Window: derived directly from the URL every render — no
+  // separate synced local state, so there is no stale-state-vs-URL race
+  // window (the class of bug previously fixed on /inventory). An invalid
+  // or missing value safely falls back to 4, per parseTrendWeeksParam.
+  const trendWeeks = parseTrendWeeksParam(searchParams.get('trend_weeks'));
+
   const [evidence, setEvidence] = useState<ListingEvidence | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedChannelId, setExpandedChannelId] = useState<number | null>(null);
-  const [matrixOpen, setMatrixOpen] = useState(false);
 
+  const [demandEvidence, setDemandEvidence] = useState<ListingDemandEvidence | null>(null);
+  const [demandLoading, setDemandLoading] = useState(true);
+  const [demandError, setDemandError] = useState<string | null>(null);
+
+  // Listing Evidence — the current snapshot. Independent of Trend Window.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -52,6 +70,28 @@ export default function ListingsPage() {
     return () => { cancelled = true; };
   }, []);
 
+  // Listing Demand Evidence — one shared fetch feeds both Market Activity
+  // and Channel Activity. The "current" summary period is the latest
+  // completed/current 7-day window ending today (the same day-count-preset
+  // convention already used by the Admin Debug control); trend_weeks is
+  // the only thing that changes when the Trend Window selector changes.
+  useEffect(() => {
+    let cancelled = false;
+    setDemandLoading(true);
+    setDemandError(null);
+    const { startDate, endDate } = resolveDayCountPreset(7);
+    fetchListingDemandEvidenceForCurrentUser({ startDate, endDate, trendWeeks }).then((result) => {
+      if (cancelled) return;
+      if (result.status === 'success') {
+        setDemandEvidence(result.data);
+      } else {
+        setDemandError(result.message);
+      }
+      setDemandLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [trendWeeks]);
+
   const businessPurposeId = evidence ? findPurposeId(evidence, 'Business') : null;
   const hybridPurposeId = evidence ? findPurposeId(evidence, 'Hybrid') : null;
 
@@ -61,10 +101,15 @@ export default function ListingsPage() {
         overline="Listings"
         summary={
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Current listing state, sourced from Listing Evidence v1.0 — visibility and drill-down only, no recommendations.
+            Current listing state and demand activity — visibility only, no recommendations.
           </p>
         }
         action={evidence ? <CopyAnalysisDataControl /> : undefined}
+      />
+
+      <TrendWindowControl
+        trendWeeks={trendWeeks}
+        onChange={(w) => router.replace(trendWeeksUrl(w), { scroll: false })}
       />
 
       {loading && (
@@ -83,15 +128,9 @@ export default function ListingsPage() {
         <>
           <OverviewSection evidence={evidence} />
 
-          <ChannelsSection
-            evidence={evidence}
-            expandedChannelId={expandedChannelId}
-            onToggle={(id) => setExpandedChannelId((cur) => (cur === id ? null : id))}
-          />
+          <MarketActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} />
 
-          <CrossListingSection evidence={evidence} />
-
-          <CategoryChannelSection evidence={evidence} open={matrixOpen} onToggle={() => setMatrixOpen((v) => !v)} />
+          <ChannelActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} />
 
           <UnlistedSection evidence={evidence} businessPurposeId={businessPurposeId} hybridPurposeId={hybridPurposeId} />
         </>
@@ -101,7 +140,40 @@ export default function ListingsPage() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Overview — headline KPIs
+// Trend Window — the ONE page-level trend-window selector. Historical
+// sections (Market Activity, Channel Activity) all read this same value;
+// there is no second 4/8/12 control anywhere else on this page.
+// ══════════════════════════════════════════════════════════════════════
+
+function TrendWindowControl({ trendWeeks, onChange }: { trendWeeks: TrendWeeks; onChange: (w: TrendWeeks) => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:px-5">
+      <p className="section-label shrink-0">Trend Window</p>
+      <div className="flex flex-wrap gap-2">
+        {TREND_WEEKS_OPTIONS.map((w) => (
+          <button
+            key={w}
+            type="button"
+            onClick={() => onChange(w)}
+            aria-pressed={trendWeeks === w}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+              trendWeeks === w
+                ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-900'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500'
+            }`}
+          >
+            {w}W
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Overview — headline snapshot KPIs (Listing Evidence). Never changes
+// when Trend Window changes — these four tiles have no dependency on
+// demandEvidence/trendWeeks at all.
 // ══════════════════════════════════════════════════════════════════════
 
 function StatTile({ label, value, caption, href }: { label: string; value: string; caption?: string; href?: string }) {
@@ -128,10 +200,8 @@ function OverviewSection({ evidence }: { evidence: ListingEvidence }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
       <p className="section-title">Overview</p>
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 md:grid-cols-3 lg:grid-cols-6">
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile label="Listed Items" value={String(p.distinct_listed_item_count)} caption={`of ${p.open_item_count} open`} href={inventoryUrl({ listing: 'listed' })} />
-        <StatTile label="Active Channel Listings" value={String(p.active_channel_listing_count)} caption="item/channel exposures" />
-        <StatTile label="Cross-listed Items" value={String(p.cross_listed_item_count)} caption="2+ channels" href={inventoryUrl({ channel_count: '2,3_plus' })} />
         <StatTile label="Listed Cost Basis" value={fmtMoney(p.listed_cost_basis)} />
         <StatTile label="Estimated Listed Value" value={fmtMoney(p.listed_estimated_sold_value)} caption="user estimate" />
         <StatTile label="Estimated Equity" value={fmtMoney(p.listed_estimated_equity)} caption="estimated − cost" />
@@ -146,275 +216,91 @@ function OverviewSection({ evidence }: { evidence: ListingEvidence }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Channels
+// Shared local loading/error presentation for the two Demand Evidence
+// sections — each fails/loads independently of the rest of the page.
 // ══════════════════════════════════════════════════════════════════════
 
-function ChannelsSection({
-  evidence,
-  expandedChannelId,
-  onToggle,
+function DemandSectionShell({
+  title,
+  helpText,
+  loading,
+  error,
+  hasData,
+  children,
 }: {
-  evidence: ListingEvidence;
-  expandedChannelId: number | null;
-  onToggle: (id: number) => void;
+  title: string;
+  helpText?: string;
+  loading: boolean;
+  error: string | null;
+  hasData: boolean;
+  children: React.ReactNode;
 }) {
-  if (evidence.channel_summary.length === 0) {
-    return (
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <p className="section-title">Channels</p>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">No listing-capable channels have any active listings yet.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-      <p className="section-title">Channels</p>
-      <div className="mt-4 space-y-3">
-        {evidence.channel_summary.map((channel) => (
-          <ChannelCard
-            key={channel.channel_id}
-            channel={channel}
-            expanded={expandedChannelId === channel.channel_id}
-            onToggle={() => onToggle(channel.channel_id)}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
+      <p className="section-title">{title}</p>
+      {helpText && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{helpText}</p>}
 
-function ChannelCard({ channel, expanded, onToggle }: { channel: ChannelSummaryEntry; expanded: boolean; onToggle: () => void }) {
-  const topCategories = [...channel.category_breakdown]
-    .sort((a, b) => b.listed_item_count - a.listed_item_count)
-    .slice(0, 4);
-  const overNinety = channel.listing_age_bucket_breakdown.find((b) => b.bucket_code === 'D90_PLUS')?.item_count ?? 0;
-
-  return (
-    <div className="rounded-2xl border border-slate-200 dark:border-slate-700">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-start justify-between gap-3 p-4 text-left"
-        aria-expanded={expanded}
-      >
-        <div className="min-w-0">
-          <Link
-            href={inventoryUrl({ channel_id: channel.channel_id })}
-            onClick={(e) => e.stopPropagation()}
-            className="font-semibold text-slate-900 hover:underline dark:text-white"
-          >
-            {channel.channel_name}
-          </Link>
-          <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
-            {channel.listed_item_count} item{channel.listed_item_count === 1 ? '' : 's'}
-          </p>
-          {topCategories.length > 0 && (
-            <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
-              {topCategories.map((c) => `${c.category_name ?? 'Uncategorized'} ${c.listed_item_count}`).join(' · ')}
-            </p>
-          )}
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Median age {fmtDays(channel.median_current_listing_age_days)}
-            {overNinety > 0 && <> · {overNinety} over 90d</>}
-          </p>
-        </div>
-        <svg
-          xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-          className={`mt-1 shrink-0 text-slate-400 transition-transform duration-150 ${expanded ? 'rotate-180' : ''}`}
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-
-      {expanded && (
-        <div className="space-y-4 border-t border-slate-200 p-4 dark:border-slate-700">
-          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-            <div>
-              <p className="section-label">Cost Basis</p>
-              <p className="mt-0.5 font-medium text-slate-900 dark:text-white">{fmtMoney(channel.cost_basis)}</p>
-            </div>
-            <div>
-              <p className="section-label">Est. Value</p>
-              <p className="mt-0.5 font-medium text-slate-900 dark:text-white">{fmtMoney(channel.estimated_sold_value)}</p>
-            </div>
-            <div>
-              <p className="section-label">Est. Equity</p>
-              <p className="mt-0.5 font-medium text-slate-900 dark:text-white">{fmtMoney(channel.estimated_equity)}</p>
-            </div>
-            <div>
-              <p className="section-label">Oldest Active</p>
-              <p className="mt-0.5 font-medium text-slate-900 dark:text-white">{fmtDays(channel.oldest_current_listing_age_days)}</p>
-            </div>
-          </div>
-
-          <div>
-            <p className="section-label">Category</p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {channel.category_breakdown.map((c) => (
-                <Link
-                  key={`${c.category_id}`}
-                  href={inventoryUrl({ channel_id: channel.channel_id, category: c.category_name ?? undefined })}
-                  className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-                >
-                  {c.category_name ?? 'Uncategorized'} {c.listed_item_count}
-                </Link>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <p className="section-label">Purpose</p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {channel.purpose_breakdown.map((pu) => (
-                <span key={pu.purpose_bucket} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium capitalize text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                  {pu.purpose_bucket} {pu.listed_item_count}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <p className="section-label">Listing Age (descriptive — not a performance score)</p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {channel.listing_age_bucket_breakdown.map((b) => (
-                <Link
-                  key={b.bucket_code}
-                  href={inventoryUrl({ channel_id: channel.channel_id, age_bucket: b.bucket_code })}
-                  className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-                >
-                  {AGE_BUCKET_LABELS[b.bucket_code]} {b.item_count}
-                </Link>
-              ))}
-              {channel.listing_age_bucket_breakdown.length === 0 && (
-                <span className="text-xs text-slate-400 dark:text-slate-500">No age data available.</span>
-              )}
-            </div>
-          </div>
-
-          <CopyAnalysisScopeButton selection={{ scope: 'channel', channelId: channel.channel_id }} label={`Copy ${channel.channel_name} Analysis`} />
-        </div>
+      {error && (
+        <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-400">
+          {error}
+        </p>
       )}
-    </div>
-  );
-}
 
-// ══════════════════════════════════════════════════════════════════════
-// Cross-listing
-// ══════════════════════════════════════════════════════════════════════
-
-function CrossListingSection({ evidence }: { evidence: ListingEvidence }) {
-  const cl = evidence.cross_listing_evidence;
-  const hasMultiChannelCombo = cl.combinations.some((c) => c.channel_ids.length > 1);
-
-  return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-      <p className="section-title">Channel Coverage</p>
-      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Descriptive only — a single-channel item is not a coverage problem.</p>
-
-      <div className="mt-3">
-        <p className="section-label">By channel count</p>
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {cl.by_active_channel_count.map((b) => (
-            <Link
-              key={b.active_channel_count}
-              href={inventoryUrl({ channel_count: b.active_channel_count })}
-              className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-            >
-              {b.active_channel_count === '3_plus' ? '3+' : b.active_channel_count} channel{b.active_channel_count === '1' ? '' : 's'} · {b.item_count}
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      {cl.combinations.length > 0 && (
-        <div className="mt-4">
-          <p className="section-label">Combinations</p>
-          <ul className="mt-1.5 space-y-1 text-sm">
-            {cl.combinations.map((combo) => (
-              <li key={combo.label} className="flex items-center justify-between gap-2">
-                {combo.channel_ids.length === 1 ? (
-                  <Link href={inventoryUrl({ channel_id: combo.channel_ids[0] })} className="min-w-0 break-words text-slate-700 hover:underline dark:text-slate-200">
-                    {combo.label}
-                  </Link>
-                ) : (
-                  <span className="min-w-0 break-words text-slate-700 dark:text-slate-200">{combo.label}</span>
-                )}
-                <span className="shrink-0 tabular-nums text-slate-500 dark:text-slate-400">{combo.item_count}</span>
-              </li>
-            ))}
-          </ul>
-          {hasMultiChannelCombo && (
-            <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
-              Exact multi-channel combination drill-down isn&apos;t supported yet — use individual channel filters or channel count above.
-            </p>
-          )}
-        </div>
+      {!error && loading && !hasData && (
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Loading...</p>
       )}
+
+      {!error && hasData && <div className={loading ? 'mt-4 opacity-60 transition-opacity' : 'mt-4'}>{children}</div>}
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Category × Channel
+// Market Activity — weekly_trend (Listing Demand Evidence). Leads
+// (demand/activity) and Realized Deals (realized Sell/Trade activity) are
+// shown side-by-side, never as a funnel — no conversion rate exists here
+// or anywhere else in this evidence.
 // ══════════════════════════════════════════════════════════════════════
 
-function CategoryChannelSection({ evidence, open, onToggle }: { evidence: ListingEvidence; open: boolean; onToggle: () => void }) {
-  const matrix = evidence.category_channel_matrix;
-  if (matrix.category_totals.length === 0) return null;
-
-  const channelIds = evidence.channel_summary.map((c) => c.channel_id);
-  const channelNameById = new Map(evidence.channel_summary.map((c) => [c.channel_id, c.channel_name]));
-
-  const cellByKey = new Map<string, number>();
-  for (const row of matrix.rows) cellByKey.set(`${row.category_id}:${row.channel_id}`, row.listed_item_count);
+function MarketActivitySection({ evidence, loading, error }: { evidence: ListingDemandEvidence | null; loading: boolean; error: string | null }) {
+  const rows = evidence ? buildMarketActivityRows(evidence.weekly_trend) : [];
 
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-      <button type="button" onClick={onToggle} className="flex w-full items-center justify-between gap-3 text-left" aria-expanded={open}>
-        <p className="section-title">Category × Channel</p>
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 text-slate-400 transition-transform duration-150 ${open ? 'rotate-180' : ''}`}>
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="mt-4">
+    <DemandSectionShell
+      title="Market Activity"
+      helpText="Leads reflect buyer demand/activity on your listings. Realized Deals reflect completed Sell/Trade activity in the same week. They are shown side-by-side, not as a funnel — a deal in a given week does not necessarily come from a lead shown in that same week."
+      loading={loading}
+      error={error}
+      hasData={rows.length > 0}
+    >
+      {rows.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">No listing activity in the selected window yet.</p>
+      ) : (
+        <>
           {/* Desktop table */}
           <div className="hidden overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700 md:block">
             <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-700">
               <thead className="bg-slate-50 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
                 <tr>
-                  <th className="px-3 py-2 font-semibold">Category</th>
-                  {channelIds.map((id) => (
-                    <th key={id} className="px-3 py-2 font-semibold">{channelNameById.get(id)}</th>
-                  ))}
-                  <th className="px-3 py-2 font-semibold">Total (distinct)</th>
+                  <th className="px-3 py-2 font-semibold">Week</th>
+                  <th className="px-3 py-2 font-semibold">Leads / 100 Channel-Days</th>
+                  <th className="px-3 py-2 font-semibold">Leads</th>
+                  <th className="px-3 py-2 font-semibold">Serious+</th>
+                  <th className="px-3 py-2 font-semibold">Realized Deals</th>
+                  <th className="px-3 py-2 font-semibold">Avg Listed</th>
+                  <th className="px-3 py-2 font-semibold">Avg Channel Exposure</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                {matrix.category_totals.map((cat) => (
-                  <tr key={`${cat.category_id}`}>
-                    <td className="px-3 py-2 font-medium text-slate-900 dark:text-white">{cat.category_name ?? 'Uncategorized'}</td>
-                    {channelIds.map((id) => {
-                      const count = cellByKey.get(`${cat.category_id}:${id}`) ?? 0;
-                      return (
-                        <td key={id} className="px-3 py-2">
-                          {count > 0 ? (
-                            <Link href={inventoryUrl({ channel_id: id, category: cat.category_name ?? undefined })} className="tabular-nums text-slate-700 hover:underline dark:text-slate-200">
-                              {count}
-                            </Link>
-                          ) : (
-                            <span className="tabular-nums text-slate-300 dark:text-slate-600">0</span>
-                          )}
-                        </td>
-                      );
-                    })}
-                    <td className="px-3 py-2">
-                      <Link href={inventoryUrl({ listing: 'listed', category: cat.category_name ?? undefined })} className="tabular-nums font-medium text-slate-900 hover:underline dark:text-white">
-                        {cat.distinct_listed_item_count}
-                      </Link>
-                    </td>
+                {rows.map((row) => (
+                  <tr key={row.startDate}>
+                    <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-900 dark:text-white">{row.weekLabel}</td>
+                    <td className="px-3 py-2 font-semibold tabular-nums text-slate-900 dark:text-white">{fmtRate(row.leadsPer100ChannelDays)}</td>
+                    <td className="px-3 py-2 tabular-nums text-slate-700 dark:text-slate-200">{row.leadsStarted}</td>
+                    <td className="px-3 py-2 tabular-nums text-slate-700 dark:text-slate-200">{row.seriousPlusLeads}</td>
+                    <td className="px-3 py-2 tabular-nums text-slate-700 dark:text-slate-200">{row.realizedDeals}</td>
+                    <td className="px-3 py-2 tabular-nums text-slate-700 dark:text-slate-200">{fmtRate(row.avgListedItems)}</td>
+                    <td className="px-3 py-2 tabular-nums text-slate-700 dark:text-slate-200">{fmtRate(row.avgChannelExposure)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -423,43 +309,113 @@ function CategoryChannelSection({ evidence, open, onToggle }: { evidence: Listin
 
           {/* Mobile stacked cards */}
           <div className="space-y-3 md:hidden">
-            {matrix.category_totals.map((cat) => (
-              <div key={`${cat.category_id}`} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+            {rows.map((row) => (
+              <div key={row.startDate} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="min-w-0 break-words font-medium text-slate-900 dark:text-white">{cat.category_name ?? 'Uncategorized'}</p>
-                  <Link href={inventoryUrl({ listing: 'listed', category: cat.category_name ?? undefined })} className="shrink-0 text-xs font-medium text-slate-500 hover:underline dark:text-slate-400">
-                    {cat.distinct_listed_item_count} distinct
-                  </Link>
+                  <p className="font-medium text-slate-900 dark:text-white">{row.weekLabel}</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900 dark:text-white">{fmtRate(row.leadsPer100ChannelDays)}</p>
                 </div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {channelIds.map((id) => {
-                    const count = cellByKey.get(`${cat.category_id}:${id}`) ?? 0;
-                    if (count === 0) return null;
-                    return (
-                      <Link
-                        key={id}
-                        href={inventoryUrl({ channel_id: id, category: cat.category_name ?? undefined })}
-                        className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-200"
-                      >
-                        {channelNameById.get(id)} {count}
-                      </Link>
-                    );
-                  })}
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">Leads / 100 Channel-Days</p>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-slate-500 dark:text-slate-400">Leads </span><span className="tabular-nums text-slate-900 dark:text-white">{row.leadsStarted}</span></div>
+                  <div><span className="text-slate-500 dark:text-slate-400">Serious+ </span><span className="tabular-nums text-slate-900 dark:text-white">{row.seriousPlusLeads}</span></div>
+                  <div><span className="text-slate-500 dark:text-slate-400">Realized Deals </span><span className="tabular-nums text-slate-900 dark:text-white">{row.realizedDeals}</span></div>
+                  <div><span className="text-slate-500 dark:text-slate-400">Avg Listed </span><span className="tabular-nums text-slate-900 dark:text-white">{fmtRate(row.avgListedItems)}</span></div>
+                  <div className="col-span-2"><span className="text-slate-500 dark:text-slate-400">Avg Channel Exposure </span><span className="tabular-nums text-slate-900 dark:text-white">{fmtRate(row.avgChannelExposure)}</span></div>
                 </div>
               </div>
             ))}
           </div>
-          <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
-            &quot;Total (distinct)&quot; comes directly from evidence — it is not the sum of the channel columns, since a cross-listed item counts once.
-          </p>
-        </div>
+        </>
       )}
-    </div>
+    </DemandSectionShell>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Unlisted Inventory
+// Channel Activity — per-channel current-period snapshot (Listing Demand
+// Evidence, 7-day cohort) plus its weekly Leads/100 Channel-Days trend
+// across the selected Trend Window. Channels are read dynamically from
+// evidence.channels — never a hardcoded Marketplace/Kijiji/Reverb set.
+// ══════════════════════════════════════════════════════════════════════
+
+function ChannelActivitySection({ evidence, loading, error }: { evidence: ListingDemandEvidence | null; loading: boolean; error: string | null }) {
+  const rows = evidence ? buildChannelActivityRows(evidence) : [];
+
+  return (
+    <DemandSectionShell
+      title="Channel Activity"
+      helpText="Attributed Leads and Realized Deals are shown side-by-side per channel — factual activity, not a performance judgment. Leads / 100 Channel-Days is the primary comparison metric because it normalizes demand by how much exposure a channel actually had."
+      loading={loading}
+      error={error}
+      hasData={rows.length > 0}
+    >
+      {rows.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">No listing-capable channels found.</p>
+      ) : (
+        <div className="space-y-3">
+          {rows.map((row) => (
+            <div key={row.dealChannelId} className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+              <div className="flex items-start justify-between gap-3">
+                <Link href={inventoryUrl({ channel_id: row.dealChannelId })} className="font-semibold text-slate-900 hover:underline dark:text-white">
+                  {row.channelName}
+                </Link>
+                <div className="text-right">
+                  <p className="text-lg font-bold tabular-nums text-slate-900 dark:text-white">{fmtRate(row.leadsPer100ChannelDays)}</p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">Leads / 100 Channel-Days</p>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                <div>
+                  <p className="section-label">Channel Listing Days</p>
+                  <p className="mt-0.5 font-medium tabular-nums text-slate-900 dark:text-white">{row.channelListingDays}</p>
+                </div>
+                <div>
+                  <p className="section-label">Attributed Leads</p>
+                  <p className="mt-0.5 font-medium tabular-nums text-slate-900 dark:text-white">{row.attributedLeads}</p>
+                </div>
+                <div>
+                  <p className="section-label">Serious+</p>
+                  <p className="mt-0.5 font-medium tabular-nums text-slate-900 dark:text-white">{row.seriousPlusLeads}</p>
+                </div>
+                <div>
+                  <p className="section-label">Realized Deals</p>
+                  <p className="mt-0.5 font-medium tabular-nums text-slate-900 dark:text-white">{row.realizedDeals}</p>
+                </div>
+              </div>
+
+              {row.weeklyTrend.length > 0 && (
+                <div className="mt-3 overflow-x-auto">
+                  <table className="min-w-full text-left text-xs">
+                    <thead className="text-slate-500 dark:text-slate-400">
+                      <tr>
+                        {row.weeklyTrend.map((point) => (
+                          <th key={point.startDate} className="whitespace-nowrap px-2 py-1 font-medium">{point.weekLabel}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        {row.weeklyTrend.map((point) => (
+                          <td key={point.startDate} className="whitespace-nowrap px-2 py-1 tabular-nums font-medium text-slate-900 dark:text-white">{fmtRate(point.leadsPer100ChannelDays)}</td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </DemandSectionShell>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Unlisted Inventory — unchanged, sourced from Listing Evidence. Never
+// depends on Trend Window/Demand Evidence.
 // ══════════════════════════════════════════════════════════════════════
 
 function UnlistedSection({

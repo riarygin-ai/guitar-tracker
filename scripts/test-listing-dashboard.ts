@@ -1,17 +1,21 @@
 /**
  * test-listing-dashboard.ts
  *
- * Focused validation for Listing Dashboard v1.0 (src/app/listings/page.tsx)
- * and the Inventory drill-down filters it links to (src/lib/
- * inventoryListingFilters.ts, src/lib/listingDashboardHelpers.ts) — a
- * follow-up to Listing Evidence v1.0 (commit aa884b2). Builds a small
- * dedicated fixture pool (marker `DASH:<key>`), fetches real Listing
- * Evidence via the actual RPC, then reconciles the Dashboard's data-layer
- * helpers against it directly. There is no component-rendering test
- * framework in this project (see every other scripts/test-*.ts), so this
- * exercises the extracted pure logic the page renders from, plus static
- * source-scans for the "never hardcode a channel name" / "Personal is
- * never a drill-down target" / "no Asking Value headline KPI while null"
+ * Focused validation for the Listings + Demand Dashboard v1.0
+ * (src/app/listings/page.tsx) and the Inventory drill-down filters it
+ * links to (src/lib/inventoryListingFilters.ts, src/lib/
+ * listingDashboardHelpers.ts, src/lib/listingDemandDashboardHelpers.ts) —
+ * a follow-up to Listing Evidence v1.0 (commit aa884b2) and Listing Demand
+ * Evidence v1.0/v1.1. Builds a small dedicated fixture pool (marker
+ * `DASH:<key>`), fetches real Listing Evidence via the actual RPC, then
+ * reconciles the Dashboard's data-layer helpers against it directly.
+ * There is no component-rendering test framework in this project (see
+ * every other scripts/test-*.ts), so this exercises the extracted pure
+ * logic the page renders from, plus static source-scans for the "never
+ * hardcode a channel name" / "Personal is never a drill-down target" /
+ * "no Asking Value headline KPI while null" / "removed KPIs and sections
+ * stay removed" / "Overview never depends on Trend Window" / "a Demand
+ * Evidence failure never gates the Listing Evidence snapshot" structural
  * requirements. Same conventions as every other script here: tsx, no test
  * framework, local check(), safety-gated to local Supabase only. Every
  * row created is deleted and the deletion verified before the script
@@ -33,6 +37,15 @@ import {
 import { buildListingLookups, matchesListingFilters } from '../src/lib/inventoryListingFilters';
 import { inventoryUrl, findPurposeId, fmtMoney, fmtDays } from '../src/lib/listingDashboardHelpers';
 import type { ListingEvidence } from '../src/lib/analytics/listingEvidence';
+import { getListingDemandEvidence } from '../src/lib/analytics/listingDemandEvidence';
+import {
+  parseTrendWeeksParam,
+  trendWeeksUrl,
+  fmtWeekLabel,
+  fmtRate,
+  buildMarketActivityRows,
+  buildChannelActivityRows,
+} from '../src/lib/listingDemandDashboardHelpers';
 
 let passed = 0;
 let failed = 0;
@@ -246,6 +259,7 @@ async function main() {
         path.join(__dirname, '..', 'src', 'app', 'listings', 'page.tsx'),
         path.join(__dirname, '..', 'src', 'lib', 'inventoryListingFilters.ts'),
         path.join(__dirname, '..', 'src', 'lib', 'listingDashboardHelpers.ts'),
+        path.join(__dirname, '..', 'src', 'lib', 'listingDemandDashboardHelpers.ts'),
       ];
       for (const f of files) {
         const src = fs.readFileSync(f, 'utf8');
@@ -282,6 +296,140 @@ async function main() {
       check('fmtMoney(-500) shows a minus sign, not a double negative', fmtMoney(-500) === '−$500', fmtMoney(-500));
       check('fmtDays(null) is an em-dash', fmtDays(null) === '—');
       check('fmtDays(45.6) rounds to an integer with a "d" suffix', fmtDays(45.6) === '46d', fmtDays(45.6));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log('\n=== Listings + Demand Dashboard (Listing Demand Evidence UI) ===');
+
+    const pageSourcePath = path.join(__dirname, '..', 'src', 'app', 'listings', 'page.tsx');
+    const pageSource = fs.readFileSync(pageSourcePath, 'utf8');
+
+    console.log('\n[L — Overview has exactly the four intended snapshot KPIs]');
+    {
+      const overviewMatch = pageSource.match(/function OverviewSection[\s\S]*?\n}\n/);
+      check('OverviewSection function found in page.tsx', !!overviewMatch);
+      const overviewSource = overviewMatch ? overviewMatch[0] : '';
+      for (const label of ['Listed Items', 'Listed Cost Basis', 'Estimated Listed Value', 'Estimated Equity']) {
+        check(`Overview renders the "${label}" KPI`, overviewSource.includes(`label="${label}"`), overviewSource.slice(0, 200));
+      }
+      check('OverviewSection renders exactly 4 StatTile calls', (overviewSource.match(/<StatTile/g) ?? []).length === 4, overviewSource.match(/<StatTile/g));
+      // OverviewSection's own signature only accepts Listing Evidence — by
+      // construction it cannot vary with Trend Window/Demand Evidence.
+      check('OverviewSection only takes `evidence: ListingEvidence` as a prop (never demandEvidence/trendWeeks)', /function OverviewSection\(\{ evidence \}: \{ evidence: ListingEvidence \}\)/.test(pageSource));
+    }
+
+    console.log('\n[M — removed KPIs/sections no longer render anywhere on the page]');
+    {
+      check('no "Active Channel Listings" KPI anywhere in page.tsx', !pageSource.includes('Active Channel Listings'));
+      check('no "Cross-listed Items" KPI anywhere in page.tsx', !pageSource.includes('Cross-listed Items'));
+      check('no "Channel Coverage" section title anywhere in page.tsx', !pageSource.includes('Channel Coverage'));
+      check('no "Category × Channel" section title anywhere in page.tsx', !pageSource.includes('Category × Channel'));
+      check('the old CrossListingSection/CategoryChannelSection components are gone', !/function CrossListingSection|function CategoryChannelSection/.test(pageSource));
+    }
+
+    console.log('\n[N — Trend Window: URL parsing/fallback (pure)]');
+    {
+      check('no query param -> default 4', parseTrendWeeksParam(null) === 4);
+      check('trend_weeks=4 -> 4', parseTrendWeeksParam('4') === 4);
+      check('trend_weeks=8 -> 8', parseTrendWeeksParam('8') === 8);
+      check('trend_weeks=12 -> 12', parseTrendWeeksParam('12') === 12);
+      for (const invalid of ['0', '3', '6', '20', '-4', '4.5', 'abc', '']) {
+        check(`trend_weeks=${JSON.stringify(invalid)} safely falls back to 4 (never clamped/rounded)`, parseTrendWeeksParam(invalid) === 4, parseTrendWeeksParam(invalid));
+      }
+      check('trendWeeksUrl(4) omits the param (default -> bare /listings)', trendWeeksUrl(4) === '/listings');
+      check('trendWeeksUrl(8) -> /listings?trend_weeks=8', trendWeeksUrl(8) === '/listings?trend_weeks=8');
+      check('trendWeeksUrl(12) -> /listings?trend_weeks=12', trendWeeksUrl(12) === '/listings?trend_weeks=12');
+    }
+
+    console.log('\n[O — Trend Window: exactly one page-level selector, wired to the URL]');
+    {
+      check('page.tsx has exactly one TrendWindowControl usage (rendered once)', (pageSource.match(/<TrendWindowControl/g) ?? []).length === 1);
+      check('the selector default label reads "Trend Window"', /Trend Window/.test(pageSource));
+      check('changing the selector calls router.replace(trendWeeksUrl(...)) — URL is the source of truth', /router\.replace\(trendWeeksUrl\(/.test(pageSource));
+      check('no second 4/8/12 control exists inside Market/Channel Activity (only TREND_WEEKS_OPTIONS.map appears once)', (pageSource.match(/TREND_WEEKS_OPTIONS\.map/g) ?? []).length === 1);
+      check('the Admin 7/30/90-day summary preset is not exposed on /listings', !/\b7 days\b|\b30 days\b|\b90 days\b/.test(pageSource));
+    }
+
+    console.log('\n[P — error isolation: a Demand Evidence failure never gates the Listing Evidence snapshot]');
+    {
+      // The snapshot render gate must depend on `evidence` only.
+      check('the snapshot sections are gated on `{evidence && (` only', /\{evidence && \(/.test(pageSource));
+      check('that gate never also requires demandEvidence/demandError to be truthy/falsy', !/\{evidence && demandEvidence|\{evidence && !demandError|\{!demandError && evidence/.test(pageSource));
+      const snapshotGateMatch = pageSource.match(/\{evidence && \(([\s\S]*?)\n {6}\)\}/);
+      check('OverviewSection is rendered inside that gate', !!snapshotGateMatch && /<OverviewSection/.test(snapshotGateMatch[1]));
+      check('UnlistedSection is rendered inside that gate', !!snapshotGateMatch && /<UnlistedSection/.test(snapshotGateMatch[1]));
+      // Market/Channel Activity take their OWN independent loading/error
+      // props rather than being wrapped in a page-wide demand-error block.
+      check('MarketActivitySection receives its own independent error prop', /<MarketActivitySection[\s\S]{0,120}error=\{demandError\}/.test(pageSource));
+      check('ChannelActivitySection receives its own independent error prop', /<ChannelActivitySection[\s\S]{0,120}error=\{demandError\}/.test(pageSource));
+    }
+
+    console.log('\n[Q — Market Activity / Channel Activity pure row-mapping, real Demand Evidence]');
+    {
+      for (const trendWeeks of [4, 8, 12] as const) {
+        const demandEvidence = await getListingDemandEvidence({ appUserId: userId, serviceClient: admin, startDate: daysAgo(6), endDate: daysAgo(0), trendWeeks });
+
+        const marketRows = buildMarketActivityRows(demandEvidence.weekly_trend);
+        check(`Q.${trendWeeks} Market Activity renders exactly one row per weekly_trend entry (${trendWeeks})`, marketRows.length === demandEvidence.weekly_trend.length && marketRows.length === trendWeeks, marketRows.length);
+        for (let i = 0; i < marketRows.length; i++) {
+          const row = marketRows[i];
+          const w = demandEvidence.weekly_trend[i];
+          check(`Q.${trendWeeks}.${i} avgListedItems === evidence.avg_listed_items (no recalculation)`, row.avgListedItems === w.avg_listed_items);
+          check(`Q.${trendWeeks}.${i} avgChannelExposure === evidence.avg_channel_exposure`, row.avgChannelExposure === w.avg_channel_exposure);
+          check(`Q.${trendWeeks}.${i} leadsStarted === evidence.leads_started`, row.leadsStarted === w.leads_started);
+          check(`Q.${trendWeeks}.${i} seriousPlusLeads === evidence.serious_plus_leads_from_cohort`, row.seriousPlusLeads === w.serious_plus_leads_from_cohort);
+          check(`Q.${trendWeeks}.${i} realizedDeals === evidence.realized_deal_count`, row.realizedDeals === w.realized_deal_count);
+          check(`Q.${trendWeeks}.${i} leadsPer100ChannelDays === evidence.leads_per_100_channel_listing_days`, row.leadsPer100ChannelDays === w.leads_per_100_channel_listing_days);
+          check(`Q.${trendWeeks}.${i} weekLabel === fmtWeekLabel(start,end)`, row.weekLabel === fmtWeekLabel(w.start_date, w.end_date));
+        }
+        // No conversion rate/funnel field anywhere in a market row.
+        check(`Q.${trendWeeks} no market row contains a conversion/funnel-named key`, marketRows.every((row) => !Object.keys(row).some((k) => /conversion|funnel/i.test(k))));
+
+        const channelRows = buildChannelActivityRows(demandEvidence);
+        check(`Q.${trendWeeks} Channel Activity renders exactly one row per evidence.channels entry (dynamic, never hardcoded)`, channelRows.length === demandEvidence.channels.length);
+        check(`Q.${trendWeeks} channel names come straight from evidence (Marketplace/Kijiji/Reverb present)`, ['Marketplace', 'Kijiji', 'Reverb'].every((n) => channelRows.some((r) => r.channelName === n)), channelRows.map((r) => r.channelName));
+        for (const row of channelRows) {
+          const channel = demandEvidence.channels.find((c) => c.deal_channel_id === row.dealChannelId)!;
+          check(`Q.${trendWeeks}/${row.channelName} channelListingDays === current.channel_listing_days`, row.channelListingDays === channel.current.channel_listing_days);
+          check(`Q.${trendWeeks}/${row.channelName} attributedLeads === current.channel_attributed_leads`, row.attributedLeads === channel.current.channel_attributed_leads);
+          check(`Q.${trendWeeks}/${row.channelName} seriousPlusLeads === current.serious_plus_attributed_leads_from_cohort`, row.seriousPlusLeads === channel.current.serious_plus_attributed_leads_from_cohort);
+          check(`Q.${trendWeeks}/${row.channelName} realizedDeals === current.realized_deal_count_by_recorded_channel`, row.realizedDeals === channel.current.realized_deal_count_by_recorded_channel);
+          check(`Q.${trendWeeks}/${row.channelName} leadsPer100ChannelDays === current.leads_per_100_channel_listing_days`, row.leadsPer100ChannelDays === channel.current.leads_per_100_channel_listing_days);
+          // Weekly channel trend follows the selected Trend Window exactly.
+          check(`Q.${trendWeeks}/${row.channelName} weeklyTrend has exactly ${trendWeeks} points, matching weekly_trend length`, row.weeklyTrend.length === demandEvidence.weekly_trend.length && row.weeklyTrend.length === trendWeeks);
+          for (let i = 0; i < row.weeklyTrend.length; i++) {
+            const w = demandEvidence.weekly_trend[i];
+            const wc = w.channels.find((c) => c.deal_channel_id === row.dealChannelId);
+            check(`Q.${trendWeeks}/${row.channelName} week[${i}] leadsPer100ChannelDays matches weekly_trend[${i}].channels`, row.weeklyTrend[i].leadsPer100ChannelDays === (wc?.leads_per_100_channel_listing_days ?? null));
+            check(`Q.${trendWeeks}/${row.channelName} week[${i}] dates match weekly_trend[${i}]`, row.weeklyTrend[i].startDate === w.start_date && row.weeklyTrend[i].endDate === w.end_date);
+          }
+        }
+      }
+    }
+
+    console.log('\n[R — fmtRate / fmtWeekLabel formatting (pure)]');
+    {
+      check('fmtRate(null) is an em-dash', fmtRate(null) === '—');
+      check('fmtRate(12.345) rounds to 1 decimal by default', fmtRate(12.345) === '12.3', fmtRate(12.345));
+      check('fmtRate(0) is "0.0", never an em-dash (0 is a real, meaningful rate)', fmtRate(0) === '0.0');
+      check('fmtWeekLabel is timezone-free (pure string parsing, no Date/local-tz shift)', fmtWeekLabel('2026-08-25', '2026-08-31') === 'Aug 25 – Aug 31', fmtWeekLabel('2026-08-25', '2026-08-31'));
+    }
+
+    console.log('\n[S — no interpretive/causal language anywhere in the Listings page]');
+    {
+      // Scan only what a user would actually see — strip source comments
+      // first, since a comment explicitly DISCLAIMING a concept (e.g. "no
+      // conversion rate exists here") is the opposite of the concept
+      // appearing as rendered UI copy. Same lesson as the Listing Demand
+      // Evidence limitations-prose false positive fixed earlier: distinguish
+      // "the word appears in an explanatory sentence" from "it's live
+      // wording a user would read."
+      const renderedTextOnly = pageSource.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      const forbidden = [/is better/i, /is bad/i, /is worse/i, /demand is increasing/i, /demand is decreasing/i, /caused/i, /conversion rate/i, /market demand score/i];
+      for (const re of forbidden) {
+        check(`rendered page copy contains no interpretive phrase matching ${re}`, !re.test(renderedTextOnly));
+      }
+      check('Market Activity help text clarifies Leads/Realized Deals are side-by-side, not a funnel', /side-by-side/i.test(renderedTextOnly) && /not (?:as )?a funnel/i.test(renderedTextOnly));
     }
   } finally {
     console.log('\n[cleanup]');

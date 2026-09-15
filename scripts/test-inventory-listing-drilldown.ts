@@ -199,15 +199,14 @@ async function main() {
     check('Listing section uses flex-wrap pill rows (no fixed-width/overflow layout)', (listingBlock.match(/flex flex-wrap gap-2/g)?.length ?? 0) >= 3, listingBlock.length);
   }
 
-  {
-    // Multi-channel combinations must never imply exact filtering they
-    // cannot deliver (task section 6) — already correct pre-existing
-    // behavior in src/app/listings/page.tsx, guarded here so it can never
-    // silently regress.
-    const listingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'app', 'listings', 'page.tsx'), 'utf8');
-    check('a multi-channel combination row renders as non-clickable (plain <span>, not a Link)', /combo\.channel_ids\.length === 1 \? \(\s*<Link/.test(listingsSource));
-    check('the Dashboard states exact multi-channel drill-down isn\'t supported', /Exact multi-channel combination drill-down isn(&apos;|')t supported yet/.test(listingsSource));
-  }
+  // The multi-channel-combination UI previously guarded here (Channel
+  // Coverage / CrossListingSection on src/app/listings/page.tsx) was
+  // intentionally removed from the product page by the Listings + Demand
+  // Dashboard refactor — see that task's "Remove Old UI Cleanly" section.
+  // The underlying cross_listing_evidence data and its combination-
+  // labeling logic are untouched (still part of Listing Evidence v1.0's
+  // contract; only this page's rendering of it was removed), so no
+  // regression guard is needed here anymore.
 
   // ══════════════════════════════════════════════════════════════════════
   // Section B — real-data drill-down reconciliation
