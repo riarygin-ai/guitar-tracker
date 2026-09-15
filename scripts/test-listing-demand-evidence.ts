@@ -670,6 +670,78 @@ async function main() {
       check('5.2 Historical Import deals never contribute to realized_deal_count', true); // covered by the same equality above (both inserted before this read)
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    console.log('\n=== Section 6: channel last_lead_date period-scoping (fix 20260915000000) ===');
+    // Isolated on its own calendar window (2021) so no other fixture's
+    // leads/listings on Kijiji can contaminate these assertions.
+    {
+      const T6_CURRENT_START = '2021-06-01';
+      const T6_CURRENT_END = '2021-06-30'; // 30 days inclusive
+      const T6_PREVIOUS_START = '2021-05-02';
+      const T6_PREVIOUS_END = '2021-05-31'; // equal-length previous period
+
+      // Continuously listed on Kijiji well before both periods and never
+      // realized — every lead dated on Kijiji for this item is
+      // channel-attributed regardless of which period it falls in.
+      const lastLeadDateItem = await insertItem(admin, 'last-lead-date', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: businessId, model: 'Last Lead Date Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, lastLeadDateItem, '2020-12-01', 300, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: lastLeadDateItem, channelId: kijijiId, status: 'active', listedAt: '2021-01-01' }, createdListingIds);
+
+      // "Older" lead: predates even the previous period — must never leak
+      // into either current or previous last_lead_date.
+      await insertLead(admin, { userId: userA, sourceId, itemId: lastLeadDateItem, firstContactAt: '2021-03-15', dealChannelId: kijijiId }, createdLeadIds);
+
+      // Several attributed leads IN the current period — last_lead_date
+      // must be the LATEST of these, not merely "a" match.
+      await insertLead(admin, { userId: userA, sourceId, itemId: lastLeadDateItem, firstContactAt: '2021-06-05', dealChannelId: kijijiId }, createdLeadIds);
+      await insertLead(admin, { userId: userA, sourceId, itemId: lastLeadDateItem, firstContactAt: '2021-06-15', dealChannelId: kijijiId }, createdLeadIds);
+      const latestCurrentAttributedDate: string = '2021-06-25';
+      await insertLead(admin, { userId: userA, sourceId, itemId: lastLeadDateItem, firstContactAt: latestCurrentAttributedDate, dealChannelId: kijijiId }, createdLeadIds);
+
+      // A lead tagged with the SAME channel (Kijiji) but on an item that
+      // was never listed on Kijiji at all — never channel-attributed, and
+      // its later date must NOT override the legitimate last_lead_date
+      // above even though it is chronologically later.
+      const unattributedKijijiItem = await insertItem(admin, 'unattributed-kijiji', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: businessId, model: 'Unattributed Kijiji Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, unattributedKijijiItem, '2020-12-01', 250, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: unattributedKijijiItem, channelId: marketplaceId, status: 'active', listedAt: '2021-01-01' }, createdListingIds); // listed on Marketplace, NOT Kijiji
+      await insertLead(admin, { userId: userA, sourceId, itemId: unattributedKijijiItem, firstContactAt: '2021-06-28', dealChannelId: kijijiId }, createdLeadIds);
+
+      const currentEvidence = await getListingDemandEvidence({ appUserId: userA, serviceClient: admin, startDate: T6_CURRENT_START, endDate: T6_CURRENT_END });
+      const kijijiCurrent = currentEvidence.channels.find((c) => c.deal_channel_id === kijijiId)!;
+      check('6.1 several attributed leads in current period -> last_lead_date is the LATEST one (2021-06-25)', kijijiCurrent.current.last_lead_date === latestCurrentAttributedDate, kijijiCurrent.current);
+      check('6.1b last_lead_date never falls outside the current period', kijijiCurrent.current.last_lead_date !== null && kijijiCurrent.current.last_lead_date >= T6_CURRENT_START && kijijiCurrent.current.last_lead_date <= T6_CURRENT_END, kijijiCurrent.current.last_lead_date);
+      check('6.4 the unattributed later lead (2021-06-28, item never listed on Kijiji) does not override last_lead_date', kijijiCurrent.current.last_lead_date !== '2021-06-28');
+      check('6.4b the unattributed lead is correctly excluded from channel_attributed_leads too', kijijiCurrent.current.channel_attributed_leads === 3, kijijiCurrent.current);
+
+      // Now add ONE attributed lead in the PREVIOUS period and re-fetch —
+      // proves previous.last_lead_date is independently computed and
+      // still correctly scoped, and that current is unaffected by it.
+      const previousAttributedDate: string = '2021-05-20';
+      await insertLead(admin, { userId: userA, sourceId, itemId: lastLeadDateItem, firstContactAt: previousAttributedDate, dealChannelId: kijijiId }, createdLeadIds);
+
+      const bothPeriodsEvidence = await getListingDemandEvidence({ appUserId: userA, serviceClient: admin, startDate: T6_CURRENT_START, endDate: T6_CURRENT_END });
+      const kijijiBoth = bothPeriodsEvidence.channels.find((c) => c.deal_channel_id === kijijiId)!;
+      check('6.2 previous period attributed lead -> previous.last_lead_date is within the previous period', kijijiBoth.previous.last_lead_date === previousAttributedDate, kijijiBoth.previous);
+      check('6.2b previous.last_lead_date never falls outside the previous period', kijijiBoth.previous.last_lead_date !== null && kijijiBoth.previous.last_lead_date >= T6_PREVIOUS_START && kijijiBoth.previous.last_lead_date <= T6_PREVIOUS_END);
+      check('6.5 current and previous last_lead_date do not leak into one another', kijijiBoth.current.last_lead_date === latestCurrentAttributedDate && kijijiBoth.previous.last_lead_date === previousAttributedDate && kijijiBoth.current.last_lead_date !== kijijiBoth.previous.last_lead_date);
+      check('6.5b the "older" pre-previous-period lead (2021-03-15) leaks into neither current nor previous', kijijiBoth.current.last_lead_date !== '2021-03-15' && kijijiBoth.previous.last_lead_date !== '2021-03-15');
+
+      // Test A: a channel with genuinely ZERO attributed leads in the
+      // current period, even though older leads exist for that channel —
+      // use Reverb, which this dedicated 2021 window never touches at all.
+      const zeroLeadItem = await insertItem(admin, 'zero-current-lead', { userId: userA, brandId, subtypeId: guitarSubtypeId, purposeId: businessId, model: 'Zero Current Lead Guitar' }, createdItemIds);
+      await acquireItem(admin, userA, zeroLeadItem, '2020-12-01', 260, createdDealIds);
+      await insertListingCycle(admin, { userId: userA, itemId: zeroLeadItem, channelId: reverbId, status: 'active', listedAt: '2021-01-01' }, createdListingIds);
+      await insertLead(admin, { userId: userA, sourceId, itemId: zeroLeadItem, firstContactAt: '2021-02-10', dealChannelId: reverbId }, createdLeadIds); // older than both 2021-06 periods
+
+      const zeroLeadEvidence = await getListingDemandEvidence({ appUserId: userA, serviceClient: admin, startDate: T6_CURRENT_START, endDate: T6_CURRENT_END });
+      const reverbZero = zeroLeadEvidence.channels.find((c) => c.deal_channel_id === reverbId)!;
+      check('6.3 current period has no attributed leads but an older channel lead exists -> current.last_lead_date is NULL', reverbZero.current.last_lead_date === null, reverbZero.current);
+      check('6.3b channel_attributed_leads is correctly 0 for the same channel/period', reverbZero.current.channel_attributed_leads === 0, reverbZero.current);
+      check('6.3c previous period also has no attributed lead -> previous.last_lead_date is NULL too', reverbZero.previous.last_lead_date === null, reverbZero.previous);
+    }
+
   } finally {
     console.log('\n=== Cleanup ===');
     if (createdLeadIds.length) { const { error } = await admin.from('item_leads').delete().in('id', createdLeadIds); check('cleanup: item_leads deleted', !error, error); }
