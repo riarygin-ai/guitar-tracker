@@ -133,8 +133,8 @@ console.log('\n[G — no Leads page / nav, no backend changes]');
 {
   check('no /leads link anywhere on the listings page', !/['"`]\/leads/.test(page));
   check('no /leads link in layout nav', !/href="\/leads/.test(layout));
-  check('src/app/leads does not exist', !fs.existsSync(path.join(root, 'src', 'app', 'leads')));
-  check('DrillValue only links when href is supplied (no dead links today)', !/<DrillValue[^>]*href=/.test(page));
+  check('/leads exists as a contextual (non-nav) route — reached only via drill-downs', fs.existsSync(path.join(root, 'src', 'app', 'leads', 'page.tsx')) && !/\/leads/.test(layout));
+  check('DrillValue links only come from the drill-down URL builders (no hand-written hrefs, no dead links)', (page.match(/<DrillValue[^>]*href=\{[^}]*\}/g) ?? []).every((m) => /(marketWeek(Leads|SeriousPlus)Url|channel(AttributedLeads|SeriousPlus)Url)\(/.test(m)) && /\?\? undefined/.test(page));
 }
 
 console.log('\n[H — primary navigation]');

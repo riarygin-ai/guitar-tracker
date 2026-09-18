@@ -25,6 +25,7 @@ import { fetchListingEvidence } from '@/lib/analytics/listingEvidenceClient';
 import type { ListingEvidence } from '@/lib/analytics/listingEvidence';
 import { fetchListingDemandEvidenceForCurrentUser } from '@/lib/analytics/listingDemandEvidenceClient';
 import type { ListingDemandEvidence } from '@/lib/analytics/listingDemandEvidence';
+import { channelAttributedLeadsUrl, channelSeriousPlusUrl, marketWeekLeadsUrl, marketWeekSeriousPlusUrl, type DrillPeriod } from '@/lib/leads/leadDrilldownUrls';
 import { LISTING_HELP, type ListingHelpKey } from '@/lib/listingHelpText';
 import { fmtMoney, inventoryUrl, findPurposeId } from '@/lib/listingDashboardHelpers';
 import { resolveDayCountPreset } from '@/lib/listingDemandEvidenceClipboard';
@@ -196,7 +197,7 @@ function MetricLabel({ help, text, icon, tone }: { help?: ListingHelpKey; text?:
 function DrillValue({ children, href, className = '' }: { children: React.ReactNode; href?: string; className?: string }) {
   if (href) {
     return (
-      <Link href={href} className={`underline decoration-dotted underline-offset-2 hover:decoration-solid ${className}`}>
+      <Link href={href} className={`inline-block py-0.5 underline decoration-dotted underline-offset-2 hover:decoration-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${className}`}>
         {children}
       </Link>
     );
@@ -401,8 +402,8 @@ function MarketActivitySection({
                     <td className="px-3 py-2 text-right">
                       <span className={`inline-block rounded-md px-2 py-0.5 font-bold tabular-nums ${TONE.cyan.pill}`}>{fmtRate(row.leadsPer100ChannelDays)}</span>
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue className={`font-medium ${TONE.cyan.text}`}>{row.leadsStarted}</DrillValue></td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue className={`font-medium ${TONE.violet.text}`}>{row.seriousPlusLeads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={marketWeekLeadsUrl(row) ?? undefined} className={`font-medium ${TONE.cyan.text}`}>{row.leadsStarted}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={marketWeekSeriousPlusUrl(row) ?? undefined} className={`font-medium ${TONE.violet.text}`}>{row.seriousPlusLeads}</DrillValue></td>
                     <td className={`px-3 py-2 text-right font-medium tabular-nums ${TONE.emerald.text}`}>{row.realizedDeals}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">{fmtRate(row.avgListedItems)}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">{fmtRate(row.avgChannelExposure)}</td>
@@ -424,8 +425,8 @@ function MarketActivitySection({
                   </div>
                 </div>
                 <div className="mt-2 grid grid-cols-3 gap-2">
-                  <MiniStat label="Leads" value={<DrillValue>{row.leadsStarted}</DrillValue>} tone="cyan" />
-                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue>{row.seriousPlusLeads}</DrillValue>} tone="violet" />
+                  <MiniStat label="Leads" value={<DrillValue href={marketWeekLeadsUrl(row) ?? undefined}>{row.leadsStarted}</DrillValue>} tone="cyan" />
+                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={marketWeekSeriousPlusUrl(row) ?? undefined}>{row.seriousPlusLeads}</DrillValue>} tone="violet" />
                   <MiniStat label={<MetricLabel text="Deals" help="realizedDeals" />} value={row.realizedDeals} tone="emerald" />
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-2 border-t border-slate-100 pt-2 dark:border-slate-700">
@@ -462,6 +463,8 @@ function TrendSequence({ points, className = '' }: { points: { weekLabel: string
 
 function ChannelActivitySection({ evidence, loading, error }: { evidence: ListingDemandEvidence | null; loading: boolean; error: string | null }) {
   const rows = evidence ? buildChannelActivityRows(evidence) : [];
+  // Exact period the channel numbers were computed for — straight from the evidence, never recomputed here.
+  const period: DrillPeriod | null = evidence ? { startDate: evidence.period.start_date, endDate: evidence.period.end_date } : null;
 
   return (
     <DemandSectionShell
@@ -498,8 +501,8 @@ function ChannelActivitySection({ evidence, loading, error }: { evidence: Listin
                       </Link>
                     </td>
                     <td className={`px-3 py-2 text-right font-medium tabular-nums ${TONE.blue.text}`}>{row.channelListingDays}</td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue className={`font-medium ${TONE.cyan.text}`}>{row.attributedLeads}</DrillValue></td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue className={`font-medium ${TONE.violet.text}`}>{row.seriousPlusLeads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={period ? channelAttributedLeadsUrl(period, row) ?? undefined : undefined} className={`font-medium ${TONE.cyan.text}`}>{row.attributedLeads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={period ? channelSeriousPlusUrl(period, row) ?? undefined : undefined} className={`font-medium ${TONE.violet.text}`}>{row.seriousPlusLeads}</DrillValue></td>
                     <td className={`px-3 py-2 text-right font-medium tabular-nums ${TONE.emerald.text}`}>{row.realizedDeals}</td>
                     <td className="px-3 py-2 text-right">
                       <span className={`inline-block rounded-md px-2 py-0.5 font-bold tabular-nums ${TONE.cyan.pill}`}>{fmtRate(row.leadsPer100ChannelDays)}</span>
@@ -528,8 +531,8 @@ function ChannelActivitySection({ evidence, loading, error }: { evidence: Listin
                 </div>
                 <div className="mt-2 grid grid-cols-4 gap-2">
                   <MiniStat label={<MetricLabel text="Exposure" help="channelListingDays" />} value={row.channelListingDays} tone="blue" />
-                  <MiniStat label="Leads" value={<DrillValue>{row.attributedLeads}</DrillValue>} tone="cyan" />
-                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue>{row.seriousPlusLeads}</DrillValue>} tone="violet" />
+                  <MiniStat label="Leads" value={<DrillValue href={period ? channelAttributedLeadsUrl(period, row) ?? undefined : undefined}>{row.attributedLeads}</DrillValue>} tone="cyan" />
+                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={period ? channelSeriousPlusUrl(period, row) ?? undefined : undefined}>{row.seriousPlusLeads}</DrillValue>} tone="violet" />
                   <MiniStat label={<MetricLabel text="Deals" help="realizedDeals" />} value={row.realizedDeals} tone="emerald" />
                 </div>
                 <div className="mt-2 border-t border-slate-100 pt-2 dark:border-slate-700">
