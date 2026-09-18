@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getLatestCompletedAdviceForCurrentUser, getActiveAdviceDismissalKeysForCurrentUser } from '@/lib/supabase'
 import type { AnalyticsRunMeta } from '@/types'
 import type { AnalyticsRunAdviceRow, AdviceCard } from '@/lib/analytics/advice/types'
@@ -510,17 +511,26 @@ export default function HomePage() {
                 <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">estimated − cost</p>
               </div>
 
-              {/* Cash Balance */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:p-5">
-                <div className="inline-flex rounded-xl bg-sky-50 p-2.5 dark:bg-sky-900/20">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-sky-500 dark:text-sky-400">
-                    <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+              {/* Cash Balance — whole card is the drill-down to /cash-flow */}
+              <Link
+                href="/cash-flow"
+                aria-label={`Cash Balance ${formatMoney(currentCash)} — open Cash Flow`}
+                className="group block rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-sky-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:border-sky-700 sm:p-5"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="inline-flex rounded-xl bg-sky-50 p-2.5 dark:bg-sky-900/20">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-sky-500 dark:text-sky-400">
+                      <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+                    </svg>
+                  </div>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-sky-500 dark:text-slate-600 dark:group-hover:text-sky-400" aria-hidden="true">
+                    <polyline points="9 18 15 12 9 6"/>
                   </svg>
                 </div>
                 <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Cash Balance</p>
                 <p className="mt-1 text-xl font-bold tabular-nums text-sky-700 dark:text-sky-300 sm:text-2xl">{formatMoney(currentCash)}</p>
                 <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">available business cash</p>
-              </div>
+              </Link>
 
             </div>
 
