@@ -1,8 +1,9 @@
 'use client';
 
 // "Copy Item Context" button for the Inventory Item detail page. Builds a
-// plain-text summary of the item (via getText, evaluated at click time so
-// it always reflects the latest loaded data) and copies it to the
+// plain-text snapshot of the item (via getText, evaluated at click time so
+// it always reflects the latest data — it may return a Promise because the
+// listing/price/lead history is loaded then) and copies it to the
 // clipboard for pasting into an external ChatGPT conversation.
 
 import { useEffect, useRef, useState } from 'react';
@@ -12,7 +13,7 @@ type ButtonState = 'idle' | 'copying' | 'success' | 'error';
 
 const RESET_DELAY_MS = 2200;
 
-export default function CopyItemContextButton({ getText }: { getText: () => string }) {
+export default function CopyItemContextButton({ getText }: { getText: () => string | Promise<string> }) {
   const [state, setState] = useState<ButtonState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -32,6 +33,15 @@ export default function CopyItemContextButton({ getText }: { getText: () => stri
       }
       await navigator.clipboard.writeText(text);
     },
+    // Promise-backed write keeps the click's user gesture valid while the
+    // history loads (Safari); unsupported browsers fall back to writeText.
+    writeTextFromPromise: typeof ClipboardItem !== 'undefined' && typeof navigator !== 'undefined' && navigator.clipboard?.write
+      ? async (text) => {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'text/plain': text.then((t) => new Blob([t], { type: 'text/plain' })) }),
+          ]);
+        }
+      : undefined,
   }));
 
   function scheduleReset() {
@@ -48,7 +58,13 @@ export default function CopyItemContextButton({ getText }: { getText: () => stri
     setState('copying');
     setErrorMessage(null);
 
-    const result = await copierRef.current.copy(getText());
+    let text: string | Promise<string>;
+    try {
+      text = getText();
+    } catch {
+      text = Promise.reject(new Error('getText failed'));
+    }
+    const result = await copierRef.current.copy(text);
     if (!mountedRef.current) return;
 
     if (result.status === 'already_in_progress') return;
@@ -78,7 +94,7 @@ export default function CopyItemContextButton({ getText }: { getText: () => stri
         {label}
       </button>
       {state === 'error' && errorMessage && (
-        <span className="max-w-[220px] text-xs text-rose-600 dark:text-rose-400">{errorMessage}</span>
+        <span className="max-w-[260px] text-xs text-rose-600 dark:text-rose-400">{errorMessage}</span>
       )}
     </div>
   );

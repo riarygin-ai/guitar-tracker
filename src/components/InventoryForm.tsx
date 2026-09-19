@@ -29,6 +29,7 @@ import {
   getAcquiredDateForItem,
   getBrands,
   getDealChannels,
+  supabase,
   getHistoricalImportByItemId,
   getInventoryExpensesByItemIds,
   getInventoryItemById,
@@ -47,7 +48,8 @@ import {
   type HistoricalImportInfo,
 } from '@/lib/supabase';
 import { calculateItemProfitMetrics } from '@/lib/profit';
-import { buildItemContext, type ItemContextListingSummary } from '@/lib/itemContext';
+import { buildItemContext } from '@/lib/itemContext';
+import { loadItemContextHistory } from '@/lib/itemContextData';
 
 
 const conditionOptions: Array<{ label: string; value: Condition }> = [
@@ -588,34 +590,12 @@ export default function InventoryForm({
     () => allPurposes.find((p) => p.id === purposeId)?.name ?? null,
     [allPurposes, purposeId],
   );
-  const listingContextSummary = useMemo<ItemContextListingSummary[]>(() => {
-    const byChannel = new Map<number, ItemListing[]>();
-    for (const row of itemListings) {
-      const rows = byChannel.get(row.deal_channel_id) ?? [];
-      rows.push(row);
-      byChannel.set(row.deal_channel_id, rows);
-    }
-    const summaries: ItemContextListingSummary[] = [];
-    for (const [channelId, rows] of Array.from(byChannel.entries())) {
-      const channel = dealChannels.find((c) => c.id === channelId);
-      if (!channel) continue;
-      // Newest row (by created_at) that isn't a cancelled cycle and actually
-      // has a listed_at — mirrors getAllListedDates' cancelled-exclusion rule.
-      const display = [...rows]
-        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-        .find((r) => r.status !== 'cancelled' && r.listed_at);
-      if (!display) continue;
-      summaries.push({
-        platformName: channel.name,
-        status: display.status,
-        listedAt: display.listed_at,
-        endedAt: display.ended_at,
-      });
-    }
-    return summaries;
-  }, [itemListings, dealChannels]);
-  const getItemContextText = () => existingItem
-    ? buildItemContext(existingItem, {
+  // Async: listing cycles, price history and leads are loaded at click time
+  // (4 queries total, see itemContextData.ts) so the snapshot is current.
+  const getItemContextText = async (): Promise<string> => {
+    if (!existingItem) return '';
+    const history = await loadItemContextHistory(supabase, existingItem.id);
+    return buildItemContext(existingItem, {
         brandName: brandInput.trim() || null,
         categoryName,
         typeName: selectedSubtype?.name ?? null,
@@ -629,9 +609,10 @@ export default function InventoryForm({
         realizedGain,
         realizedRoi,
         acquiredDate,
-        listings: listingContextSummary,
-      })
-    : '';
+        listingCycles: history.listingCycles,
+        leads: history.leads,
+      });
+  };
 
   const isOwned = existingItem?.status === 'owned' || existingItem?.status === 'listed';
   const isSoldOrTraded = existingItem?.status === 'sold' || existingItem?.status === 'traded';
