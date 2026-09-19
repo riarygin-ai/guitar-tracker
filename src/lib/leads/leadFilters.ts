@@ -21,9 +21,12 @@
 //                the exact ITEM-attributed cohort (listing exposure for that
 //                item, on any channel, on first_contact_at), resolved
 //                server-side. Plain item_id + from/to stays a raw filter.
+//   return_to    internal /listings URL the back arrow returns to (validated by
+//                safeReturnTo; anything else is dropped -> back goes to /listings)
 //   expected     diagnostic only: the count the drill-down source claimed;
 //                compared (console-only) against the actual result.
 
+import { safeReturnTo } from '../listingsReturn';
 import {
   LEAD_QUALITIES, OFFER_TYPES, LEAD_STATUSES, SERIOUS_PLUS_QUALITIES,
   type LeadRow, type LeadQuality, type OfferType, type LeadStatus,
@@ -44,12 +47,13 @@ export interface LeadFilters {
   itemId: number | null;
   attributed: boolean;
   itemAttributed: boolean;
+  returnTo: string | null;
   expected: number | null;
 }
 
 export const EMPTY_LEAD_FILTERS: LeadFilters = {
   search: '', channel: null, quality: null, seriousPlus: false, offerType: null, offers: false,
-  status: null, from: null, to: null, itemId: null, attributed: false, itemAttributed: false, expected: null,
+  status: null, from: null, to: null, itemId: null, attributed: false, itemAttributed: false, returnTo: null, expected: null,
 };
 
 /** True only for a real calendar date in strict YYYY-MM-DD form. */
@@ -93,6 +97,7 @@ export function parseLeadFilters(get: (key: string) => string | null): LeadFilte
     itemId,
     attributed,
     itemAttributed,
+    returnTo: safeReturnTo(get('return_to')),
     expected: (() => { const n = get('expected'); return n !== null && /^\d{1,7}$/.test(n) ? Number(n) : null; })(),
   };
 }
@@ -113,6 +118,7 @@ export function leadsUrl(f: Partial<LeadFilters> = {}): string {
   if (f.offers) p.set('offers', '1');
   if (f.status) p.set('status', f.status);
   if (f.expected != null) p.set('expected', String(f.expected));
+  if (f.returnTo) p.set('return_to', f.returnTo);
   const qs = p.toString();
   return `/leads${qs ? `?${qs}` : ''}`;
 }

@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { invalidateListingsCache, listingsUserGuard } from './listingsCacheStore'
 import { splitSearchTerms } from '@/lib/search';
 import type { AnalyticsRunAdviceMeta, AnalyticsRunAdviceRow } from '@/lib/analytics/advice/types';
 import type { LeadImportSource, NewLeadImportSource } from '@/lib/leadImport/types';
@@ -65,11 +66,22 @@ let _appUserId: number | null = null;
 
 // Clear the cached app user ID when the session changes so a new login
 // does not accidentally inherit the previous user's cached ID.
-supabase.auth.onAuthStateChange((event) => {
+supabase.auth.onAuthStateChange((event, session) => {
   if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
     _appUserId = null;
   }
+  // The Listings cache holds per-user responses in module memory, and
+  // logout here is a client-side route push (no reload) — so drop it on
+  // sign-out or whenever the signed-in user changes.
+  listingsUserGuard(event, session?.user?.id ?? null);
 });
+
+// Listings cache invalidation on a SUCCESSFUL write (the 5-minute TTL is the
+// safety net for everything not wired here). Failed writes never invalidate.
+function invalidateListingsOnSuccess<T extends { error: unknown }>(result: T): T {
+  if (!result.error) invalidateListingsCache();
+  return result;
+}
 
 export async function getOrCreateAppUser(): Promise<AppUser | null> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -564,7 +576,7 @@ export async function createBuyOperation(params: {
     p_incoming_items: params.incomingItems,
     p_notes:          params.notes ?? null,
     p_cf_description: params.cfDescription,
-  });
+  }).then(invalidateListingsOnSuccess);
 }
 
 export async function createSellOperation(params: {
@@ -580,7 +592,7 @@ export async function createSellOperation(params: {
     p_items:          params.items,
     p_notes:          params.notes ?? null,
     p_cf_description: params.cfDescription,
-  });
+  }).then(invalidateListingsOnSuccess);
 }
 
 export async function createTradeOperation(params: {
@@ -604,7 +616,7 @@ export async function createTradeOperation(params: {
     p_incoming_items:      params.incomingItems,
     p_cf_transaction_date: params.cfTransactionDate ?? null,
     p_cf_description:      params.cfDescription ?? null,
-  });
+  }).then(invalidateListingsOnSuccess);
 }
 
 export async function editTradeOperation(params: {
@@ -630,7 +642,7 @@ export async function editTradeOperation(params: {
     p_incoming_items:      params.incomingItems,
     p_cf_transaction_date: params.cfTransactionDate,
     p_cf_description:      params.cfDescription,
-  });
+  }).then(invalidateListingsOnSuccess);
 }
 
 export async function editBuyOperation(params: {
@@ -648,7 +660,7 @@ export async function editBuyOperation(params: {
     p_notes:          params.notes,
     p_incoming_items: params.incomingItems,
     p_cf_description: params.cfDescription ?? null,
-  });
+  }).then(invalidateListingsOnSuccess);
 }
 
 export async function editSellOperation(params: {
@@ -666,7 +678,7 @@ export async function editSellOperation(params: {
     p_notes:          params.notes ?? null,
     p_items:          params.items,
     p_cf_description: params.cfDescription ?? null,
-  });
+  }).then(invalidateListingsOnSuccess);
 }
 
 export async function editExpenseOperation(params: {
@@ -814,14 +826,16 @@ export async function startListing(params: {
       .update({ status: 'active', listed_at, updated_at, ...priceField })
       .eq('id', existingDraftId)
       .select()
-      .single<ItemListing>();
+      .single<ItemListing>()
+    .then(invalidateListingsOnSuccess);
   }
 
   return supabase
     .from('item_listings')
     .insert({ inventory_item_id, deal_channel_id, status: 'active', listed_at, updated_at, ...priceField })
     .select()
-    .single<ItemListing>();
+    .single<ItemListing>()
+    .then(invalidateListingsOnSuccess);
 }
 
 // Update Price — the ONLY thing this ever touches is asking_price (+
@@ -839,7 +853,8 @@ export async function updateListingPrice(id: number, askingPrice: number | null)
     .eq('id', id)
     .in('status', ['draft', 'active'])
     .select()
-    .single<ItemListing>();
+    .single<ItemListing>()
+    .then(invalidateListingsOnSuccess);
 }
 
 // Full price-change audit trail for one listing cycle, newest first —
@@ -863,7 +878,8 @@ export async function endListing(id: number, endedAt: string) {
     .eq('id', id)
     .eq('status', 'active')
     .select()
-    .single<ItemListing>();
+    .single<ItemListing>()
+    .then(invalidateListingsOnSuccess);
 }
 
 // Cancel — soft-delete: the row is preserved but marked ignored. Valid
@@ -876,7 +892,8 @@ export async function cancelListing(id: number) {
     .eq('id', id)
     .in('status', ['draft', 'active'])
     .select()
-    .single<ItemListing>();
+    .single<ItemListing>()
+    .then(invalidateListingsOnSuccess);
 }
 
 // ─── Photo functions ──────────────────────────────────────────────────────────

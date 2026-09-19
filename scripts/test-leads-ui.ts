@@ -126,7 +126,7 @@ console.log('\n[C — URL is the source of truth; invalid values fail safely]');
   const page = strip(read('src', 'app', 'leads', 'page.tsx'));
   check('page derives filters from searchParams every render', /parseLeadFilters\(\(k\) => searchParams\.get\(k\)\)/.test(page));
   check('page has NO filter useState (no synced duplicate)', !/useState<LeadFilters/.test(page) && !/const \[(filters|search|channel|quality|status|offerType|from|to)\b/.test(page));
-  check('changes are written to the URL via router.push/replace', /router\[mode\]\(leadsUrl\(/.test(page) && /router\.push\('\/leads'/.test(page));
+  check('changes are written to the URL via router.push/replace', /router\[mode\]\(leadsUrl\(/.test(page) && /router\.push\(leadsUrl\(\{ returnTo: filters\.returnTo \}\)/.test(page));
 }
 
 console.log('\n[D — main list, mobile cards, detail]');
@@ -186,8 +186,8 @@ console.log('\n[E — /listings drill-down wiring & URL builders]');
 
   const listings = strip(read('src', 'app', 'listings', 'page.tsx'));
   check('channel period comes from evidence.period (no independent date math)', /evidence\.period\.start_date/.test(listings) && /evidence\.period\.end_date/.test(listings) && !/new Date|Date\.UTC|setDate/.test(listings));
-  check('Market Activity Leads + Serious+ are drill-down links', /marketWeekLeadsUrl\(row\)/.test(listings) && /marketWeekSeriousPlusUrl\(row\)/.test(listings));
-  check('Channel Attributed Leads + Serious+ are drill-down links', /channelAttributedLeadsUrl\(period, row\)/.test(listings) && /channelSeriousPlusUrl\(period, row\)/.test(listings));
+  check('Market Activity Leads + Serious+ are drill-down links', /marketWeekLeadsUrl\(row, returnTo\)/.test(listings) && /marketWeekSeriousPlusUrl\(row, returnTo\)/.test(listings));
+  check('Channel Attributed Leads + Serious+ are drill-down links', /channelAttributedLeadsUrl\(period, row, returnTo\)/.test(listings) && /channelSeriousPlusUrl\(period, row, returnTo\)/.test(listings));
   const market = listings.slice(listings.indexOf('function MarketActivitySection'), listings.indexOf('function TrendSequence'));
   const dealsCell = market.match(/\{row\.realizedDeals\}/g) ?? [];
   check('Realized Deals / Avg Listed / Avg Exposure / Leads-per-100 are NOT links', dealsCell.length > 0 && !/href=\{[^}]*\}[^<]*>\{row\.(realizedDeals|avgListedItems|avgChannelExposure)/.test(market) && !/DrillValue[^>]*>\{fmtRate/.test(market));

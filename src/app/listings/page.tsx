@@ -14,7 +14,6 @@
 // Overview or Unlisted Inventory sections, which stay fully usable off
 // Listing Evidence alone.
 
-import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import CompactPageHeader from '@/components/CompactPageHeader';
@@ -25,9 +24,13 @@ import { fetchListingEvidence } from '@/lib/analytics/listingEvidenceClient';
 import type { ListingEvidence } from '@/lib/analytics/listingEvidence';
 import { fetchListingDemandEvidenceForCurrentUser } from '@/lib/analytics/listingDemandEvidenceClient';
 import { fetchListingItemActivity } from '@/lib/analytics/listingItemActivityClient';
+import { LISTING_EVIDENCE_KEY, itemActivityKey, listingDemandKey } from '@/lib/listingsCacheKeys';
+import { listingsCache } from '@/lib/listingsCacheStore';
+import { currentListingsReturnTo } from '@/lib/listingsReturn';
+import { useSwrResource } from '@/lib/useSwrResource';
 import type { ListingDemandEvidence } from '@/lib/analytics/listingDemandEvidence';
 import { channelAttributedLeadsUrl, channelSeriousPlusUrl, itemAttributedLeadsUrl, itemOffersUrl, itemSeriousPlusUrl, marketWeekLeadsUrl, marketWeekSeriousPlusUrl, type DrillPeriod } from '@/lib/leads/leadDrilldownUrls';
-import { itemActiveChannelsLabel, itemActivityWindow, itemActivityWindowKey, sortItemActivity, type ItemActivityEntry, type ItemActivityWindow } from '@/lib/listingItemActivityHelpers';
+import { itemActiveChannelsLabel, itemActivityWindow, sortItemActivity, type ItemActivityEntry, type ItemActivityWindow } from '@/lib/listingItemActivityHelpers';
 import { fmtLeadDate } from '@/lib/leads/leadFormat';
 import { LISTING_HELP, type ListingHelpKey } from '@/lib/listingHelpText';
 import { fmtMoney, inventoryUrl, findPurposeId } from '@/lib/listingDashboardHelpers';
@@ -54,76 +57,61 @@ export default function ListingsPage() {
   // or missing value safely falls back to 4, per parseTrendWeeksParam.
   const trendWeeks = parseTrendWeeksParam(searchParams.get('trend_weeks'));
 
-  const [evidence, setEvidence] = useState<ListingEvidence | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [demandEvidence, setDemandEvidence] = useState<ListingDemandEvidence | null>(null);
-  const [demandLoading, setDemandLoading] = useState(true);
-  const [demandError, setDemandError] = useState<string | null>(null);
+  // ── Data (stale-while-revalidate) ─────────────────────────────────────
+  // Each expensive source is cached independently in the session cache
+  // (see lib/swrCache.ts): returning to /listings (e.g. from a /leads
+  // drill-down) renders the cached data on the first paint and revalidates
+  // quietly in the background — never a blocking Loading state when usable
+  // data exists. Keys carry the exact window identity, so data cached for
+  // one Trend Window / date window can never appear under another.
 
   // Listing Evidence — the current snapshot. Independent of Trend Window.
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchListingEvidence().then((result) => {
-      if (cancelled) return;
-      if (result.status === 'success') {
-        setEvidence(result.data);
-      } else {
-        setError(result.message);
-      }
-      setLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, []);
+  const listingRes = useSwrResource<ListingEvidence>(listingsCache, LISTING_EVIDENCE_KEY, async () => {
+    const result = await fetchListingEvidence();
+    if (result.status !== 'success') throw new Error(result.message);
+    return result.data;
+  });
+  const evidence = listingRes.data ?? null;
+  const loading = listingRes.isLoading;
+  const error = listingRes.error;
 
-  // Listing Demand Evidence — one shared fetch feeds both Market Activity
-  // and Channel Activity. The "current" summary period is the latest
-  // completed/current 7-day window ending today (the same day-count-preset
-  // convention already used by the Admin Debug control); trend_weeks is
-  // the only thing that changes when the Trend Window selector changes.
-  useEffect(() => {
-    let cancelled = false;
-    setDemandLoading(true);
-    setDemandError(null);
-    const { startDate, endDate } = resolveDayCountPreset(7);
-    fetchListingDemandEvidenceForCurrentUser({ startDate, endDate, trendWeeks }).then((result) => {
-      if (cancelled) return;
-      if (result.status === 'success') {
-        setDemandEvidence(result.data);
-      } else {
-        setDemandError(result.message);
-      }
-      setDemandLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [trendWeeks]);
+  // Listing Demand Evidence — one shared (deduplicated) fetch feeds both
+  // Market Activity and Channel Activity. The "current" summary period is the
+  // latest completed/current 7-day window ending today (the same
+  // day-count-preset convention already used by the Admin Debug control);
+  // trend_weeks is the only thing that changes when the Trend Window
+  // selector changes. The key includes weeks AND the exact period dates.
+  const { startDate: demandStart, endDate: demandEnd } = resolveDayCountPreset(7);
+  const demandKey = listingDemandKey(trendWeeks, demandStart, demandEnd);
+  const demandRes = useSwrResource<ListingDemandEvidence>(listingsCache, demandKey, async () => {
+    const result = await fetchListingDemandEvidenceForCurrentUser({ startDate: demandStart, endDate: demandEnd, trendWeeks });
+    if (result.status !== 'success') throw new Error(result.message);
+    return result.data;
+  });
+  // Defensive: cached data must be for exactly the selected Trend Window.
+  const demandEvidence = demandRes.data && demandRes.data.trend_window_weeks === trendWeeks ? demandRes.data : null;
+  const demandLoading = demandRes.isLoading;
+  const demandError = demandRes.error;
 
-  // Lead Activity by Item — ONE compact request per Trend Window, over the
-  // exact window Listing Demand Evidence reports (first weekly bucket's
-  // start -> last bucket's end). Only fetched once evidence for the CURRENT
-  // trendWeeks has landed, so the section can never show a different
-  // window from Market/Channel Activity.
-  const evidenceMatchesWindow = demandEvidence !== null && demandEvidence.trend_window_weeks === trendWeeks && !demandLoading;
-  const itemWindow: ItemActivityWindow | null = evidenceMatchesWindow ? itemActivityWindow(demandEvidence) : null;
-  const itemWindowKey = itemActivityWindowKey(itemWindow);
-  const [itemActivity, setItemActivity] = useState<{ key: string; items: ItemActivityEntry[] } | null>(null);
-  const [itemError, setItemError] = useState<{ key: string; message: string } | null>(null);
-  useEffect(() => {
-    if (!itemWindowKey) return;
-    let cancelled = false;
-    const [from, to] = itemWindowKey.split('|');
-    fetchListingItemActivity(from, to).then((result) => {
-      if (cancelled) return;
-      if (result.status === 'success') { setItemActivity({ key: itemWindowKey, items: result.items }); setItemError(null); }
-      else setItemError({ key: itemWindowKey, message: result.message });
-    });
-    return () => { cancelled = true; };
-  }, [itemWindowKey]);
-  const itemReady = itemActivity !== null && itemActivity.key === itemWindowKey;
-  const itemErrorMessage = demandError ?? (itemError && itemError.key === itemWindowKey ? itemError.message : null);
+  // Lead Activity by Item — ONE compact request per exact window, over the
+  // window Listing Demand Evidence reports (first weekly bucket's start ->
+  // last bucket's end). The key includes weeks + exact from/to, so it can
+  // never show a different window from Market/Channel Activity; cached data
+  // for the SAME window renders immediately and revalidates in background.
+  const itemWindow: ItemActivityWindow | null = itemActivityWindow(demandEvidence);
+  const itemKey = itemWindow ? itemActivityKey(trendWeeks, itemWindow.from, itemWindow.to) : null;
+  const itemRes = useSwrResource<ItemActivityEntry[]>(listingsCache, itemKey, async () => {
+    const result = await fetchListingItemActivity(itemWindow!.from, itemWindow!.to);
+    if (result.status !== 'success') throw new Error(result.message);
+    return result.items;
+  });
+  // Until the window is known, the section is loading (or shows the demand error).
+  const itemLoading = itemKey === null ? demandError === null : itemRes.isLoading;
+  const itemErrorMessage = itemKey === null ? demandError : itemRes.error;
+
+  // The exact current Listings URL (path + real query string) travels with
+  // every drill-down as return_to, so Back restores this exact state.
+  const returnTo = currentListingsReturnTo(searchParams.toString());
 
   const businessPurposeId = evidence ? findPurposeId(evidence, 'Business') : null;
   const hybridPurposeId = evidence ? findPurposeId(evidence, 'Hybrid') : null;
@@ -158,11 +146,11 @@ export default function ListingsPage() {
 
       {/* Demand sections never depend on Listing Evidence: they render (and the
           Trend Window stays usable) even when the snapshot failed to load. */}
-      <MarketActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} trendWeeks={trendWeeks} onTrendChange={(w) => router.replace(trendWeeksUrl(w), { scroll: false })} />
+      <MarketActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} refreshing={demandRes.isRefreshing} returnTo={returnTo} trendWeeks={trendWeeks} onTrendChange={(w) => router.replace(trendWeeksUrl(w), { scroll: false })} />
 
-      <ChannelActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} />
+      <ChannelActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} refreshing={demandRes.isRefreshing} returnTo={returnTo} />
 
-      <ItemActivitySection items={itemReady ? itemActivity.items : null} window={itemWindow} trendWeeks={trendWeeks} loading={!itemReady && !itemErrorMessage} error={itemErrorMessage} />
+      <ItemActivitySection items={itemRes.data ?? null} window={itemWindow} trendWeeks={trendWeeks} loading={itemLoading} error={itemErrorMessage} refreshing={itemRes.isRefreshing} returnTo={returnTo} />
 
       {evidence && (
         <UnlistedSection evidence={evidence} businessPurposeId={businessPurposeId} hybridPurposeId={hybridPurposeId} />
@@ -331,6 +319,7 @@ function DemandSectionShell({
   helpText,
   action,
   loading,
+  refreshing = false,
   error,
   hasData,
   children,
@@ -340,6 +329,8 @@ function DemandSectionShell({
   helpText?: string;
   action?: React.ReactNode;
   loading: boolean;
+  /** Cached data is showing while a background refresh runs (subtle indicator only). */
+  refreshing?: boolean;
   error: string | null;
   hasData: boolean;
   children: React.ReactNode;
@@ -351,6 +342,7 @@ function DemandSectionShell({
           <p className="section-title inline-flex items-center gap-1.5">
             {title}
             {titleHelp && <InfoTip label={LISTING_HELP[titleHelp].label} text={LISTING_HELP[titleHelp].text} />}
+            {refreshing && <span role="status" className="text-[11px] font-normal text-slate-400 dark:text-slate-500">Updating…</span>}
           </p>
           {helpText && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{helpText}</p>}
         </div>
@@ -367,7 +359,7 @@ function DemandSectionShell({
         <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Loading...</p>
       )}
 
-      {!error && hasData && <div className={loading ? 'mt-3 opacity-60 transition-opacity' : 'mt-3'}>{children}</div>}
+      {!error && hasData && <div className="mt-3">{children}</div>}
     </div>
   );
 }
@@ -394,12 +386,16 @@ function MarketActivitySection({
   evidence,
   loading,
   error,
+  refreshing,
+  returnTo,
   trendWeeks,
   onTrendChange,
 }: {
   evidence: ListingDemandEvidence | null;
   loading: boolean;
   error: string | null;
+  refreshing: boolean;
+  returnTo: string;
   trendWeeks: TrendWeeks;
   onTrendChange: (w: TrendWeeks) => void;
 }) {
@@ -411,6 +407,7 @@ function MarketActivitySection({
       helpText="Leads and Realized Deals are shown side-by-side, not as a funnel."
       action={<TrendWindowControl trendWeeks={trendWeeks} onChange={onTrendChange} />}
       loading={loading}
+      refreshing={refreshing}
       error={error}
       hasData={rows.length > 0}
     >
@@ -439,8 +436,8 @@ function MarketActivitySection({
                     <td className="px-3 py-2 text-right">
                       <span className={`inline-block rounded-md px-2 py-0.5 font-bold tabular-nums ${TONE.cyan.pill}`}>{fmtRate(row.leadsPer100ChannelDays)}</span>
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={marketWeekLeadsUrl(row) ?? undefined} className={`font-medium ${TONE.cyan.text}`}>{row.leadsStarted}</DrillValue></td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={marketWeekSeriousPlusUrl(row) ?? undefined} className={`font-medium ${TONE.violet.text}`}>{row.seriousPlusLeads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={marketWeekLeadsUrl(row, returnTo) ?? undefined} className={`font-medium ${TONE.cyan.text}`}>{row.leadsStarted}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={marketWeekSeriousPlusUrl(row, returnTo) ?? undefined} className={`font-medium ${TONE.violet.text}`}>{row.seriousPlusLeads}</DrillValue></td>
                     <td className={`px-3 py-2 text-right font-medium tabular-nums ${TONE.emerald.text}`}>{row.realizedDeals}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">{fmtRate(row.avgListedItems)}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">{fmtRate(row.avgChannelExposure)}</td>
@@ -462,8 +459,8 @@ function MarketActivitySection({
                   </div>
                 </div>
                 <div className="mt-2 grid grid-cols-3 gap-2">
-                  <MiniStat label="Leads" value={<DrillValue href={marketWeekLeadsUrl(row) ?? undefined}>{row.leadsStarted}</DrillValue>} tone="cyan" />
-                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={marketWeekSeriousPlusUrl(row) ?? undefined}>{row.seriousPlusLeads}</DrillValue>} tone="violet" />
+                  <MiniStat label="Leads" value={<DrillValue href={marketWeekLeadsUrl(row, returnTo) ?? undefined}>{row.leadsStarted}</DrillValue>} tone="cyan" />
+                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={marketWeekSeriousPlusUrl(row, returnTo) ?? undefined}>{row.seriousPlusLeads}</DrillValue>} tone="violet" />
                   <MiniStat label={<MetricLabel text="Deals" help="realizedDeals" />} value={row.realizedDeals} tone="emerald" />
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-2 border-t border-slate-100 pt-2 dark:border-slate-700">
@@ -498,7 +495,7 @@ function TrendSequence({ points, className = '' }: { points: { weekLabel: string
   );
 }
 
-function ChannelActivitySection({ evidence, loading, error }: { evidence: ListingDemandEvidence | null; loading: boolean; error: string | null }) {
+function ChannelActivitySection({ evidence, loading, error, refreshing, returnTo }: { evidence: ListingDemandEvidence | null; loading: boolean; error: string | null; refreshing: boolean; returnTo: string }) {
   const rows = evidence ? buildChannelActivityRows(evidence) : [];
   // Exact period the channel numbers were computed for — straight from the evidence, never recomputed here.
   const period: DrillPeriod | null = evidence ? { startDate: evidence.period.start_date, endDate: evidence.period.end_date } : null;
@@ -508,6 +505,7 @@ function ChannelActivitySection({ evidence, loading, error }: { evidence: Listin
       title="Channel Activity"
       helpText="Most recent week per channel; the trend follows the Trend Window above."
       loading={loading}
+      refreshing={refreshing}
       error={error}
       hasData={rows.length > 0}
     >
@@ -538,8 +536,8 @@ function ChannelActivitySection({ evidence, loading, error }: { evidence: Listin
                       </Link>
                     </td>
                     <td className={`px-3 py-2 text-right font-medium tabular-nums ${TONE.blue.text}`}>{row.channelListingDays}</td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={period ? channelAttributedLeadsUrl(period, row) ?? undefined : undefined} className={`font-medium ${TONE.cyan.text}`}>{row.attributedLeads}</DrillValue></td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={period ? channelSeriousPlusUrl(period, row) ?? undefined : undefined} className={`font-medium ${TONE.violet.text}`}>{row.seriousPlusLeads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={period ? channelAttributedLeadsUrl(period, row, returnTo) ?? undefined : undefined} className={`font-medium ${TONE.cyan.text}`}>{row.attributedLeads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={period ? channelSeriousPlusUrl(period, row, returnTo) ?? undefined : undefined} className={`font-medium ${TONE.violet.text}`}>{row.seriousPlusLeads}</DrillValue></td>
                     <td className={`px-3 py-2 text-right font-medium tabular-nums ${TONE.emerald.text}`}>{row.realizedDeals}</td>
                     <td className="px-3 py-2 text-right">
                       <span className={`inline-block rounded-md px-2 py-0.5 font-bold tabular-nums ${TONE.cyan.pill}`}>{fmtRate(row.leadsPer100ChannelDays)}</span>
@@ -568,8 +566,8 @@ function ChannelActivitySection({ evidence, loading, error }: { evidence: Listin
                 </div>
                 <div className="mt-2 grid grid-cols-4 gap-2">
                   <MiniStat label={<MetricLabel text="Exposure" help="channelListingDays" />} value={row.channelListingDays} tone="blue" />
-                  <MiniStat label="Leads" value={<DrillValue href={period ? channelAttributedLeadsUrl(period, row) ?? undefined : undefined}>{row.attributedLeads}</DrillValue>} tone="cyan" />
-                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={period ? channelSeriousPlusUrl(period, row) ?? undefined : undefined}>{row.seriousPlusLeads}</DrillValue>} tone="violet" />
+                  <MiniStat label="Leads" value={<DrillValue href={period ? channelAttributedLeadsUrl(period, row, returnTo) ?? undefined : undefined}>{row.attributedLeads}</DrillValue>} tone="cyan" />
+                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={period ? channelSeriousPlusUrl(period, row, returnTo) ?? undefined : undefined}>{row.seriousPlusLeads}</DrillValue>} tone="violet" />
                   <MiniStat label={<MetricLabel text="Deals" help="realizedDeals" />} value={row.realizedDeals} tone="emerald" />
                 </div>
                 <div className="mt-2 border-t border-slate-100 pt-2 dark:border-slate-700">
@@ -602,12 +600,16 @@ function ItemActivitySection({
   trendWeeks,
   loading,
   error,
+  refreshing,
+  returnTo,
 }: {
   items: ItemActivityEntry[] | null;
   window: ItemActivityWindow | null;
   trendWeeks: TrendWeeks;
   loading: boolean;
   error: string | null;
+  refreshing: boolean;
+  returnTo: string;
 }) {
   const rows = items ? sortItemActivity(items) : [];
   const hasData = items !== null;
@@ -624,6 +626,7 @@ function ItemActivitySection({
       titleHelp="leadActivityByItem"
       helpText={win ? `${fmtWeekLabel(win.from, win.to)} · ${trendWeeks}W Trend Window` : `${trendWeeks}W Trend Window`}
       loading={loading}
+      refreshing={refreshing}
       error={error}
       hasData={hasData}
     >
@@ -655,11 +658,11 @@ function ItemActivitySection({
                     </td>
                     <td className="px-3 py-2 text-right">
                       <span className={`inline-block rounded-md px-2 py-0.5 font-bold tabular-nums ${TONE.cyan.pill}`}>
-                        <DrillValue href={win ? itemAttributedLeadsUrl(win, drill(item)) ?? undefined : undefined}>{item.item_attributed_leads}</DrillValue>
+                        <DrillValue href={win ? itemAttributedLeadsUrl(win, drill(item), returnTo) ?? undefined : undefined}>{item.item_attributed_leads}</DrillValue>
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={win ? itemSeriousPlusUrl(win, drill(item)) ?? undefined : undefined} className={`font-medium ${TONE.violet.text}`}>{item.serious_plus_attributed_leads}</DrillValue></td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={win ? itemOffersUrl(win, drill(item)) ?? undefined : undefined} className="font-medium text-slate-700 dark:text-slate-200">{item.offer_attributed_leads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={win ? itemSeriousPlusUrl(win, drill(item), returnTo) ?? undefined : undefined} className={`font-medium ${TONE.violet.text}`}>{item.serious_plus_attributed_leads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={win ? itemOffersUrl(win, drill(item), returnTo) ?? undefined : undefined} className="font-medium text-slate-700 dark:text-slate-200">{item.offer_attributed_leads}</DrillValue></td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">{item.channel_listing_days}</td>
                     <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-500 dark:text-slate-400">{item.last_attributed_lead_date ? fmtLeadDate(item.last_attributed_lead_date) : '—'}</td>
                   </tr>
@@ -677,9 +680,9 @@ function ItemActivitySection({
                 </Link>
                 {itemActiveChannelsLabel(item) && <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{itemActiveChannelsLabel(item)}</p>}
                 <div className="mt-2 grid grid-cols-4 gap-2">
-                  <MiniStat label="Leads" value={<DrillValue href={win ? itemAttributedLeadsUrl(win, drill(item)) ?? undefined : undefined}>{item.item_attributed_leads}</DrillValue>} tone="cyan" />
-                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={win ? itemSeriousPlusUrl(win, drill(item)) ?? undefined : undefined}>{item.serious_plus_attributed_leads}</DrillValue>} tone="violet" />
-                  <MiniStat label={<MetricLabel help="offersAttributed" />} value={<DrillValue href={win ? itemOffersUrl(win, drill(item)) ?? undefined : undefined}>{item.offer_attributed_leads}</DrillValue>} tone="slate" />
+                  <MiniStat label="Leads" value={<DrillValue href={win ? itemAttributedLeadsUrl(win, drill(item), returnTo) ?? undefined : undefined}>{item.item_attributed_leads}</DrillValue>} tone="cyan" />
+                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={win ? itemSeriousPlusUrl(win, drill(item), returnTo) ?? undefined : undefined}>{item.serious_plus_attributed_leads}</DrillValue>} tone="violet" />
+                  <MiniStat label={<MetricLabel help="offersAttributed" />} value={<DrillValue href={win ? itemOffersUrl(win, drill(item), returnTo) ?? undefined : undefined}>{item.offer_attributed_leads}</DrillValue>} tone="slate" />
                   <MiniStat label={<MetricLabel help="channelDays" />} value={item.channel_listing_days} />
                 </div>
                 <p className="mt-2 border-t border-slate-100 pt-2 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">

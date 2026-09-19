@@ -36,24 +36,24 @@ export interface DrillPeriod {
   endDate: string;
 }
 
-export function marketWeekLeadsUrl(week: WeekDrillSource): string | null {
+export function marketWeekLeadsUrl(week: WeekDrillSource, returnTo?: string | null): string | null {
   if (week.leadsStarted <= 0) return null;
-  return leadsUrl({ from: week.startDate, to: week.endDate, expected: week.leadsStarted });
+  return leadsUrl({ from: week.startDate, to: week.endDate, expected: week.leadsStarted, returnTo: returnTo ?? null });
 }
 
-export function marketWeekSeriousPlusUrl(week: WeekDrillSource): string | null {
+export function marketWeekSeriousPlusUrl(week: WeekDrillSource, returnTo?: string | null): string | null {
   if (week.seriousPlusLeads <= 0) return null;
-  return leadsUrl({ from: week.startDate, to: week.endDate, seriousPlus: true, expected: week.seriousPlusLeads });
+  return leadsUrl({ from: week.startDate, to: week.endDate, seriousPlus: true, expected: week.seriousPlusLeads, returnTo: returnTo ?? null });
 }
 
-export function channelAttributedLeadsUrl(period: DrillPeriod, channel: ChannelDrillSource): string | null {
+export function channelAttributedLeadsUrl(period: DrillPeriod, channel: ChannelDrillSource, returnTo?: string | null): string | null {
   if (channel.attributedLeads <= 0) return null;
-  return leadsUrl({ channel: channel.dealChannelId, from: period.startDate, to: period.endDate, attributed: true, expected: channel.attributedLeads });
+  return leadsUrl({ channel: channel.dealChannelId, from: period.startDate, to: period.endDate, attributed: true, expected: channel.attributedLeads, returnTo: returnTo ?? null });
 }
 
-export function channelSeriousPlusUrl(period: DrillPeriod, channel: ChannelDrillSource): string | null {
+export function channelSeriousPlusUrl(period: DrillPeriod, channel: ChannelDrillSource, returnTo?: string | null): string | null {
   if (channel.seriousPlusLeads <= 0) return null;
-  return leadsUrl({ channel: channel.dealChannelId, from: period.startDate, to: period.endDate, attributed: true, seriousPlus: true, expected: channel.seriousPlusLeads });
+  return leadsUrl({ channel: channel.dealChannelId, from: period.startDate, to: period.endDate, attributed: true, seriousPlus: true, expected: channel.seriousPlusLeads, returnTo: returnTo ?? null });
 }
 
 // ── Item drill-downs (Lead Activity by Item) ─────────────────────────────
@@ -69,17 +69,17 @@ export interface ItemDrillSource {
   offers: number;
 }
 
-export function itemAttributedLeadsUrl(window: { from: string; to: string }, item: ItemDrillSource): string | null {
+export function itemAttributedLeadsUrl(window: { from: string; to: string }, item: ItemDrillSource, returnTo?: string | null): string | null {
   if (item.leads <= 0) return null;
-  return leadsUrl({ itemId: item.itemId, from: window.from, to: window.to, itemAttributed: true, expected: item.leads });
+  return leadsUrl({ itemId: item.itemId, from: window.from, to: window.to, itemAttributed: true, expected: item.leads, returnTo: returnTo ?? null });
 }
 
-export function itemSeriousPlusUrl(window: { from: string; to: string }, item: ItemDrillSource): string | null {
+export function itemSeriousPlusUrl(window: { from: string; to: string }, item: ItemDrillSource, returnTo?: string | null): string | null {
   if (item.seriousPlus <= 0) return null;
-  return leadsUrl({ itemId: item.itemId, from: window.from, to: window.to, itemAttributed: true, seriousPlus: true, expected: item.seriousPlus });
+  return leadsUrl({ itemId: item.itemId, from: window.from, to: window.to, itemAttributed: true, seriousPlus: true, expected: item.seriousPlus, returnTo: returnTo ?? null });
 }
 
-export function itemOffersUrl(window: { from: string; to: string }, item: ItemDrillSource): string | null {
+export function itemOffersUrl(window: { from: string; to: string }, item: ItemDrillSource, returnTo?: string | null): string | null {
   if (item.offers <= 0) return null;
-  return leadsUrl({ itemId: item.itemId, from: window.from, to: window.to, itemAttributed: true, offers: true, expected: item.offers });
+  return leadsUrl({ itemId: item.itemId, from: window.from, to: window.to, itemAttributed: true, offers: true, expected: item.offers, returnTo: returnTo ?? null });
 }

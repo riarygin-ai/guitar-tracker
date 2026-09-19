@@ -16,13 +16,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import CompactPageHeader from '@/components/CompactPageHeader';
+import BackLink from '@/components/BackLink';
 import InfoTip from '@/components/InfoTip';
 import { QualityBadge, StatusBadge } from '@/components/leads/LeadBadges';
 import LeadDetailPanel from '@/components/leads/LeadDetailPanel';
 import { fetchLeads } from '@/lib/leads/leadsClient';
 import { LEAD_HELP } from '@/lib/leads/leadHelpText';
+import { resolveBackHref } from '@/lib/listingsReturn';
 import {
   QUICK_FILTERS, NO_CHANNEL, activeQuickFilter, applyLeadFilters, attributionRequest, itemAttributionRequest, leadsUrl,
   parseLeadFilters, patchLeadFilters, quickFilterPatch, sortLeadsRecentFirst, type LeadFilters,
@@ -118,7 +119,7 @@ export default function LeadsPage() {
   const selectedLead = selectedId !== null && payload ? payload.leads.find((l) => l.id === selectedId) ?? null : null;
 
   const quick = activeQuickFilter(filters);
-  const hasAnyFilter = leadsUrl({ ...filters, expected: null }) !== '/leads';
+  const hasAnyFilter = leadsUrl({ ...filters, expected: null, returnTo: null }) !== '/leads';
   const channelOptions = payload?.channels ?? [];
   const attributedChannelName = typeof filters.channel === 'number' ? channelOptions.find((c) => c.id === filters.channel)?.name ?? `Channel ${filters.channel}` : null;
   const itemChipName = filters.itemId != null ? payload?.leads.find((l) => l.inventory_item_id === filters.itemId)?.item_name ?? `Item #${filters.itemId}` : null;
@@ -128,14 +129,7 @@ export default function LeadsPage() {
       <CompactPageHeader
         overline="Leads"
         summary={<p className="text-xs text-slate-500 dark:text-slate-400">Buyer conversations and recorded offers from your listing activity.</p>}
-        action={
-          <Link
-            href="/listings"
-            className="inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
-          >
-            <span aria-hidden="true">←</span> Listings
-          </Link>
-        }
+        back={<BackLink href={resolveBackHref(filters.returnTo)} label="Back to Listings" />}
       />
 
       {/* ── Filters ─────────────────────────────────────────────── */}
@@ -228,7 +222,7 @@ export default function LeadsPage() {
           {hasAnyFilter && (
             <button
               type="button"
-              onClick={() => router.push('/leads', { scroll: false })}
+              onClick={() => router.push(leadsUrl({ returnTo: filters.returnTo }), { scroll: false })}
               className="ml-auto rounded-full px-2 py-1 text-xs font-medium text-slate-500 underline-offset-2 hover:text-slate-900 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-400 dark:hover:text-white"
             >
               Clear filters
