@@ -24,8 +24,11 @@ import Sparkline from '@/components/Sparkline';
 import { fetchListingEvidence } from '@/lib/analytics/listingEvidenceClient';
 import type { ListingEvidence } from '@/lib/analytics/listingEvidence';
 import { fetchListingDemandEvidenceForCurrentUser } from '@/lib/analytics/listingDemandEvidenceClient';
+import { fetchListingItemActivity } from '@/lib/analytics/listingItemActivityClient';
 import type { ListingDemandEvidence } from '@/lib/analytics/listingDemandEvidence';
-import { channelAttributedLeadsUrl, channelSeriousPlusUrl, marketWeekLeadsUrl, marketWeekSeriousPlusUrl, type DrillPeriod } from '@/lib/leads/leadDrilldownUrls';
+import { channelAttributedLeadsUrl, channelSeriousPlusUrl, itemAttributedLeadsUrl, itemOffersUrl, itemSeriousPlusUrl, marketWeekLeadsUrl, marketWeekSeriousPlusUrl, type DrillPeriod } from '@/lib/leads/leadDrilldownUrls';
+import { itemActiveChannelsLabel, itemActivityWindow, itemActivityWindowKey, sortItemActivity, type ItemActivityEntry, type ItemActivityWindow } from '@/lib/listingItemActivityHelpers';
+import { fmtLeadDate } from '@/lib/leads/leadFormat';
 import { LISTING_HELP, type ListingHelpKey } from '@/lib/listingHelpText';
 import { fmtMoney, inventoryUrl, findPurposeId } from '@/lib/listingDashboardHelpers';
 import { resolveDayCountPreset } from '@/lib/listingDemandEvidenceClipboard';
@@ -36,6 +39,7 @@ import {
   fmtRate,
   buildMarketActivityRows,
   buildChannelActivityRows,
+  fmtWeekLabel,
   type TrendWeeks,
 } from '@/lib/listingDemandDashboardHelpers';
 
@@ -97,6 +101,30 @@ export default function ListingsPage() {
     return () => { cancelled = true; };
   }, [trendWeeks]);
 
+  // Lead Activity by Item — ONE compact request per Trend Window, over the
+  // exact window Listing Demand Evidence reports (first weekly bucket's
+  // start -> last bucket's end). Only fetched once evidence for the CURRENT
+  // trendWeeks has landed, so the section can never show a different
+  // window from Market/Channel Activity.
+  const evidenceMatchesWindow = demandEvidence !== null && demandEvidence.trend_window_weeks === trendWeeks && !demandLoading;
+  const itemWindow: ItemActivityWindow | null = evidenceMatchesWindow ? itemActivityWindow(demandEvidence) : null;
+  const itemWindowKey = itemActivityWindowKey(itemWindow);
+  const [itemActivity, setItemActivity] = useState<{ key: string; items: ItemActivityEntry[] } | null>(null);
+  const [itemError, setItemError] = useState<{ key: string; message: string } | null>(null);
+  useEffect(() => {
+    if (!itemWindowKey) return;
+    let cancelled = false;
+    const [from, to] = itemWindowKey.split('|');
+    fetchListingItemActivity(from, to).then((result) => {
+      if (cancelled) return;
+      if (result.status === 'success') { setItemActivity({ key: itemWindowKey, items: result.items }); setItemError(null); }
+      else setItemError({ key: itemWindowKey, message: result.message });
+    });
+    return () => { cancelled = true; };
+  }, [itemWindowKey]);
+  const itemReady = itemActivity !== null && itemActivity.key === itemWindowKey;
+  const itemErrorMessage = demandError ?? (itemError && itemError.key === itemWindowKey ? itemError.message : null);
+
   const businessPurposeId = evidence ? findPurposeId(evidence, 'Business') : null;
   const hybridPurposeId = evidence ? findPurposeId(evidence, 'Hybrid') : null;
 
@@ -125,15 +153,19 @@ export default function ListingsPage() {
       )}
 
       {evidence && (
-        <>
-          <OverviewSection evidence={evidence} />
+        <OverviewSection evidence={evidence} />
+      )}
 
-          <MarketActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} trendWeeks={trendWeeks} onTrendChange={(w) => router.replace(trendWeeksUrl(w), { scroll: false })} />
+      {/* Demand sections never depend on Listing Evidence: they render (and the
+          Trend Window stays usable) even when the snapshot failed to load. */}
+      <MarketActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} trendWeeks={trendWeeks} onTrendChange={(w) => router.replace(trendWeeksUrl(w), { scroll: false })} />
 
-          <ChannelActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} />
+      <ChannelActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} />
 
-          <UnlistedSection evidence={evidence} businessPurposeId={businessPurposeId} hybridPurposeId={hybridPurposeId} />
-        </>
+      <ItemActivitySection items={itemReady ? itemActivity.items : null} window={itemWindow} trendWeeks={trendWeeks} loading={!itemReady && !itemErrorMessage} error={itemErrorMessage} />
+
+      {evidence && (
+        <UnlistedSection evidence={evidence} businessPurposeId={businessPurposeId} hybridPurposeId={hybridPurposeId} />
       )}
     </div>
   );
@@ -295,6 +327,7 @@ function TrendWindowControl({ trendWeeks, onChange }: { trendWeeks: TrendWeeks; 
 
 function DemandSectionShell({
   title,
+  titleHelp,
   helpText,
   action,
   loading,
@@ -303,6 +336,7 @@ function DemandSectionShell({
   children,
 }: {
   title: string;
+  titleHelp?: ListingHelpKey;
   helpText?: string;
   action?: React.ReactNode;
   loading: boolean;
@@ -314,7 +348,10 @@ function DemandSectionShell({
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:p-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="section-title">{title}</p>
+          <p className="section-title inline-flex items-center gap-1.5">
+            {title}
+            {titleHelp && <InfoTip label={LISTING_HELP[titleHelp].label} text={LISTING_HELP[titleHelp].text} />}
+          </p>
           {helpText && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{helpText}</p>}
         </div>
         {action != null && <div className="sm:shrink-0 sm:pt-1">{action}</div>}
@@ -539,6 +576,115 @@ function ChannelActivitySection({ evidence, loading, error }: { evidence: Listin
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">{row.weeklyTrend.length}W Trend</p>
                   <TrendSequence points={row.weeklyTrend} className="mt-0.5" />
                 </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </DemandSectionShell>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Lead Activity by Item — currently listed items over the SAME Trend
+// Window as Market/Channel Activity (exact window = first weekly bucket's
+// start .. last bucket's end, straight off Listing Demand Evidence). Every
+// number comes from the server-side listing_demand_item_activity_v1_0
+// helper: ITEM-attributed leads (the item had listing exposure, on any
+// channel, on first_contact_at). Zero-activity listings stay visible.
+// Item name -> Inventory item detail; the count values -> the exact
+// attributed cohort on /leads (zero counts are plain text, never links).
+// ══════════════════════════════════════════════════════════════════════
+
+function ItemActivitySection({
+  items,
+  window: win,
+  trendWeeks,
+  loading,
+  error,
+}: {
+  items: ItemActivityEntry[] | null;
+  window: ItemActivityWindow | null;
+  trendWeeks: TrendWeeks;
+  loading: boolean;
+  error: string | null;
+}) {
+  const rows = items ? sortItemActivity(items) : [];
+  const hasData = items !== null;
+  const drill = (item: ItemActivityEntry) => ({
+    itemId: item.item_id,
+    leads: item.item_attributed_leads,
+    seriousPlus: item.serious_plus_attributed_leads,
+    offers: item.offer_attributed_leads,
+  });
+
+  return (
+    <DemandSectionShell
+      title="Lead Activity by Item"
+      titleHelp="leadActivityByItem"
+      helpText={win ? `${fmtWeekLabel(win.from, win.to)} · ${trendWeeks}W Trend Window` : `${trendWeeks}W Trend Window`}
+      loading={loading}
+      error={error}
+      hasData={hasData}
+    >
+      {rows.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">No currently listed items.</p>
+      ) : (
+        <>
+          {/* Desktop table */}
+          <div className="hidden overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700 md:block">
+            <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700">
+              <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 dark:bg-slate-700/60 dark:text-slate-400">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold">Item</th>
+                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel text="Leads" icon="message" tone="cyan" /></th>
+                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="seriousPlus" icon="zap" tone="violet" /></th>
+                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="offersAttributed" /></th>
+                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="channelDays" icon="eye" tone="blue" /></th>
+                  <th className="px-3 py-2 text-left font-semibold">Last Lead</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                {rows.map((item) => (
+                  <tr key={item.item_id} data-item-row={item.item_id} className="align-top">
+                    <td className="max-w-[20rem] px-3 py-2">
+                      <Link href={`/inventory/${item.item_id}`} className="break-words font-medium text-slate-900 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-white">
+                        {item.item_display_name}
+                      </Link>
+                      {itemActiveChannelsLabel(item) && <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{itemActiveChannelsLabel(item)}</p>}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span className={`inline-block rounded-md px-2 py-0.5 font-bold tabular-nums ${TONE.cyan.pill}`}>
+                        <DrillValue href={win ? itemAttributedLeadsUrl(win, drill(item)) ?? undefined : undefined}>{item.item_attributed_leads}</DrillValue>
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={win ? itemSeriousPlusUrl(win, drill(item)) ?? undefined : undefined} className={`font-medium ${TONE.violet.text}`}>{item.serious_plus_attributed_leads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={win ? itemOffersUrl(win, drill(item)) ?? undefined : undefined} className="font-medium text-slate-700 dark:text-slate-200">{item.offer_attributed_leads}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">{item.channel_listing_days}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-500 dark:text-slate-400">{item.last_attributed_lead_date ? fmtLeadDate(item.last_attributed_lead_date) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile compact item cards */}
+          <div className="space-y-2 md:hidden">
+            {rows.map((item) => (
+              <div key={item.item_id} data-item-card={item.item_id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                <Link href={`/inventory/${item.item_id}`} className="break-words font-semibold leading-snug text-slate-900 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-white">
+                  {item.item_display_name}
+                </Link>
+                {itemActiveChannelsLabel(item) && <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{itemActiveChannelsLabel(item)}</p>}
+                <div className="mt-2 grid grid-cols-4 gap-2">
+                  <MiniStat label="Leads" value={<DrillValue href={win ? itemAttributedLeadsUrl(win, drill(item)) ?? undefined : undefined}>{item.item_attributed_leads}</DrillValue>} tone="cyan" />
+                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={win ? itemSeriousPlusUrl(win, drill(item)) ?? undefined : undefined}>{item.serious_plus_attributed_leads}</DrillValue>} tone="violet" />
+                  <MiniStat label={<MetricLabel help="offersAttributed" />} value={<DrillValue href={win ? itemOffersUrl(win, drill(item)) ?? undefined : undefined}>{item.offer_attributed_leads}</DrillValue>} tone="slate" />
+                  <MiniStat label={<MetricLabel help="channelDays" />} value={item.channel_listing_days} />
+                </div>
+                <p className="mt-2 border-t border-slate-100 pt-2 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                  Last Lead <span className="ml-1 tabular-nums text-slate-700 dark:text-slate-200">{item.last_attributed_lead_date ? fmtLeadDate(item.last_attributed_lead_date) : '—'}</span>
+                </p>
               </div>
             ))}
           </div>

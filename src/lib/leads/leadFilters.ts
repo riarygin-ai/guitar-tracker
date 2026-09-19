@@ -17,6 +17,10 @@
 //                to the exact channel-ATTRIBUTED cohort Listing Demand
 //                Evidence counts (listing exposure on first_contact_at),
 //                resolved server-side — never approximated here.
+//   item_attributed 1 -> ONLY meaningful with item_id + from + to: restrict to
+//                the exact ITEM-attributed cohort (listing exposure for that
+//                item, on any channel, on first_contact_at), resolved
+//                server-side. Plain item_id + from/to stays a raw filter.
 //   expected     diagnostic only: the count the drill-down source claimed;
 //                compared (console-only) against the actual result.
 
@@ -39,12 +43,13 @@ export interface LeadFilters {
   to: string | null;
   itemId: number | null;
   attributed: boolean;
+  itemAttributed: boolean;
   expected: number | null;
 }
 
 export const EMPTY_LEAD_FILTERS: LeadFilters = {
   search: '', channel: null, quality: null, seriousPlus: false, offerType: null, offers: false,
-  status: null, from: null, to: null, itemId: null, attributed: false, expected: null,
+  status: null, from: null, to: null, itemId: null, attributed: false, itemAttributed: false, expected: null,
 };
 
 /** True only for a real calendar date in strict YYYY-MM-DD form. */
@@ -73,6 +78,8 @@ export function parseLeadFilters(get: (key: string) => string | null): LeadFilte
   const to = isValidDateParam(toRaw) ? toRaw : null;
   // Attribution only makes sense for a concrete channel + a full date window.
   const attributed = get('attributed') === '1' && typeof channel === 'number' && from !== null && to !== null;
+  const itemId = posInt(get('item_id'));
+  const itemAttributed = get('item_attributed') === '1' && itemId !== null && from !== null && to !== null;
   return {
     search: (get('search') ?? '').trim().slice(0, 200),
     channel,
@@ -83,8 +90,9 @@ export function parseLeadFilters(get: (key: string) => string | null): LeadFilte
     status: oneOf(get('status'), LEAD_STATUSES),
     from,
     to,
-    itemId: posInt(get('item_id')),
+    itemId,
     attributed,
+    itemAttributed,
     expected: (() => { const n = get('expected'); return n !== null && /^\d{1,7}$/.test(n) ? Number(n) : null; })(),
   };
 }
@@ -94,15 +102,16 @@ export function leadsUrl(f: Partial<LeadFilters> = {}): string {
   const p = new URLSearchParams();
   if (f.search) p.set('search', f.search);
   if (f.channel != null) p.set('channel_id', String(f.channel));
+  if (f.itemId != null) p.set('item_id', String(f.itemId));
   if (f.from) p.set('from', f.from);
   if (f.to) p.set('to', f.to);
   if (f.attributed) p.set('attributed', '1');
+  if (f.itemAttributed) p.set('item_attributed', '1');
   if (f.quality) p.set('quality', f.quality);
   if (f.seriousPlus) p.set('serious_plus', '1');
   if (f.offerType) p.set('offer_type', f.offerType);
   if (f.offers) p.set('offers', '1');
   if (f.status) p.set('status', f.status);
-  if (f.itemId != null) p.set('item_id', String(f.itemId));
   if (f.expected != null) p.set('expected', String(f.expected));
   const qs = p.toString();
   return `/leads${qs ? `?${qs}` : ''}`;
@@ -116,6 +125,7 @@ export function leadsUrl(f: Partial<LeadFilters> = {}): string {
 export function patchLeadFilters(current: LeadFilters, patch: Partial<LeadFilters>): LeadFilters {
   const next: LeadFilters = { ...current, ...patch, expected: null };
   if ('channel' in patch || 'from' in patch || 'to' in patch) next.attributed = false;
+  if ('itemId' in patch || 'from' in patch || 'to' in patch) next.itemAttributed = false;
   return next;
 }
 
@@ -123,6 +133,14 @@ export function patchLeadFilters(current: LeadFilters, patch: Partial<LeadFilter
 export function attributionRequest(f: LeadFilters): { channelId: number; from: string; to: string } | null {
   if (f.attributed && typeof f.channel === 'number' && f.from && f.to) {
     return { channelId: f.channel, from: f.from, to: f.to };
+  }
+  return null;
+}
+
+/** What the server needs to resolve the exact item-attributed cohort, or null when none applies. */
+export function itemAttributionRequest(f: LeadFilters): { itemId: number; from: string; to: string } | null {
+  if (f.itemAttributed && f.itemId !== null && f.from && f.to) {
+    return { itemId: f.itemId, from: f.from, to: f.to };
   }
   return null;
 }
@@ -138,10 +156,16 @@ function matchesSearch(lead: LeadRow, tokens: string[]): boolean {
  * true (it is the server-resolved cohort); if it is missing the result is
  * empty rather than silently un-attributed.
  */
-export function applyLeadFilters(rows: LeadRow[], f: LeadFilters, attributedIds: ReadonlySet<number> | null): LeadRow[] {
+export function applyLeadFilters(
+  rows: LeadRow[],
+  f: LeadFilters,
+  attributedIds: ReadonlySet<number> | null,
+  itemAttributedIds: ReadonlySet<number> | null = null,
+): LeadRow[] {
   const tokens = f.search.toLowerCase().split(/\s+/).filter(Boolean);
   return rows.filter((l) => {
     if (f.attributed && !(attributedIds && attributedIds.has(l.id))) return false;
+    if (f.itemAttributed && !(itemAttributedIds && itemAttributedIds.has(l.id))) return false;
     if (f.channel === NO_CHANNEL && l.deal_channel_id !== null) return false;
     if (typeof f.channel === 'number' && l.deal_channel_id !== f.channel) return false;
     if (f.quality && l.lead_quality !== f.quality) return false;

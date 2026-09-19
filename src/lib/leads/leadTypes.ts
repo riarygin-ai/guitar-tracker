@@ -50,4 +50,6 @@ export interface LeadsPayload {
   channels: LeadChannelOption[];
   /** item_leads.id set for the requested channel-attributed cohort; null when no cohort was requested. */
   attributed_lead_ids: number[] | null;
+  /** item_leads.id set for the requested ITEM-attributed cohort; null when none was requested. */
+  item_attributed_lead_ids: number[] | null;
 }

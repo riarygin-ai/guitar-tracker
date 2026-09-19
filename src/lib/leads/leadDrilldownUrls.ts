@@ -55,3 +55,31 @@ export function channelSeriousPlusUrl(period: DrillPeriod, channel: ChannelDrill
   if (channel.seriousPlusLeads <= 0) return null;
   return leadsUrl({ channel: channel.dealChannelId, from: period.startDate, to: period.endDate, attributed: true, seriousPlus: true, expected: channel.seriousPlusLeads });
 }
+
+// ── Item drill-downs (Lead Activity by Item) ─────────────────────────────
+// ITEM-attributed cohort (`item_attributed=1`): that inventory item,
+// first_contact_at in the exact Trend Window, AND listing exposure for the
+// item (any channel) on first_contact_at — resolved server-side by
+// lead_drilldown_item_attributed_ids_v1_0. No normalized channel needed.
+
+export interface ItemDrillSource {
+  itemId: number;
+  leads: number;
+  seriousPlus: number;
+  offers: number;
+}
+
+export function itemAttributedLeadsUrl(window: { from: string; to: string }, item: ItemDrillSource): string | null {
+  if (item.leads <= 0) return null;
+  return leadsUrl({ itemId: item.itemId, from: window.from, to: window.to, itemAttributed: true, expected: item.leads });
+}
+
+export function itemSeriousPlusUrl(window: { from: string; to: string }, item: ItemDrillSource): string | null {
+  if (item.seriousPlus <= 0) return null;
+  return leadsUrl({ itemId: item.itemId, from: window.from, to: window.to, itemAttributed: true, seriousPlus: true, expected: item.seriousPlus });
+}
+
+export function itemOffersUrl(window: { from: string; to: string }, item: ItemDrillSource): string | null {
+  if (item.offers <= 0) return null;
+  return leadsUrl({ itemId: item.itemId, from: window.from, to: window.to, itemAttributed: true, offers: true, expected: item.offers });
+}

@@ -18,6 +18,10 @@ export const LEAD_HELP = {
     label: 'Cash Component',
     text: 'Positive means cash to us. Negative means cash from us.',
   },
+  itemAttributed: {
+    label: 'Listing-attributed',
+    text: 'Only leads whose first contact occurred while this item had active listing exposure during the selected period.',
+  },
   attributed: {
     label: 'Channel-attributed',
     text: 'Leads on this channel whose item was actually listed there on the day of first contact — the same set counted on the Listings page.',

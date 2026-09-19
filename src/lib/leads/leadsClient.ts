@@ -9,7 +9,10 @@ export type LeadsFetchResult =
   | { status: 'unauthenticated'; message: string }
   | { status: 'error'; message: string };
 
-export async function fetchLeads(attribution?: { channelId: number; from: string; to: string } | null): Promise<LeadsFetchResult> {
+export async function fetchLeads(
+  attribution?: { channelId: number; from: string; to: string } | null,
+  itemAttribution?: { itemId: number; from: string; to: string } | null,
+): Promise<LeadsFetchResult> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) {
     return { status: 'unauthenticated', message: 'Not signed in — please sign in again.' };
@@ -20,6 +23,11 @@ export async function fetchLeads(attribution?: { channelId: number; from: string
     qs.set('channel_id', String(attribution.channelId));
     qs.set('from', attribution.from);
     qs.set('to', attribution.to);
+  }
+  if (itemAttribution) {
+    qs.set('item_id', String(itemAttribution.itemId));
+    qs.set('item_from', itemAttribution.from);
+    qs.set('item_to', itemAttribution.to);
   }
 
   let res: Response;
@@ -45,5 +53,5 @@ export async function fetchLeads(attribution?: { channelId: number; from: string
   if (!p || !Array.isArray(p.leads) || !Array.isArray(p.channels)) {
     return { status: 'error', message: 'Leads response had an unexpected shape.' };
   }
-  return { status: 'success', data: { leads: p.leads, channels: p.channels, attributed_lead_ids: Array.isArray(p.attributed_lead_ids) ? p.attributed_lead_ids : null } };
+  return { status: 'success', data: { leads: p.leads, channels: p.channels, attributed_lead_ids: Array.isArray(p.attributed_lead_ids) ? p.attributed_lead_ids : null, item_attributed_lead_ids: Array.isArray(p.item_attributed_lead_ids) ? p.item_attributed_lead_ids : null } };
 }

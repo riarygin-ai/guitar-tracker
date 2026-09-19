@@ -1,26 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { loadLeadsForUser, LeadsLoadError, type LeadAttributionRequest } from '@/lib/leads/leadsServer';
+import { loadLeadsForUser, LeadsLoadError, type LeadAttributionRequest, type LeadItemAttributionRequest } from '@/lib/leads/leadsServer';
 import { isValidDateParam } from '@/lib/leads/leadFilters';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// GET /api/leads[?channel_id=N&from=YYYY-MM-DD&to=YYYY-MM-DD]
+// GET /api/leads[?channel_id=N&from=YYYY-MM-DD&to=YYYY-MM-DD][&item_id=N&item_from=YYYY-MM-DD&item_to=YYYY-MM-DD]
 //
 // Read-only. Returns the authenticated caller's OWN leads (RLS-scoped
 // client + explicit user_id filter; the target user is always the token's
 // own app_users.id, never client-supplied). When channel_id + from + to are
 // all present it additionally returns attributed_lead_ids: the exact
 // channel-attributed cohort Listing Demand Evidence counts (see migration
-// 20260918000000). Filtering/sorting/pagination happen client-side in the
+// 20260918000000). When item_id + item_from + item_to are all present it
+// additionally returns item_attributed_lead_ids: the exact ITEM-attributed
+// cohort (listing exposure for the item, any channel, on first_contact_at;
+// migration 20260919000000). Filtering/sorting/pagination happen client-side in the
 // pure helpers under src/lib/leads.
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const channelParam = sp.get('channel_id');
   const from = sp.get('from');
   const to = sp.get('to');
+
+  const itemParam = sp.get('item_id');
+  const itemFrom = sp.get('item_from');
+  const itemTo = sp.get('item_to');
+
+  let itemAttribution: LeadItemAttributionRequest | null = null;
+  if (itemParam !== null || itemFrom !== null || itemTo !== null) {
+    if (!itemParam || !/^\d{1,15}$/.test(itemParam) || !isValidDateParam(itemFrom) || !isValidDateParam(itemTo)) {
+      return NextResponse.json({ error: 'item_id, item_from and item_to must all be valid when requesting an item-attributed cohort' }, { status: 400 });
+    }
+    if (itemFrom > itemTo) {
+      return NextResponse.json({ error: 'item_from must be on or before item_to' }, { status: 400 });
+    }
+    itemAttribution = { itemId: Number(itemParam), from: itemFrom, to: itemTo };
+  }
 
   let attribution: LeadAttributionRequest | null = null;
   if (channelParam !== null || from !== null || to !== null) {
@@ -55,7 +73,7 @@ export async function GET(req: NextRequest) {
   }
 
   let serviceClient = null;
-  if (attribution) {
+  if (attribution || itemAttribution) {
     if (!SUPABASE_SERVICE_ROLE_KEY) {
       console.error('[api/leads] SUPABASE_SERVICE_ROLE_KEY is not configured');
       return NextResponse.json({ error: 'Server misconfiguration' }, { status: 500 });
@@ -66,7 +84,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const payload = await loadLeadsForUser({ db, serviceClient, appUserId: appUser.id as number, attribution });
+    const payload = await loadLeadsForUser({ db, serviceClient, appUserId: appUser.id as number, attribution, itemAttribution });
     return NextResponse.json(payload);
   } catch (err) {
     if (err instanceof LeadsLoadError) {

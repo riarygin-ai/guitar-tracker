@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import InfoTip from '@/components/InfoTip';
 import { QualityBadge, StatusBadge } from '@/components/leads/LeadBadges';
@@ -23,7 +24,7 @@ import LeadDetailPanel from '@/components/leads/LeadDetailPanel';
 import { fetchLeads } from '@/lib/leads/leadsClient';
 import { LEAD_HELP } from '@/lib/leads/leadHelpText';
 import {
-  QUICK_FILTERS, NO_CHANNEL, activeQuickFilter, applyLeadFilters, attributionRequest, leadsUrl,
+  QUICK_FILTERS, NO_CHANNEL, activeQuickFilter, applyLeadFilters, attributionRequest, itemAttributionRequest, leadsUrl,
   parseLeadFilters, patchLeadFilters, quickFilterPatch, sortLeadsRecentFirst, type LeadFilters,
 } from '@/lib/leads/leadFilters';
 import {
@@ -49,6 +50,9 @@ export default function LeadsPage() {
 
   const attr = attributionRequest(filters);
   const attrKey = attr ? `${attr.channelId}|${attr.from}|${attr.to}` : '';
+  const itemAttr = itemAttributionRequest(filters);
+  const itemAttrKey = itemAttr ? `${itemAttr.itemId}|${itemAttr.from}|${itemAttr.to}` : '';
+  const cohortKey = `${attrKey}#${itemAttrKey}`;
 
   const [loaded, setLoaded] = useState<{ key: string; payload: LeadsPayload } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,20 +63,26 @@ export default function LeadsPage() {
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    const [channelId, from, to] = attrKey ? attrKey.split('|') : [];
-    fetchLeads(attrKey ? { channelId: Number(channelId), from, to } : null).then((result) => {
+    const [attrPart, itemPart] = cohortKey.split('#');
+    const [channelId, from, to] = attrPart ? attrPart.split('|') : [];
+    const [itemId, itemFrom, itemTo] = itemPart ? itemPart.split('|') : [];
+    fetchLeads(
+      attrPart ? { channelId: Number(channelId), from, to } : null,
+      itemPart ? { itemId: Number(itemId), from: itemFrom, to: itemTo } : null,
+    ).then((result) => {
       if (cancelled) return;
-      if (result.status === 'success') setLoaded({ key: attrKey, payload: result.data });
+      if (result.status === 'success') setLoaded({ key: cohortKey, payload: result.data });
       else setError(result.message);
     });
     return () => { cancelled = true; };
-  }, [attrKey]);
+  }, [cohortKey]);
 
-  const ready = loaded !== null && loaded.key === attrKey;
+  const ready = loaded !== null && loaded.key === cohortKey;
   const payload = ready ? loaded.payload : null;
 
   const attributedSet = payload?.attributed_lead_ids ? new Set(payload.attributed_lead_ids) : null;
-  const filtered = payload ? sortLeadsRecentFirst(applyLeadFilters(payload.leads, filters, attributedSet)) : [];
+  const itemAttributedSet = payload?.item_attributed_lead_ids ? new Set(payload.item_attributed_lead_ids) : null;
+  const filtered = payload ? sortLeadsRecentFirst(applyLeadFilters(payload.leads, filters, attributedSet, itemAttributedSet)) : [];
 
   // Drill-down reconciliation diagnostic (development aid; UI stays calm).
   const expected = filters.expected;
@@ -118,6 +128,14 @@ export default function LeadsPage() {
       <CompactPageHeader
         overline="Leads"
         summary={<p className="text-xs text-slate-500 dark:text-slate-400">Buyer conversations and recorded offers from your listing activity.</p>}
+        action={
+          <Link
+            href="/listings"
+            className="inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+          >
+            <span aria-hidden="true">←</span> Listings
+          </Link>
+        }
       />
 
       {/* ── Filters ─────────────────────────────────────────────── */}
@@ -218,13 +236,20 @@ export default function LeadsPage() {
           )}
         </div>
 
-        {(filters.attributed || filters.itemId != null) && (
+        {(filters.attributed || filters.itemAttributed || filters.itemId != null) && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {filters.attributed && (
               <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-cyan-50 py-0.5 pl-2.5 pr-1 text-xs font-medium text-cyan-800 ring-1 ring-inset ring-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-200 dark:ring-cyan-800/60" data-chip="attributed">
                 <span className="min-w-0 break-words">Channel-attributed · {attributedChannelName} · {fmtLeadDateFull(filters.from)} – {fmtLeadDateFull(filters.to)}</span>
                 <InfoTip label={LEAD_HELP.attributed.label} text={LEAD_HELP.attributed.text} />
                 <button type="button" aria-label="Remove channel-attributed cohort" onClick={() => update({ attributed: false })} className="rounded-full px-1.5 text-cyan-700 hover:bg-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-cyan-200 dark:hover:bg-cyan-800/50">×</button>
+              </span>
+            )}
+            {filters.itemAttributed && (
+              <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-cyan-50 py-0.5 pl-2.5 pr-1 text-xs font-medium text-cyan-800 ring-1 ring-inset ring-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-200 dark:ring-cyan-800/60" data-chip="item-attributed">
+                <span className="min-w-0 break-words">Listing-attributed · {fmtLeadDateFull(filters.from)} – {fmtLeadDateFull(filters.to)}</span>
+                <InfoTip label={LEAD_HELP.itemAttributed.label} text={LEAD_HELP.itemAttributed.text} />
+                <button type="button" aria-label="Remove listing-attributed cohort" onClick={() => update({ itemAttributed: false })} className="rounded-full px-1.5 text-cyan-700 hover:bg-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-cyan-200 dark:hover:bg-cyan-800/50">×</button>
               </span>
             )}
             {filters.itemId != null && (

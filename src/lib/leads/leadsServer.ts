@@ -28,13 +28,20 @@ export interface LeadAttributionRequest {
   to: string;
 }
 
+export interface LeadItemAttributionRequest {
+  itemId: number;
+  from: string;
+  to: string;
+}
+
 export async function loadLeadsForUser(params: {
   db: SupabaseClient;
   serviceClient: SupabaseClient | null;
   appUserId: number;
   attribution?: LeadAttributionRequest | null;
+  itemAttribution?: LeadItemAttributionRequest | null;
 }): Promise<LeadsPayload> {
-  const { db, serviceClient, appUserId, attribution } = params;
+  const { db, serviceClient, appUserId, attribution, itemAttribution } = params;
 
   // 1. All of the user's leads (paged past PostgREST's row cap).
   const raw: Record<string, unknown>[] = [];
@@ -103,5 +110,19 @@ export async function loadLeadsForUser(params: {
     attributedLeadIds = ((data ?? []) as { lead_row_id: number }[]).map((r) => r.lead_row_id);
   }
 
-  return { leads, channels, attributed_lead_ids: attributedLeadIds };
+  // 4. Exact ITEM-attributed cohort (same rule as Listing Demand Evidence item_attributed_leads).
+  let itemAttributedLeadIds: number[] | null = null;
+  if (itemAttribution) {
+    if (!serviceClient) throw new LeadsLoadError('service client unavailable for item-attributed cohort');
+    const { data, error } = await serviceClient.rpc('lead_drilldown_item_attributed_ids_v1_0', {
+      p_target_user_id: appUserId,
+      p_item_id: itemAttribution.itemId,
+      p_period_start: itemAttribution.from,
+      p_period_end: itemAttribution.to,
+    });
+    if (error) throw new LeadsLoadError(`item-attributed cohort: ${error.message}`);
+    itemAttributedLeadIds = ((data ?? []) as { lead_row_id: number }[]).map((r) => r.lead_row_id);
+  }
+
+  return { leads, channels, attributed_lead_ids: attributedLeadIds, item_attributed_lead_ids: itemAttributedLeadIds };
 }

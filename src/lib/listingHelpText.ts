@@ -24,6 +24,18 @@ export const LISTING_HELP = {
     label: 'Realized Deals',
     text: 'Completed Sell/Trade activity during the week. Deals are shown alongside leads but are not treated as lead conversions.',
   },
+  leadActivityByItem: {
+    label: 'Lead Activity by Item',
+    text: 'Buyer lead activity attributed to currently listed items during the selected Trend Window.',
+  },
+  channelDays: {
+    label: 'Channel Days',
+    text: 'Total item-channel listing exposure during the selected Trend Window. One item listed on one channel for one day equals one Channel Day.',
+  },
+  offersAttributed: {
+    label: 'Offers',
+    text: 'Attributed leads with a recorded CASH, TRADE, or MIXED offer.',
+  },
 } as const;
 
 export type ListingHelpKey = keyof typeof LISTING_HELP;

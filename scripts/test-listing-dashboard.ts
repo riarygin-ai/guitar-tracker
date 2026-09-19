@@ -355,9 +355,14 @@ async function main() {
       // The snapshot render gate must depend on `evidence` only.
       check('the snapshot sections are gated on `{evidence && (` only', /\{evidence && \(/.test(pageSource));
       check('that gate never also requires demandEvidence/demandError to be truthy/falsy', !/\{evidence && demandEvidence|\{evidence && !demandError|\{!demandError && evidence/.test(pageSource));
-      const snapshotGateMatch = pageSource.match(/\{evidence && \(([\s\S]*?)\n {6}\)\}/);
-      check('OverviewSection is rendered inside that gate', !!snapshotGateMatch && /<OverviewSection/.test(snapshotGateMatch[1]));
-      check('UnlistedSection is rendered inside that gate', !!snapshotGateMatch && /<UnlistedSection/.test(snapshotGateMatch[1]));
+      // Listing Evidence and Demand Evidence are independent: the snapshot
+      // sections (Overview, Unlisted) each sit in their own `{evidence && (`
+      // gate, while the demand sections render OUTSIDE any evidence gate so a
+      // Listing Evidence failure never hides them or the Trend Window.
+      const gates = Array.from(pageSource.matchAll(/\{evidence && \(([\s\S]*?)\n {6}\)\}/g)).map((m) => m[1]).join('\n');
+      check('OverviewSection is rendered inside an evidence gate', /<OverviewSection/.test(gates));
+      check('UnlistedSection is rendered inside an evidence gate', /<UnlistedSection/.test(gates));
+      check('Market/Channel/Item Activity are NOT inside an evidence gate', !/<MarketActivitySection|<ChannelActivitySection|<ItemActivitySection/.test(gates));
       // Market/Channel Activity take their OWN independent loading/error
       // props rather than being wrapped in a page-wide demand-error block.
       check('MarketActivitySection receives its own independent error prop', /<MarketActivitySection[\s\S]{0,120}error=\{demandError\}/.test(pageSource));
