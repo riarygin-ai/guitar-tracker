@@ -37,7 +37,7 @@ import {
 import { classifySheetValues } from '../src/lib/leadImport/preview';
 import { runLeadImport } from '../src/lib/leadImport/importRun';
 import { EXPECTED_HEADERS, type ExpectedHeader, type LeadImportSource, type RowPreviewResult, type SheetCellValue } from '../src/lib/leadImport/types';
-import { ROW_ISSUE, SOURCE_FATAL } from '../src/lib/leadImport/errorCodes';
+import { ROW_ISSUE, ROW_WARNING, SOURCE_FATAL } from '../src/lib/leadImport/errorCodes';
 
 let passed = 0;
 let failed = 0;
@@ -426,7 +426,7 @@ async function main() {
       INVALID_MESSAGE_COUNT: sheetRow({ buyer_message_count: -1 }),
       BEST_LT_INITIAL: sheetRow({ initial_cash_offer: 500, best_cash_offer: 100 }),
       TRADE_ZERO_VALID: sheetRow({ offer_type: 'TRADE', cash_component: 0 }),
-      TRADE_NULL_INVALID: sheetRow({ offer_type: 'TRADE', cash_component: null }),
+      TRADE_NULL_NORMALIZED: sheetRow({ offer_type: 'TRADE', cash_component: null }),
       TRADE_NONZERO_INVALID: sheetRow({ offer_type: 'TRADE', cash_component: 75 }),
       MIXED_NULL_VALID: sheetRow({ offer_type: 'MIXED', cash_component: null }),
       MIXED_POSITIVE_VALID: sheetRow({ offer_type: 'MIXED', cash_component: 200 }),
@@ -463,7 +463,8 @@ async function main() {
     check('3.11 invalid message count -> INVALID_BUYER_MESSAGE_COUNT / INVALID', hasCode(rowFor(idx('INVALID_MESSAGE_COUNT')), ROW_ISSUE.INVALID_BUYER_MESSAGE_COUNT) && rowFor(idx('INVALID_MESSAGE_COUNT'))?.classification === 'INVALID');
     check('3.12 best < initial -> BEST_OFFER_LESS_THAN_INITIAL / INVALID', hasCode(rowFor(idx('BEST_LT_INITIAL')), ROW_ISSUE.BEST_OFFER_LESS_THAN_INITIAL) && rowFor(idx('BEST_LT_INITIAL'))?.classification === 'INVALID');
     check('3.13 valid TRADE + 0 -> NEW (no cash issue)', rowFor(idx('TRADE_ZERO_VALID'))?.classification === 'NEW' && !hasCode(rowFor(idx('TRADE_ZERO_VALID')), ROW_ISSUE.INVALID_CASH_COMPONENT));
-    check('3.14 invalid TRADE + NULL -> INVALID_CASH_COMPONENT / INVALID', hasCode(rowFor(idx('TRADE_NULL_INVALID')), ROW_ISSUE.INVALID_CASH_COMPONENT) && rowFor(idx('TRADE_NULL_INVALID'))?.classification === 'INVALID');
+    check('3.14 TRADE + blank cash_component is NORMALIZED to 0: valid NEW with a non-blocking warning, never INVALID_CASH_COMPONENT',
+      rowFor(idx('TRADE_NULL_NORMALIZED'))?.classification === 'NEW' && hasCode(rowFor(idx('TRADE_NULL_NORMALIZED')), ROW_WARNING.TRADE_CASH_COMPONENT_DEFAULTED_TO_ZERO) && !hasCode(rowFor(idx('TRADE_NULL_NORMALIZED')), ROW_ISSUE.INVALID_CASH_COMPONENT) && (rowFor(idx('TRADE_NULL_NORMALIZED'))?.issues ?? []).every((i) => i.severity === 'warning'));
     check('3.15 invalid TRADE + non-zero -> INVALID_CASH_COMPONENT / INVALID', hasCode(rowFor(idx('TRADE_NONZERO_INVALID')), ROW_ISSUE.INVALID_CASH_COMPONENT) && rowFor(idx('TRADE_NONZERO_INVALID'))?.classification === 'INVALID');
     check('3.16 valid MIXED + NULL -> NEW', rowFor(idx('MIXED_NULL_VALID'))?.classification === 'NEW');
     check('3.17 valid MIXED + positive -> NEW', rowFor(idx('MIXED_POSITIVE_VALID'))?.classification === 'NEW');
@@ -697,7 +698,7 @@ async function main() {
         sheetRow({ lead_id: validIds[1], lead_quality: 'SUPER_HOT' }),   // invalid enum
         sheetRow({ lead_id: validIds[2] }),
         sheetRow({ lead_id: randomUuid(), item_id: itemB }),             // wrong-owner item
-        sheetRow({ lead_id: randomUuid(), offer_type: 'TRADE', cash_component: null }), // invalid cash semantics
+        sheetRow({ lead_id: randomUuid(), offer_type: 'TRADE', cash_component: 75 }),   // invalid cash semantics (non-zero TRADE)
       ]);
       const outcome = outcomeOf(await importSheet(sourceA, mixedSheet));
       check('6.6a valid rows still import alongside invalid ones', outcome?.counts.inserted === 2, outcome?.counts);
@@ -713,6 +714,85 @@ async function main() {
         rows.filter((r) => r.result === 'SKIPPED_INVALID').every((r) => (r.issue_codes as string[]).length > 0), rows);
       check('6.6g wrong-user item cannot import (ITEM_NOT_OWNED_BY_SOURCE_USER)',
         rows.some((r) => (r.issue_codes as string[]).includes(ROW_ISSUE.ITEM_NOT_OWNED_BY_SOURCE_USER)), rows);
+    }
+
+    // ── 6.15 TRADE + blank cash_component (the recurring production case) ──
+    // Canonical rule: TRADE means cash_component = 0. A blank cell is
+    // normalized to 0 BEFORE classification/payload construction (with a
+    // non-blocking warning), stored as 0, and a re-import of the unchanged
+    // sheet stays idempotent. The sheet itself is never modified.
+    await resetImportState();
+    {
+      const ids = { blank: randomUuid(), zero: randomUuid(), pos: randomUuid(), neg: randomUuid(), mixedNull: randomUuid(), mixedPos: randomUuid(), mixedNeg: randomUuid(), mixedZero: randomUuid() };
+      const cashValues = buildValues([
+        sheetRow({ lead_id: ids.blank, offer_type: 'TRADE', cash_component: null, trade_item: 'Bogner Ecstasy 3534' }),
+        sheetRow({ lead_id: ids.zero, offer_type: 'TRADE', cash_component: 0, trade_item: 'Bogner Ecstasy 3534' }),
+        sheetRow({ lead_id: ids.pos, offer_type: 'TRADE', cash_component: 50 }),
+        sheetRow({ lead_id: ids.neg, offer_type: 'TRADE', cash_component: -50 }),
+        sheetRow({ lead_id: ids.mixedNull, offer_type: 'MIXED', cash_component: null }),
+        sheetRow({ lead_id: ids.mixedPos, offer_type: 'MIXED', cash_component: 200 }),
+        sheetRow({ lead_id: ids.mixedNeg, offer_type: 'MIXED', cash_component: -150 }),
+        sheetRow({ lead_id: ids.mixedZero, offer_type: 'MIXED', cash_component: 0 }),
+      ]);
+      const sheetSnapshot = JSON.stringify(cashValues);
+      const preview = await classifySheetValues(cashValues, sourceA, admin);
+      const pRow = (n: number) => preview.rows[n];
+      const codes = (n: number) => pRow(n).issues.map((i) => i.code);
+      check('6.15a TRADE + blank -> valid NEW (not INVALID)', pRow(0).classification === 'NEW');
+      check('6.15b TRADE + blank emits TRADE_CASH_COMPONENT_DEFAULTED_TO_ZERO as a WARNING only', codes(0).includes(ROW_WARNING.TRADE_CASH_COMPONENT_DEFAULTED_TO_ZERO) && pRow(0).issues.every((i) => i.severity === 'warning') && !codes(0).includes(ROW_ISSUE.INVALID_CASH_COMPONENT));
+      check('6.15c the warning message is the specified one', pRow(0).issues.some((i) => i.message === 'cash_component was blank for TRADE and was normalized to 0.'));
+      check('6.15d TRADE + explicit 0 -> NEW with no warning', pRow(1).classification === 'NEW' && pRow(1).issues.length === 0);
+      check('6.15e TRADE + positive -> INVALID_CASH_COMPONENT', pRow(2).classification === 'INVALID' && codes(2).includes(ROW_ISSUE.INVALID_CASH_COMPONENT));
+      check('6.15f TRADE + negative -> INVALID_CASH_COMPONENT', pRow(3).classification === 'INVALID' && codes(3).includes(ROW_ISSUE.INVALID_CASH_COMPONENT));
+      check('6.15g MIXED + blank -> valid NEW (stays NULL, no warning)', pRow(4).classification === 'NEW' && pRow(4).issues.length === 0);
+      check('6.15h MIXED + positive / negative -> valid NEW', pRow(5).classification === 'NEW' && pRow(6).classification === 'NEW');
+      check('6.15i MIXED + 0 -> INVALID_CASH_COMPONENT (known zero cash is a TRADE)', pRow(7).classification === 'INVALID' && codes(7).includes(ROW_ISSUE.INVALID_CASH_COMPONENT));
+      check('6.15j preview counts: 5 New, 3 Invalid (TRADE blank is NOT counted invalid), exactly 1 Warning', preview.counts.new === 5 && preview.counts.invalid === 3 && preview.counts.warnings === 1, preview.counts);
+      check('6.15k the normalized row stays in the importable count (New + Updates = 5)', preview.counts.new + preview.counts.updates === 5);
+
+      const outcome = outcomeOf(await importSheet(sourceA, cashValues));
+      check('6.15l import writes exactly the 5 valid rows (warning row included), skips the 3 invalid', outcome?.counts.inserted === 5 && outcome?.counts.invalid === 3, outcome?.counts);
+      const blankStored = await leadByLeadId(userA, ids.blank);
+      const zeroStored = await leadByLeadId(userA, ids.zero);
+      check('6.15m TRADE + blank is STORED as numeric 0 (canonical), not NULL', blankStored?.offer_type === 'TRADE' && blankStored?.cash_component !== null && Number(blankStored?.cash_component) === 0, blankStored?.cash_component);
+      check('6.15n explicit 0 and blank-normalized 0 are identical in the database', Number(zeroStored?.cash_component) === 0 && zeroStored?.offer_type === blankStored?.offer_type && Number(zeroStored?.cash_component) === Number(blankStored?.cash_component));
+      check('6.15o MIXED semantics stored intact: NULL / +200 / -150; invalid rows never written',
+        (await leadByLeadId(userA, ids.mixedNull))?.cash_component === null && Number((await leadByLeadId(userA, ids.mixedPos))?.cash_component) === 200 && Number((await leadByLeadId(userA, ids.mixedNeg))?.cash_component) === -150
+        && !(await leadByLeadId(userA, ids.pos)) && !(await leadByLeadId(userA, ids.neg)) && !(await leadByLeadId(userA, ids.mixedZero)));
+      const auditRows = outcome ? await runRowsFor(outcome.runId) : [];
+      const blankAudit = auditRows.find((r) => r.lead_id === ids.blank);
+      check('6.15p the warning row is audited as INSERTED (not SKIPPED_INVALID) with its warning code', blankAudit?.result === 'INSERTED' && (blankAudit?.issue_codes as string[]).includes(ROW_WARNING.TRADE_CASH_COMPONENT_DEFAULTED_TO_ZERO), blankAudit);
+
+      // Idempotency: the SAME unchanged sheet (blank still blank) must not re-update forever.
+      const rePreview = await classifySheetValues(cashValues, sourceA, admin);
+      check('6.15q a repeat preview of the unchanged sheet classifies the blank TRADE row UNCHANGED (never UPDATE)', rePreview.rows[0].classification === 'UNCHANGED' && rePreview.counts.updates === 0 && rePreview.counts.unchanged === 5, rePreview.counts);
+      const reOutcome = outcomeOf(await importSheet(sourceA, cashValues));
+      check('6.15r a repeat import writes nothing (idempotent)', reOutcome?.counts.inserted === 0 && reOutcome?.counts.updated === 0 && reOutcome?.counts.unchanged === 5, reOutcome?.counts);
+      check('6.15s the source sheet was never modified (no 0 written back)', JSON.stringify(cashValues) === sheetSnapshot);
+
+      // A genuinely newer blank TRADE row updates, and still stores 0.
+      const newerValues = buildValues([sheetRow({ lead_id: ids.blank, offer_type: 'TRADE', cash_component: null, trade_item: 'Bogner Ecstasy 3534', status: 'GHOSTED', updated_at: T_NEWER })]);
+      const upOutcome = outcomeOf(await importSheet(sourceA, newerValues));
+      const afterUpdate = await leadByLeadId(userA, ids.blank);
+      check('6.15t a newer blank-TRADE row UPDATEs and the stored value stays 0', upOutcome?.counts.updated === 1 && afterUpdate?.status === 'GHOSTED' && Number(afterUpdate?.cash_component) === 0, { counts: upOutcome?.counts, cash: afterUpdate?.cash_component });
+    }
+
+    // ── 6.15b "Import N changes" counts warnings as changes ─────────────
+    await resetImportState();
+    {
+      const existingId = randomUuid();
+      await importSheet(sourceA, buildValues([sheetRow({ lead_id: existingId, offer_type: 'TRADE', cash_component: 0, updated_at: T_NOW })]));
+      const rows = [
+        sheetRow({ lead_id: existingId, offer_type: 'TRADE', cash_component: null, updated_at: T_NEWER }),                      // UPDATE + warning
+        sheetRow({ lead_id: randomUuid(), offer_type: 'TRADE', cash_component: null }),                                        // NEW + warning
+        sheetRow({ lead_id: randomUuid() }),                                                                                    // NEW
+        sheetRow({ lead_id: randomUuid(), offer_type: 'TRADE', cash_component: 5 }),                                          // INVALID
+      ];
+      const vals = buildValues(rows);
+      const pv = await classifySheetValues(vals, sourceA, admin);
+      check('6.15u warnings do not reduce the importable count: 2 New + 1 Update = 3 changes, 1 Invalid, 2 Warnings', pv.counts.new === 2 && pv.counts.updates === 1 && pv.counts.invalid === 1 && pv.counts.warnings === 2, pv.counts);
+      const out = outcomeOf(await importSheet(sourceA, vals));
+      check('6.15v the import applies exactly that many changes (3)', (out?.counts.inserted ?? 0) + (out?.counts.updated ?? 0) === pv.counts.new + pv.counts.updates, out?.counts);
     }
 
     // ── 6.7 A newer row can clear an optional value back to NULL ──────

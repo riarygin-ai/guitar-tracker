@@ -101,7 +101,8 @@ function trimTo(value: string, max: number): string {
 // One short, code-derived sentence per row — errors first, then warnings.
 // Never sheet content beyond what validate.ts already put in the message.
 function issueMessageFor(row: RowValidationResult): string | null {
-  const preferred = row.issues.find((i) => i.severity === 'error') ?? row.issues[0];
+  // errors first; then the classification-defining warning (SOURCE_OLDER) over an incidental one (e.g. a normalization warning).
+  const preferred = row.issues.find((i) => i.severity === 'error') ?? row.issues.find((i) => i.code === 'SOURCE_OLDER') ?? row.issues[0];
   if (!preferred) return null;
   const message = trimTo(preferred.message, MAX_ISSUE_MESSAGE_LENGTH);
   return message === '' ? null : message;

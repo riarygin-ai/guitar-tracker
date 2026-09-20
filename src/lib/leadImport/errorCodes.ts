@@ -54,4 +54,7 @@ export const ROW_ISSUE = {
 // ── Row-level warning (non-fatal, does not force INVALID) ───────────────────
 export const ROW_WARNING = {
   SOURCE_OLDER: 'SOURCE_OLDER',
+  // TRADE + blank cash_component: a straight trade has no cash by definition,
+  // so the blank is normalized to 0 (never written back to the Sheet).
+  TRADE_CASH_COMPONENT_DEFAULTED_TO_ZERO: 'TRADE_CASH_COMPONENT_DEFAULTED_TO_ZERO',
 } as const;

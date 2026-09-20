@@ -207,13 +207,27 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
     issues.push(issue('error', ROW_ISSUE.BEST_OFFER_LESS_THAN_INITIAL, 'best_cash_offer is less than initial_cash_offer.', at2()));
   }
 
-  // ── cash_component (semantics depend on offer_type — never coerce NULL
-  // to 0) ────────────────────────────────────────────────────────────────
+  // ── cash_component (semantics depend on offer_type) ──────────────────
+  // Canonical rule: offer_type TRADE means cash_component = 0 by
+  // definition (1-for-1, 2-for-1, bundles — any straight trade). A BLANK
+  // cash_component on a TRADE row is therefore NORMALIZED to 0 (with a
+  // non-blocking warning) here, before classification/comparison/payload
+  // construction, so the stored canonical value is 0 and a re-import of the
+  // same unchanged Sheet row stays idempotent. The Sheet itself is never
+  // written. Every other case keeps its strict semantics: an explicit
+  // non-zero on TRADE is invalid (that is MIXED); MIXED + blank stays NULL
+  // (cash involved, amount unknown), MIXED + 0 is invalid (known zero cash
+  // is a TRADE); NONE/CASH must be blank.
   const cashComponentParsed = cellToNumberOrNull(cells.cash_component);
+  let cashComponentValue: number | null = cashComponentParsed.ok ? cashComponentParsed.value : null;
   if (!cashComponentParsed.ok) {
     issues.push(issue('error', ROW_ISSUE.INVALID_CASH_COMPONENT, 'cash_component is not a valid number.', at2()));
-  } else if (offerType !== null) {
-    const cashComponent = cashComponentParsed.value;
+  } else if (offerType === 'TRADE' && cashComponentValue === null) {
+    cashComponentValue = 0;
+    issues.push(issue('warning', ROW_WARNING.TRADE_CASH_COMPONENT_DEFAULTED_TO_ZERO, 'cash_component was blank for TRADE and was normalized to 0.', at2()));
+  }
+  if (cashComponentParsed.ok && offerType !== null) {
+    const cashComponent = cashComponentValue;
     let semanticsOk = true;
     switch (offerType) {
       case 'TRADE':
@@ -360,7 +374,7 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
           initialCashOffer: initialCashParsed.ok ? initialCashParsed.value : null,
           bestCashOffer: bestCashParsed.ok ? bestCashParsed.value : null,
           tradeItem,
-          cashComponent: cashComponentParsed.ok ? cashComponentParsed.value : null,
+          cashComponent: cashComponentValue,
           tradeEstValue: tradeEstValueParsed.ok ? tradeEstValueParsed.value : null,
           status: leadStatus,
           outcomeReason,

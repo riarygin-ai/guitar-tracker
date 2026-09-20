@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import { getLeadImportSources, getOrCreateAppUser, supabase, upsertLeadImportSource } from '@/lib/supabase';
 import { extractSpreadsheetId } from '@/lib/leadImport/spreadsheetId';
+import { buildConfigDraft, canOfferPreview, configPanelMode, defaultSelectedUserId, formatImportTimestamp, summarizeSource } from '@/lib/leadImport/sourceConfigView';
 import type { AppUser } from '@/types';
 import type {
   ImportRowResult,
@@ -86,6 +87,10 @@ export default function LeadImportAdminPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  // Maintenance mode: the edit form (user picker, source name, spreadsheet, sheet, enabled) only exists while true.
+  const [editing, setEditing] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -140,26 +145,55 @@ export default function LeadImportAdminPage() {
       if (usersRes.ok) {
         const payload = (await usersRes.json()) as { users: PickerUser[] };
         setPickerUsers(payload.users);
-        if (payload.users.length > 0) setSelectedUserId((prev) => prev ?? payload.users[0].id);
+        // Normal view = the CURRENT authenticated user (never the first picker entry).
+        setSelectedUserId((prev) => prev ?? defaultSelectedUserId(user!.id));
       } else {
         setPickerError('Could not load users.');
+        setSelectedUserId((prev) => prev ?? defaultSelectedUserId(user!.id));
       }
 
       if (!sourcesRes.error) setSources((sourcesRes.data as LeadImportSource[]) ?? []);
+      setConfigLoaded(true);
     }
 
     load();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Rebuilds ALL four form fields from one user's source (or neutral defaults) so nothing carries over between users.
+  function applyDraft(d: { sourceName: string; spreadsheetInput: string; sheetName: string; isEnabled: boolean }) {
+    setSourceName(d.sourceName);
+    setSpreadsheetInput(d.spreadsheetInput);
+    setSheetName(d.sheetName);
+    setIsEnabled(d.isEnabled);
+  }
+
+  function draftFor(userId: number | null) {
+    const src = userId != null ? sources.find((x) => x.user_id === userId) : undefined;
+    const pu = userId != null ? pickerUsers.find((u) => u.id === userId) : undefined;
+    return buildConfigDraft(src, pu?.display_name ?? null);
+  }
+
+  function openConfig() {
+    setSaveError(null);
+    applyDraft(draftFor(selectedUserId));
+    setEditing(true);
+  }
+
+  // Cancel: discard unsaved edits and return to the current authenticated user's normal view.
+  function cancelConfig() {
+    const home = user ? defaultSelectedUserId(user.id) : selectedUserId;
+    setEditing(false);
+    setSaveError(null);
+    setSelectedUserId(home);
+    applyDraft(draftFor(home));
+  }
 
   // ── Populate the form from the selected user's existing source ──────────
   useEffect(() => {
     if (selectedUserId == null) return;
     const existing = sources.find((s) => s.user_id === selectedUserId);
     const pickerUser = pickerUsers.find((u) => u.id === selectedUserId);
-    setSourceName(existing?.source_name ?? (pickerUser ? `${pickerUser.display_name} GT Lead Log` : ''));
-    setSpreadsheetInput(existing?.spreadsheet_id ?? '');
-    setSheetName(existing?.sheet_name ?? 'Leads');
-    setIsEnabled(existing?.is_enabled ?? true);
+    applyDraft(buildConfigDraft(existing, pickerUser?.display_name ?? null));
     setSaveError(null);
     setSavedAt(null);
     setPreviewResult(null);
@@ -230,6 +264,11 @@ export default function LeadImportAdminPage() {
     setSheetName(saved.sheet_name);
     setSavedAt(saved.updated_at);
     setPreviewResult(null);
+    const savedFor = pickerUsers.find((u) => u.id === saved.user_id)?.display_name;
+    setSavedNotice(user && saved.user_id !== user.id && savedFor ? `Saved configuration for ${savedFor}.` : 'Configuration saved.');
+    // Close maintenance mode and go back to the current authenticated user's normal view.
+    setEditing(false);
+    if (user) setSelectedUserId(defaultSelectedUserId(user.id));
   }
 
   async function runPreview(sourceId: number) {
@@ -383,86 +422,113 @@ export default function LeadImportAdminPage() {
       />
 
       {/* ── Source configuration ─────────────────────────────────────── */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+      {/* Normal view: compact summary of the CURRENT user's saved source + Preview.
+          The edit form (incl. user picker) exists only in "Change configuration". */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800" data-config-mode={configPanelMode(currentSource, editing)}>
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">Source configuration</h2>
 
         {pickerError && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{pickerError}</p>}
 
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <label className={labelClass}>Guitar Tracker user</label>
-            <select
-              value={selectedUserId ?? ''}
-              onChange={(e) => setSelectedUserId(Number(e.target.value))}
-              className={inputClass}
-            >
-              {pickerUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.display_name} {u.email ? `(${u.email})` : ''}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1.5">
-            <label className={labelClass}>Source Name</label>
-            <input value={sourceName} onChange={(e) => setSourceName(e.target.value)} disabled={saving} className={inputClass} />
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <label className={labelClass}>Spreadsheet URL or ID</label>
-            <input
-              value={spreadsheetInput}
-              onChange={(e) => setSpreadsheetInput(e.target.value)}
-              disabled={saving}
-              placeholder="https://docs.google.com/spreadsheets/d/…"
-              className={inputClass}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className={labelClass}>Sheet Name</label>
-            <input value={sheetName} onChange={(e) => setSheetName(e.target.value)} disabled={saving} placeholder="Leads" className={inputClass} />
-          </div>
-          <div className="space-y-1.5">
-            <label className={labelClass}>Enabled</label>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={isEnabled}
-              onClick={() => setIsEnabled((v) => !v)}
-              disabled={saving}
-              className={`relative mt-0.5 inline-flex h-6 w-11 items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${isEnabled ? 'bg-emerald-500 dark:bg-emerald-600' : 'bg-slate-300 dark:bg-slate-600'}`}
-            >
-              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${isEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-            </button>
-          </div>
-        </div>
+        {!configLoaded && !editing && <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Loading configuration…</p>}
 
-        {saveError && (
-          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-300">
-            {saveError}
+        {configLoaded && configPanelMode(currentSource, editing) === 'summary' && currentSource && (() => {
+          const summary = summarizeSource(currentSource);
+          return (
+            <div className="mt-3">
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">{summary.title}</p>
+              <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
+                <div className="min-w-0"><dt className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Spreadsheet</dt><dd className="mt-0.5 break-words text-slate-800 dark:text-slate-200">{summary.spreadsheetLabel}</dd></div>
+                <div className="min-w-0"><dt className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Sheet</dt><dd className="mt-0.5 break-words text-slate-800 dark:text-slate-200">{summary.sheetName}</dd></div>
+                <div className="min-w-0"><dt className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Status</dt><dd className={`mt-0.5 font-medium ${currentSource.is_enabled ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'}`}>{summary.statusLabel}</dd></div>
+                <div className="min-w-0"><dt className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Last successful import</dt><dd className="mt-0.5 text-slate-800 dark:text-slate-200">{formatImportTimestamp(summary.lastSuccessfulImportAt)}</dd></div>
+              </dl>
+              {savedNotice && <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">{savedNotice}</p>}
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handlePreview}
+                  disabled={previewLoading || importing || !canOfferPreview(currentSource, editing)}
+                  className={btnPrimary}
+                >
+                  {previewLoading ? 'Running Preview…' : 'Preview Lead Import'}
+                </button>
+                <button type="button" onClick={openConfig} className={btnSecondary}>Change configuration</button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {configLoaded && configPanelMode(currentSource, editing) === 'setup' && (
+          <div className="mt-3">
+            <p className="text-sm text-slate-600 dark:text-slate-300">Lead Log import is not configured for this user.</p>
+            <div className="mt-3">
+              <button type="button" onClick={openConfig} className={btnPrimary}>Configure source</button>
+            </div>
           </div>
         )}
-        {savedAt && !saveError && (
-          <p className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">Saved {new Date(savedAt).toLocaleString()}</p>
-        )}
 
-        <div className="mt-4 flex items-center gap-3">
-          <button type="button" onClick={handleSave} disabled={saving || selectedUserId == null} className={btnPrimary}>
-            {saving ? 'Saving…' : currentSource ? 'Save changes' : 'Create source'}
-          </button>
-          <button
-            type="button"
-            onClick={handlePreview}
-            disabled={previewLoading || importing || !currentSource}
-            className={btnSecondary}
-            title={!currentSource ? 'Save the source configuration first' : undefined}
-          >
-            {previewLoading ? 'Running Preview…' : 'Preview Lead Import'}
-          </button>
-        </div>
-        {currentSource && (
-          <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-            {currentSource.last_successful_import_at
-              ? `Last successful import ${new Date(currentSource.last_successful_import_at).toLocaleString()}.`
-              : 'This source has never been imported.'}
-          </p>
+        {editing && (
+          <>
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className={labelClass}>Guitar Tracker user</label>
+                <select
+                  value={selectedUserId ?? ''}
+                  onChange={(e) => setSelectedUserId(Number(e.target.value))}
+                  disabled={saving}
+                  className={inputClass}
+                >
+                  {pickerUsers.map((u) => (
+                    <option key={u.id} value={u.id}>{u.display_name} {u.email ? `(${u.email})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClass}>Source Name</label>
+                <input value={sourceName} onChange={(e) => setSourceName(e.target.value)} disabled={saving} className={inputClass} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className={labelClass}>Spreadsheet URL or ID</label>
+                <input
+                  value={spreadsheetInput}
+                  onChange={(e) => setSpreadsheetInput(e.target.value)}
+                  disabled={saving}
+                  placeholder="https://docs.google.com/spreadsheets/d/…"
+                  className={inputClass}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClass}>Sheet Name</label>
+                <input value={sheetName} onChange={(e) => setSheetName(e.target.value)} disabled={saving} placeholder="Leads" className={inputClass} />
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClass}>Enabled</label>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isEnabled}
+                  onClick={() => setIsEnabled((v) => !v)}
+                  disabled={saving}
+                  className={`relative mt-0.5 inline-flex h-6 w-11 items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${isEnabled ? 'bg-emerald-500 dark:bg-emerald-600' : 'bg-slate-300 dark:bg-slate-600'}`}
+                >
+                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${isEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            {saveError && (
+              <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-300">
+                {saveError}
+              </div>
+            )}
+
+            <div className="mt-4 flex items-center gap-3">
+              <button type="button" onClick={handleSave} disabled={saving || selectedUserId == null} className={btnPrimary}>
+                {saving ? 'Saving…' : 'Save changes'}
+              </button>
+              <button type="button" onClick={cancelConfig} disabled={saving} className={btnSecondary}>Cancel</button>
+            </div>
+          </>
         )}
       </div>
 
