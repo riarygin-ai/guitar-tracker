@@ -20,5 +20,6 @@ export const {
   invalidateListingEvidenceCache,
   invalidateListingDemandCache,
   invalidateItemActivityCache,
+  invalidateListingAdviceCache,
   invalidateListingsCache,
 } = createListingsInvalidators(listingsCache);

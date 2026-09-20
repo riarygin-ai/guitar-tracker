@@ -17,6 +17,7 @@ import type {
   StructuredAdviceResponse,
 } from './types';
 import { ADVICE_SCHEMA_VERSION, MAX_ADVICE_CARDS } from './types';
+import { collectStrings, findLeadDealViolations } from './sharedSemantics';
 
 function toRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -174,6 +175,21 @@ export function validateAdviceResponse(rawJson: string, sourceRegistry: SourceRe
     advice_cards: cards,
     limitations: limitations!,
   };
+
+  // There is no canonical lead -> deal linkage, so a response that asserts a
+  // lead/deal "conversion" (or explains the lead/deal gap as a cause) is
+  // rejected in full rather than shown — same guard the Listing Advice
+  // validator applies (see sharedSemantics.ts). Only model-written prose is
+  // scanned, never source ids.
+  const prose = collectStrings({
+    run_summary: { headline: runSummary.headline, summary: runSummary.summary },
+    cards: cards.map((c) => ({ headline: c.headline, advice: c.advice, why: c.why_it_matters, limitations: c.limitations })),
+    limitations: response.limitations,
+  });
+  const violations = new Set(prose.flatMap((t) => findLeadDealViolations(t)));
+  if (violations.size > 0) {
+    return { valid: false, response: null, reasons: Array.from(violations).map((v) => `LEAD_DEAL_${v}`) };
+  }
 
   return { valid: true, response, reasons: [] };
 }

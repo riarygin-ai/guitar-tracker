@@ -257,7 +257,7 @@ async function main() {
     check('highest-ever lead_quality + Serious+ definition', /highest intent level a lead has reached/.test(p) && /Serious\+ means SERIOUS or HIGH_INTENT/.test(p));
     check('Offers definition', /Offers \(offer_attributed_leads\) counts leads with a recorded CASH, TRADE, or MIXED offer/.test(p));
     check('item vs channel attribution + NULL-channel case', /Item-attributed means/.test(p) && /Channel-attributed additionally requires matching item\/channel listing exposure/.test(p) && /no normalized channel can still be item-attributed/.test(p));
-    check('no lead->deal conversion assumption', /NO canonical lead-to-deal relationship/.test(p) && /never state or imply a lead-to-deal conversion rate or funnel/.test(p) && /cannot currently be determined/.test(p));
+    check('no lead->deal conversion assumption', /NO canonical lead_id -> deal_id linkage/.test(p) && /never state or imply a lead-to-deal conversion rate or funnel/i.test(p) && /cannot currently be determined/.test(p));
     check('observational, non-causal wording rule', /never claim that listing on a channel, cross-listing, or any action caused demand/.test(p) && /associated with/.test(p) && /coincided with/.test(p));
     check('channel interpretation: experiments allowed, never remove a channel just for a low rate', /Never recommend removing or abandoning a channel merely because its lead rate is low/.test(p) && /realized deals are a separate fact/.test(p));
     check('sample size / logging-completeness caveat', /small counts are weak evidence/.test(p) && /incomplete logging/.test(p));

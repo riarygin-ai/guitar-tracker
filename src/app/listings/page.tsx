@@ -18,6 +18,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import CopyAnalysisDataControl from '@/components/CopyAnalysisDataControl';
+import ListingAdviceSection from '@/components/listings/ListingAdviceSection';
 import InfoTip from '@/components/InfoTip';
 import Sparkline from '@/components/Sparkline';
 import { fetchListingEvidence } from '@/lib/analytics/listingEvidenceClient';
@@ -143,6 +144,9 @@ export default function ListingsPage() {
       {evidence && (
         <OverviewSection evidence={evidence} />
       )}
+
+      {/* AI Listing Advice: optional enrichment with its own cache/fetch/error state — never gates any other section. */}
+      <ListingAdviceSection returnTo={returnTo} />
 
       {/* Demand sections never depend on Listing Evidence: they render (and the
           Trend Window stays usable) even when the snapshot failed to load. */}

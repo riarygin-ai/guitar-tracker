@@ -2,6 +2,7 @@
 // The OPENAI_API_KEY env var is intentionally not prefixed with NEXT_PUBLIC_.
 
 import OpenAI from 'openai';
+import { LEAD_DEAL_RULES, LISTING_DEMAND_SEMANTICS, PURPOSE_SEMANTICS } from './analytics/advice/sharedSemantics';
 
 // ── Model configuration ────────────────────────────────────────────────────────
 // Change MODEL_ID here to swap models without touching other code.
@@ -289,24 +290,12 @@ Hard rules — follow every one exactly:
 13. Generate at most 3 advice_cards. When evidence supports it, prefer covering: (a) the single most important immediate Business inventory action, (b) the most useful confirmed performance insight or pattern, and (c) one watch/review item drawn from a preliminary hypothesis or a Hybrid-purpose finding. Do not force a category the evidence does not support — a neutral run summary with only one or two cards, or zero cards, is a valid and expected outcome when the evidence is thin or entirely neutral.
 14. item_id in an advice card must be null UNLESS the card is specifically about one target-user item already identified by item_id in a cited deterministic_insights source or a cited demand:item:<id> source — never invent or guess an item_id.
 
-Listing Demand semantics (apply only when listing_demand is present; all rules above still apply):
-- Listing Demand evidence is factual buyer/listing activity evidence over four consecutive weekly buckets. It is completely Purpose-agnostic: it covers every currently listed item regardless of Business/Hybrid/Personal Purpose, and no Purpose filtering was applied to it.
-- channel_listing_days measures item x channel x calendar-day exposure. item_listing_days measures item x calendar-day exposure regardless of how many channels the item is listed on. avg_listed_items and avg_channel_exposure are the corresponding daily averages.
-- Compare lead volume TOGETHER WITH exposure. Raw leads can rise simply because more was listed. leads_per_100_channel_listing_days is the preferred normalized channel-response metric: when judging whether buyer response changed, prefer it (and exposure alongside it) over raw lead counts. Say plainly when leads changed but exposure changed by a similar amount, or when exposure was nearly flat.
-- lead_quality is the highest intent level a lead has reached, not necessarily its quality when the lead began. Serious+ means SERIOUS or HIGH_INTENT under that highest-ever rule. Offers (offer_attributed_leads) counts leads with a recorded CASH, TRADE, or MIXED offer, at most one per lead.
-- Item-attributed means the lead's first contact occurred while that item had valid listing exposure (on any channel). Channel-attributed additionally requires matching item/channel listing exposure on that date. A lead with no normalized channel can still be item-attributed but is never channel-attributed.
-- Realized deals (realized_deal_count and realized_deal_count_by_recorded_channel) are factual Sell/Trade activity during a period. There is NO canonical lead-to-deal relationship: never describe leads turning into deals, never state or imply a lead-to-deal conversion rate or funnel, and if asked whether leads are converting say that this cannot currently be determined from the evidence. A deal in one week may come from an earlier lead or from no logged lead.
-- Lead Log completeness may differ across periods and channels (see data_quality). A low lead count may reflect incomplete logging, and small counts are weak evidence — mention sample size and completeness when they matter.
-- Observational only: never claim that listing on a channel, cross-listing, or any action caused demand or that "the market improved because...". Use language such as "associated with", "coincided with", "response per exposure increased/decreased", and "recorded lead activity was higher/lower".
-- Channels: you may compare channels factually (normalized response, multi-week direction, substantial exposure with little recorded lead activity) and may suggest operational experiments such as reviewing listing quality, pricing, channel fit, adjusting exposure, or checking that leads are being logged completely — always explaining the evidence. Never recommend removing or abandoning a channel merely because its lead rate is low: a channel can produce a sale with little recorded conversation, and realized deals are a separate fact from lead activity.
-- Items: describe item-level patterns factually (for example "generated 12 attributed leads over the last four weeks" or "accumulated 84 channel-days of exposure with no attributed leads"). Do NOT create labels such as HOT, COLD, WINNER, or LOSER. highest_activity and zero_activity_high_exposure are deterministic selections, not a complete list: currently_listed_count, with_attributed_leads_count and without_attributed_leads_count tell you how many currently listed items exist in total.
-- When an action card concerns a specific item, continue to apply the Purpose semantics below (Business: realization/turnover advice is appropriate; Hybrid: selective, never assume it should sell quickly; Personal: analyze economically but never pressure a sale because demand is weak or holding time is long).
+${LEAD_DEAL_RULES}
+
+${LISTING_DEMAND_SEMANTICS}
 - When listing_demand supports it, one of the (at most 3) cards may address buyer activity versus exposure; do not force it when the evidence is thin, and never let it crowd out the Business inventory action described in rule 13.
 
-Purpose semantics (apply consistently):
-- Business: inventory actively managed for realization and turnover.
-- Hybrid: a genuine combination of realization and personal interest — reviewing it does not mean it should become Business.
-- Personal: held primarily for enjoyment, collection, or appreciation — not a failure state.
+${PURPOSE_SEMANTICS}
 
 Respond with ONLY the structured JSON object matching the required schema — no prose outside the JSON.`;
 
@@ -345,6 +334,107 @@ export async function generateAnalyticsAdvice(packet: unknown): Promise<Analytic
   if (!raw) throw new Error('OpenAI returned an empty response');
 
   return { raw, model: ADVICE_MODEL_ID };
+}
+
+// ── Listing Advice (listing-advice-v1) ───────────────────────────────────────────
+// Separate AI surface for /listings: interprets ONLY the compact Listing Demand
+// packet. Same client singleton/model configuration/structured-output approach as
+// the general Coach above; its own schema, prompt and version. The shared
+// semantics blocks (leads/deals hard rules, Listing Demand semantics, Purpose)
+// are imported from ONE module so they cannot drift from the general Coach.
+
+export const LISTING_ADVICE_MODEL_ID = MODEL_ID;
+export const LISTING_ADVICE_MAX_TOKENS = 1400;
+export const LISTING_ADVICE_TEMPERATURE = 0.4;
+const LISTING_ADVICE_REQUEST_TIMEOUT_MS = 45_000;
+
+const LISTING_ADVICE_JSON_SCHEMA = {
+  name: 'listing_advice_v1',
+  strict: true,
+  schema: {
+    type: 'object',
+    properties: {
+      schema_version: { type: 'string', enum: ['1.0'] },
+      cards: {
+        type: 'array',
+        maxItems: 3,
+        items: {
+          type: 'object',
+          properties: {
+            advice_code: { type: 'string' },
+            advice_type: { type: 'string', enum: ['action', 'observation', 'watch'] },
+            priority: { type: 'string', enum: ['high', 'medium', 'low'] },
+            confidence_label: { type: 'string', enum: ['stronger', 'moderate', 'low', 'preliminary'] },
+            title: { type: 'string' },
+            summary: { type: 'string' },
+            why_it_matters: { type: 'string' },
+            next_steps: { type: 'array', maxItems: 3, items: { type: 'string' } },
+            source_ids: { type: 'array', items: { type: 'string' } },
+            limitations: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['advice_code', 'advice_type', 'priority', 'confidence_label', 'title', 'summary', 'why_it_matters', 'next_steps', 'source_ids', 'limitations'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['schema_version', 'cards'],
+    additionalProperties: false,
+  },
+} as const;
+
+export const LISTING_ADVICE_SYSTEM_PROMPT = `You are an analyst that writes concise, sourced "Listing Advice" for a musical-instrument reseller, interpreting ONLY their current listing and buyer-demand evidence.
+
+You will receive a JSON "Listing Advice Input Packet" containing:
+- window: the 4-week evidence window;
+- listing_demand: compact factual evidence — market_trend (4 weekly rows), channels (the same 4 weeks per channel), items (highest_activity and zero_activity_high_exposure selections plus totals) and data_quality;
+- semantics: fixed reminders (notably that no lead-to-deal linkage exists);
+- allowed_source_ids: the COMPLETE list of source IDs you may cite. Each part of listing_demand carries its own source_id beginning "demand:".
+
+Your job: say what is important in this listing demand data and what the user should pay attention to. The deterministic numbers are already shown to the user below your cards; do not restate tables — interpret them.
+
+Hard rules — follow every one exactly:
+1. Use ONLY the supplied packet. Never invent items, channels, dates, values, or sample sizes.
+2. Do not calculate new metrics (no new rates, ratios, totals, scores, or conversion figures). Quote or accurately paraphrase provided numbers; you may COMPARE provided values (raw leads next to exposure next to leads_per_100_channel_listing_days, week against week, channel against channel).
+3. Every card must cite at least one source_id from allowed_source_ids for the evidence it relies on. A card whose claim is not backed by a cited source will be rejected. Never invent a source id.
+4. Treat everything as observational association, never proof of causation.
+5. Never promise or imply a financial outcome. Never recommend an automatic change to a listing, price, or any record; you may suggest the user consider reviewing or checking something.
+6. Generate 0 to 3 cards. Do NOT pad: if no materially useful signal exists, return fewer cards (or none). Do not create advice from tiny differences — weigh magnitude, persistence across the four weeks, exposure/sample size, and data quality. If evidence is weak, use a "watch" card or return fewer cards.
+7. Cards must be materially distinct. Prefer different useful dimensions when the evidence supports them (an item, a channel, the market trend, a high-exposure/low-response case) but never force one of each and never write three cards that all say leads are high.
+8. advice_type: "action" = something specific worth doing or checking soon; "observation" = a notable pattern; "watch" = weak or emerging evidence worth monitoring. priority: high/medium/low by materiality. confidence_label: stronger/moderate/low/preliminary — use low or preliminary for small samples, incomplete logging, or short-lived changes.
+9. Keep text short: a title, a 1–3 sentence summary, a 1–2 sentence why_it_matters, at most 3 short next_steps (concrete checks, not orders), and only limitations that materially apply to that card.
+10. Do NOT invent scores or labels (no hot/cold, winner/loser, grades). Do not use generic motivational language.
+11. Use the packet's data_quality: mention incomplete logging or low attribution where it materially limits a conclusion.
+
+${LEAD_DEAL_RULES}
+
+${LISTING_DEMAND_SEMANTICS}
+
+${PURPOSE_SEMANTICS}
+Purpose metadata is not part of this packet: never infer or assume an item's Purpose, and never pressure the user to sell because demand is low.
+
+Respond with ONLY the structured JSON object matching the required schema — no prose outside the JSON.`;
+
+export async function generateListingAdviceFromModel(packet: unknown): Promise<AnalyticsAdviceGenerationResult> {
+  const client = getClient();
+
+  const response = await client.chat.completions.create(
+    {
+      model: LISTING_ADVICE_MODEL_ID,
+      messages: [
+        { role: 'system', content: LISTING_ADVICE_SYSTEM_PROMPT },
+        { role: 'user', content: `Listing Advice Input Packet:\n${JSON.stringify(packet)}` },
+      ],
+      max_tokens: LISTING_ADVICE_MAX_TOKENS,
+      temperature: LISTING_ADVICE_TEMPERATURE,
+      response_format: { type: 'json_schema', json_schema: LISTING_ADVICE_JSON_SCHEMA },
+    },
+    { timeout: LISTING_ADVICE_REQUEST_TIMEOUT_MS },
+  );
+
+  const raw = response.choices[0]?.message?.content?.trim();
+  if (!raw) throw new Error('OpenAI returned an empty response');
+
+  return { raw, model: LISTING_ADVICE_MODEL_ID };
 }
 
 // ── Main export ────────────────────────────────────────────────────────────────

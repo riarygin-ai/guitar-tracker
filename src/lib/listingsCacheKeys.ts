@@ -15,6 +15,8 @@ import type { SwrCache } from './swrCache';
 export const LISTING_EVIDENCE_KEY = 'listing-evidence';
 export const LISTING_DEMAND_PREFIX = 'listing-demand:';
 export const ITEM_ACTIVITY_PREFIX = 'listing-item-activity:';
+// Persisted AI Listing Advice (latest completed) — independent of the three evidence caches above.
+export const LISTING_ADVICE_KEY = 'listing-advice:latest';
 
 export function listingDemandKey(trendWeeks: number, startDate: string, endDate: string): string {
   return `${LISTING_DEMAND_PREFIX}${trendWeeks}:${startDate}:${endDate}`;
@@ -34,7 +36,8 @@ export function createListingsInvalidators(cache: Pick<SwrCache, 'invalidate'>) 
     invalidateListingEvidenceCache: () => cache.invalidate(LISTING_EVIDENCE_KEY),
     invalidateListingDemandCache: () => cache.invalidate(LISTING_DEMAND_PREFIX),
     invalidateItemActivityCache: () => cache.invalidate(ITEM_ACTIVITY_PREFIX),
-    /** Everything Listings shows (evidence + demand + item activity). */
+    invalidateListingAdviceCache: () => cache.invalidate(LISTING_ADVICE_KEY),
+    /** Everything Listings shows (evidence + demand + item activity). Deliberately does NOT touch the advice cache: advice is regenerated manually. */
     invalidateListingsCache: () => {
       cache.invalidate(LISTING_EVIDENCE_KEY);
       cache.invalidate(LISTING_DEMAND_PREFIX);

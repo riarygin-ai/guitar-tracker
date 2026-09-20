@@ -20,7 +20,7 @@ import Link from 'next/link';
 import type { AdviceCard } from '@/lib/analytics/advice/types';
 import { formatAdviceType, formatConfidence, formatPriority, humanizeCode } from '@/lib/analytics/advice/presentation';
 
-function PriorityBadge({ priority }: { priority: string }) {
+export function PriorityBadge({ priority }: { priority: string }) {
   const classes: Record<string, string> = {
     high: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-700',
     medium: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700',
@@ -33,7 +33,7 @@ function PriorityBadge({ priority }: { priority: string }) {
   );
 }
 
-function ConfidencePill({ confidence }: { confidence: string | null }) {
+export function ConfidencePill({ confidence }: { confidence: string | null }) {
   return (
     <span className="inline-flex shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300">
       Confidence: {formatConfidence(confidence)}
