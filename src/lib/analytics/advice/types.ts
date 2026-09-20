@@ -4,8 +4,12 @@
 // generateAdvice.ts for the full lifecycle and buildInputPacket.ts for how
 // the packet below is derived.
 
+import type { ListingDemandContext } from './listingDemandContext';
+
 export const ADVICE_SCHEMA_VERSION = '1.0';
-export const PROMPT_TEMPLATE_VERSION = 'analytics-advice-v1';
+// v2: adds the optional listing_demand packet block, its `demand:*` sources and the
+// Listing Demand semantics to the system prompt (all existing rules unchanged).
+export const PROMPT_TEMPLATE_VERSION = 'analytics-advice-v2';
 export const ADVICE_PROVIDER = 'openai';
 
 export type AdviceStatus = 'pending' | 'generating' | 'completed' | 'failed';
@@ -55,7 +59,7 @@ export type AnalyticsRunAdviceMeta = Omit<AnalyticsRunAdviceRow, 'advice' | 'sou
 // target-user item_id a Business/Hybrid open-inventory insight already
 // legitimately carries.
 
-export type SourceType = 'deterministic_insight' | 'confirmed_pattern' | 'preliminary_hypothesis';
+export type SourceType = 'deterministic_insight' | 'confirmed_pattern' | 'preliminary_hypothesis' | 'listing_demand';
 
 export interface SourceRegistryEntry {
   source_id: string;
@@ -115,6 +119,11 @@ export interface AdviceInputPacket {
   confirmed_patterns: AdviceInputPacketSource[];
   preliminary_hypotheses: AdviceInputPacketSource[];
   pattern_selection_summary: Record<string, unknown> | null;
+  /** Compact, canonical Listing Demand evidence (4 weekly buckets ending today) —
+   *  fetched live at generation time and persisted with the packet so the exact
+   *  block the Coach saw is auditable. Omitted entirely (never fabricated) when
+   *  the enrichment was unavailable. Its `demand:*` source ids are in allowed_source_ids. */
+  listing_demand?: ListingDemandContext;
   allowed_source_ids: string[];
 }
 

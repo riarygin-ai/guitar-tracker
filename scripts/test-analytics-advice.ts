@@ -418,7 +418,7 @@ async function main() {
   check('system prompt explicitly forbids causal framing', /causal|causation|caused/i.test(ADVICE_SYSTEM_PROMPT));
   check('system prompt explicitly forbids promising financial outcomes', /promise/i.test(ADVICE_SYSTEM_PROMPT));
   check('advice_schema_version constant is "1.0"', ADVICE_SCHEMA_VERSION === '1.0');
-  check('prompt_template_version constant is "analytics-advice-v1"', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v1');
+  check('prompt_template_version constant is "analytics-advice-v2"', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v2');
   check('provider constant is "openai"', ADVICE_PROVIDER === 'openai');
 
   // ══════════════════════════════════════════════════════════════════════
@@ -765,9 +765,18 @@ async function main() {
     if (outcome.status === 'completed') {
       const row = outcome.row;
       check('completed advice carries the configured provider/model', row.provider === 'openai' && row.model === ADVICE_MODEL_ID, { provider: row.provider, model: row.model });
-      check('completed advice carries the exact expected schema/prompt versions', row.advice_schema_version === '1.0' && row.prompt_template_version === 'analytics-advice-v1');
+      check('completed advice carries the exact expected schema/prompt versions', row.advice_schema_version === '1.0' && row.prompt_template_version === 'analytics-advice-v2');
       check('completed advice canonical_input_hash is a real 64-char hex digest', /^[0-9a-f]{64}$/.test(row.canonical_input_hash ?? ''), row.canonical_input_hash);
-      check('completed advice matches the independently-recomputed packet hash for the same saved run', row.canonical_input_hash === hashCanonicalInputPacket(directPacket.packet), { stored: row.canonical_input_hash, recomputed: hashCanonicalInputPacket(directPacket.packet) });
+      // The packet now optionally carries the live Listing Demand block that was persisted WITH it, so the
+      // independent recomputation must include that exact persisted block (or its absence) to reproduce the hash.
+      const recomputedPacket = buildAdviceInputPacket({
+        runId: realRun.id,
+        analyticsVersion: realRunRow!.analytics_version as string,
+        evidenceScope: realRunRow!.evidence_scope as string,
+        snapshot: realRunRow!.snapshot,
+        listingDemand: row.input_packet?.listing_demand ?? null,
+      });
+      check('completed advice matches the independently-recomputed packet hash for the same saved run (+ its persisted listing_demand block, if any)', row.canonical_input_hash === hashCanonicalInputPacket(recomputedPacket.packet), { stored: row.canonical_input_hash, recomputed: hashCanonicalInputPacket(recomputedPacket.packet) });
       check('completed advice has at most 3 advice_cards', (row.advice?.advice_cards.length ?? 0) <= 3, row.advice?.advice_cards.length);
       check('every completed advice card cites at least one source_id (re-verified on the persisted row)', (row.advice?.advice_cards ?? []).every((c) => c.source_ids.length > 0));
       const registryIds = new Set((row.source_refs ?? []).map((s: SourceRegistryEntry) => s.source_id));

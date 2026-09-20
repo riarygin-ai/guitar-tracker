@@ -98,6 +98,7 @@ function SourceTypeBadge({ sourceType }: { sourceType: string }) {
     deterministic_insight: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700',
     confirmed_pattern: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-300 dark:border-teal-700',
     preliminary_hypothesis: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700',
+    listing_demand: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-300 dark:border-cyan-700',
   };
   return (
     <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${classes[sourceType] ?? classes.deterministic_insight}`}>
@@ -935,6 +936,30 @@ export default function AnalyticsPage() {
                     </span>
                   )}
                 </div>
+
+                {/* Debug/audit: the exact Listing Demand block the Coach received for THIS
+                    revision (persisted inside the immutable input_packet). Collapsed by
+                    default; the Copy button copies exactly this block. */}
+                {selectedAdvice.input_packet && (
+                  <CollapsibleSection title="Debug: Listing Demand context sent to the Coach" data={selectedAdvice.input_packet.listing_demand}>
+                    {selectedAdvice.input_packet.listing_demand ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Window {selectedAdvice.input_packet.listing_demand.start_date} to {selectedAdvice.input_packet.listing_demand.end_date} ({selectedAdvice.input_packet.listing_demand.window_weeks} weeks) ·{' '}
+                          {JSON.stringify(selectedAdvice.input_packet.listing_demand).length.toLocaleString()} characters ·{' '}
+                          {selectedAdvice.input_packet.allowed_source_ids.filter((id) => id.startsWith('demand:')).length} citable demand sources
+                        </p>
+                        <pre className="max-h-96 overflow-auto rounded-xl bg-slate-50 p-3 text-[11px] leading-snug text-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
+                          {JSON.stringify(selectedAdvice.input_packet.listing_demand, null, 2)}
+                        </pre>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        No Listing Demand block was included in this revision&apos;s packet (the evidence was unavailable when it was generated, or this revision predates the integration).
+                      </p>
+                    )}
+                  </CollapsibleSection>
+                )}
 
                 <div className="min-w-0">
                   <h3 className="break-words text-sm font-semibold text-slate-900 dark:text-white">{selectedAdvice.advice?.run_summary.headline}</h3>

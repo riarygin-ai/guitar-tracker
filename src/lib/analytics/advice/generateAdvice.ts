@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { generateAnalyticsAdvice, ADVICE_MODEL_ID } from '@/lib/openai';
 import { sanitizeErrorMessage } from '@/lib/analytics/runAnalytics';
 import { buildAdviceInputPacket } from './buildInputPacket';
+import { loadListingDemandContext, type ListingDemandContext } from './listingDemandContext';
 import { hashCanonicalInputPacket } from './canonicalHash';
 import { validateAdviceResponse } from './validateAdviceResponse';
 import { ADVICE_PROVIDER, ADVICE_SCHEMA_VERSION, PROMPT_TEMPLATE_VERSION } from './types';
@@ -166,12 +167,27 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
 
   const rowId = claimed.id;
 
-  // ── 4. Build the deterministic packet from the SAVED snapshot only. ──
+  // ── 3b. Listing Demand enrichment (optional, live at generation time). ──
+  // The insights/patterns below always come from the SAVED snapshot; Listing
+  // Demand is the one live, canonical, server-side evidence source (never the
+  // /listings client cache). It ENHANCES the Coach and must never make it
+  // unusable: any failure/timeout is logged, the block is simply omitted, and
+  // generation continues with the existing context. No fallback metrics are
+  // ever fabricated. The exact block used is persisted inside input_packet.
+  let listingDemand: ListingDemandContext | null = null;
+  try {
+    listingDemand = await loadListingDemandContext({ appUserId: requestingUserId, serviceClient });
+  } catch (demandError) {
+    console.error('[generateAdvice] listing demand enrichment unavailable for run', runId, '- continuing without it:', sanitizeErrorMessage(demandError));
+  }
+
+  // ── 4. Build the deterministic packet from the SAVED snapshot (+ the optional live Listing Demand block). ──
   const { packet, sourceRegistry, notes } = buildAdviceInputPacket({
     runId: run.id as number,
     analyticsVersion: run.analytics_version as string,
     evidenceScope: run.evidence_scope as string,
     snapshot: run.snapshot,
+    listingDemand,
   });
 
   if (!packet) {

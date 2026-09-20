@@ -90,6 +90,7 @@ const PORTFOLIO_SOURCE_PREFIX_PRIORITY: Record<string, number> = {
   pattern: 0,
   insight: 1,
   hypothesis: 2,
+  demand: 3, // Listing Demand evidence ranks after every deterministic/statistical source
 };
 
 function sourcePrefix(sourceId: string): string {

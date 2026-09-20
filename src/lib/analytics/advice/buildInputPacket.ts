@@ -13,6 +13,7 @@
 // user's data (this module only ever sees ONE user's own saved snapshot,
 // by construction of the caller).
 
+import { buildListingDemandSources, type ListingDemandContext } from './listingDemandContext';
 import type {
   AdviceInputPacket,
   AdviceInputPacketRunMeta,
@@ -174,6 +175,11 @@ export interface BuildAdviceInputPacketParams {
   evidenceScope: string;
   /** analytics_runs.snapshot — the exact saved JSON, unmodified. */
   snapshot: unknown;
+  /** Optional canonical Listing Demand context, fetched by the caller at
+   *  generation time (see listingDemandContext.ts). Purely additive: absent/null
+   *  yields exactly the packet this function always produced. It never makes an
+   *  otherwise evidence-less run generatable. */
+  listingDemand?: ListingDemandContext | null;
 }
 
 export interface BuildAdviceInputPacketResult {
@@ -233,6 +239,8 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
 
   const allSources = [...deterministicInsights, ...confirmedPatterns, ...preliminaryHypotheses];
 
+  const demandSources = params.listingDemand ? buildListingDemandSources(params.listingDemand) : [];
+
   const packet: AdviceInputPacket = {
     packet_version: '1.0',
     run: runMeta,
@@ -240,7 +248,8 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
     confirmed_patterns: confirmedPatterns,
     preliminary_hypotheses: preliminaryHypotheses,
     pattern_selection_summary: selectionSummary,
-    allowed_source_ids: allSources.map((s) => s.source_id),
+    ...(params.listingDemand ? { listing_demand: params.listingDemand } : {}),
+    allowed_source_ids: [...allSources.map((s) => s.source_id), ...demandSources.map((s) => s.source_id)],
   };
 
   const sourceRegistry: SourceRegistryEntry[] = allSources.map((s) => {
@@ -264,6 +273,23 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
       ...(s.ineligibility_reasons !== undefined ? { ineligibility_reasons: s.ineligibility_reasons } : {}),
     };
   });
+
+  // Listing Demand sources: citable exactly like any other source. The
+  // registry copy carries the same compact sub-block the packet already holds
+  // (no extra fields), and demand:item:<id> entries carry item_id so an item-level
+  // card is validly justified by them.
+  for (const d of demandSources) {
+    sourceRegistry.push({
+      source_id: d.source_id,
+      source_type: 'listing_demand',
+      item_id: d.item_id,
+      headline: d.headline,
+      summary: d.summary,
+      confidence: null,
+      key_metrics: d.key_metrics,
+      limitations: d.limitations,
+    });
+  }
 
   return { packet, sourceRegistry, notes };
 }

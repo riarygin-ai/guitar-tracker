@@ -91,6 +91,7 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   deterministic_insight: 'Deterministic Insight',
   confirmed_pattern: 'Confirmed Pattern',
   preliminary_hypothesis: 'Preliminary Hypothesis',
+  listing_demand: 'Listing Demand',
 };
 
 export function formatSourceType(sourceType: string | null | undefined): string {
