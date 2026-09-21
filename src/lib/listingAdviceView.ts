@@ -6,7 +6,7 @@
 // helpers (never from model-written URLs).
 
 import type { ListingAdviceCard, ListingAdvicePacket, ListingAdviceType } from './analytics/listingAdvice/listingAdvice';
-import type { CoachChannel, CoachItem, CoachMarketWeek } from './analytics/advice/listingDemandContext';
+import type { CoachChannel, CoachItem, CoachMarketWeek, ListingDemandContext } from './analytics/advice/listingDemandContext';
 import {
   channelAttributedLeadsUrl, itemAttributedLeadsUrl, marketWeekLeadsUrl,
 } from './leads/leadDrilldownUrls';
@@ -41,8 +41,12 @@ export function formatGeneratedAt(iso: string | null | undefined): string {
 
 export interface EvidenceBlock {
   sourceId: string;
-  kind: 'market' | 'channel' | 'item' | 'data_quality';
+  kind: 'market' | 'channel' | 'item' | 'data_quality' | 'insight' | 'pattern' | 'hypothesis';
   title: string;
+  /** Optional small label above the title (e.g. "Deterministic insight"). */
+  badge?: string;
+  /** Optional persisted prose (headline summary) for non-demand sources. */
+  text?: string;
   /** Short headline facts (label -> value). */
   facts: { label: string; value: string }[];
   /** Per-week factual lines (market / channel). */
@@ -59,13 +63,16 @@ function channelWeekLine(w: CoachChannel['weeks'][number]): string {
   return `Week of ${fmtLeadDate(w.start_date)} · ${w.channel_listing_days} channel-days · ${w.channel_attributed_leads} leads · ${w.serious_plus_attributed_leads_from_cohort} Serious+ · ${fmtRate(w.leads_per_100_channel_listing_days)} leads/100 channel-days · ${w.realized_deal_count_by_recorded_channel} realized deals (recorded channel)`;
 }
 
-function findItem(packet: ListingAdvicePacket, id: string): CoachItem | undefined {
+/** Minimal shape the demand resolvers need — satisfied by both the Listing Advice packet and the Coach packet. */
+export interface DemandPacketLike { listing_demand: ListingDemandContext }
+
+function findItem(packet: DemandPacketLike, id: string): CoachItem | undefined {
   const { highest_activity, zero_activity_high_exposure } = packet.listing_demand.items;
   return [...highest_activity, ...zero_activity_high_exposure].find((i) => i.source_id === id);
 }
 
 /** Resolves one cited source id to concise deterministic facts, from the persisted packet only. */
-export function resolveEvidence(packet: ListingAdvicePacket, sourceId: string): EvidenceBlock | null {
+export function resolveEvidence(packet: DemandPacketLike, sourceId: string): EvidenceBlock | null {
   const ld = packet.listing_demand;
   if (sourceId === ld.market_trend.source_id) {
     return { sourceId, kind: 'market', title: `Market trend — ${fmtWeekLabel(ld.start_date, ld.end_date)}`, facts: [], weeks: ld.market_trend.weeks.map(marketWeekLine) };
@@ -139,7 +146,7 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
  * sources yield no link. There is deliberately no Deals action (no lead->deal
  * linkage exists).
  */
-export function adviceActions(card: ListingAdviceCard, packet: ListingAdvicePacket, returnTo: string): AdviceAction[] {
+export function adviceActions(card: { source_ids: string[] }, packet: DemandPacketLike, returnTo: string): AdviceAction[] {
   const ld = packet.listing_demand;
   const window = { from: ld.start_date, to: ld.end_date };
   const period = { startDate: ld.start_date, endDate: ld.end_date };

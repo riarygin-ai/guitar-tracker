@@ -404,6 +404,8 @@ Hard rules — follow every one exactly:
 9. Keep text short: a title, a 1–3 sentence summary, a 1–2 sentence why_it_matters, at most 3 short next_steps (concrete checks, not orders), and only limitations that materially apply to that card.
 10. Do NOT invent scores or labels (no hot/cold, winner/loser, grades). Do not use generic motivational language.
 11. Use the packet's data_quality: mention incomplete logging or low attribution where it materially limits a conclusion.
+12. Card selection — positive item demand is first-class evidence, not a footnote. Consider materially strong item signals (for example an item with notably more attributed leads, Serious+ leads or offers than the others) ALONGSIDE weak or zero-response signals (high exposure with no attributed leads). Do not omit a clearly material positive item signal merely because channel or market observations also exist. When three materially distinct, useful signals exist, prefer three cards; when only one or two exist, return one or two. Never add filler to reach three and never force exactly three.
+13. Wording: describe demand as "buyer/lead response" (or "attributed leads" / "lead activity"), not as broad "channel performance" — the packet records leads and listing exposure, not channel quality. High listing exposure with zero attributed leads "warrants review" or is "worth checking": do NOT assert that the listing has a problem, that the price is wrong, or that the listing is failing; the evidence is observational and other causes are possible.
 
 ${LEAD_DEAL_RULES}
 

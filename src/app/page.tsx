@@ -9,6 +9,7 @@ import type { AnalyticsRunAdviceRow, AdviceCard } from '@/lib/analytics/advice/t
 import { formatDateTime as formatAdviceDateTime } from '@/lib/analytics/advice/presentation'
 import { computeAdviceKey } from '@/lib/analytics/advice/adviceKey'
 import AdviceCardView from '@/components/AdviceCardView'
+import CoachAdviceDrawer from '@/components/CoachAdviceDrawer'
 
 export default function HomePage() {
   const router = useRouter()
@@ -41,6 +42,7 @@ export default function HomePage() {
   // never flashes on screen before being filtered out.
   const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set())
   const [dismissalsLoading, setDismissalsLoading] = useState(true)
+  const [openAdviceCode, setOpenAdviceCode] = useState<string | null>(null)
   const [dismissingCodes, setDismissingCodes] = useState<Set<string>>(new Set())
   const [dismissToast, setDismissToast] = useState<string | null>(null)
 
@@ -66,6 +68,12 @@ export default function HomePage() {
     const cards = latestCompletedAdvice?.advice.advice?.advice_cards ?? []
     return cards.filter((card) => !dismissedKeys.has(computeAdviceKey(card)))
   }, [latestCompletedAdvice, dismissedKeys])
+
+  // Drawer is derived from the visible cards, so a dismissed card closes it.
+  const openAdviceCard = useMemo(
+    () => visibleAdviceCards.find((c) => c.advice_code === openAdviceCode) ?? null,
+    [visibleAdviceCards, openAdviceCode],
+  )
 
   async function handleDismissAdvice(card: AdviceCard) {
     if (dismissingCodes.has(card.advice_code) || !latestCompletedAdvice) return
@@ -425,11 +433,21 @@ export default function HomePage() {
                     variant="compact"
                     onDismiss={() => handleDismissAdvice(card)}
                     dismissing={dismissingCodes.has(card.advice_code)}
+                    onViewDetails={() => setOpenAdviceCode(card.advice_code)}
                   />
                 ))}
               </div>
             )}
           </div>
+          {openAdviceCard && latestCompletedAdvice && (
+            <CoachAdviceDrawer
+              card={openAdviceCard}
+              revision={latestCompletedAdvice.advice}
+              onDismiss={() => handleDismissAdvice(openAdviceCard)}
+              dismissing={dismissingCodes.has(openAdviceCard.advice_code)}
+              onClose={() => setOpenAdviceCode(null)}
+            />
+          )}
         </section>
       )}
 

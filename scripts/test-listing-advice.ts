@@ -24,6 +24,7 @@ import { validateAdviceResponse } from '../src/lib/analytics/advice/validateAdvi
 import { PROMPT_TEMPLATE_VERSION } from '../src/lib/analytics/advice/types';
 import { ADVICE_SYSTEM_PROMPT, LISTING_ADVICE_SYSTEM_PROMPT } from '../src/lib/openai';
 import { adviceActions, relevantLimitations, resolveCardEvidence, resolveEvidence } from '../src/lib/listingAdviceView';
+import { coachActions, coachLimitations, resolveCoachCardEvidence, resolveCoachEvidence } from '../src/lib/coachAdviceView';
 import { parseLeadFilters } from '../src/lib/leads/leadFilters';
 import { LISTING_ADVICE_KEY, LISTING_EVIDENCE_KEY, createListingsInvalidators, listingDemandKey } from '../src/lib/listingsCacheKeys';
 import { createSwrCache } from '../src/lib/swrCache';
@@ -194,6 +195,59 @@ async function main() {
     check('reuses the existing OpenAI client (no second SDK/client) with a strict JSON schema of max 3 cards', (oa.match(/new OpenAI\(/g) ?? []).length === 1 && /name: 'listing_advice_v1'/.test(oa) && /strict: true/.test(oa) && /maxItems: 3/.test(oa));
     check('its own schema enums: type action|observation|watch; priority; confidence', /advice_type: \{ type: 'string', enum: \['action', 'observation', 'watch'\] \}/.test(oa) && /confidence_label: \{ type: 'string', enum: \['stronger', 'moderate', 'low', 'preliminary'\] \}/.test(oa));
     check('uses the existing configured model constant', /LISTING_ADVICE_MODEL_ID = MODEL_ID/.test(oa));
+
+    check('selection: positive item demand is first-class evidence, strong item signals weighed with weak/zero-response ones', /positive item demand is first-class evidence/.test(p) && /materially strong item signals/.test(p) && /ALONGSIDE weak or zero-response signals/.test(p));
+    check('selection: do not omit a clearly material positive item signal just because channel/market observations exist', /Do not omit a clearly material positive item signal merely because channel or market observations also exist/.test(p));
+    check('selection: prefer 3 cards when 3 distinct useful signals exist; never filler; never force exactly 3', /prefer three cards/.test(p) && /Never add filler to reach three and never force exactly three/.test(p) && /return one or two/.test(p));
+    check('wording: "buyer/lead response" instead of broad "channel performance"', /"buyer\/lead response"/.test(p) && /not as broad "channel performance"/.test(p));
+    check('wording: high exposure + zero leads "warrants review"; must not assert a listing problem', /warrants review/.test(p) && /do NOT assert that the listing has a problem/.test(p));
+    check('no-fake-conversion rules still composed in (shared blocks) and prompt version unchanged', p.includes(LEAD_DEAL_RULES) && p.includes(LISTING_DEMAND_SEMANTICS) && p.includes(PURPOSE_SEMANTICS) && LISTING_ADVICE_PROMPT_VERSION === 'listing-advice-v1');
+  }
+
+  console.log('\n[G — General Business Coach detail drawer (persisted evidence)]');
+  {
+    const src = (id: string, type: string) => ({ source_id: id, source_type: type, headline: `H ${id}`, summary: `S ${id}`, confidence: 'moderate', key_metrics: { count: 3, nested: { a: 1 } }, limitations: ['SRC_LIMIT'] });
+    const insight = src('insight:x:item:77', 'deterministic_insight');
+    const pattern = src('pattern:p1', 'confirmed_pattern');
+    const hyp = src('hyp:h1', 'preliminary_hypothesis');
+    const CP: any = {
+      packet_version: '1.0', run: {}, deterministic_insights: [insight], confirmed_patterns: [pattern], preliminary_hypotheses: [hyp],
+      pattern_selection_summary: null, listing_demand: PACKET.listing_demand,
+      allowed_source_ids: ['insight:x:item:77', 'pattern:p1', 'hyp:h1', 'demand:item:55', 'demand:market_trend', 'demand:data_quality'],
+    };
+    const REG: any = [{ ...insight, item_id: 77 }, { ...pattern, item_id: null }, { ...hyp, item_id: null }];
+    const cc = (o: Record<string, unknown> = {}): any => ({ advice_code: 'c', advice_type: 'action', priority: 'high', headline: 'Head', advice: 'Adv', why_it_matters: 'Why', confidence_label: 'moderate', source_ids: ['insight:x:item:77'], limitations: ['SMALL_SAMPLE'], item_id: null, ...o });
+
+    const ev = resolveCoachCardEvidence(cc({ source_ids: ['insight:x:item:77', 'pattern:p1', 'hyp:h1', 'demand:item:55', 'demand:market_trend', 'gone:1'] }), CP, REG);
+    check('resolves insight / pattern / hypothesis / demand sources from the persisted packet; unknown ids are dropped', ev.map((b) => b.kind).join() === 'insight,pattern,hypothesis,item,market', ev.map((b) => b.kind));
+    check('insight evidence shows persisted headline/summary and scalar metrics only', ev[0].title === 'H insight:x:item:77' && ev[0].text === 'S insight:x:item:77' && ev[0].facts.length === 1 && ev[0].facts[0].value === '3');
+    const tampered = JSON.parse(JSON.stringify(CP));
+    tampered.listing_demand.items.highest_activity[0].item_attributed_leads = 999;
+    tampered.deterministic_insights[0].headline = 'CHANGED';
+    check('evidence follows the persisted packet it is given (demand + insight), never live data', resolveCoachEvidence('demand:item:55', tampered, REG)!.facts.find((f) => f.label === 'Attributed leads')!.value === '999' && resolveCoachEvidence('insight:x:item:77', tampered, REG)!.title === 'CHANGED');
+    check('legacy revision without a packet falls back to the source_refs registry (demand sources unresolvable, not invented)', resolveCoachEvidence('pattern:p1', null, REG)!.title === 'H pattern:p1' && resolveCoachEvidence('demand:item:55', null, REG) === null);
+    const lims = coachLimitations(cc({ source_ids: ['insight:x:item:77', 'demand:data_quality'], limitations: ['SMALL_SAMPLE', 'SMALL_SAMPLE'] }), CP, REG);
+    check('limitations = card + cited-source limitations (humanized, deduped) + data-quality limitations when cited', lims.length === new Set(lims).size && lims.includes('Small sample') && lims.includes('Src limit') && lims.length >= 2 + new Set(PACKET.listing_demand.data_quality.limitations).size - 1, lims);
+    check('uncited sources contribute no limitations', !coachLimitations(cc({ source_ids: ['pattern:p1'], limitations: [] }), CP, REG).some((l) => l === 'Small sample') && coachLimitations(cc({ source_ids: [], limitations: [] }), CP, REG).length === 0);
+    const acts = coachActions(cc({ source_ids: ['insight:x:item:77', 'demand:item:55'] }), CP, REG, '/listings');
+    check('actions: Open Item for cited items + View Leads from the cited demand source (deduped by href)', acts.filter((a) => a.kind === 'open_item').length === 2 && acts.some((a) => a.href === '/inventory/77') && acts.some((a) => a.href === '/inventory/55') && acts.some((a) => a.kind === 'view_leads' && /^\/leads\?/.test(a.href)) && new Set(acts.map((a) => a.href)).size === acts.length, acts);
+    check('actions: nothing invented when sources are unsupported; card item_id still gives Open Item', coachActions(cc({ source_ids: ['pattern:p1'] }), CP, REG, '/listings').length === 0 && coachActions(cc({ item_id: 9, source_ids: ['pattern:p1'] }), null, REG, '/listings').map((a) => a.href).join() === '/inventory/9');
+    const view = strip(read('src', 'lib', 'coachAdviceView.ts'));
+    check('resolver is pure: no fetch/supabase/live-analytics access', !/fetch\(|supabase|rpc\(|loadListingDemandContext|getLatest/.test(view));
+
+    const cardSrc = strip(read('src', 'components', 'AdviceCardView.tsx'));
+    const drawer = strip(read('src', 'components', 'CoachAdviceDrawer.tsx'));
+    const parts = strip(read('src', 'components', 'AdviceDrawerParts.tsx'));
+    const lDrawer = strip(read('src', 'components', 'listings', 'ListingAdviceDrawer.tsx'));
+    const dash = strip(read('src', 'app', 'page.tsx'));
+    const ana = read('src', 'app', 'analytics', 'page.tsx');
+    check('compact card gets a "View details" control (only when onViewDetails is passed)', /onViewDetails/.test(cardSrc) && /View details ›/.test(cardSrc));
+    check('drawer: Advice, Why it matters, evidence, limitations, actions; reads the persisted revision', />Advice<\/h3>/.test(drawer) && /Why it matters/.test(drawer) && /EvidenceSection/.test(drawer) && /LimitationsSection/.test(drawer) && /ActionsSection/.test(drawer) && /input_packet: packet, source_refs: registry/.test(drawer));
+    check('shell: right-side drawer on desktop, bottom sheet on mobile, dialog semantics, Escape, focus trap', /md:w-\[32rem\]/.test(parts) && /rounded-t-3xl/.test(parts) && /role="dialog"/.test(parts) && /aria-modal="true"/.test(parts) && /'Escape'/.test(parts) && /shiftKey/.test(parts));
+    check('Listing Advice drawer reuses the shared shell (no duplicated dialog markup)', /AdviceDrawerShell/.test(lDrawer) && !/role="dialog"/.test(lDrawer));
+    check('Dashboard: same dismiss handler + dismissedKeys drive the drawer (dismissal stays synchronized)', /onViewDetails=\{\(\) => setOpenAdviceCode/.test(dash) && /onDismiss=\{\(\) => handleDismissAdvice\(openAdviceCard\)\}/.test(dash) && /visibleAdviceCards\.find\(\(c\) => c\.advice_code === openAdviceCode\)/.test(dash) && /revision=\{latestCompletedAdvice\.advice\}/.test(dash));
+    check('Analytics page not redesigned (does not use the drawer)', !/CoachAdviceDrawer|AdviceDrawerShell/.test(ana));
+    check('drawer never fetches live data', !/fetch\(|supabase|useSwrResource/.test(drawer));
   }
 
   console.log('\n[F — persisted evidence + deterministic actions]');
@@ -251,7 +305,7 @@ async function main() {
     check('load failure is local: "Listing Advice is unavailable right now." + Retry; nothing else is affected', /Listing Advice is unavailable right now\./.test(sec) && /Retry/.test(sec));
     check('uses the shared SWR cache with key listing-advice:latest', /useSwrResource\(listingsCache, LISTING_ADVICE_KEY/.test(sec) && LISTING_ADVICE_KEY === 'listing-advice:latest');
 
-    const dr = strip(read('src', 'components', 'listings', 'ListingAdviceDrawer.tsx'));
+    const dr = strip(read('src', 'components', 'listings', 'ListingAdviceDrawer.tsx')) + strip(read('src', 'components', 'AdviceDrawerParts.tsx'));
     check('drawer: right-side on desktop, bottom sheet on mobile, accessible dialog', /md:w-\[32rem\]/.test(dr) && /rounded-t-3xl/.test(dr) && /role="dialog"/.test(dr) && /aria-modal="true"/.test(dr) && /Escape/.test(dr));
     check('drawer sections: Advice (summary/why it matters/suggested checks), Evidence, Limitations, Actions', /Why it matters/.test(dr) && /Suggested checks/.test(dr) && /Evidence the advice was based on/.test(dr) && /Limitations/.test(dr) && /Actions/.test(dr));
     check('drawer evidence comes from the persisted packet (run.input_packet) via resolveCardEvidence', /const packet = run\.input_packet/.test(dr) && /resolveCardEvidence\(card, packet\)/.test(dr) && !/fetch\(|supabase/.test(dr));

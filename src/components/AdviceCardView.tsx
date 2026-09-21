@@ -59,9 +59,12 @@ export interface AdviceCardViewProps {
    *  complete original Advice for a run. */
   onDismiss?: () => void;
   dismissing?: boolean;
+  /** Compact-only. When provided, renders a "View details" control that opens
+   *  the persisted-evidence detail drawer (the compact card itself stays concise). */
+  onViewDetails?: () => void;
 }
 
-export default function AdviceCardView({ card, evidence, variant = 'full', onDismiss, dismissing = false }: AdviceCardViewProps) {
+export default function AdviceCardView({ card, evidence, variant = 'full', onDismiss, dismissing = false, onViewDetails }: AdviceCardViewProps) {
   if (variant === 'compact') {
     return (
       <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-700 dark:bg-slate-700/30">
@@ -72,8 +75,19 @@ export default function AdviceCardView({ card, evidence, variant = 'full', onDis
         </div>
         <h4 className="mt-1.5 break-words text-sm font-semibold text-slate-900 dark:text-white">{card.headline}</h4>
         <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{card.advice}</p>
-        {(card.item_id != null || onDismiss) && (
+        {(card.item_id != null || onDismiss || onViewDetails) && (
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            {onViewDetails && (
+              <button
+                type="button"
+                onClick={onViewDetails}
+                aria-haspopup="dialog"
+                aria-label={`View details: ${card.headline}`}
+                className="shrink-0 text-xs font-medium text-indigo-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-indigo-400"
+              >
+                View details ›
+              </button>
+            )}
             {onDismiss ? (
               <button
                 type="button"
