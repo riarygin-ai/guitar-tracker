@@ -1,19 +1,24 @@
 'use client';
 
 // "Listing Advice" section on /listings — persisted AI interpretation of the
-// 4-week Listing Demand evidence, shown right after Overview. It is optional
-// enrichment: it has its own cache key/fetch/error state and NEVER gates any
-// other Listings section. Advice is generated manually (never on page load);
-// while a refresh runs the previous completed cards stay visible, and a failed
-// refresh keeps them and shows a local, non-destructive error.
+// 4-week Listing Demand evidence, shown right after Overview.
+//
+// DISPLAY-ONLY with respect to AI generation: this page shows the latest
+// completed persisted advice and lets the user dismiss cards, but it can never
+// generate or refresh advice. Listing Advice is produced solely by the
+// Analytics workflow (Admin "Run Analytics" and the scheduled weekly run). It
+// is optional enrichment: its own cache key/fetch/error state, and it never
+// gates any other Listings section.
 
 import { useCallback, useState } from 'react';
+import Link from 'next/link';
 import { ConfidencePill, PriorityBadge } from '@/components/AdviceCardView';
 import ListingAdviceDrawer from '@/components/listings/ListingAdviceDrawer';
-import { fetchLatestListingAdvice, requestListingAdviceGeneration } from '@/lib/analytics/listingAdvice/listingAdviceClient';
+import { dismissListingAdvice, fetchLatestListingAdvice } from '@/lib/analytics/listingAdvice/listingAdviceClient';
 import { LISTING_ADVICE_KEY } from '@/lib/listingsCacheKeys';
 import { listingsCache } from '@/lib/listingsCacheStore';
 import { useSwrResource } from '@/lib/useSwrResource';
+import { listingAdviceKey } from '@/lib/listingAdviceKey';
 import { ADVICE_TYPE_LABEL, formatGeneratedAt, formatWindowLabel } from '@/lib/listingAdviceView';
 import type { ListingAdviceCard } from '@/lib/analytics/listingAdvice/listingAdvice';
 
@@ -27,64 +32,49 @@ const BTN = 'inline-flex h-8 items-center rounded-xl border border-slate-200 bg-
 
 export default function ListingAdviceSection({ returnTo }: { returnTo: string }) {
   const res = useSwrResource(listingsCache, LISTING_ADVICE_KEY, fetchLatestListingAdvice);
-  const [generating, setGenerating] = useState(false);
-  const [genError, setGenError] = useState<string | null>(null);
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [hiddenKeys, setHiddenKeys] = useState<string[]>([]);
+  const [dismissError, setDismissError] = useState<string | null>(null);
+  const [openCard, setOpenCard] = useState<ListingAdviceCard | null>(null);
 
   const data = res.data;
   const latest = data?.latest ?? null;
-  const cards = latest?.output?.cards ?? [];
-  // Another tab/device may be generating right now.
-  const busy = generating || !!data?.generating;
+  const allCards = latest?.output?.cards ?? [];
+  const dismissed = new Set([...(data?.dismissed_keys ?? []), ...hiddenKeys]);
+  const cards = allCards.filter((c) => !dismissed.has(listingAdviceKey(c)));
 
-  const generate = useCallback(async () => {
-    if (generating) return;
-    setGenerating(true);
-    setGenError(null);
-    const result = await requestListingAdviceGeneration();
-    if (result.ok) {
-      // Replace the displayed advice only now, after a successful generation.
-      try {
-        await listingsCache.load(LISTING_ADVICE_KEY, fetchLatestListingAdvice, { force: true });
-      } catch {
-        setGenError('Advice was generated but could not be refreshed on screen — reload to see it.');
-      }
-    } else {
-      // Old completed cards stay on screen.
-      setGenError(result.message);
+  const dismiss = useCallback(async (card: ListingAdviceCard) => {
+    if (!latest) return;
+    const key = listingAdviceKey(card);
+    setDismissError(null);
+    setHiddenKeys((prev) => [...prev, key]); // optimistic
+    const result = await dismissListingAdvice(latest.id, card.advice_code);
+    if (!result.ok) {
+      setHiddenKeys((prev) => prev.filter((k) => k !== key));
+      setDismissError(result.message);
+      return;
     }
-    setGenerating(false);
-  }, [generating]);
+    // Persisted: refresh the cached snapshot so the dismissal survives navigation.
+    listingsCache.load(LISTING_ADVICE_KEY, fetchLatestListingAdvice, { force: true }).catch(() => undefined);
+  }, [latest]);
 
-  const closeDrawer = useCallback(() => setOpenIndex(null), []);
-  const openCard: ListingAdviceCard | null = openIndex !== null && cards[openIndex] ? cards[openIndex] : null;
+  const closeDrawer = useCallback(() => setOpenCard(null), []);
 
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:p-5" data-listing-advice>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <p className="section-title inline-flex items-center gap-2">
-            Listing Advice
-            {busy && <span role="status" className="text-[11px] font-normal text-slate-400 dark:text-slate-500">Generating…</span>}
+      <div className="min-w-0">
+        <p className="section-title">Listing Advice</p>
+        {latest ? (
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            Generated {formatGeneratedAt(latest.generated_at)} · 4-week demand window: {formatWindowLabel(latest.window_start, latest.window_end)}
           </p>
-          {latest ? (
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-              Generated {formatGeneratedAt(latest.generated_at)} · 4-week demand window: {formatWindowLabel(latest.window_start, latest.window_end)}
-            </p>
-          ) : (
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">AI interpretation of your recent listing demand — separate from the facts below.</p>
-          )}
-        </div>
-        {(latest || (!res.isLoading && !res.error)) && (
-          <button type="button" onClick={generate} disabled={busy} className={BTN} data-advice-generate>
-            {busy ? 'Generating…' : latest ? 'Refresh Advice' : 'Generate Listing Advice'}
-          </button>
+        ) : (
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">AI interpretation of your recent listing demand — separate from the facts below.</p>
         )}
       </div>
 
-      {genError && (
+      {dismissError && (
         <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-300" data-advice-error>
-          {genError}{latest ? ' Your previous advice is still shown below.' : ''}
+          {dismissError}
         </p>
       )}
 
@@ -98,34 +88,63 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
       )}
 
       {!latest && !res.isLoading && !res.error && (
-        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400" data-advice-empty>No Listing Advice has been generated yet.</p>
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1" data-advice-empty>
+          <p className="text-sm text-slate-500 dark:text-slate-400">No Listing Advice has been generated yet.</p>
+          {data?.viewer_is_admin && (
+            <Link href="/analytics" className="text-xs font-medium text-sky-700 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-sky-300">Run Analytics</Link>
+          )}
+        </div>
       )}
 
-      {latest && cards.length === 0 && (
+      {latest && allCards.length === 0 && (
         <p className="mt-3 text-sm text-slate-500 dark:text-slate-400" data-advice-no-cards>No material listing advice for this window.</p>
+      )}
+
+      {latest && allCards.length > 0 && cards.length === 0 && (
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400" data-advice-all-dismissed>
+          You&apos;ve dismissed all current Listing Advice. New advice appears after the next Analytics run.
+        </p>
       )}
 
       {latest && cards.length > 0 && (
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3" data-advice-grid>
-          {cards.map((card, i) => (
-            <button
-              key={card.advice_code + i}
-              type="button"
-              data-advice-card
-              onClick={() => setOpenIndex(i)}
-              className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3.5 text-left transition hover:border-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:border-slate-600"
-            >
-              <span className={`text-[11px] font-semibold uppercase tracking-wider ${TYPE_TONE[card.advice_type] ?? ''}`}>{ADVICE_TYPE_LABEL[card.advice_type]}</span>
-              <span className="mt-1 break-words text-sm font-semibold leading-snug text-slate-900 dark:text-white">{card.title}</span>
-              <span className="mt-1.5 line-clamp-4 break-words text-xs text-slate-600 dark:text-slate-300">{card.summary}</span>
-              <span className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                <PriorityBadge priority={card.priority} />
-                <ConfidencePill confidence={card.confidence_label} />
-              </span>
-              <span className="mt-2 text-[11px] font-medium text-slate-400 dark:text-slate-500">View details ›</span>
-            </button>
+          {cards.map((card) => (
+            <div key={card.advice_code} className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white transition hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:border-slate-600">
+              <button
+                type="button"
+                data-advice-card
+                onClick={() => setOpenCard(card)}
+                className="flex min-w-0 flex-1 flex-col rounded-t-2xl p-3.5 pb-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+              >
+                <span className={`text-[11px] font-semibold uppercase tracking-wider ${TYPE_TONE[card.advice_type] ?? ''}`}>{ADVICE_TYPE_LABEL[card.advice_type]}</span>
+                <span className="mt-1 break-words text-sm font-semibold leading-snug text-slate-900 dark:text-white">{card.title}</span>
+                <span className="mt-1.5 line-clamp-4 break-words text-xs text-slate-600 dark:text-slate-300">{card.summary}</span>
+                <span className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                  <PriorityBadge priority={card.priority} />
+                  <ConfidencePill confidence={card.confidence_label} />
+                </span>
+                <span className="mt-2 text-[11px] font-medium text-slate-400 dark:text-slate-500">View details ›</span>
+              </button>
+              <div className="flex justify-end px-3 pb-2.5">
+                <button
+                  type="button"
+                  data-advice-dismiss
+                  onClick={() => dismiss(card)}
+                  aria-label={`Dismiss advice: ${card.title}`}
+                  className="rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
           ))}
         </div>
+      )}
+
+      {latest && data?.viewer_is_admin && data.last_failure && (
+        <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500" data-advice-last-failure>
+          The most recent Listing Advice update failed ({data.last_failure.error_code}); the previous advice is shown.
+        </p>
       )}
 
       {openCard && latest && (

@@ -238,16 +238,16 @@ async function main() {
     check('Listing Advice is NOT inside a Listing Evidence gate (own state, never gates other sections)', !/ListingAdviceSection/.test(gates) && /<ListingAdviceSection returnTo=\{returnTo\}/.test(page));
     check('the page itself never generates advice (no generation call on load / import / listing change)', !/requestListingAdviceGeneration|generateListingAdvice/.test(page));
     const sec = strip(read('src', 'components', 'listings', 'ListingAdviceSection.tsx'));
-    check('generation is only ever triggered by the button handler (once, no effects)', (sec.match(/requestListingAdviceGeneration\(/g) ?? []).length === 1 && !/useEffect/.test(sec) && /onClick=\{generate\}/.test(sec));
-    check('no advice -> "Generate Listing Advice"; advice -> "Refresh Advice"', /latest \? 'Refresh Advice' : 'Generate Listing Advice'/.test(sec));
+    check('/listings is display-only for generation: no generation call, no Generate / Refresh controls anywhere in the section', !/requestListingAdviceGeneration|generateListingAdvice/.test(sec) && !/Generate Listing Advice|Refresh Advice/.test(sec) && !/data-advice-generate/.test(sec) && !/useEffect/.test(sec));
+    check('no advice -> calm empty state (with an admin-only "Run Analytics" link to /analytics), never a generate button', sec.includes('No Listing Advice has been generated yet.') && /viewer_is_admin && \(\s*<Link href="\/analytics"[^>]*>Run Analytics<\/Link>/.test(sec));
     check('0 cards -> calm "No material listing advice for this window."', sec.includes('No material listing advice for this window.'));
     check('header shows Generated <date> and the 4-week demand window', /Generated \{formatGeneratedAt\(latest\.generated_at\)\}/.test(sec) && /4-week demand window: \{formatWindowLabel\(latest\.window_start, latest\.window_end\)\}/.test(sec));
-    check('refresh keeps old cards visible (cards derive from the cached latest run; only replaced by the forced cache reload after a SUCCESS)', /const latest = data\?\.latest \?\? null/.test(sec) && /if \(result\.ok\)[\s\S]*?listingsCache\.load\(LISTING_ADVICE_KEY, fetchLatestListingAdvice, \{ force: true \}\)/.test(sec));
-    check('generation failure preserves old cards and shows a local non-destructive error', /else \{[\s\S]*?setGenError\(result\.message\)/.test(sec) && /Your previous advice is still shown below/.test(sec) && !/setData|clear\(|invalidate/.test(sec));
-    check('a subtle Generating state (role=status) + disabled button while busy; double clicks blocked', /role="status"[^>]*>Generating…/.test(sec) && /disabled=\{busy\}/.test(sec) && /if \(generating\) return/.test(sec));
+    check('the latest completed persisted advice is what is shown (from the cached fetch); a new Analytics run is picked up on the next load', /const latest = data\?\.latest \?\? null/.test(sec) && /useSwrResource\(listingsCache, LISTING_ADVICE_KEY, fetchLatestListingAdvice\)/.test(sec) && !/setInterval|setTimeout|polling/i.test(sec));
+    check('an admin sees a small note when the latest update failed, while the previous advice stays displayed', /data\?\.viewer_is_admin && data\.last_failure/.test(sec) && /the previous advice is shown/.test(sec));
+    check('cards can be dismissed (Dismiss button per card; optimistic hide, persisted, rolled back on failure)', /data-advice-dismiss/.test(sec) && /dismissListingAdvice\(latest\.id, card\.advice_code\)/.test(sec) && /setHiddenKeys\(\(prev\) => prev\.filter/.test(sec) && /listingAdviceKey\(c\)/.test(sec));
     check('cards: desktop up to 3 columns, mobile stacked', /grid grid-cols-1 gap-3 lg:grid-cols-3/.test(sec) && (sec.match(/data-advice-card/g) ?? []).length === 1);
     check('each card shows type, title, short summary, priority + confidence badges (reused AdviceCardView badges)', /ADVICE_TYPE_LABEL\[card\.advice_type\]/.test(sec) && /card\.title/.test(sec) && /line-clamp-4/.test(sec) && /<PriorityBadge/.test(sec) && /<ConfidencePill/.test(sec));
-    check('a card is a real button that opens the detail drawer', /<button[\s\S]{0,80}type="button"[\s\S]{0,60}data-advice-card[\s\S]{0,60}onClick=\{\(\) => setOpenIndex\(i\)\}/.test(sec) && /<ListingAdviceDrawer/.test(sec));
+    check('a card is a real button that opens the detail drawer', /<button[\s\S]{0,80}type="button"[\s\S]{0,60}data-advice-card[\s\S]{0,60}onClick=\{\(\) => setOpenCard\(card\)\}/.test(sec) && /<ListingAdviceDrawer/.test(sec));
     check('load failure is local: "Listing Advice is unavailable right now." + Retry; nothing else is affected', /Listing Advice is unavailable right now\./.test(sec) && /Retry/.test(sec));
     check('uses the shared SWR cache with key listing-advice:latest', /useSwrResource\(listingsCache, LISTING_ADVICE_KEY/.test(sec) && LISTING_ADVICE_KEY === 'listing-advice:latest');
 
@@ -273,7 +273,7 @@ async function main() {
     inv.invalidateListingAdviceCache();
     check('advice cache can be invalidated independently', cache.status(LISTING_ADVICE_KEY) === 'stale' && cache.peek(LISTING_ADVICE_KEY)?.data === 'advice');
     const route = strip(read('src', 'app', 'api', 'listing-advice', 'route.ts'));
-    check('GET reads through the caller\'s own RLS client; POST uses the service client and takes no body', /getLatestListingAdvice\(auth\.db, auth\.appUserId\)/.test(route) && /generateListingAdvice\(\{ appUserId: auth\.appUserId, serviceClient \}\)/.test(route) && !/req\.json\(/.test(route));
+    check('the API is read-only: GET through the caller\'s own RLS client, NO POST/generation handler', /getLatestListingAdvice\(db, appUser\.id as number\)/.test(route) && !/export async function POST/.test(route) && !/serviceClient|SERVICE_ROLE/.test(route) && !/generateListingAdvice\(/.test(route));
     check('the browser never calls the model (client only hits /api/listing-advice)', !/openai/i.test(read('src', 'lib', 'analytics', 'listingAdvice', 'listingAdviceClient.ts')));
     const gen = strip(read('src', 'lib', 'analytics', 'listingAdvice', 'generateListingAdvice.ts'));
     check('a failed generation never replaces the latest completed advice (latest = newest COMPLETED only)', /\.eq\('status', 'completed'\)[\s\S]*?\.order\('generated_at'/.test(gen));

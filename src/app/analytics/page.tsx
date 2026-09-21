@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import CompactPageHeader from '@/components/CompactPageHeader';
+import { invalidateListingAdviceCache } from '@/lib/listingsCacheStore';
 import AdviceCardView from '@/components/AdviceCardView';
 import {
   supabase,
@@ -89,6 +90,24 @@ function ConfidencePill({ confidence }: { confidence: string | null }) {
   return (
     <span className="inline-flex shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300">
       Confidence: {formatConfidence(confidence)}
+    </span>
+  );
+}
+
+interface RunStage {
+  status: 'completed' | 'failed' | 'skipped';
+  code: string | null;
+  message: string | null;
+  rowId: number | null;
+}
+
+/** One lightweight status word; a failed/skipped AI stage shows its code + detail without implying the snapshot was lost. */
+function StageStatus({ stage }: { stage: RunStage }) {
+  if (stage.status === 'completed') return <span className="text-emerald-600 dark:text-emerald-400">completed</span>;
+  const tone = stage.status === 'failed' ? 'text-amber-700 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400';
+  return (
+    <span className={tone} title={stage.message ?? undefined}>
+      {stage.status}{stage.code ? ` (${stage.code})` : ''}
     </span>
   );
 }
@@ -370,6 +389,8 @@ export default function AnalyticsPage() {
 
   const [runningAnalytics, setRunningAnalytics] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  // Outcome of the AI stages of the last manual run (Business Coach / Listing Advice) — shown as one compact line.
+  const [lastStages, setLastStages] = useState<{ business_coach: RunStage; listing_advice: RunStage } | null>(null);
 
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [selectedSnapshot, setSelectedSnapshot] = useState<AnalyticsSnapshot | null>(null);
@@ -579,6 +600,7 @@ export default function AnalyticsPage() {
   async function handleRunAnalytics() {
     setRunningAnalytics(true);
     setRunError(null);
+    setLastStages(null);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -606,6 +628,9 @@ export default function AnalyticsPage() {
       }
 
       const run = payload.run as AnalyticsRun;
+      if (payload.stages?.business_coach && payload.stages?.listing_advice) setLastStages({ business_coach: payload.stages.business_coach, listing_advice: payload.stages.listing_advice });
+      // A new Listing Advice may now exist: make /listings resolve the latest persisted advice next time it is shown.
+      invalidateListingAdviceCache();
       const nextRuns = [toMetaFromRun(run), ...runs.filter((r) => r.id !== run.id)].slice(0, HISTORY_LIMIT);
       setRuns(nextRuns);
       // The API route already awaited automatic advice generation before
@@ -630,7 +655,7 @@ export default function AnalyticsPage() {
         overline="Analytics"
         summary={
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Run the complete business analytics snapshot and review stored results.
+            Runs the complete business analytics snapshot and refreshes Business Coach and Listing Advice. Review stored results below.
           </p>
         }
         action={
@@ -663,6 +688,15 @@ export default function AnalyticsPage() {
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-400">
           {runError}
         </div>
+      )}
+
+      {lastStages && (
+        <p className="text-xs text-slate-500 dark:text-slate-400" data-run-stages>
+          <span className="font-medium text-slate-600 dark:text-slate-300">Last run:</span>{' '}
+          Analytics snapshot <span className="text-emerald-600 dark:text-emerald-400">completed</span>
+          {' · '}Business Coach <StageStatus stage={lastStages.business_coach} />
+          {' · '}Listing Advice <StageStatus stage={lastStages.listing_advice} />
+        </p>
       )}
 
       <WeeklyAutomationStatusPanel />

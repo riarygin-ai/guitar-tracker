@@ -463,6 +463,9 @@ async function main() {
     // composite FK (ON DELETE CASCADE) — no separate advice cleanup needed.
     await serviceClient.from('analytics_runs').delete().in('id', createdRunIds);
   }
+  // The weekly automation now runs the shared workflow, which also generates Listing Advice
+  // (listing_advice_runs) for each user it processes — remove those rows this test caused.
+  await serviceClient.from('listing_advice_runs').delete().in('user_id', [userAId, userBId, ...(bareAppUserId ? [bareAppUserId] : [])]);
   await serviceClient.auth.admin.deleteUser(bareAuthUserId);
 
   const { data: leftoverExecutions } = await serviceClient

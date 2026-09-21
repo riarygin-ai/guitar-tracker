@@ -1,8 +1,9 @@
 // Server-only. Executes the weekly Analytics + Advice automation for ONE
-// eligible target user: atomically claims that user's weekly slot, runs
-// the existing production Analytics pipeline, and — only if that
-// succeeds — generates Advice for the freshly created run via the
-// existing auto-mode Advice pipeline. Never touches OpenAI if Analytics
+// eligible target user: atomically claims that user's weekly slot, then runs
+// the SAME shared workflow the manual Admin "Run Analytics" uses
+// (runAnalyticsWorkflow: Analytics snapshot -> Business Coach -> Listing
+// Advice), so scheduled and manual runs cannot drift. There is no separate
+// Listing Advice schedule. Never touches OpenAI if Analytics
 // fails. Deliberately does not loop over users itself — the caller (the
 // cron route) enumerates eligible users and calls this once per user,
 // so one user's failure/throw can never prevent the others from being
@@ -10,13 +11,13 @@
 // row, never an unhandled exception).
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { runAnalyticsForCurrentUser, AnalyticsRunError, sanitizeErrorMessage } from '@/lib/analytics/runAnalytics';
-import { generateAdviceForRun } from '@/lib/analytics/advice/generateAdvice';
+import { AnalyticsRunError, sanitizeErrorMessage } from '@/lib/analytics/runAnalytics';
+import { runAnalyticsWorkflow, type AiStageStatus } from '@/lib/analytics/runAnalyticsWorkflow';
 
 export const WEEKLY_AUTOMATION_CODE = 'weekly_analytics_advice';
 
 export type WeeklyAutomationOutcome =
-  | { status: 'completed'; executionId: number; analyticsRunId: number; adviceRowId: number | null }
+  | { status: 'completed'; executionId: number; analyticsRunId: number; adviceRowId: number | null; listingAdviceStatus: AiStageStatus }
   | { status: 'failed'; executionId: number; errorCode: string; errorMessage: string }
   | { status: 'skipped'; reason: 'ALREADY_CLAIMED_FOR_PERIOD'; executionId: number };
 
@@ -76,10 +77,15 @@ export async function runWeeklyAutomationForUser(
 
   const executionId = claimed.id;
 
-  // ── 2. Run the existing production Analytics pipeline for this user. ──
-  let run;
+  // ── 2. Shared workflow: Analytics snapshot, then (only if it succeeded)
+  // Business Coach + Listing Advice. Analytics failure prevents any OpenAI
+  // call, by construction (runAnalyticsWorkflow throws before any AI stage).
+  // An AI stage failure never fails this execution: the snapshot is what
+  // determines completed/failed, and each stage's own persisted row records
+  // its outcome. ─────────────────────────────────────────────────────────
+  let workflow;
   try {
-    run = await runAnalyticsForCurrentUser({ appUserId: targetUserId, serviceClient });
+    workflow = await runAnalyticsWorkflow({ appUserId: targetUserId, serviceClient });
   } catch (err) {
     const errorCode = err instanceof AnalyticsRunError ? 'ANALYTICS_RUN_FAILED' : 'ANALYTICS_RUN_THREW';
     const errorMessage = sanitizeErrorMessage(err);
@@ -94,38 +100,12 @@ export async function runWeeklyAutomationForUser(
         completed_at: new Date().toISOString(),
       })
       .eq('id', executionId);
-    // Analytics failed — OpenAI is never called for this user this week.
     return { status: 'failed', executionId, errorCode, errorMessage };
   }
 
-  // ── 3. Generate Advice (auto mode) for the run just created. Never
-  // reached if step 2 threw — Analytics failure prevents any OpenAI
-  // call, by construction (there is no code path from the catch block
-  // above back down to here). ─────────────────────────────────────────
-  let adviceRowId: number | null = null;
-  try {
-    const outcome = await generateAdviceForRun({
-      runId: run.id,
-      requestingUserId: targetUserId,
-      serviceClient,
-      mode: 'auto',
-    });
-    // 'completed' and 'failed' (including NO_VALID_EVIDENCE) both produce
-    // a real, auditable analytics_run_advice row — record it either way.
-    // 'skipped' should never occur here (this run is brand new, so no
-    // prior revision can exist for it to skip against) but if it somehow
-    // did, adviceRowId simply stays null rather than being treated as an
-    // automation failure — the Analytics Run itself is what determines
-    // this execution's own completed/failed status.
-    if (outcome.status === 'completed' || outcome.status === 'failed') {
-      adviceRowId = outcome.row.id;
-    }
-  } catch (err) {
-    // generateAdviceForRun's own contract never throws — this mirrors the
-    // same defensive catch already used in POST /api/analytics/runs, in
-    // case something outside that contract ever does.
-    console.error('[weekly-automation] advice generation threw unexpectedly for run', run.id, ':', sanitizeErrorMessage(err));
-  }
+  const run = workflow.run;
+  // A completed or failed Coach revision is a real, auditable row — record it either way.
+  const adviceRowId: number | null = workflow.businessCoach.rowId;
 
   await serviceClient
     .from('analytics_automation_executions')
@@ -137,5 +117,5 @@ export async function runWeeklyAutomationForUser(
     })
     .eq('id', executionId);
 
-  return { status: 'completed', executionId, analyticsRunId: run.id, adviceRowId };
+  return { status: 'completed', executionId, analyticsRunId: run.id, adviceRowId, listingAdviceStatus: workflow.listingAdvice.status };
 }

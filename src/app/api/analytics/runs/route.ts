@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import {
-  runAnalyticsForCurrentUser,
-  AnalyticsRunError,
-} from '@/lib/analytics/runAnalytics';
-import { generateAdviceForRun } from '@/lib/analytics/advice/generateAdvice';
+import { AnalyticsRunError } from '@/lib/analytics/runAnalytics';
+import { runAnalyticsWorkflow } from '@/lib/analytics/runAnalyticsWorkflow';
 
 const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
@@ -54,34 +51,19 @@ export async function POST(req: NextRequest) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // ── Run analytics for the authenticated user only ────────────────────────────
+  // ── Run the full workflow for the authenticated user only ───────────────────
+  // Analytics snapshot -> Business Coach -> Listing Advice: the SAME shared
+  // workflow the scheduled weekly automation runs (runAnalyticsWorkflow). The
+  // snapshot is saved as completed before either AI stage starts, and an AI
+  // stage failure can never fail or roll back the run response — each stage's
+  // outcome is returned in `stages` (and persisted in its own table).
   try {
-    const run = await runAnalyticsForCurrentUser({
+    const { run, businessCoach, listingAdvice } = await runAnalyticsWorkflow({
       appUserId: appUser.id as number,
       serviceClient,
     });
 
-    // ── Auditable AI Advice v1.0 — automatic, idempotent initial
-    // generation ──────────────────────────────────────────────────────
-    // Preserves the existing successful run completion flow above exactly
-    // (this block runs strictly AFTER the run is already saved as
-    // completed) and can never fail or roll back the run response: any
-    // failure here — network, OpenAI, validation — is already captured as
-    // a 'failed' analytics_run_advice row by generateAdviceForRun itself,
-    // and this defensive try/catch exists only in case something outside
-    // that function's own contract throws (it is not expected to).
-    try {
-      await generateAdviceForRun({
-        runId: run.id,
-        requestingUserId: appUser.id as number,
-        serviceClient,
-        mode: 'auto',
-      });
-    } catch (adviceError) {
-      console.error('[api/analytics/runs] advice generation threw unexpectedly for run', run.id, ':', adviceError instanceof Error ? adviceError.message : String(adviceError));
-    }
-
-    return NextResponse.json({ run });
+    return NextResponse.json({ run, stages: { analytics: { status: 'completed' }, business_coach: businessCoach, listing_advice: listingAdvice } });
   } catch (err) {
     if (err instanceof AnalyticsRunError) {
       return NextResponse.json({ error: err.publicMessage, runId: err.runId }, { status: err.status });
