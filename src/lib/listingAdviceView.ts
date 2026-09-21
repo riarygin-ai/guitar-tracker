@@ -12,6 +12,7 @@ import {
 } from './leads/leadDrilldownUrls';
 import { fmtRate, fmtWeekLabel } from './listingDemandDashboardHelpers';
 import { fmtLeadDate } from './leads/leadFormat';
+import { safeReturnTo } from './listingsReturn';
 
 export const ADVICE_TYPE_LABEL: Record<ListingAdviceType, string> = {
   action: 'Action',
@@ -146,7 +147,11 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
  * sources yield no link. There is deliberately no Deals action (no lead->deal
  * linkage exists).
  */
-export function adviceActions(card: { source_ids: string[] }, packet: DemandPacketLike, returnTo: string): AdviceAction[] {
+export function adviceActions(card: { source_ids: string[] }, packet: DemandPacketLike, callerReturnTo: string | null): AdviceAction[] {
+  // The CALLER supplies where /leads should return to (Listings, Dashboard, ...);
+  // it is re-validated here with the shared allowlist so an unsafe value can
+  // never be embedded in a drill-down URL (it is dropped instead).
+  const returnTo = safeReturnTo(callerReturnTo);
   const ld = packet.listing_demand;
   const window = { from: ld.start_date, to: ld.end_date };
   const period = { startDate: ld.start_date, endDate: ld.end_date };

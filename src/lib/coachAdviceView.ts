@@ -72,7 +72,7 @@ export function coachLimitations(card: AdviceCard, packet: AdviceInputPacket | n
  * cited persisted Listing Demand sources (item / channel / market window).
  * Never model-written URLs.
  */
-export function coachActions(card: AdviceCard, packet: AdviceInputPacket | null, registry: SourceRegistryEntry[] | null, returnTo: string): AdviceAction[] {
+export function coachActions(card: AdviceCard, packet: AdviceInputPacket | null, registry: SourceRegistryEntry[] | null, returnTo: string | null): AdviceAction[] {
   const out: AdviceAction[] = [];
   const seen = new Set<string>();
   const push = (a: AdviceAction) => { if (!seen.has(a.href)) { seen.add(a.href); out.push(a); } };

@@ -11,7 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { currentListingsReturnTo, resolveBackHref, safeReturnTo } from '../src/lib/listingsReturn';
+import { currentListingsReturnTo, resolveBackHref, resolveBackLabel, safeReturnTo } from '../src/lib/listingsReturn';
 import {
   channelAttributedLeadsUrl, channelSeriousPlusUrl, itemAttributedLeadsUrl, itemOffersUrl, itemSeriousPlusUrl, marketWeekLeadsUrl, marketWeekSeriousPlusUrl,
 } from '../src/lib/leads/leadDrilldownUrls';
@@ -111,7 +111,7 @@ console.log('\n[E — Inventory-style back arrow on /leads]');
   check('tap target grows via padding, icon stays small', /-my-2/.test(back) && /py-2/.test(back));
   const page = read('src', 'app', 'leads', 'page.tsx');
   const pageNc = strip(page);
-  check('/leads uses BackLink with label "Back to Listings" and the validated return target', /<BackLink href=\{resolveBackHref\(filters\.returnTo\)\} label="Back to Listings" \/>/.test(pageNc));
+  check('/leads uses BackLink with label "Back to Listings" and the validated return target', /<BackLink href=\{resolveBackHref\(filters\.returnTo\)\} label=\{resolveBackLabel\(filters\.returnTo\)\} \/>/.test(pageNc));
   check('the old "← Listings" text link is gone', !/← Listings|←<\/span> Listings/.test(page) && !/href="\/listings"/.test(pageNc));
   const header = strip(read('src', 'components', 'CompactPageHeader.tsx'));
   check('CompactPageHeader renders the back control above the overline', /back != null/.test(header) && header.indexOf('back != null') < header.indexOf('page-overline'));

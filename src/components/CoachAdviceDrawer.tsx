@@ -18,18 +18,21 @@ export default function CoachAdviceDrawer({
   revision,
   onDismiss,
   dismissing,
+  returnTo,
   onClose,
 }: {
   card: AdviceCard;
   revision: Pick<AnalyticsRunAdviceRow, 'input_packet' | 'source_refs'>;
   onDismiss: () => void;
   dismissing: boolean;
+  /** Where "View Leads" should return to — supplied by the host page (e.g. "/" on the Dashboard). Re-validated by the shared allowlist. */
+  returnTo: string;
   onClose: () => void;
 }) {
   const { input_packet: packet, source_refs: registry } = revision;
   const evidence = resolveCoachCardEvidence(card, packet, registry);
   const limitations = coachLimitations(card, packet, registry);
-  const actions = coachActions(card, packet, registry, '/listings');
+  const actions = coachActions(card, packet, registry, returnTo);
 
   return (
     <AdviceDrawerShell

@@ -23,7 +23,7 @@ import { QualityBadge, StatusBadge } from '@/components/leads/LeadBadges';
 import LeadDetailPanel from '@/components/leads/LeadDetailPanel';
 import { fetchLeads } from '@/lib/leads/leadsClient';
 import { LEAD_HELP } from '@/lib/leads/leadHelpText';
-import { resolveBackHref } from '@/lib/listingsReturn';
+import { resolveBackHref, resolveBackLabel } from '@/lib/listingsReturn';
 import {
   QUICK_FILTERS, NO_CHANNEL, activeQuickFilter, applyLeadFilters, attributionRequest, itemAttributionRequest, leadsUrl,
   parseLeadFilters, patchLeadFilters, quickFilterPatch, sortLeadsRecentFirst, type LeadFilters,
@@ -129,7 +129,7 @@ export default function LeadsPage() {
       <CompactPageHeader
         overline="Leads"
         summary={<p className="text-xs text-slate-500 dark:text-slate-400">Buyer conversations and recorded offers from your listing activity.</p>}
-        back={<BackLink href={resolveBackHref(filters.returnTo)} label="Back to Listings" />}
+        back={<BackLink href={resolveBackHref(filters.returnTo)} label={resolveBackLabel(filters.returnTo)} />}
       />
 
       {/* ── Filters ─────────────────────────────────────────────── */}

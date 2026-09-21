@@ -123,7 +123,7 @@ console.log('\n[D — /leads item_attributed semantics]');
   check('existing channel-attributed chip untouched', /data-chip="attributed"/.test(pageNc) && /Channel-attributed/.test(pageNc));
   check('cohorts are requested from the server (no client-side attribution)', /itemAttributionRequest\(filters\)/.test(pageNc) && /fetchLeads\(/.test(pageNc) && /itemAttributedSet/.test(pageNc));
   check('URL remains the source of truth (no filter state)', /parseLeadFilters\(\(k\) => searchParams\.get\(k\)\)/.test(pageNc) && !/useState<LeadFilters/.test(pageNc));
-  check('contextual back arrow in the /leads header (BackLink -> Back to Listings)', /<BackLink href=\{resolveBackHref\(filters\.returnTo\)\} label="Back to Listings"/.test(pageNc) && /back=\{/.test(pageNc));
+  check('contextual back arrow in the /leads header (BackLink -> Back to Listings)', /<BackLink href=\{resolveBackHref\(filters\.returnTo\)\} label=\{resolveBackLabel\(filters\.returnTo\)\}/.test(pageNc) && /back=\{/.test(pageNc));
   const layout = read('src', 'app', 'layout.tsx');
   const navs = layout.match(/<nav[\s\S]*?<\/nav>/g) ?? [];
   navs.forEach((nav, i) => {

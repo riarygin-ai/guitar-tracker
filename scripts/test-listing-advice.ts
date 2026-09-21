@@ -26,6 +26,7 @@ import { ADVICE_SYSTEM_PROMPT, LISTING_ADVICE_SYSTEM_PROMPT } from '../src/lib/o
 import { adviceActions, relevantLimitations, resolveCardEvidence, resolveEvidence } from '../src/lib/listingAdviceView';
 import { coachActions, coachLimitations, resolveCoachCardEvidence, resolveCoachEvidence } from '../src/lib/coachAdviceView';
 import { parseLeadFilters } from '../src/lib/leads/leadFilters';
+import { resolveBackHref, resolveBackLabel, safeReturnTo } from '../src/lib/listingsReturn';
 import { LISTING_ADVICE_KEY, LISTING_EVIDENCE_KEY, createListingsInvalidators, listingDemandKey } from '../src/lib/listingsCacheKeys';
 import { createSwrCache } from '../src/lib/swrCache';
 import type { ListingDemandEvidence, DemandWeeklyTrendEntry } from '../src/lib/analytics/listingDemandEvidence';
@@ -313,6 +314,34 @@ async function main() {
     check('debug/audit (model, prompt version, input hash, cited ids, copy packet) only for admins and collapsed', /showDebug &&/.test(dr) && /<details/.test(dr) && /Copy input packet/.test(dr) && /run\.input_hash/.test(dr) && /run\.prompt_version/.test(dr) && /card\.source_ids\.join/.test(dr) && /showDebug=\{!!data\?\.viewer_is_admin\}/.test(sec));
     const layout = read('src', 'app', 'layout.tsx');
     check('no new navigation item (nav still Dashboard/Inventory/Listings/Operations)', (layout.match(/<nav[\s\S]*?<\/nav>/g) ?? []).every((nav) => JSON.stringify((nav.match(/>([^<]+)<\/a>/g) ?? []).map((m) => m.slice(1, -4).trim())) === JSON.stringify(['Dashboard', 'Inventory', 'Listings', 'Operations'])));
+  }
+
+  console.log('\n[G2 — caller-supplied return_to (Listings vs Dashboard)]');
+  {
+    const CPK: any = { packet_version: '1.0', run: {}, deterministic_insights: [], confirmed_patterns: [], preliminary_hypotheses: [], pattern_selection_summary: null, listing_demand: PACKET.listing_demand, allowed_source_ids: [] };
+    const cc = (ids: string[]): any => ({ advice_code: 'c', advice_type: 'action', priority: 'high', headline: 'H', advice: 'A', why_it_matters: 'W', confidence_label: 'moderate', source_ids: ids, limitations: [], item_id: null });
+    const leads = (acts: { kind: string; href: string }[]) => acts.filter((a) => a.kind === 'view_leads').map((a) => a.href);
+    const rt = (href: string) => new URL(href, 'http://x').searchParams.get('return_to');
+    const strip2 = (href: string) => href.replace(/&return_to=[^&]*$/, '');
+    const ids = ['demand:item:55', 'demand:channel:2', 'demand:market_trend'];
+
+    const listingLeads = leads(adviceActions(card({ source_ids: ids }) as unknown as ListingAdviceCard, PACKET, '/listings'));
+    check('1. Listing Advice View Leads (item/channel/market) return to /listings', listingLeads.length === 3 && listingLeads.every((h) => rt(h) === '/listings'), listingLeads);
+    const dashLeads = leads(coachActions(cc(ids), CPK, [], '/'));
+    check('2. Dashboard Coach View Leads (item/channel/market) return to /', dashLeads.length === 3 && dashLeads.every((h) => rt(h) === '/'), dashLeads);
+    check('3. drill-down filters are identical regardless of return path (only return_to differs)', dashLeads.map(strip2).join('|') === listingLeads.map(strip2).join('|') && dashLeads[0].startsWith('/leads?item_id=55&from=2026-08-24&to=2026-09-20&item_attributed=1&expected=21'));
+    check('3b. /leads honors return_to=/ and labels the back arrow "Back to Dashboard"; /listings keeps "Back to Listings"', parseLeadFilters((k) => new URL(dashLeads[0], 'http://x').searchParams.get(k)).returnTo === '/' && resolveBackHref('/') === '/' && resolveBackLabel('/') === 'Back to Dashboard' && resolveBackLabel('/listings?trend_weeks=8') === 'Back to Listings' && resolveBackLabel(null) === 'Back to Listings');
+    const unsafe = ['https://evil.example', '//evil.example', 'javascript:alert(1)', '/leads', '/?x=1', '/#f', '/ ', '\evil', '/inventory/1', ''];
+    check('4. unsafe caller return paths are dropped by the action builder (no return_to emitted)', unsafe.every((u) => leads(coachActions(cc(ids), CPK, [], u)).every((h) => !h.includes('return_to')) && leads(adviceActions(cc(ids), PACKET, u)).every((h) => !h.includes('return_to'))));
+    check('4b. null return path also emits none; unsafe return_to arriving at /leads is still rejected', leads(coachActions(cc(ids), CPK, [], null)).every((h) => !h.includes('return_to')) && unsafe.every((u) => parseLeadFilters((k) => (k === 'return_to' ? u : null)).returnTo === null));
+    check('4c. only "/" and /listings targets are honored by safeReturnTo', safeReturnTo('/') === '/' && safeReturnTo('/listings') === '/listings' && safeReturnTo('//') === null && safeReturnTo('/x') === null);
+
+    const shared = strip(read('src', 'lib', 'listingAdviceView.ts')) + strip(read('src', 'lib', 'coachAdviceView.ts'));
+    check('no return path is hardcoded in the shared resolvers; the caller supplies it', !/'\/listings'|"\/listings"/.test(shared.replace(/import[^;]*;/g, '')) && /callerReturnTo/.test(shared));
+    const dash = strip(read('src', 'app', 'page.tsx'));
+    const cd = strip(read('src', 'components', 'CoachAdviceDrawer.tsx'));
+    check('CoachAdviceDrawer takes returnTo from the host (Dashboard passes "/"); no hardcoded path in the drawer', /returnTo: string/.test(cd) && /registry, returnTo\)/.test(cd) && !/'\/listings'/.test(cd) && /returnTo="\/"/.test(dash));
+    check('ListingAdviceDrawer still receives /listings-based returnTo from the Listings page', /returnTo=\{/.test(strip(read('src', 'components', 'listings', 'ListingAdviceSection.tsx'))));
   }
 
   console.log('\n[H — cache independence & failure isolation]');

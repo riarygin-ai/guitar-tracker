@@ -445,6 +445,7 @@ export default function HomePage() {
               revision={latestCompletedAdvice.advice}
               onDismiss={() => handleDismissAdvice(openAdviceCard)}
               dismissing={dismissingCodes.has(openAdviceCard.advice_code)}
+              returnTo="/"
               onClose={() => setOpenAdviceCode(null)}
             />
           )}
