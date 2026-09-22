@@ -7,7 +7,7 @@
 // analytics data is consulted, so the drawer shows exactly what the Coach saw.
 
 import type { AdviceCard, AdviceInputPacket, AdviceInputPacketSource, SourceRegistryEntry } from './analytics/advice/types';
-import { humanizeCode } from './analytics/advice/presentation';
+import { formatLimitation, humanizeCode } from './analytics/advice/presentation';
 import {
   adviceActions as demandActions, resolveEvidence as resolveDemandEvidence,
   type AdviceAction, type EvidenceBlock,
@@ -58,7 +58,7 @@ export function resolveCoachCardEvidence(card: AdviceCard, packet: AdviceInputPa
 /** The card's own limitations plus those persisted on the sources it cites (deduplicated, humanized). */
 export function coachLimitations(card: AdviceCard, packet: AdviceInputPacket | null, registry: SourceRegistryEntry[] | null): string[] {
   const out: string[] = [];
-  const add = (l: string) => { const h = humanizeCode(l); if (!out.includes(h)) out.push(h); };
+  const add = (l: string) => { const h = formatLimitation(l); if (!out.includes(h)) out.push(h); };
   card.limitations.forEach(add);
   const cited = new Set(card.source_ids);
   for (const s of persistedSources(packet, registry)) if (cited.has(s.source_id)) (s.limitations ?? []).forEach(add);

@@ -970,9 +970,9 @@ async function main() {
 
     check('compact card never renders "Why it matters"', !compactBlockOnly.includes('card.why_it_matters') && fullVariantOnwards.includes('card.why_it_matters'));
     check('compact card never renders limitations', !compactBlockOnly.includes('card.limitations') && fullVariantOnwards.includes('card.limitations'));
-    check('compact card never renders a "View Evidence" control', !compactBlockOnly.includes('View Evidence') && fullVariantOnwards.includes('View Evidence'));
+    check('compact card never renders a "View Evidence" control', !/viewEvidence|View Evidence/.test(compactBlockOnly) && /viewEvidence/.test(fullVariantOnwards));
     check('compact card never renders a source count (source_ids.length)', !compactBlockOnly.includes('source_ids.length') && fullVariantOnwards.includes('source_ids.length'));
-    check('compact card DOES render an Open Item link (present in both variants)', compactBlockOnly.includes('Open Item') && fullVariantOnwards.includes('Open Item'));
+    check('compact card DOES render an Open Item link (present in both variants)', /L\.openItem/.test(compactBlockOnly) && /L\.openItem/.test(fullVariantOnwards));
     check('AdviceCardView still exposes a real \'compact\' variant branch', componentSource.includes("variant === 'compact'"));
 
     const analyticsPageSource = fs.readFileSync(path.resolve(process.cwd(), 'src', 'app', 'analytics', 'page.tsx'), 'utf8');

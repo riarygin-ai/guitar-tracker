@@ -24,6 +24,7 @@ import {
   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY,
   assertLocalSupabaseUrl, assertLocalSupabaseIsRunning,
 } from './setup-analytics-test-fixtures';
+import { adviceLabels } from '../src/lib/analytics/advice/adviceLabels';
 import { runAnalyticsWorkflow, runAiStagesForRun, type AnalyticsWorkflowDeps } from '../src/lib/analytics/runAnalyticsWorkflow';
 import { AnalyticsRunError } from '../src/lib/analytics/runAnalytics';
 import { generateListingAdvice, getLatestListingAdvice, type GenerateListingAdviceOutcome } from '../src/lib/analytics/listingAdvice/generateListingAdvice';
@@ -96,10 +97,10 @@ async function main() {
     check('no dead/disabled generation controls left behind', !/data-advice-generate|onClick=\{generate\}|const generate\b|generating|Generating/.test(sec));
     check('no code path on the client can generate advice (only fetch + dismiss)', !/method: 'POST'[\s\S]{0,200}\/api\/listing-advice['`]/.test(client) && /dismissListingAdvice/.test(client) && !/requestListingAdviceGeneration/.test(client + sec + page));
     check('latest completed persisted advice still loads (SWR cache key listing-advice:latest, no polling)', /useSwrResource\(listingsCache, LISTING_ADVICE_KEY, fetchLatestListingAdvice\)/.test(sec) && !/setInterval|polling|BroadcastChannel|storage/i.test(sec));
-    check('empty state: "No Listing Advice has been generated yet."', sec.includes('No Listing Advice has been generated yet.'));
-    check('admin-only "Run Analytics" link to the Analytics page in the empty state', /viewer_is_admin && \(\s*<Link href="\/analytics"[^>]*>Run Analytics<\/Link>/.test(sec));
-    check('a non-admin sees no Run Analytics link (gated on viewer_is_admin)', (sec.match(/Run Analytics/g) ?? []).length === 1 && /data\?\.viewer_is_admin/.test(sec));
-    check('0 cards: calm "No material listing advice"; all dismissed: calm notice pointing at the next Analytics run', sec.includes('No material listing advice for this window.') && /dismissed all current Listing Advice\. New advice appears after the next Analytics run\./.test(sec));
+    check('empty state: "No Listing Advice has been generated yet."', sec.includes('L.noneYet') && adviceLabels('en').noneYet === 'No Listing Advice has been generated yet.');
+    check('admin-only "Run Analytics" link to the Analytics page in the empty state', /viewer_is_admin && \(\s*<Link href="\/analytics"[^>]*>\{L\.runAnalytics\}<\/Link>/.test(sec) && adviceLabels('en').runAnalytics === 'Run Analytics');
+    check('a non-admin sees no Run Analytics link (gated on viewer_is_admin)', (sec.match(/L\.runAnalytics/g) ?? []).length === 1 && /data\?\.viewer_is_admin/.test(sec));
+    check('0 cards: calm "No material listing advice"; all dismissed: calm notice pointing at the next Analytics run', sec.includes('L.noMaterialAdvice') && adviceLabels('en').noMaterialAdvice === 'No material listing advice for this window.' && sec.includes('L.allDismissed') && /dismissed all current Listing Advice\. New advice appears after the next Analytics run\./.test(adviceLabels('en').allDismissed));
     check('dismissal remains: Dismiss control per card, optimistic + persisted + rolled back on failure', /data-advice-dismiss/.test(sec) && /setHiddenKeys\(\(prev\) => \[\.\.\.prev, key\]\)/.test(sec) && /setHiddenKeys\(\(prev\) => prev\.filter\(\(k\) => k !== key\)\)/.test(sec));
     check('dismissed keys from the server hide cards (independent of generation)', /data\?\.dismissed_keys/.test(sec) && /allCards\.filter\(\(c\) => !dismissed\.has\(listingAdviceKey\(c\)\)\)/.test(sec));
     check('the dismiss control is a sibling of the card button (no nested buttons)', /<button[\s\S]*?data-advice-card[\s\S]*?<\/button>\s*<div className="flex justify-end[^"]*">\s*<button[\s\S]*?data-advice-dismiss/.test(sec));
@@ -187,7 +188,7 @@ async function main() {
     const dis = strip(read('src', 'lib', 'analytics', 'listingAdvice', 'listingAdviceDismissal.ts'));
     check('reuses the existing dismissals table + 30-day resurface policy; never writes advice rows', /analytics_advice_dismissals/.test(dis) && /30 \* 24 \* 60 \* 60 \* 1000/.test(dis) && !/from\('listing_advice_runs'\)\s*\.(update|delete|insert)/.test(dis));
     const migs = fs.readdirSync(path.join(root, 'supabase', 'migrations')).sort();
-    check('no new migration for this change (latest is still the Listing Advice table)', migs[migs.length - 1] === '20260920000000_listing_advice_runs.sql', migs[migs.length - 1]);
+    check('orchestration change added no migration of its own (Listing Advice table is still the latest orchestration-era migration; the later one is the additive preferred_language column)', migs.includes('20260920000000_listing_advice_runs.sql') && migs[migs.length - 1] === '20260921000000_app_users_preferred_language.sql', migs[migs.length - 1]);
   }
 
   // ── Real DB ────────────────────────────────────────────────────────────

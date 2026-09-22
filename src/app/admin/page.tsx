@@ -39,6 +39,7 @@ import {
   updateItemSubtype,
   updateTag,
 } from '@/lib/supabase';
+import AdminUserLanguageCard from '@/components/admin/AdminUserLanguageCard';
 import type { AppUser, Brand, DealChannel, InventoryTag, ItemCategory, ItemPurpose, ItemSubtype } from '@/types';
 
 const BRAND_PAGE_SIZE = 5;
@@ -796,6 +797,9 @@ export default function AdminPage() {
           </Link>
         </div>
       </div>
+
+      {/* ── Users (Preferred AI Language) ─────────────────────────────── */}
+      <AdminUserLanguageCard />
 
       {/* ── Lead Log Import ───────────────────────────────────────────── */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">

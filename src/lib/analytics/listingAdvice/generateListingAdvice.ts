@@ -17,6 +17,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { LISTING_ADVICE_MODEL_ID, generateListingAdviceFromModel } from '../../openai';
 import { sanitizeErrorMessage } from '../runAnalytics';
+import { getUserPreferredLanguage } from '../advice/userLanguage';
+import type { AdviceLanguage } from '../advice/adviceLanguage';
 import { loadListingDemandContext, type ListingDemandContext } from '../advice/listingDemandContext';
 import {
   LISTING_ADVICE_PROMPT_VERSION, LISTING_ADVICE_PROVIDER, LISTING_ADVICE_SCHEMA_VERSION,
@@ -79,6 +81,8 @@ async function markFailed(serviceClient: SupabaseClient, id: number, code: strin
 export async function generateListingAdvice(params: {
   appUserId: number;
   serviceClient: SupabaseClient;
+  /** Advice prose language; resolved once by runAnalyticsWorkflow. When omitted it is read server-side from app_users. */
+  language?: AdviceLanguage;
   deps?: GenerateListingAdviceDeps;
 }): Promise<GenerateListingAdviceOutcome> {
   const { appUserId, serviceClient } = params;
@@ -105,7 +109,8 @@ export async function generateListingAdvice(params: {
   }
 
   // 2. Deterministic packet + hash, persisted BEFORE the model call (immutable from here on).
-  const packet = buildListingAdvicePacket(ctx);
+  const language = params.language ?? await getUserPreferredLanguage(serviceClient, appUserId);
+  const packet = buildListingAdvicePacket(ctx, language);
   const inputHash = hashListingAdvicePacket(packet);
 
   const { data: inserted, error: insertError } = await serviceClient

@@ -26,6 +26,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { runAnalyticsForCurrentUser, sanitizeErrorMessage } from './runAnalytics';
 import { generateAdviceForRun, type GenerateAdviceOutcome } from './advice/generateAdvice';
+import { getUserPreferredLanguage } from './advice/userLanguage';
 import { generateListingAdvice, type GenerateListingAdviceOutcome } from './listingAdvice/generateListingAdvice';
 
 // Same run shape runAnalyticsForCurrentUser returns.
@@ -91,10 +92,14 @@ export async function runAiStagesForRun(params: {
   const coach = params.deps?.generateCoachAdvice ?? generateAdviceForRun;
   const listing = params.deps?.generateListingAdvice ?? generateListingAdvice;
 
+  // ONE language resolution (server-side, from the authenticated user's own app_users row) feeds BOTH
+  // AI stages, so manual Run Analytics and the weekly automation cannot drift. Never throws (falls back to 'en').
+  const language = await getUserPreferredLanguage(serviceClient, appUserId);
+
   const [businessCoach, listingAdvice] = await Promise.all([
     (async (): Promise<AiStageResult> => {
       try {
-        return coachStageFromOutcome(await coach({ runId, requestingUserId: appUserId, serviceClient, mode: 'auto' }));
+        return coachStageFromOutcome(await coach({ runId, requestingUserId: appUserId, serviceClient, mode: 'auto', language }));
       } catch (err) {
         console.error('[runAnalyticsWorkflow] business coach stage threw for run', runId, ':', sanitizeErrorMessage(err));
         return { status: 'failed', code: 'THREW', message: sanitizeErrorMessage(err), rowId: null };
@@ -102,7 +107,7 @@ export async function runAiStagesForRun(params: {
     })(),
     (async (): Promise<AiStageResult> => {
       try {
-        return listingAdviceStageFromOutcome(await listing({ appUserId, serviceClient }));
+        return listingAdviceStageFromOutcome(await listing({ appUserId, serviceClient, language }));
       } catch (err) {
         console.error('[runAnalyticsWorkflow] listing advice stage threw for run', runId, ':', sanitizeErrorMessage(err));
         return { status: 'failed', code: 'THREW', message: sanitizeErrorMessage(err), rowId: null };

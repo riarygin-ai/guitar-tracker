@@ -286,7 +286,7 @@ async function main() {
   {
     const gen = strip(read('src', 'lib', 'analytics', 'advice', 'generateAdvice.ts'));
     check('generateAdviceForRun wraps the enrichment in try/catch and continues without it', /let listingDemand: ListingDemandContext \| null = null;\s*try \{\s*listingDemand = await loadListingDemandContext\(/.test(gen) && /catch \(demandError\)/.test(gen));
-    check('the failure is logged, and no fallback metrics are fabricated', /console\.error\('\[generateAdvice\] listing demand enrichment unavailable/.test(gen) && /listingDemand,\s*\}\)/.test(gen));
+    check('the failure is logged, and no fallback metrics are fabricated', /console\.error\('\[generateAdvice\] listing demand enrichment unavailable/.test(gen) && /listingDemand,\s*language,\s*\}\)/.test(gen));
     check('the demand context is fetched server-side, at generation time (not from the /listings client cache)', /loadListingDemandContext\(\{ appUserId: requestingUserId, serviceClient \}\)/.test(gen) && !/listingsCache|swrCache/.test(gen + strip(read('src', 'lib', 'analytics', 'advice', 'listingDemandContext.ts'))));
     let rejected = false;
     const failing = { rpc: async () => ({ data: null, error: { message: 'boom' } }) } as never;

@@ -11,6 +11,7 @@
 import { hashCanonicalInputPacket } from '../advice/canonicalHash';
 import { buildListingDemandSources, type ListingDemandContext } from '../advice/listingDemandContext';
 import { collectStrings, findLeadDealViolations } from '../advice/sharedSemantics';
+import { DEFAULT_ADVICE_LANGUAGE, type AdviceLanguage } from '../advice/adviceLanguage';
 
 export const LISTING_ADVICE_SCHEMA_VERSION = '1.0';
 export const LISTING_ADVICE_PROMPT_VERSION = 'listing-advice-v1';
@@ -49,6 +50,8 @@ export interface ListingAdvicePacket {
   kind: 'listing_advice';
   window: { start_date: string; end_date: string; weeks: number };
   listing_demand: ListingDemandContext;
+  /** Requested advice language (user's preferred_language at generation). Hashed + persisted with the run. */
+  language: AdviceLanguage;
   semantics: {
     lead_deal_linkage: string;
     demand_evidence_purpose_agnostic: boolean;
@@ -64,12 +67,13 @@ export const LISTING_ADVICE_SEMANTICS = {
 } as const;
 
 /** Deterministic packet from the shared compact context — same input, same bytes, same hash. */
-export function buildListingAdvicePacket(ctx: ListingDemandContext): ListingAdvicePacket {
+export function buildListingAdvicePacket(ctx: ListingDemandContext, language: AdviceLanguage = DEFAULT_ADVICE_LANGUAGE): ListingAdvicePacket {
   return {
     packet_version: '1.0',
     kind: 'listing_advice',
     window: { start_date: ctx.start_date, end_date: ctx.end_date, weeks: ctx.window_weeks },
     listing_demand: ctx,
+    language,
     semantics: { ...LISTING_ADVICE_SEMANTICS },
     allowed_source_ids: buildListingDemandSources(ctx).map((s) => s.source_id),
   };

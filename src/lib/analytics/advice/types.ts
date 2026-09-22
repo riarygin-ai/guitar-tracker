@@ -5,6 +5,7 @@
 // the packet below is derived.
 
 import type { ListingDemandContext } from './listingDemandContext';
+import type { AdviceLanguage } from './adviceLanguage';
 
 export const ADVICE_SCHEMA_VERSION = '1.0';
 // v2: adds the optional listing_demand packet block, its `demand:*` sources and the
@@ -119,6 +120,9 @@ export interface AdviceInputPacket {
   confirmed_patterns: AdviceInputPacketSource[];
   preliminary_hypotheses: AdviceInputPacketSource[];
   pattern_selection_summary: Record<string, unknown> | null;
+  /** Language the advice prose was requested in (the user's preferred_language at generation time).
+   *  Part of the persisted, hashed packet. Absent only on legacy revisions generated before this field existed. */
+  language?: AdviceLanguage;
   /** Compact, canonical Listing Demand evidence (4 weekly buckets ending today) —
    *  fetched live at generation time and persisted with the packet so the exact
    *  block the Coach saw is auditable. Omitted entirely (never fabricated) when

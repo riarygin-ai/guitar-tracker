@@ -11,6 +11,8 @@
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import type { AdviceAction, EvidenceBlock } from '@/lib/listingAdviceView';
+import { adviceLabels } from '@/lib/analytics/advice/adviceLabels';
+import type { AdviceLanguage } from '@/lib/analytics/advice/adviceLanguage';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
@@ -20,6 +22,7 @@ export function AdviceDrawerShell({
   eyebrow,
   title,
   badges,
+  language = 'en',
   onClose,
   children,
 }: {
@@ -28,9 +31,11 @@ export function AdviceDrawerShell({
   eyebrow: React.ReactNode;
   title: string;
   badges?: React.ReactNode;
+  language?: AdviceLanguage;
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const L = adviceLabels(language);
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -60,7 +65,7 @@ export function AdviceDrawerShell({
 
   return (
     <div className="fixed inset-0 z-40">
-      <button type="button" aria-label="Close advice details" tabIndex={-1} onClick={onClose} className="absolute inset-0 h-full w-full cursor-default bg-slate-900/40" />
+      <button type="button" aria-label={L.closeAdviceDetails} tabIndex={-1} onClick={onClose} className="absolute inset-0 h-full w-full cursor-default bg-slate-900/40" />
       <aside
         ref={panelRef}
         role="dialog"
@@ -79,7 +84,7 @@ export function AdviceDrawerShell({
             ref={closeRef}
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={L.close}
             className="shrink-0 rounded-full p-2 text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-300 dark:hover:bg-slate-700"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
@@ -91,10 +96,11 @@ export function AdviceDrawerShell({
   );
 }
 
-export function EvidenceSection({ blocks }: { blocks: EvidenceBlock[] }) {
+export function EvidenceSection({ blocks, language = 'en' }: { blocks: EvidenceBlock[]; language?: AdviceLanguage }) {
+  const L = adviceLabels(language);
   return (
     <section data-advice-evidence>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Evidence the advice was based on</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{L.evidenceHeading}</h3>
       <div className="mt-2 space-y-3">
         {blocks.map((b) => (
           <div key={b.sourceId} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700" data-evidence-source={b.sourceId}>
@@ -119,16 +125,17 @@ export function EvidenceSection({ blocks }: { blocks: EvidenceBlock[] }) {
           </div>
         ))}
       </div>
-      <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">Shown as recorded when this advice was generated.</p>
+      <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">{L.evidenceFooter}</p>
     </section>
   );
 }
 
-export function LimitationsSection({ items }: { items: string[] }) {
+export function LimitationsSection({ items, language = 'en' }: { items: string[]; language?: AdviceLanguage }) {
   if (items.length === 0) return null;
+  const L = adviceLabels(language);
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Limitations</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{L.limitations}</h3>
       <ul className="mt-1.5 list-disc space-y-1 pl-5 text-xs text-slate-600 dark:text-slate-300">
         {items.map((l, i) => <li key={i} className="break-words">{l}</li>)}
       </ul>
@@ -136,21 +143,22 @@ export function LimitationsSection({ items }: { items: string[] }) {
   );
 }
 
-export function ActionsSection({ actions, children }: { actions: AdviceAction[]; children?: React.ReactNode }) {
+export function ActionsSection({ actions, children, language = 'en' }: { actions: AdviceAction[]; children?: React.ReactNode; language?: AdviceLanguage }) {
   if (actions.length === 0 && !children) return null;
+  const L = adviceLabels(language);
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Actions</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{L.actions}</h3>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {actions.map((a) => (
           <Link
             key={a.href}
             href={a.href}
-            aria-label={`${a.label}: ${a.subject}`}
+            aria-label={`${a.kind === 'open_item' ? L.openItem : L.viewLeads}: ${a.subject}`}
             className="inline-flex items-center rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
           >
-            {a.label}
-            <span className="ml-1.5 max-w-[10rem] truncate text-xs font-normal text-slate-400 dark:text-slate-500">{a.subject}</span>
+            {a.kind === 'open_item' ? L.openItem : L.viewLeads}
+            <span className="ml-1.5 max-w-[10rem] truncate text-xs font-normal text-slate-400 dark:text-slate-500">{a.subjectKey === 'market_window' ? L.marketWindowSubject : a.subject}</span>
           </Link>
         ))}
         {children}

@@ -110,6 +110,12 @@ export function humanizeCode(code: string | null | undefined): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
 }
 
+/** A limitation is either a machine code ("SMALL_SAMPLE") or model-written prose. Codes are humanized;
+ *  prose (any language, with brand/model names) is shown exactly as persisted — never lower-cased. */
+export function formatLimitation(limitation: string): string {
+  return /^[A-Za-z0-9_]+$/.test(limitation) ? humanizeCode(limitation) : limitation;
+}
+
 // ── Key-metrics rendering ────────────────────────────────────────────────
 // The compact `key_metrics` object stored per source (see buildInputPacket
 // .ts) uses a handful of recurring field-name patterns across both

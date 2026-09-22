@@ -26,6 +26,7 @@ import { ADVICE_SYSTEM_PROMPT, LISTING_ADVICE_SYSTEM_PROMPT } from '../src/lib/o
 import { adviceActions, relevantLimitations, resolveCardEvidence, resolveEvidence } from '../src/lib/listingAdviceView';
 import { coachActions, coachLimitations, resolveCoachCardEvidence, resolveCoachEvidence } from '../src/lib/coachAdviceView';
 import { parseLeadFilters } from '../src/lib/leads/leadFilters';
+import { adviceLabels } from '../src/lib/analytics/advice/adviceLabels';
 import { resolveBackHref, resolveBackLabel, safeReturnTo } from '../src/lib/listingsReturn';
 import { LISTING_ADVICE_KEY, LISTING_EVIDENCE_KEY, createListingsInvalidators, listingDemandKey } from '../src/lib/listingsCacheKeys';
 import { createSwrCache } from '../src/lib/swrCache';
@@ -242,8 +243,8 @@ async function main() {
     const lDrawer = strip(read('src', 'components', 'listings', 'ListingAdviceDrawer.tsx'));
     const dash = strip(read('src', 'app', 'page.tsx'));
     const ana = read('src', 'app', 'analytics', 'page.tsx');
-    check('compact card gets a "View details" control (only when onViewDetails is passed)', /onViewDetails/.test(cardSrc) && /View details ›/.test(cardSrc));
-    check('drawer: Advice, Why it matters, evidence, limitations, actions; reads the persisted revision', />Advice<\/h3>/.test(drawer) && /Why it matters/.test(drawer) && /EvidenceSection/.test(drawer) && /LimitationsSection/.test(drawer) && /ActionsSection/.test(drawer) && /input_packet: packet, source_refs: registry/.test(drawer));
+    check('compact card gets a "View details" control (only when onViewDetails is passed)', /onViewDetails/.test(cardSrc) && /L.viewDetails} ›/.test(cardSrc));
+    check('drawer: Advice, Why it matters, evidence, limitations, actions; reads the persisted revision', /\{L\.advice\}<\/h3>/.test(drawer) && /\{L\.whyItMatters\}/.test(drawer) && /EvidenceSection/.test(drawer) && /LimitationsSection/.test(drawer) && /ActionsSection/.test(drawer) && /input_packet: packet, source_refs: registry/.test(drawer));
     check('shell: right-side drawer on desktop, bottom sheet on mobile, dialog semantics, Escape, focus trap', /md:w-\[32rem\]/.test(parts) && /rounded-t-3xl/.test(parts) && /role="dialog"/.test(parts) && /aria-modal="true"/.test(parts) && /'Escape'/.test(parts) && /shiftKey/.test(parts));
     check('Listing Advice drawer reuses the shared shell (no duplicated dialog markup)', /AdviceDrawerShell/.test(lDrawer) && !/role="dialog"/.test(lDrawer));
     check('Dashboard: same dismiss handler + dismissedKeys drive the drawer (dismissal stays synchronized)', /onViewDetails=\{\(\) => setOpenAdviceCode/.test(dash) && /onDismiss=\{\(\) => handleDismissAdvice\(openAdviceCard\)\}/.test(dash) && /visibleAdviceCards\.find\(\(c\) => c\.advice_code === openAdviceCode\)/.test(dash) && /revision=\{latestCompletedAdvice\.advice\}/.test(dash));
@@ -294,24 +295,24 @@ async function main() {
     check('the page itself never generates advice (no generation call on load / import / listing change)', !/requestListingAdviceGeneration|generateListingAdvice/.test(page));
     const sec = strip(read('src', 'components', 'listings', 'ListingAdviceSection.tsx'));
     check('/listings is display-only for generation: no generation call, no Generate / Refresh controls anywhere in the section', !/requestListingAdviceGeneration|generateListingAdvice/.test(sec) && !/Generate Listing Advice|Refresh Advice/.test(sec) && !/data-advice-generate/.test(sec) && !/useEffect/.test(sec));
-    check('no advice -> calm empty state (with an admin-only "Run Analytics" link to /analytics), never a generate button', sec.includes('No Listing Advice has been generated yet.') && /viewer_is_admin && \(\s*<Link href="\/analytics"[^>]*>Run Analytics<\/Link>/.test(sec));
-    check('0 cards -> calm "No material listing advice for this window."', sec.includes('No material listing advice for this window.'));
-    check('header shows Generated <date> and the 4-week demand window', /Generated \{formatGeneratedAt\(latest\.generated_at\)\}/.test(sec) && /4-week demand window: \{formatWindowLabel\(latest\.window_start, latest\.window_end\)\}/.test(sec));
+    check('no advice -> calm empty state (with an admin-only "Run Analytics" link to /analytics), never a generate button', adviceLabels('en').noneYet === 'No Listing Advice has been generated yet.' && sec.includes('L.noneYet') && adviceLabels('en').runAnalytics === 'Run Analytics' && /viewer_is_admin && \(\s*<Link href="\/analytics"[^>]*>\{L\.runAnalytics\}<\/Link>/.test(sec));
+    check('0 cards -> calm "No material listing advice for this window."', adviceLabels('en').noMaterialAdvice === 'No material listing advice for this window.' && sec.includes('L.noMaterialAdvice'));
+    check('header shows Generated <date> and the 4-week demand window', adviceLabels('en').generated === 'Generated' && adviceLabels('en').demandWindow === '4-week demand window' && /\{L\.generated\} \{formatAdviceTimestamp\(latest\.generated_at, language\)\}/.test(sec) && /\{L\.demandWindow\}: \{formatWindowLabel\(latest\.window_start, latest\.window_end\)\}/.test(sec));
     check('the latest completed persisted advice is what is shown (from the cached fetch); a new Analytics run is picked up on the next load', /const latest = data\?\.latest \?\? null/.test(sec) && /useSwrResource\(listingsCache, LISTING_ADVICE_KEY, fetchLatestListingAdvice\)/.test(sec) && !/setInterval|setTimeout|polling/i.test(sec));
-    check('an admin sees a small note when the latest update failed, while the previous advice stays displayed', /data\?\.viewer_is_admin && data\.last_failure/.test(sec) && /the previous advice is shown/.test(sec));
+    check('an admin sees a small note when the latest update failed, while the previous advice stays displayed', /data\?\.viewer_is_admin && data\.last_failure/.test(sec) && /L\.lastFailure/.test(sec) && /the previous advice is shown/.test(adviceLabels('en').lastFailure));
     check('cards can be dismissed (Dismiss button per card; optimistic hide, persisted, rolled back on failure)', /data-advice-dismiss/.test(sec) && /dismissListingAdvice\(latest\.id, card\.advice_code\)/.test(sec) && /setHiddenKeys\(\(prev\) => prev\.filter/.test(sec) && /listingAdviceKey\(c\)/.test(sec));
     check('cards: desktop up to 3 columns, mobile stacked', /grid grid-cols-1 gap-3 lg:grid-cols-3/.test(sec) && (sec.match(/data-advice-card/g) ?? []).length === 1);
-    check('each card shows type, title, short summary, priority + confidence badges (reused AdviceCardView badges)', /ADVICE_TYPE_LABEL\[card\.advice_type\]/.test(sec) && /card\.title/.test(sec) && /line-clamp-4/.test(sec) && /<PriorityBadge/.test(sec) && /<ConfidencePill/.test(sec));
+    check('each card shows type, title, short summary, priority + confidence badges (reused AdviceCardView badges)', /L\.type\[card\.advice_type\]/.test(sec) && /card\.title/.test(sec) && /line-clamp-4/.test(sec) && /<PriorityBadge/.test(sec) && /<ConfidencePill/.test(sec));
     check('a card is a real button that opens the detail drawer', /<button[\s\S]{0,80}type="button"[\s\S]{0,60}data-advice-card[\s\S]{0,60}onClick=\{\(\) => setOpenCard\(card\)\}/.test(sec) && /<ListingAdviceDrawer/.test(sec));
-    check('load failure is local: "Listing Advice is unavailable right now." + Retry; nothing else is affected', /Listing Advice is unavailable right now\./.test(sec) && /Retry/.test(sec));
+    check('load failure is local: "Listing Advice is unavailable right now." + Retry; nothing else is affected', adviceLabels('en').unavailable === 'Listing Advice is unavailable right now.' && /L\.unavailable/.test(sec) && /L\.retry/.test(sec) && adviceLabels('en').retry === 'Retry');
     check('uses the shared SWR cache with key listing-advice:latest', /useSwrResource\(listingsCache, LISTING_ADVICE_KEY/.test(sec) && LISTING_ADVICE_KEY === 'listing-advice:latest');
 
     const dr = strip(read('src', 'components', 'listings', 'ListingAdviceDrawer.tsx')) + strip(read('src', 'components', 'AdviceDrawerParts.tsx'));
     check('drawer: right-side on desktop, bottom sheet on mobile, accessible dialog', /md:w-\[32rem\]/.test(dr) && /rounded-t-3xl/.test(dr) && /role="dialog"/.test(dr) && /aria-modal="true"/.test(dr) && /Escape/.test(dr));
-    check('drawer sections: Advice (summary/why it matters/suggested checks), Evidence, Limitations, Actions', /Why it matters/.test(dr) && /Suggested checks/.test(dr) && /Evidence the advice was based on/.test(dr) && /Limitations/.test(dr) && /Actions/.test(dr));
+    check('drawer sections: Advice (summary/why it matters/suggested checks), Evidence, Limitations, Actions', /L\.whyItMatters/.test(dr) && /L\.suggestedChecks/.test(dr) && /L\.evidenceHeading/.test(dr) && /L\.limitations/.test(dr) && /L\.actions/.test(dr) && adviceLabels('en').suggestedChecks === 'Suggested checks' && adviceLabels('en').evidenceHeading === 'Evidence the advice was based on');
     check('drawer evidence comes from the persisted packet (run.input_packet) via resolveCardEvidence', /const packet = run\.input_packet/.test(dr) && /resolveCardEvidence\(card, packet\)/.test(dr) && !/fetch\(|supabase/.test(dr));
     check('drawer actions come from adviceActions (View Leads / Open Item), no Deals action', /adviceActions\(card, packet, returnTo\)/.test(dr) && !/Deals/.test(dr));
-    check('debug/audit (model, prompt version, input hash, cited ids, copy packet) only for admins and collapsed', /showDebug &&/.test(dr) && /<details/.test(dr) && /Copy input packet/.test(dr) && /run\.input_hash/.test(dr) && /run\.prompt_version/.test(dr) && /card\.source_ids\.join/.test(dr) && /showDebug=\{!!data\?\.viewer_is_admin\}/.test(sec));
+    check('debug/audit (model, prompt version, input hash, cited ids, copy packet) only for admins and collapsed', /showDebug &&/.test(dr) && /<details/.test(dr) && /L\.copyPacket/.test(dr) && adviceLabels('en').copyPacket === 'Copy input packet' && /run\.input_hash/.test(dr) && /run\.prompt_version/.test(dr) && /card\.source_ids\.join/.test(dr) && /showDebug=\{!!data\?\.viewer_is_admin\}/.test(sec));
     const layout = read('src', 'app', 'layout.tsx');
     check('no new navigation item (nav still Dashboard/Inventory/Listings/Operations)', (layout.match(/<nav[\s\S]*?<\/nav>/g) ?? []).every((nav) => JSON.stringify((nav.match(/>([^<]+)<\/a>/g) ?? []).map((m) => m.slice(1, -4).trim())) === JSON.stringify(['Dashboard', 'Inventory', 'Listings', 'Operations'])));
   }
@@ -361,7 +362,7 @@ async function main() {
     const gen = strip(read('src', 'lib', 'analytics', 'listingAdvice', 'generateListingAdvice.ts'));
     check('a failed generation never replaces the latest completed advice (latest = newest COMPLETED only)', /\.eq\('status', 'completed'\)[\s\S]*?\.order\('generated_at'/.test(gen));
     check('/listings sections other than advice never import the advice modules', !/listingAdvice/.test(strip(read('src', 'app', 'listings', 'page.tsx')).replace(/ListingAdviceSection/g, '')));
-    check('per-user language is NOT implemented (text persisted exactly as returned; no locale plumbing)', !/locale|language|translate/i.test(gen + strip(read('src', 'components', 'listings', 'ListingAdviceSection.tsx'))));
+    check('advice text is persisted exactly as returned by the model (no post-translation of prose in the generation service)', !/translate/i.test(gen));
     check('no lead->deal linkage added anywhere in this change', !/lead_deal|deal_leads|item_lead_deals/i.test(read('supabase', 'migrations', '20260920000000_listing_advice_runs.sql')));
   }
 

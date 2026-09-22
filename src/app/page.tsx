@@ -6,10 +6,11 @@ import Link from 'next/link'
 import { supabase, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getLatestCompletedAdviceForCurrentUser, getActiveAdviceDismissalKeysForCurrentUser } from '@/lib/supabase'
 import type { AnalyticsRunMeta } from '@/types'
 import type { AnalyticsRunAdviceRow, AdviceCard } from '@/lib/analytics/advice/types'
-import { formatDateTime as formatAdviceDateTime } from '@/lib/analytics/advice/presentation'
 import { computeAdviceKey } from '@/lib/analytics/advice/adviceKey'
 import AdviceCardView from '@/components/AdviceCardView'
 import CoachAdviceDrawer from '@/components/CoachAdviceDrawer'
+import { adviceLabels, formatAdviceTimestamp, resolveRevisionLanguage } from '@/lib/analytics/advice/adviceLabels'
+import type { AdviceLanguage } from '@/lib/analytics/advice/adviceLanguage'
 
 export default function HomePage() {
   const router = useRouter()
@@ -42,6 +43,7 @@ export default function HomePage() {
   // never flashes on screen before being filtered out.
   const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set())
   const [dismissalsLoading, setDismissalsLoading] = useState(true)
+  const [viewerLanguage, setViewerLanguage] = useState<AdviceLanguage | null>(null)
   const [openAdviceCode, setOpenAdviceCode] = useState<string | null>(null)
   const [dismissingCodes, setDismissingCodes] = useState<Set<string>>(new Set())
   const [dismissToast, setDismissToast] = useState<string | null>(null)
@@ -51,6 +53,9 @@ export default function HomePage() {
       setAdviceLoading(true)
       const { data } = await getLatestCompletedAdviceForCurrentUser()
       setLatestCompletedAdvice(data)
+      // Only a fallback for legacy revisions that stored no language (RLS: the caller's own app_users row).
+      const { data: pref } = await supabase.from('app_users').select('preferred_language').maybeSingle()
+      setViewerLanguage(pref?.preferred_language === 'ru' ? 'ru' : pref?.preferred_language === 'en' ? 'en' : null)
       setAdviceLoading(false)
     }
     loadLatestCompletedAdvice()
@@ -68,6 +73,11 @@ export default function HomePage() {
     const cards = latestCompletedAdvice?.advice.advice?.advice_cards ?? []
     return cards.filter((card) => !dismissedKeys.has(computeAdviceKey(card)))
   }, [latestCompletedAdvice, dismissedKeys])
+
+  // Advice chrome follows the language stored WITH the displayed revision; only legacy revisions with no stored
+  // language fall back to the viewer's current preference (then English).
+  const adviceLanguage = resolveRevisionLanguage(latestCompletedAdvice?.advice.input_packet?.language, viewerLanguage)
+  const AL = adviceLabels(adviceLanguage)
 
   // Drawer is derived from the visible cards, so a dismissed card closes it.
   const openAdviceCard = useMemo(
@@ -90,7 +100,7 @@ export default function HomePage() {
       if (!res.ok) throw new Error('Failed to dismiss advice')
 
       setDismissedKeys((prev) => new Set(prev).add(computeAdviceKey(card)))
-      setDismissToast('Hidden for 30 days')
+      setDismissToast(AL.hiddenFor30Days)
       setTimeout(() => setDismissToast(null), 2500)
     } catch (err) {
       console.error('[Dashboard] dismiss advice failed:', err)
@@ -406,9 +416,9 @@ export default function HomePage() {
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <p className="page-overline">Latest Analytics Advice</p>
+              <p className="page-overline">{AL.latestAnalyticsAdvice}</p>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                From the Analytics Run generated {formatAdviceDateTime(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at)}.
+                {AL.fromRunGenerated} {formatAdviceTimestamp(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at, adviceLanguage)}.
               </p>
             </div>
             {dismissToast && (
@@ -434,6 +444,7 @@ export default function HomePage() {
                     onDismiss={() => handleDismissAdvice(card)}
                     dismissing={dismissingCodes.has(card.advice_code)}
                     onViewDetails={() => setOpenAdviceCode(card.advice_code)}
+                    language={adviceLanguage}
                   />
                 ))}
               </div>
@@ -446,6 +457,7 @@ export default function HomePage() {
               onDismiss={() => handleDismissAdvice(openAdviceCard)}
               dismissing={dismissingCodes.has(openAdviceCard.advice_code)}
               returnTo="/"
+              viewerLanguage={viewerLanguage}
               onClose={() => setOpenAdviceCode(null)}
             />
           )}

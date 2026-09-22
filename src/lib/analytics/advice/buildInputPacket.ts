@@ -14,6 +14,7 @@
 // by construction of the caller).
 
 import { buildListingDemandSources, type ListingDemandContext } from './listingDemandContext';
+import { DEFAULT_ADVICE_LANGUAGE, type AdviceLanguage } from './adviceLanguage';
 import type {
   AdviceInputPacket,
   AdviceInputPacketRunMeta,
@@ -180,6 +181,8 @@ export interface BuildAdviceInputPacketParams {
    *  yields exactly the packet this function always produced. It never makes an
    *  otherwise evidence-less run generatable. */
   listingDemand?: ListingDemandContext | null;
+  /** Requested advice language; part of the hashed packet. Defaults to 'en'. */
+  language?: AdviceLanguage;
 }
 
 export interface BuildAdviceInputPacketResult {
@@ -248,6 +251,7 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
     confirmed_patterns: confirmedPatterns,
     preliminary_hypotheses: preliminaryHypotheses,
     pattern_selection_summary: selectionSummary,
+    language: params.language ?? DEFAULT_ADVICE_LANGUAGE,
     ...(params.listingDemand ? { listing_demand: params.listingDemand } : {}),
     allowed_source_ids: [...allSources.map((s) => s.source_id), ...demandSources.map((s) => s.source_id)],
   };

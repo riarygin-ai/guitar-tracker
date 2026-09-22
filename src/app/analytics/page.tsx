@@ -6,6 +6,8 @@ import { useSearchParams } from 'next/navigation';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import { invalidateListingAdviceCache } from '@/lib/listingsCacheStore';
 import AdviceCardView from '@/components/AdviceCardView';
+import { resolveRevisionLanguage } from '@/lib/analytics/advice/adviceLabels';
+import { describeAdviceLanguage } from '@/lib/analytics/advice/adviceLanguage';
 import {
   supabase,
   getRecentAnalyticsRuns,
@@ -964,6 +966,7 @@ export default function AnalyticsPage() {
                   <span>Generated {formatAdviceDateTime(selectedAdvice.generated_at)}</span>
                   <span>{selectedAdvice.provider} / {selectedAdvice.model}</span>
                   <span>Prompt {selectedAdvice.prompt_template_version}</span>
+                  {selectedAdvice.input_packet?.language && <span data-advice-language>Language: {describeAdviceLanguage(selectedAdvice.input_packet.language)}</span>}
                   {selectedAdvice.canonical_input_hash && (
                     <span className="font-mono" title={selectedAdvice.canonical_input_hash}>
                       Packet hash {selectedAdvice.canonical_input_hash.slice(0, 12)}…
@@ -1020,6 +1023,7 @@ export default function AnalyticsPage() {
                         key={card.advice_code}
                         card={card}
                         evidence={{ kind: 'button', onClick: () => handleViewEvidence(card.source_ids) }}
+                        language={resolveRevisionLanguage(selectedAdvice.input_packet?.language)}
                       />
                     ))}
                   </div>

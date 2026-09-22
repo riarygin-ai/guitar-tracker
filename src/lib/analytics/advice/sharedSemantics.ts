@@ -73,10 +73,24 @@ function sentences(text: string): string[] {
   return text.split(/(?<=[.!?])\s+|\n+|;/).map((s) => s.trim()).filter(Boolean);
 }
 
+// Russian output must obey the same no-fake-conversion rule. JS \b is ASCII-only, so these use plain
+// stems (no word boundaries). A disclaimer with a Russian negation cue ("нет конверсии", "нельзя оценить
+// конверсию") passes; an unqualified claim, or a quality-qualified/negated verb, is flagged.
+const RU_CONVERSION_TERMS: RegExp[] = [/конверси/i, /конвертир/i, /конвертац/i];
+const RU_ALWAYS_FLAGGED: RegExp[] = [
+  /(?:низк|плох|слаб|высок|сильн|хорош|здоров)\S*\s+(?:лид\S*\s+)?конверси/i,
+  /не\s+(?:\S+\s+)?конвертир/i,
+  /конвертир\S*\s+(?:плохо|хорошо|слабо|сильно)/i,
+];
+const RU_NEGATION_CUES = /(?:^|[^а-яё])(?:нет|нельзя|невозможно|отсутствует|отсутствуют|без|не\s+(?:может|можем|можно|удаётся|удается|определить|рассчит\S*|связан\S*))(?![а-яё])/i;
+
 /** Returns the violations found in `text` (empty when the text is acceptable). */
 export function findLeadDealViolations(text: string): LeadDealViolation[] {
   const found = new Set<LeadDealViolation>();
   for (const sentence of sentences(text)) {
+    if (RU_ALWAYS_FLAGGED.some((re) => re.test(sentence)) || (RU_CONVERSION_TERMS.some((re) => re.test(sentence)) && !RU_NEGATION_CUES.test(sentence))) {
+      found.add('CONVERSION_CLAIM');
+    }
     if (ALWAYS_FLAGGED.some((re) => re.test(sentence)) || (CONVERSION_TERMS.some((re) => re.test(sentence)) && !NEGATION_CUES.test(sentence))) {
       found.add('CONVERSION_CLAIM');
     }

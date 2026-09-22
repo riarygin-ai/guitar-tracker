@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getLatestListingAdvice } from '@/lib/analytics/listingAdvice/generateListingAdvice';
+import { normalizeAdviceLanguage } from '@/lib/analytics/advice/adviceLanguage';
 import { getActiveListingDismissalKeys } from '@/lib/analytics/listingAdvice/listingAdviceDismissal';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -25,13 +26,13 @@ export async function GET(req: NextRequest) {
   const { data: { user }, error: authError } = await db.auth.getUser();
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data: appUser } = await db.from('app_users').select('id, admin').eq('auth_user_id', user.id).single();
+  const { data: appUser } = await db.from('app_users').select('id, admin, preferred_language').eq('auth_user_id', user.id).single();
   if (!appUser) return NextResponse.json({ error: 'No app user found for this account' }, { status: 403 });
 
   try {
     const advice = await getLatestListingAdvice(db, appUser.id as number);
     const dismissedKeys = await getActiveListingDismissalKeys(db);
-    return NextResponse.json({ ...advice, dismissed_keys: dismissedKeys, viewer_is_admin: appUser.admin === true });
+    return NextResponse.json({ ...advice, dismissed_keys: dismissedKeys, viewer_is_admin: appUser.admin === true, viewer_language: normalizeAdviceLanguage(appUser.preferred_language) });
   } catch (err) {
     console.error('[api/listing-advice] load failed:', err instanceof Error ? err.message : String(err));
     return NextResponse.json({ error: 'Could not load Listing Advice' }, { status: 500 });

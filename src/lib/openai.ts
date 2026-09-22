@@ -3,6 +3,7 @@
 
 import OpenAI from 'openai';
 import { LEAD_DEAL_RULES, LISTING_DEMAND_SEMANTICS, PURPOSE_SEMANTICS } from './analytics/advice/sharedSemantics';
+import { normalizeAdviceLanguage, withAdviceLanguage, type AdviceLanguage } from './analytics/advice/adviceLanguage';
 
 // ── Model configuration ────────────────────────────────────────────────────────
 // Change MODEL_ID here to swap models without touching other code.
@@ -299,6 +300,21 @@ ${PURPOSE_SEMANTICS}
 
 Respond with ONLY the structured JSON object matching the required schema — no prose outside the JSON.`;
 
+/** Language recorded in an advice packet (legacy/malformed -> English). */
+function packetLanguage(packet: unknown): AdviceLanguage {
+  return normalizeAdviceLanguage((packet as { language?: unknown } | null)?.language);
+}
+
+/** The exact system prompt for a General Coach call: ONE canonical prompt + the language instruction. */
+export function adviceSystemPromptFor(language: AdviceLanguage): string {
+  return withAdviceLanguage(ADVICE_SYSTEM_PROMPT, language);
+}
+
+/** The exact system prompt for a Listing Advice call: ONE canonical prompt + the language instruction. */
+export function listingAdviceSystemPromptFor(language: AdviceLanguage): string {
+  return withAdviceLanguage(LISTING_ADVICE_SYSTEM_PROMPT, language);
+}
+
 export interface AnalyticsAdviceGenerationResult {
   raw: string;
   model: string;
@@ -320,7 +336,7 @@ export async function generateAnalyticsAdvice(packet: unknown): Promise<Analytic
     {
       model: ADVICE_MODEL_ID,
       messages: [
-        { role: 'system', content: ADVICE_SYSTEM_PROMPT },
+        { role: 'system', content: adviceSystemPromptFor(packetLanguage(packet)) },
         { role: 'user', content: `Advice Input Packet:\n${JSON.stringify(packet)}` },
       ],
       max_tokens: ADVICE_MAX_TOKENS,
@@ -423,7 +439,7 @@ export async function generateListingAdviceFromModel(packet: unknown): Promise<A
     {
       model: LISTING_ADVICE_MODEL_ID,
       messages: [
-        { role: 'system', content: LISTING_ADVICE_SYSTEM_PROMPT },
+        { role: 'system', content: listingAdviceSystemPromptFor(packetLanguage(packet)) },
         { role: 'user', content: `Listing Advice Input Packet:\n${JSON.stringify(packet)}` },
       ],
       max_tokens: LISTING_ADVICE_MAX_TOKENS,

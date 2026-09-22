@@ -53,6 +53,8 @@ export interface AppUser {
   email: string | null;
   display_name: string;
   admin: boolean;
+  /** Preferred AI Advice language ('en' | 'ru'); Coach + Listing Advice prose only. */
+  preferred_language?: string;
   created_at: string;
 }
 

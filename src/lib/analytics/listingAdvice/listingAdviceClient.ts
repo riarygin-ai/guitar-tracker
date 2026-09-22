@@ -4,9 +4,12 @@
 // generation (that lives solely in the Analytics workflow).
 
 import { supabase } from '@/lib/supabase';
+import { normalizeAdviceLanguage, type AdviceLanguage } from '../advice/adviceLanguage';
 import type { LatestListingAdvice } from './generateListingAdvice';
 
-export type LatestListingAdviceResponse = LatestListingAdvice & { viewer_is_admin: boolean; dismissed_keys: string[] };
+export type LatestListingAdviceResponse = LatestListingAdvice & { viewer_is_admin: boolean; dismissed_keys: string[];
+  /** Viewer's CURRENT preferred_language — only a fallback for legacy runs with no stored language. */
+  viewer_language: AdviceLanguage };
 
 async function bearer(): Promise<string | null> {
   const { data: { session } } = await supabase.auth.getSession();
@@ -25,6 +28,7 @@ export async function fetchLatestListingAdvice(): Promise<LatestListingAdviceRes
     generating: !!payload.generating,
     last_failure: payload.last_failure ?? null,
     viewer_is_admin: !!payload.viewer_is_admin,
+    viewer_language: normalizeAdviceLanguage(payload.viewer_language),
     dismissed_keys: Array.isArray(payload.dismissed_keys) ? payload.dismissed_keys : [],
   };
 }

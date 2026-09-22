@@ -17,8 +17,10 @@ import { buildAdviceInputPacket } from './buildInputPacket';
 import { loadListingDemandContext, type ListingDemandContext } from './listingDemandContext';
 import { hashCanonicalInputPacket } from './canonicalHash';
 import { validateAdviceResponse } from './validateAdviceResponse';
+import { getUserPreferredLanguage } from './userLanguage';
+import type { AdviceLanguage } from './adviceLanguage';
 import { ADVICE_PROVIDER, ADVICE_SCHEMA_VERSION, PROMPT_TEMPLATE_VERSION } from './types';
-import type { AdviceStatus, AnalyticsRunAdviceRow } from './types';
+import type { AdviceInputPacket, AdviceStatus, AnalyticsRunAdviceRow } from './types';
 
 export type GenerateAdviceOutcome =
   | { status: 'completed'; row: AnalyticsRunAdviceRow }
@@ -38,6 +40,11 @@ export interface GenerateAdviceForRunParams {
    *  Regenerate: always creates revision_number + 1, regardless of how
    *  many revisions already exist. */
   mode: 'auto' | 'retry';
+  /** Advice prose language. runAnalyticsWorkflow resolves it once and passes it to both AI stages; when omitted
+   *  (e.g. a direct retry) it is resolved server-side from the caller's own app_users row. */
+  language?: AdviceLanguage;
+  /** Test seam: replaces the OpenAI call. Production callers pass nothing. */
+  deps?: { callModel?: (packet: AdviceInputPacket) => Promise<{ raw: string }> };
 }
 
 const ADVICE_ROW_COLUMNS =
@@ -174,6 +181,8 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
   // unusable: any failure/timeout is logged, the block is simply omitted, and
   // generation continues with the existing context. No fallback metrics are
   // ever fabricated. The exact block used is persisted inside input_packet.
+  const language = params.language ?? await getUserPreferredLanguage(serviceClient, requestingUserId);
+
   let listingDemand: ListingDemandContext | null = null;
   try {
     listingDemand = await loadListingDemandContext({ appUserId: requestingUserId, serviceClient });
@@ -188,6 +197,7 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
     evidenceScope: run.evidence_scope as string,
     snapshot: run.snapshot,
     listingDemand,
+    language,
   });
 
   if (!packet) {
@@ -215,7 +225,7 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
   // ── 6. Call OpenAI with that same packet. ────────────────────────────
   let raw: string;
   try {
-    const result = await generateAnalyticsAdvice(packet);
+    const result = await (params.deps?.callModel ?? generateAnalyticsAdvice)(packet);
     raw = result.raw;
   } catch (openAiError) {
     const row = await markFailed(serviceClient, rowId, 'OPENAI_ERROR', sanitizeErrorMessage(openAiError));

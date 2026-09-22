@@ -19,7 +19,8 @@ import { LISTING_ADVICE_KEY } from '@/lib/listingsCacheKeys';
 import { listingsCache } from '@/lib/listingsCacheStore';
 import { useSwrResource } from '@/lib/useSwrResource';
 import { listingAdviceKey } from '@/lib/listingAdviceKey';
-import { ADVICE_TYPE_LABEL, formatGeneratedAt, formatWindowLabel } from '@/lib/listingAdviceView';
+import { formatWindowLabel } from '@/lib/listingAdviceView';
+import { adviceLabels, formatAdviceTimestamp, resolveRevisionLanguage } from '@/lib/analytics/advice/adviceLabels';
 import type { ListingAdviceCard } from '@/lib/analytics/listingAdvice/listingAdvice';
 
 const TYPE_TONE: Record<string, string> = {
@@ -39,6 +40,9 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
   const data = res.data;
   const latest = data?.latest ?? null;
   const allCards = latest?.output?.cards ?? [];
+  // Chrome follows the language stored with the displayed run (legacy: viewer's current preference, then English).
+  const language = resolveRevisionLanguage(latest?.input_packet?.language, data?.viewer_language);
+  const L = adviceLabels(language);
   const dismissed = new Set([...(data?.dismissed_keys ?? []), ...hiddenKeys]);
   const cards = allCards.filter((c) => !dismissed.has(listingAdviceKey(c)));
 
@@ -62,13 +66,13 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:p-5" data-listing-advice>
       <div className="min-w-0">
-        <p className="section-title">Listing Advice</p>
+        <p className="section-title">{L.listingAdviceTitle}</p>
         {latest ? (
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            Generated {formatGeneratedAt(latest.generated_at)} · 4-week demand window: {formatWindowLabel(latest.window_start, latest.window_end)}
+            {L.generated} {formatAdviceTimestamp(latest.generated_at, language)} · {L.demandWindow}: {formatWindowLabel(latest.window_start, latest.window_end)}
           </p>
         ) : (
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">AI interpretation of your recent listing demand — separate from the facts below.</p>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{L.listingAdviceSubtitle}</p>
         )}
       </div>
 
@@ -78,31 +82,31 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
         </p>
       )}
 
-      {!latest && res.isLoading && <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Loading Listing Advice…</p>}
+      {!latest && res.isLoading && <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">{L.loading}</p>}
 
       {!latest && res.error && (
         <div className="mt-3 flex flex-wrap items-center gap-3" data-advice-load-error>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Listing Advice is unavailable right now.</p>
-          <button type="button" className={BTN} onClick={() => { listingsCache.load(LISTING_ADVICE_KEY, fetchLatestListingAdvice, { force: true }).catch(() => undefined); }}>Retry</button>
+          <p className="text-sm text-slate-500 dark:text-slate-400">{L.unavailable}</p>
+          <button type="button" className={BTN} onClick={() => { listingsCache.load(LISTING_ADVICE_KEY, fetchLatestListingAdvice, { force: true }).catch(() => undefined); }}>{L.retry}</button>
         </div>
       )}
 
       {!latest && !res.isLoading && !res.error && (
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1" data-advice-empty>
-          <p className="text-sm text-slate-500 dark:text-slate-400">No Listing Advice has been generated yet.</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">{L.noneYet}</p>
           {data?.viewer_is_admin && (
-            <Link href="/analytics" className="text-xs font-medium text-sky-700 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-sky-300">Run Analytics</Link>
+            <Link href="/analytics" className="text-xs font-medium text-sky-700 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-sky-300">{L.runAnalytics}</Link>
           )}
         </div>
       )}
 
       {latest && allCards.length === 0 && (
-        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400" data-advice-no-cards>No material listing advice for this window.</p>
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400" data-advice-no-cards>{L.noMaterialAdvice}</p>
       )}
 
       {latest && allCards.length > 0 && cards.length === 0 && (
         <p className="mt-3 text-sm text-slate-500 dark:text-slate-400" data-advice-all-dismissed>
-          You&apos;ve dismissed all current Listing Advice. New advice appears after the next Analytics run.
+          {L.allDismissed}
         </p>
       )}
 
@@ -116,24 +120,24 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
                 onClick={() => setOpenCard(card)}
                 className="flex min-w-0 flex-1 flex-col rounded-t-2xl p-3.5 pb-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
               >
-                <span className={`text-[11px] font-semibold uppercase tracking-wider ${TYPE_TONE[card.advice_type] ?? ''}`}>{ADVICE_TYPE_LABEL[card.advice_type]}</span>
+                <span className={`text-[11px] font-semibold uppercase tracking-wider ${TYPE_TONE[card.advice_type] ?? ''}`}>{L.type[card.advice_type]}</span>
                 <span className="mt-1 break-words text-sm font-semibold leading-snug text-slate-900 dark:text-white">{card.title}</span>
                 <span className="mt-1.5 line-clamp-4 break-words text-xs text-slate-600 dark:text-slate-300">{card.summary}</span>
                 <span className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                  <PriorityBadge priority={card.priority} />
-                  <ConfidencePill confidence={card.confidence_label} />
+                  <PriorityBadge priority={card.priority} language={language} />
+                  <ConfidencePill confidence={card.confidence_label} language={language} />
                 </span>
-                <span className="mt-2 text-[11px] font-medium text-slate-400 dark:text-slate-500">View details ›</span>
+                <span className="mt-2 text-[11px] font-medium text-slate-400 dark:text-slate-500">{L.viewDetails} ›</span>
               </button>
               <div className="flex justify-end px-3 pb-2.5">
                 <button
                   type="button"
                   data-advice-dismiss
                   onClick={() => dismiss(card)}
-                  aria-label={`Dismiss advice: ${card.title}`}
+                  aria-label={`${L.dismissAdvice}: ${card.title}`}
                   className="rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-200"
                 >
-                  Dismiss
+                  {L.dismiss}
                 </button>
               </div>
             </div>
@@ -143,12 +147,12 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
 
       {latest && data?.viewer_is_admin && data.last_failure && (
         <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500" data-advice-last-failure>
-          The most recent Listing Advice update failed ({data.last_failure.error_code}); the previous advice is shown.
+          {L.lastFailure.replace('{code}', data.last_failure.error_code)}
         </p>
       )}
 
       {openCard && latest && (
-        <ListingAdviceDrawer card={openCard} run={latest} returnTo={returnTo} showDebug={!!data?.viewer_is_admin} onClose={closeDrawer} />
+        <ListingAdviceDrawer card={openCard} run={latest} returnTo={returnTo} showDebug={!!data?.viewer_is_admin} viewerLanguage={data?.viewer_language} onClose={closeDrawer} />
       )}
     </div>
   );

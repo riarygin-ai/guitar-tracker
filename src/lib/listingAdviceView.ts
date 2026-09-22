@@ -135,6 +135,8 @@ export interface AdviceAction {
   kind: 'open_item' | 'view_leads';
   /** What the action is about (item / channel name) — for accessible names. */
   subject: string;
+  /** Set when the subject is a standard phrase the UI localizes (instead of an item/channel name). */
+  subjectKey?: 'market_window';
 }
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -184,7 +186,7 @@ export function adviceActions(card: { source_ids: string[] }, packet: DemandPack
         leadsStarted: sum(weeks.map((w) => w.leads_started)),
         seriousPlusLeads: sum(weeks.map((w) => w.serious_plus_leads_from_cohort)),
       }, returnTo);
-      if (url) push({ label: 'View Leads', href: url, kind: 'view_leads', subject: 'all leads in the 4-week window' });
+      if (url) push({ label: 'View Leads', href: url, kind: 'view_leads', subject: 'all leads in the 4-week window', subjectKey: 'market_window' });
     }
   }
   return out;
