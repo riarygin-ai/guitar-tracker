@@ -10,7 +10,7 @@ import { buildRawRows, parseHeaders } from './normalize';
 import { validateAndClassifyRow, type ExistingLeadInfo, type ValidationContext } from './validate';
 import { KNOWN_CHANNEL_NAMES } from './types';
 import { SOURCE_FATAL } from './errorCodes';
-import type { LeadImportSource, PreviewResult, RowValidationResult, SheetCellValue, ValidationIssue } from './types';
+import type { LeadImportSource, PreviewResult, RawSheetRow, RowValidationResult, SheetCellValue, ValidationIssue } from './types';
 
 // One classification pass over a whole sheet: `preview` is the
 // browser-safe summary, `rows` the server-only detail (including each
@@ -111,6 +111,39 @@ async function loadItemOwnerByItemId(
   return map;
 }
 
+// deals.id -> owning app_users.id, and deals.id -> its OUTGOING ('out')
+// item ids, for every deal_id referenced anywhere in the sheet. A deal
+// absent from the first map simply doesn't exist (DEAL_NOT_FOUND); a deal
+// present with no entry in the second map has no outgoing items at all
+// (DEAL_ITEM_MISMATCH, same as an empty set).
+async function loadDealContextByDealId(
+  serviceClient: SupabaseClient,
+  dealIds: number[],
+): Promise<{ dealOwnerByDealId: Map<number, number>; dealOutgoingItemIdsByDealId: Map<number, Set<number>> }> {
+  if (dealIds.length === 0) return { dealOwnerByDealId: new Map(), dealOutgoingItemIdsByDealId: new Map() };
+
+  const [dealsRes, outgoingRes] = await Promise.all([
+    serviceClient.from('deals').select('id, user_id').in('id', dealIds),
+    serviceClient.from('deal_items').select('deal_id, item_id').eq('direction', 'out').in('deal_id', dealIds),
+  ]);
+  if (dealsRes.error) throw new Error(`Failed to load deals ownership: ${dealsRes.error.message}`);
+  if (outgoingRes.error) throw new Error(`Failed to load deal_items (outgoing): ${outgoingRes.error.message}`);
+
+  const dealOwnerByDealId = new Map<number, number>();
+  for (const row of (dealsRes.data ?? []) as { id: number; user_id: number }[]) {
+    dealOwnerByDealId.set(row.id, row.user_id);
+  }
+
+  const dealOutgoingItemIdsByDealId = new Map<number, Set<number>>();
+  for (const row of (outgoingRes.data ?? []) as { deal_id: number; item_id: number }[]) {
+    const set = dealOutgoingItemIdsByDealId.get(row.deal_id) ?? new Set<number>();
+    set.add(row.item_id);
+    dealOutgoingItemIdsByDealId.set(row.deal_id, set);
+  }
+
+  return { dealOwnerByDealId, dealOutgoingItemIdsByDealId };
+}
+
 export interface RunPreviewParams {
   serviceClient: SupabaseClient;
   source: LeadImportSource;
@@ -182,17 +215,20 @@ export async function classifySheetValuesDetailed(
   const dupIssues = detectDuplicateLeadIds(rawRows);
   if (dupIssues.length > 0) return { preview: fatalResult(dupIssues), rows: [] };
 
-  const itemIds = Array.from(new Set(
+  const collectCandidateIds = (cell: (r: RawSheetRow) => SheetCellValue) => Array.from(new Set(
     rawRows
-      .map((r) => r.cells.item_id)
+      .map(cell)
       .map((v) => (typeof v === 'number' ? v : typeof v === 'string' ? Number(v.trim()) : NaN))
       .filter((n) => Number.isInteger(n) && n > 0),
   ));
+  const itemIds = collectCandidateIds((r) => r.cells.item_id);
+  const dealIds = collectCandidateIds((r) => r.cells.deal_id);
 
-  const [channelNameToId, existingLeadsByLeadId, itemOwnerByItemId] = await Promise.all([
+  const [channelNameToId, existingLeadsByLeadId, itemOwnerByItemId, dealContext] = await Promise.all([
     loadChannelNameToId(serviceClient),
     loadExistingLeadsByUser(serviceClient, source.user_id),
     loadItemOwnerByItemId(serviceClient, itemIds),
+    loadDealContextByDealId(serviceClient, dealIds),
   ]);
 
   const ctx: ValidationContext = {
@@ -200,6 +236,8 @@ export async function classifySheetValuesDetailed(
     channelNameToId,
     existingLeadsByLeadId,
     itemOwnerByItemId,
+    dealOwnerByDealId: dealContext.dealOwnerByDealId,
+    dealOutgoingItemIdsByDealId: dealContext.dealOutgoingItemIdsByDealId,
   };
 
   const rows: RowValidationResult[] = rawRows.map((raw) => validateAndClassifyRow(raw, ctx));

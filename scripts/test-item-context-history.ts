@@ -10,9 +10,12 @@
  *
  * Verifies: Item ID present; every cycle is listed under the right
  * platform/cycle number; price history is chronological and attached to the
- * right cycle; lead totals/platform counts equal the underlying rows;
- * exactly four queries regardless of data size (no N+1); no cross-user
- * leakage in either direction. Prints the generated context at the end.
+ * right cycle; lead totals/platform counts equal the underlying rows; no
+ * N+1 (5 queries when the item has no exit deal, 6 when it does — see [A]);
+ * the completed EXIT deal (never an acquisition/incoming deal) is resolved
+ * correctly for sold/traded/still-owned/incoming-trade items (see [E2]); no
+ * cross-user leakage in either direction. Prints the generated context at
+ * the end.
  *
  * Local Supabase only (safety-gated); every row created is deleted.
  *
@@ -187,12 +190,17 @@ async function main() {
     const clientA = await signIn(emailA);
     const clientB = await signIn(emailB);
 
-    console.log('\n[A — loader: four queries, no N+1]');
+    console.log('\n[A — loader: no N+1]');
     const counted = countingClient(clientA);
     const history = await loadItemContextHistory(counted.client, item.id);
     const calls = counted.calls();
-    check('exactly 4 queries (listings, leads, channels, price history) for 4 cycles + 5 leads', calls.length === 4, calls);
-    check('one query per table (no per-cycle / per-lead queries)', new Set(calls).size === 4 && calls.filter((c) => c === 'item_listing_price_history').length === 1);
+    // This item has no 'out' deal_items row at all (still owned, acquisition-
+    // only), so the exit-deal resolver short-circuits before ever querying
+    // `deals` — 5 queries here, not 6 (a sold/traded item's own history call,
+    // exercised below in [E2], does reach `deals` and makes exactly 6).
+    check('exactly 5 queries (listings, leads, channels, price history, deal_items) — no exit deal means `deals` is never queried', calls.length === 5, calls);
+    check('one query per table (no per-cycle / per-lead / per-deal queries)', new Set(calls).size === 5 && calls.filter((c) => c === 'item_listing_price_history').length === 1);
+    check('this item has no exit deal (acquisition-only, still owned)', history.exitDealId === null, history.exitDealId);
     check('4 listing cycles loaded (ended + active Reverb, Marketplace, cancelled Kijiji)', history.listingCycles.length === 4, history.listingCycles.length);
     check('5 leads loaded for the item', history.leads.length === 5, history.leads.length);
 
@@ -252,6 +260,67 @@ async function main() {
     let anonBlocked = false;
     try { const anonHistory = await loadItemContextHistory(anon, item.id); anonBlocked = anonHistory.listingCycles.length === 0 && anonHistory.leads.length === 0; } catch { anonBlocked = true; }
     check('an unauthenticated client gets nothing (or is denied outright)', anonBlocked);
+
+    console.log('\n[E2 — Deal ID: the completed EXIT deal, never the acquisition/incoming deal]');
+    {
+      // Each of these starts from insertItem's own default acquisition
+      // ('purchase' deal, direction='in') — exactly the "historical import /
+      // opening acquisition only" shape (edge case G) — then gets ONE more
+      // deal_items row to model its actual outcome.
+      const soldItem = await insertItem(userA, 'Ctx Sold Exit Item');
+      const { data: saleDeal, error: saleErr } = await admin.from('deals').insert({ user_id: userA, deal_type: 'sale', deal_date: '2026-08-10' }).select('id').single();
+      if (saleErr) throw saleErr;
+      dealIds.push(saleDeal.id as number);
+      await admin.from('deal_items').insert({ user_id: userA, deal_id: saleDeal.id, item_id: soldItem.id, direction: 'out', total_value: 3000 });
+
+      const tradedAwayItem = await insertItem(userA, 'Ctx Traded Away Exit Item');
+      const { data: tradeOutDeal, error: tradeOutErr } = await admin.from('deals').insert({ user_id: userA, deal_type: 'trade', deal_date: '2026-08-11' }).select('id').single();
+      if (tradeOutErr) throw tradeOutErr;
+      dealIds.push(tradeOutDeal.id as number);
+      await admin.from('deal_items').insert({ user_id: userA, deal_id: tradeOutDeal.id, item_id: tradedAwayItem.id, direction: 'out', total_value: 2500 });
+
+      // An item that came IN on a trade (in addition to insertItem's own
+      // 'purchase' acquisition) and is still owned — its ONLY deal_items rows
+      // are both 'in'. The incoming trade must never be exposed as an exit deal.
+      const incomingTradeItem = await insertItem(userA, 'Ctx Incoming Trade Item');
+      const { data: tradeInDeal, error: tradeInErr } = await admin.from('deals').insert({ user_id: userA, deal_type: 'trade', deal_date: '2026-08-12' }).select('id').single();
+      if (tradeInErr) throw tradeInErr;
+      dealIds.push(tradeInDeal.id as number);
+      await admin.from('deal_items').insert({ user_id: userA, deal_id: tradeInDeal.id, item_id: incomingTradeItem.id, direction: 'in', total_value: 2400 });
+
+      const { data: soldAcquisition } = await admin.from('deal_items').select('deal_id').eq('item_id', soldItem.id).eq('direction', 'in').single();
+
+      const countedSold = countingClient(clientA);
+      const soldHistory = await loadItemContextHistory(countedSold.client, soldItem.id);
+      // (channel/price-history queries are themselves skipped when there are
+      // no listings — this fresh item has none — so only the `deals` lookup
+      // triggered by having an exit deal is asserted here, not a fixed total.)
+      check('an item WITH an exit deal makes the extra `deals` lookup (skipped entirely when there is no exit deal, per [A])', countedSold.calls().includes('deals') && countedSold.calls().includes('deal_items'), countedSold.calls());
+      check('B: a sold item resolves its Sell deal as the exit deal (not the purchase deal insertItem also created)', soldHistory.exitDealId === saleDeal.id && soldHistory.exitDealId !== soldAcquisition?.deal_id, soldHistory.exitDealId);
+
+      const tradedHistory = await loadItemContextHistory(clientA, tradedAwayItem.id);
+      check('C: an item traded away resolves the Trade it went OUT on as the exit deal', tradedHistory.exitDealId === tradeOutDeal.id, tradedHistory.exitDealId);
+
+      const incomingHistory = await loadItemContextHistory(clientA, incomingTradeItem.id);
+      check('F: an item that came IN via a trade and is still owned has NO exit deal — the incoming trade is never exposed as one',
+        incomingHistory.exitDealId === null && incomingHistory.exitDealId !== tradeInDeal.id, incomingHistory.exitDealId);
+
+      const stillOwnedHistory = await loadItemContextHistory(clientA, item.id);
+      check('A/G: an item that is only ever acquired (historical import / opening acquisition) and still owned has no exit deal', stillOwnedHistory.exitDealId === null, stillOwnedHistory.exitDealId);
+
+      // Copy Item Context actually renders it.
+      const emptyRelated = {
+        brandName: null, categoryName: null, typeName: null, purposeName: null, tagNames: [] as string[],
+        valueIn: null, valueOut: null, totalExpenses: 0, potentialReward: null, potentialRoi: null,
+        realizedGain: null, realizedRoi: null, acquiredDate: null,
+      };
+      const soldText = buildItemContext({ ...soldItem, status: 'sold', sold_date: '2026-08-10' }, { ...emptyRelated, exitDealId: soldHistory.exitDealId });
+      check('Copy Item Context for the sold item shows "Deal ID: <sell deal id>"', soldText.includes(`Deal ID: ${saleDeal.id}`), soldText);
+
+      // Cross-user isolation: user B cannot resolve an exit deal for user A's item through RLS.
+      const asBExit = await loadItemContextHistory(clientB, soldItem.id);
+      check('user B cannot resolve an exit deal for user A\'s item (RLS: deal_items/deals rows are invisible)', asBExit.exitDealId === null, asBExit.exitDealId);
+    }
 
     console.log('\n[F — readable, paste-ready plain text]');
     check('plain text, no JSON/markup braces', !/[{}]/.test(text) && !text.includes('```'));

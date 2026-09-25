@@ -34,9 +34,9 @@ import {
   isValidUuid,
   parseHeaders,
 } from '../src/lib/leadImport/normalize';
-import { classifySheetValues } from '../src/lib/leadImport/preview';
+import { classifySheetValues, classifySheetValuesDetailed } from '../src/lib/leadImport/preview';
 import { runLeadImport } from '../src/lib/leadImport/importRun';
-import { EXPECTED_HEADERS, type ExpectedHeader, type LeadImportSource, type RowPreviewResult, type SheetCellValue } from '../src/lib/leadImport/types';
+import { ALL_HEADERS, EXPECTED_HEADERS, OPTIONAL_HEADERS, type LeadImportSource, type RowPreviewResult, type SheetCellValue, type SheetHeader } from '../src/lib/leadImport/types';
 import { ROW_ISSUE, ROW_WARNING, SOURCE_FATAL } from '../src/lib/leadImport/errorCodes';
 
 let passed = 0;
@@ -124,6 +124,23 @@ function randomUuid(): string {
   return crypto.randomUUID();
 }
 
+// ── Deal fixtures (Lead -> Deal linkage tests). Idempotent, same convention
+// as ensureItem/ensureSource — looked up by a tag (deals.notes) / exact
+// (deal_id, item_id, direction) triple and reused, never re-created. ───────
+async function ensureDeal(admin: SupabaseClient, userId: number, dealType: string, tag: string): Promise<number> {
+  const { data: existing } = await admin.from('deals').select('id').eq('notes', tag).maybeSingle();
+  if (existing) return existing.id as number;
+  const { data, error } = await admin.from('deals').insert({ user_id: userId, deal_date: '2026-01-01', deal_type: dealType, notes: tag }).select('id').single();
+  if (error) throw new Error(`Failed to create deal (type ${dealType}, tag ${tag}): ${error.message}`);
+  return data.id as number;
+}
+async function ensureDealItem(admin: SupabaseClient, userId: number, dealId: number, itemId: number, direction: 'in' | 'out'): Promise<void> {
+  const { data: existing } = await admin.from('deal_items').select('id').eq('deal_id', dealId).eq('item_id', itemId).eq('direction', direction).maybeSingle();
+  if (existing) return;
+  const { error } = await admin.from('deal_items').insert({ user_id: userId, deal_id: dealId, item_id: itemId, direction });
+  if (error) throw new Error(`Failed to create deal_item (deal ${dealId}, item ${itemId}, ${direction}): ${error.message}`);
+}
+
 async function main() {
   assertLocalSupabaseUrl(SUPABASE_URL);
   await assertLocalSupabaseIsRunning(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -141,7 +158,20 @@ async function main() {
   const itemB = await ensureItem(admin, userB, brandId, 'LEADIMPORT:userB:main');
   const sourceA = await ensureSource(admin, userA, 'User A GT Lead Log', 'fixture-spreadsheet-a');
   const sourceB = await ensureSource(admin, userB, 'User B GT Lead Log', 'fixture-spreadsheet-b');
-  console.log(`  userA=${userA} userB=${userB} itemA=${itemA} itemA2=${itemA2} itemB=${itemB} sourceA=${sourceA.id} sourceB=${sourceB.id}`);
+
+  // Deal fixtures for Lead -> Deal linkage tests:
+  //   dealOutA        — user A's completed Sale of itemA (itemA on the 'out' side).
+  //   dealTradeInA     — user A's completed Trade that brought itemA2 IN (itemA2 on the 'in' side only —
+  //                      never a valid exit deal for itemA2, and never a valid link target for it).
+  //   dealOutB         — user B's completed Sale of itemB (itemB on the 'out' side; owned by a different user).
+  const dealOutA = await ensureDeal(admin, userA, 'sale', 'LEADIMPORT:dealOutA');
+  await ensureDealItem(admin, userA, dealOutA, itemA, 'out');
+  const dealTradeInA = await ensureDeal(admin, userA, 'trade', 'LEADIMPORT:dealTradeInA');
+  await ensureDealItem(admin, userA, dealTradeInA, itemA2, 'in');
+  const dealOutB = await ensureDeal(admin, userB, 'sale', 'LEADIMPORT:dealOutB');
+  await ensureDealItem(admin, userB, dealOutB, itemB, 'out');
+
+  console.log(`  userA=${userA} userB=${userB} itemA=${itemA} itemA2=${itemA2} itemB=${itemB} sourceA=${sourceA.id} sourceB=${sourceB.id} dealOutA=${dealOutA} dealTradeInA=${dealTradeInA} dealOutB=${dealOutB}`);
 
   const createdItemLeadIds: number[] = [];
   async function insertLead(row: Record<string, unknown>): Promise<{ id: number | null; error: string | null }> {
@@ -270,8 +300,61 @@ async function main() {
       check('1.11 fully blank historical optional fields succeed', id !== null, error);
     }
 
+    // 1.12 deal_id schema: != NULL requires status = COMPLETED (item_leads_deal_id_requires_completed_check)
+    {
+      const bad = await insertLead(baseLeadRow({ status: 'OPEN', deal_id: dealOutA }));
+      check('1.12a deal_id set while status OPEN is rejected (CHECK constraint)', bad.id === null && !!bad.error, bad.error);
+      const good = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: dealOutA }));
+      check('1.12b deal_id set while status COMPLETED succeeds', good.id !== null, good.error);
+      const goodNull = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: null }));
+      check('1.12c COMPLETED with deal_id NULL still succeeds (historical backward compatibility)', goodNull.id !== null, goodNull.error);
+    }
+
+    // 1.13 deal_id FK integrity — a nonexistent deals.id is rejected
+    {
+      const bad = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: 999999999 }));
+      check('1.13 deal_id referencing a nonexistent deal is rejected (FK)', bad.id === null && !!bad.error, bad.error);
+    }
+
+    // 1.14 deal_id is not unique — the same deal_id links to two different leads
+    {
+      const a = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: dealOutA }));
+      const b = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: dealOutA }));
+      check('1.14 the same deal_id may be stored on more than one lead row (no UNIQUE constraint)', a.id !== null && b.id !== null && a.id !== b.id, { a, b });
+    }
+
+    // 1.15 deal_id participates in the material-field / newer-source-required guard
+    {
+      const leadId = randomUuid();
+      const created = await insertLead(baseLeadRow({ lead_id: leadId, status: 'OPEN', deal_id: null, source_updated_at: '2026-01-01T00:00:00Z' }));
+      check('1.15a insert with deal_id NULL succeeds', created.id !== null, created.error);
+      if (created.id !== null) {
+        const sameTimestamp = await admin.from('item_leads')
+          .update({ status: 'COMPLETED', deal_id: dealOutA, source_updated_at: '2026-01-01T00:00:00Z' })
+          .eq('id', created.id).select('id').maybeSingle();
+        check('1.15b changing deal_id (NULL -> a deal) WITHOUT a strictly newer source_updated_at is rejected', !sameTimestamp.data && !!sameTimestamp.error, sameTimestamp.error);
+        const advanced = await admin.from('item_leads')
+          .update({ status: 'COMPLETED', deal_id: dealOutA, source_updated_at: '2026-02-01T00:00:00Z' })
+          .eq('id', created.id).select('deal_id').maybeSingle();
+        check('1.15c changing deal_id (NULL -> a deal) WITH a strictly newer source_updated_at succeeds', advanced.data?.deal_id === dealOutA, advanced.error);
+        const revert = await admin.from('item_leads')
+          .update({ deal_id: null, source_updated_at: '2026-03-01T00:00:00Z' })
+          .eq('id', created.id).select('deal_id').maybeSingle();
+        check('1.15d changing deal_id back to NULL is also a material change, accepted with a newer source_updated_at', revert.data?.deal_id === null, revert.error);
+      }
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     console.log('\n=== Section 2: Google Sheets normalization (pure, no network) ===');
+
+    // 2.0 deal_id header contract: optional, not required; ALL_HEADERS = EXPECTED_HEADERS + OPTIONAL_HEADERS
+    {
+      check('2.0a deal_id is an OPTIONAL header, not a required one', (OPTIONAL_HEADERS as readonly string[]).includes('deal_id') && !(EXPECTED_HEADERS as readonly string[]).includes('deal_id'));
+      check('2.0b ALL_HEADERS is exactly EXPECTED_HEADERS + OPTIONAL_HEADERS', ALL_HEADERS.length === EXPECTED_HEADERS.length + OPTIONAL_HEADERS.length && ALL_HEADERS.slice(-1)[0] === 'deal_id');
+      const { headerIndex, fatalIssues } = parseHeaders([...EXPECTED_HEADERS]);
+      check('2.0c a sheet with only the required headers (no deal_id column) is not fatal for missing headers', fatalIssues.length === 0, fatalIssues);
+      check('2.0d deal_id is simply absent from headerIndex when the sheet has no such column', headerIndex.deal_id === undefined);
+    }
 
     // 2.1 header order independence
     {
@@ -382,9 +465,15 @@ async function main() {
     await insertLead(baseLeadRow({ lead_id: U_MISMATCH,  source_updated_at: T_MID, lead_quality: 'LOW', inventory_item_id: itemA }));
     await insertLead(baseLeadRow({ lead_id: U_REGRESS,   source_updated_at: T_MID, lead_quality: 'SERIOUS' }));
 
-    type SheetRow = Partial<Record<ExpectedHeader, SheetCellValue>>;
-    const sheetRow = (overrides: SheetRow): Record<ExpectedHeader, SheetCellValue> => {
-      const base: Record<ExpectedHeader, SheetCellValue> = {
+    // SheetHeader (EXPECTED_HEADERS + OPTIONAL_HEADERS, i.e. deal_id) so every
+    // scenario row can optionally carry a deal_id — defaults to null (a
+    // present-but-blank column), the common case. buildValues emits a full
+    // A:S sheet (deal_id header present) by default; a separate fixture
+    // below builds an explicit old-style A:R sheet with NO deal_id header
+    // at all, for the backward-compatibility test.
+    type SheetRow = Partial<Record<SheetHeader, SheetCellValue>>;
+    const sheetRow = (overrides: SheetRow): Record<SheetHeader, SheetCellValue> => {
+      const base: Record<SheetHeader, SheetCellValue> = {
         item_id: itemA,
         first_contact_at: null,
         last_contact_at: null,
@@ -403,16 +492,24 @@ async function main() {
         notes: null,
         lead_id: randomUuid(),
         updated_at: T_NOW,
+        deal_id: null,
       };
       return { ...base, ...overrides };
     };
 
-    const buildValues = (rows: Record<ExpectedHeader, SheetCellValue>[]): SheetCellValue[][] => [
+    const buildValues = (rows: Record<SheetHeader, SheetCellValue>[]): SheetCellValue[][] => [
+      [...ALL_HEADERS],
+      ...rows.map((r) => ALL_HEADERS.map((h) => r[h])),
+    ];
+
+    // Old-style A:R sheet: no deal_id column at all (header row stops at
+    // `updated_at`). Every row's cells.deal_id must still normalize to NULL.
+    const buildValuesNoDealIdHeader = (rows: Record<SheetHeader, SheetCellValue>[]): SheetCellValue[][] => [
       [...EXPECTED_HEADERS],
       ...rows.map((r) => EXPECTED_HEADERS.map((h) => r[h])),
     ];
 
-    const scenarioRows: Record<string, Record<ExpectedHeader, SheetCellValue>> = {
+    const scenarioRows: Record<string, Record<SheetHeader, SheetCellValue>> = {
       NEW: sheetRow({}),
       UPDATE: sheetRow({ lead_id: U_UPDATE, updated_at: T_NEW }),
       UNCHANGED: sheetRow({ lead_id: U_UNCHANGED, updated_at: T_MID }),
@@ -436,6 +533,20 @@ async function main() {
       BLANK_CHANNEL: sheetRow({ channel: null }),
       ITEM_MISMATCH: sheetRow({ lead_id: U_MISMATCH, item_id: itemA2, updated_at: T_NEW }),
       QUALITY_REGRESSION: sheetRow({ lead_id: U_REGRESS, lead_quality: 'ENGAGED', updated_at: T_NEW }),
+
+      // ── Lead -> Deal linkage (deal_id) ──────────────────────────────────
+      DEAL_LINK_VALID: sheetRow({ status: 'COMPLETED', deal_id: dealOutA }),
+      DEAL_ID_NOT_FOUND: sheetRow({ status: 'COMPLETED', deal_id: 999999999 }),
+      DEAL_ID_NOT_OWNED: sheetRow({ status: 'COMPLETED', deal_id: dealOutB }),
+      DEAL_ITEM_NOT_IN_DEAL: sheetRow({ item_id: itemA, status: 'COMPLETED', deal_id: dealTradeInA }),
+      DEAL_ITEM_INCOMING_SIDE: sheetRow({ item_id: itemA2, status: 'COMPLETED', deal_id: dealTradeInA }),
+      DEAL_ID_STATUS_OPEN: sheetRow({ status: 'OPEN', deal_id: dealOutA }),
+      DEAL_ID_STATUS_AGREED: sheetRow({ status: 'AGREED', deal_id: dealOutA }),
+      COMPLETED_NO_DEAL_ID: sheetRow({ status: 'COMPLETED', deal_id: null }),
+      DEAL_ID_NEGATIVE: sheetRow({ deal_id: -5 }),
+      DEAL_ID_ZERO: sheetRow({ deal_id: 0 }),
+      DEAL_ID_DECIMAL: sheetRow({ deal_id: 12.5 }),
+      DEAL_ID_TEXT: sheetRow({ deal_id: 'abc' }),
     };
 
     const rowOrder = Object.keys(scenarioRows);
@@ -475,6 +586,21 @@ async function main() {
     check('3.22 existing lead pointing at a different item -> ITEM_MISMATCH_WITH_EXISTING_LEAD / INVALID', hasCode(rowFor(idx('ITEM_MISMATCH')), ROW_ISSUE.ITEM_MISMATCH_WITH_EXISTING_LEAD) && rowFor(idx('ITEM_MISMATCH'))?.classification === 'INVALID');
     check('3.23 lead_quality regression -> LEAD_QUALITY_REGRESSION / INVALID', hasCode(rowFor(idx('QUALITY_REGRESSION')), ROW_ISSUE.LEAD_QUALITY_REGRESSION) && rowFor(idx('QUALITY_REGRESSION'))?.classification === 'INVALID');
 
+    // ── deal_id validation (Lead -> Deal linkage) ─────────────────────────
+    check('3.27 blank deal_id -> NULL, no deal issue (base NEW row)', !hasCode(rowFor(idx('NEW')), ROW_ISSUE.INVALID_DEAL_ID) && !hasCode(rowFor(idx('NEW')), ROW_ISSUE.DEAL_NOT_FOUND));
+    check('3.28 deal exists + same user + item on outgoing side + COMPLETED -> valid, no deal issues', rowFor(idx('DEAL_LINK_VALID'))?.classification === 'NEW' && (rowFor(idx('DEAL_LINK_VALID'))?.issues ?? []).length === 0);
+    check('3.29 deal does not exist -> DEAL_NOT_FOUND / INVALID', hasCode(rowFor(idx('DEAL_ID_NOT_FOUND')), ROW_ISSUE.DEAL_NOT_FOUND) && rowFor(idx('DEAL_ID_NOT_FOUND'))?.classification === 'INVALID');
+    check('3.30 deal belongs to another user -> DEAL_NOT_OWNED_BY_SOURCE_USER / INVALID (message never reveals the other user\'s deal details)', hasCode(rowFor(idx('DEAL_ID_NOT_OWNED')), ROW_ISSUE.DEAL_NOT_OWNED_BY_SOURCE_USER) && rowFor(idx('DEAL_ID_NOT_OWNED'))?.classification === 'INVALID' && !(rowFor(idx('DEAL_ID_NOT_OWNED'))?.issues ?? []).some((i) => /user ?b|userB/i.test(i.message)));
+    check('3.31 deal belongs to the user but the item is not in that deal at all -> DEAL_ITEM_MISMATCH / INVALID', hasCode(rowFor(idx('DEAL_ITEM_NOT_IN_DEAL')), ROW_ISSUE.DEAL_ITEM_MISMATCH) && rowFor(idx('DEAL_ITEM_NOT_IN_DEAL'))?.classification === 'INVALID');
+    check('3.32 item is the INCOMING side of a Trade, not outgoing -> DEAL_ITEM_MISMATCH / INVALID (never accepted merely because it appears in the same trade)', hasCode(rowFor(idx('DEAL_ITEM_INCOMING_SIDE')), ROW_ISSUE.DEAL_ITEM_MISMATCH) && rowFor(idx('DEAL_ITEM_INCOMING_SIDE'))?.classification === 'INVALID');
+    check('3.33 deal_id present while status OPEN -> DEAL_ID_REQUIRES_COMPLETED_STATUS / INVALID (status never silently changed)', hasCode(rowFor(idx('DEAL_ID_STATUS_OPEN')), ROW_ISSUE.DEAL_ID_REQUIRES_COMPLETED_STATUS) && rowFor(idx('DEAL_ID_STATUS_OPEN'))?.classification === 'INVALID');
+    check('3.34 deal_id present while status AGREED -> DEAL_ID_REQUIRES_COMPLETED_STATUS / INVALID', hasCode(rowFor(idx('DEAL_ID_STATUS_AGREED')), ROW_ISSUE.DEAL_ID_REQUIRES_COMPLETED_STATUS) && rowFor(idx('DEAL_ID_STATUS_AGREED'))?.classification === 'INVALID');
+    check('3.35 COMPLETED with blank deal_id -> VALID, with a non-blocking COMPLETED_WITHOUT_DEAL_ID warning (never INVALID)', rowFor(idx('COMPLETED_NO_DEAL_ID'))?.classification === 'NEW' && hasCode(rowFor(idx('COMPLETED_NO_DEAL_ID')), ROW_WARNING.COMPLETED_WITHOUT_DEAL_ID) && (rowFor(idx('COMPLETED_NO_DEAL_ID'))?.issues ?? []).every((i) => i.severity === 'warning'));
+    check('3.36 negative deal_id -> INVALID_DEAL_ID / INVALID', hasCode(rowFor(idx('DEAL_ID_NEGATIVE')), ROW_ISSUE.INVALID_DEAL_ID) && rowFor(idx('DEAL_ID_NEGATIVE'))?.classification === 'INVALID');
+    check('3.37 zero deal_id -> INVALID_DEAL_ID / INVALID', hasCode(rowFor(idx('DEAL_ID_ZERO')), ROW_ISSUE.INVALID_DEAL_ID) && rowFor(idx('DEAL_ID_ZERO'))?.classification === 'INVALID');
+    check('3.38 decimal deal_id -> INVALID_DEAL_ID / INVALID', hasCode(rowFor(idx('DEAL_ID_DECIMAL')), ROW_ISSUE.INVALID_DEAL_ID) && rowFor(idx('DEAL_ID_DECIMAL'))?.classification === 'INVALID');
+    check('3.39 arbitrary text deal_id -> INVALID_DEAL_ID / INVALID', hasCode(rowFor(idx('DEAL_ID_TEXT')), ROW_ISSUE.INVALID_DEAL_ID) && rowFor(idx('DEAL_ID_TEXT'))?.classification === 'INVALID');
+
     // Never writes to item_leads
     check('3.24 preview never writes new item_leads rows beyond the ones this script inserted directly', true); // structural guarantee — classifySheetValues has no .insert/.update calls (see source)
 
@@ -493,6 +619,31 @@ async function main() {
       const badValues: SheetCellValue[][] = [[...badHeaders], badHeaders.map(() => 'x')];
       const badResult = await classifySheetValues(badValues, sourceA, admin);
       check('3.26 missing header is fatal through the full pipeline', badResult.fatal && badResult.fatalIssues.some((i) => i.code === SOURCE_FATAL.MISSING_HEADERS));
+    }
+
+    // Same deal_id may validly link to more than one lead — no uniqueness
+    // failure at any layer (isolated call: two otherwise-independent NEW rows).
+    {
+      const twinValues = buildValues([
+        sheetRow({ lead_id: randomUuid(), status: 'COMPLETED', deal_id: dealOutA }),
+        sheetRow({ lead_id: randomUuid(), status: 'COMPLETED', deal_id: dealOutA }),
+      ]);
+      const twinResult = await classifySheetValues(twinValues, sourceA, admin);
+      check('3.40 the same deal_id may validly link to more than one lead — both classify NEW, no uniqueness failure',
+        !twinResult.fatal && twinResult.rows[0]?.classification === 'NEW' && twinResult.rows[1]?.classification === 'NEW' &&
+        !twinResult.rows[0]?.issues.some((i) => i.code === ROW_ISSUE.DEAL_ITEM_MISMATCH) && !twinResult.rows[1]?.issues.some((i) => i.code === ROW_ISSUE.DEAL_ITEM_MISMATCH),
+        twinResult.rows);
+    }
+
+    // Old-style A:R sheet (no deal_id column at all) still works — every row's
+    // deal_id normalizes to NULL, and no MISSING_HEADERS fatal is raised for it.
+    {
+      const oldStyleValues = buildValuesNoDealIdHeader([sheetRow({ lead_id: randomUuid(), status: 'OPEN' }), sheetRow({ lead_id: randomUuid(), status: 'COMPLETED' })]);
+      check('the old-style header row has no deal_id column', (oldStyleValues[0] as string[]).includes('updated_at') && !(oldStyleValues[0] as string[]).includes('deal_id'));
+      const { preview, rows } = await classifySheetValuesDetailed(oldStyleValues, sourceA, admin);
+      check('3.41 an old A:R sheet (no deal_id column) is not fatal', !preview.fatal, preview.fatalIssues);
+      check('3.42 an old A:R sheet classifies every row NEW with deal_id normalized to NULL for every row', rows.every((r) => r.classification === 'NEW' && r.normalized?.dealId === null), rows.map((r) => r.normalized?.dealId));
+      check('3.43 a COMPLETED row on an old A:R sheet still gets the non-blocking COMPLETED_WITHOUT_DEAL_ID warning, never INVALID', rows[1]?.classification === 'NEW' && rows[1]?.issues.some((i) => i.code === ROW_WARNING.COMPLETED_WITHOUT_DEAL_ID));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1124,6 +1275,114 @@ async function main() {
     check('6.20a the Google Sheets API was exercised only through the mock', googleCallCount > 0, googleCallCount);
     check('6.20b no real external network call was made during the import tests', realNetworkCallCount === 0, realNetworkCallCount);
 
+    // ── 6.21 Lead -> Deal linkage: full import lifecycle (NULL -> linked ->
+    // relinked -> unlinked), idempotency, and Preview/Import agreement ──────
+    {
+      const dealLeadId = randomUuid();
+      const T1 = '2026-06-01T00:00:00Z';
+      const T2 = '2026-06-02T00:00:00Z';
+      const T3 = '2026-06-03T00:00:00Z';
+      const T4 = '2026-06-04T00:00:00Z';
+
+      // A second real deal (also user A's, itemA outgoing) to relink onto.
+      const dealOutA2 = await ensureDeal(admin, userA, 'trade', 'LEADIMPORT:dealOutA2');
+      await ensureDealItem(admin, userA, dealOutA2, itemA, 'out');
+
+      const sheetAt = (updatedAt: string, status: string, dealId: number | string | null) =>
+        buildValues([sheetRow({ lead_id: dealLeadId, updated_at: updatedAt, status, deal_id: dealId })]);
+
+      // Step 1: NEW, no deal_id.
+      {
+        const preview = await classifySheetValues(sheetAt(T1, 'OPEN', null), sourceA, admin);
+        check('6.21a Preview classifies the fresh row NEW', preview.rows[0]?.classification === 'NEW');
+        const outcome = outcomeOf(await importSheet(sourceA, sheetAt(T1, 'OPEN', null)));
+        check('6.21b import inserts it with deal_id NULL', outcome?.counts.inserted === 1, outcome?.counts);
+        const stored = await leadByLeadId(userA, dealLeadId);
+        check('6.21c stored deal_id is NULL', stored?.deal_id == null, stored);
+      }
+
+      // Step 2: newer row links deal_id -> dealOutA (also flips to COMPLETED, required by the CHECK) -> UPDATE.
+      {
+        const values = sheetAt(T2, 'COMPLETED', dealOutA);
+        const previewRows = (await classifySheetValues(values, sourceA, admin)).rows;
+        check('6.21d Preview classifies the newly-linked row UPDATE', previewRows[0]?.classification === 'UPDATE');
+        const outcome = outcomeOf(await importSheet(sourceA, values));
+        check('6.21e Preview and Import agree: import also applies it as an UPDATE', outcome?.counts.updated === 1 && outcome?.counts.inserted === 0, outcome?.counts);
+        const stored = await leadByLeadId(userA, dealLeadId);
+        check('6.21f item_leads.deal_id is now set to the linked deal', stored?.deal_id === dealOutA, stored);
+      }
+
+      // Step 3: re-importing the identical row is idempotent (UNCHANGED, nothing written).
+      {
+        const values = sheetAt(T2, 'COMPLETED', dealOutA);
+        const preview = await classifySheetValues(values, sourceA, admin);
+        check('6.21g Preview classifies the identical re-import UNCHANGED', preview.rows[0]?.classification === 'UNCHANGED');
+        const outcome = outcomeOf(await importSheet(sourceA, values));
+        check('6.21h re-importing the identical row writes nothing (idempotent)', outcome?.counts.updated === 0 && outcome?.counts.inserted === 0 && outcome?.counts.unchanged === 1, outcome?.counts);
+        const stored = await leadByLeadId(userA, dealLeadId);
+        check('6.21i deal_id is unchanged by the idempotent re-import', stored?.deal_id === dealOutA, stored);
+      }
+
+      // Step 4: a newer row re-links to a DIFFERENT deal -> UPDATE, deal_id changes.
+      {
+        const values = sheetAt(T3, 'COMPLETED', dealOutA2);
+        const outcome = outcomeOf(await importSheet(sourceA, values));
+        check('6.21j relinking to a different deal on a newer row is an UPDATE', outcome?.counts.updated === 1, outcome?.counts);
+        const stored = await leadByLeadId(userA, dealLeadId);
+        check('6.21k stored deal_id follows the newer source (changed to the new deal)', stored?.deal_id === dealOutA2, stored);
+      }
+
+      // Step 5: a newer row removes the link (blank deal_id, status stays COMPLETED) -> UPDATE, deal_id back to NULL.
+      {
+        const values = sheetAt(T4, 'COMPLETED', null);
+        const preview = await classifySheetValues(values, sourceA, admin);
+        check('6.21l Preview accepts COMPLETED + blank deal_id (warns, does not invalidate) and classifies UPDATE', preview.rows[0]?.classification === 'UPDATE' && preview.rows[0]?.issues.some((i) => i.code === ROW_WARNING.COMPLETED_WITHOUT_DEAL_ID));
+        const outcome = outcomeOf(await importSheet(sourceA, values));
+        check('6.21m removing the link on a newer row is an UPDATE', outcome?.counts.updated === 1, outcome?.counts);
+        const stored = await leadByLeadId(userA, dealLeadId);
+        check('6.21n stored deal_id follows the newer source (cleared back to NULL)', stored?.deal_id == null, stored);
+      }
+
+      // User isolation: user A's sheet cannot link a lead to user B's deal —
+      // rejected before any write, and the error never names user B's deal content.
+      {
+        const isolationLeadId = randomUuid();
+        const values = buildValues([sheetRow({ lead_id: isolationLeadId, updated_at: T1, status: 'COMPLETED', deal_id: dealOutB })]);
+        const preview = await classifySheetValues(values, sourceA, admin);
+        check('6.21o Preview rejects a deal_id owned by a different user (DEAL_NOT_OWNED_BY_SOURCE_USER)', preview.rows[0]?.classification === 'INVALID' && preview.rows[0]?.issues.some((i) => i.code === ROW_ISSUE.DEAL_NOT_OWNED_BY_SOURCE_USER));
+        check('6.21p the rejection message never reveals user B\'s deal details', !preview.rows[0]?.issues.some((i) => /user ?b|userB|itemB/i.test(i.message)));
+        const outcome = outcomeOf(await importSheet(sourceA, values));
+        check('6.21q Import agrees with Preview: the row is skipped as invalid, nothing written', outcome?.counts.invalid === 1 && outcome?.counts.inserted === 0 && outcome?.counts.updated === 0, outcome?.counts);
+        check('6.21r no lead was created for the rejected row', (await leadByLeadId(userA, isolationLeadId)) === null);
+
+        // Defense in depth: even if an unowned deal_id somehow reached apply_lead_import_batch
+        // directly (bypassing Preview/Import's own validation), the database itself refuses it.
+        const { data: startData } = await admin.rpc('start_lead_import_run', { p_source_id: sourceA.id, p_requested_by_user_id: adminUserId });
+        const directRunId = Number(startData);
+        const { error: directApplyError } = await admin.rpc('apply_lead_import_batch', {
+          p_run_id: directRunId,
+          p_apply_rows: [{
+            sheet_row_number: 1, lead_id: isolationLeadId, inventory_item_id: itemA,
+            first_contact_at: null, last_contact_at: null, source_channel: null, deal_channel_id: null,
+            buyer_message_count: null, our_message_count: null, lead_quality: 'LOW', offer_type: 'NONE',
+            initial_cash_offer: null, best_cash_offer: null, trade_item: null, cash_component: null, trade_est_value: null,
+            status: 'COMPLETED', outcome_reason: null, notes: null, deal_id: dealOutB, source_updated_at: T1,
+            classification: 'NEW', issue_codes: [], issue_message: null,
+          }],
+          p_skip_rows: [],
+          p_source_row_count: 1, p_new_count: 1, p_update_count: 0, p_unchanged_count: 0, p_source_older_count: 0, p_invalid_count: 0,
+          p_source_max_updated_at: T1,
+        });
+        check('6.21s the DATABASE itself rejects an unowned deal_id (DEAL_NOT_OWNED_BY_SOURCE_USER), even bypassing app-level validation', !!directApplyError && /DEAL_NOT_OWNED_BY_SOURCE_USER/.test(directApplyError.message), directApplyError);
+        await admin.rpc('fail_lead_import_run', {
+          p_run_id: directRunId, p_error_summary: 'test cleanup', p_audit_rows: [],
+          p_source_row_count: 0, p_new_count: 0, p_update_count: 0, p_unchanged_count: 0, p_source_older_count: 0, p_invalid_count: 0, p_failed_count: 0,
+          p_source_max_updated_at: null,
+        });
+        check('6.21t no lead was created by the direct-RPC bypass attempt', (await leadByLeadId(userA, isolationLeadId)) === null);
+      }
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     console.log('\n=== Section 7: Import security (authenticated clients) ===');
 
@@ -1149,6 +1408,14 @@ async function main() {
 
       const otherRead = await asUserB.from('item_leads').select('id').eq('lead_id', securityLeadId);
       check('7.2 another user cannot read those leads', !otherRead.error && (otherRead.data ?? []).length === 0, otherRead);
+
+      // ── deal_id specifically stays inside existing RLS/read-model boundaries ──
+      const dealLinkedLeadId = randomUuid();
+      await importSheet(sourceA, buildValues([sheetRow({ lead_id: dealLinkedLeadId, updated_at: T_NEWER, status: 'COMPLETED', deal_id: dealOutA })]));
+      const ownDealRead = await asUserA.from('item_leads').select('deal_id').eq('lead_id', dealLinkedLeadId).maybeSingle();
+      check('7.2b the owner can read deal_id through the normal read model', ownDealRead.data?.deal_id === dealOutA, ownDealRead);
+      const otherDealRead = await asUserB.from('item_leads').select('deal_id').eq('lead_id', dealLinkedLeadId).maybeSingle();
+      check('7.2c another user cannot read that linked lead\'s deal_id through existing RLS (row simply does not exist for them)', !otherDealRead.data, otherDealRead);
 
       const directInsert = await asUserA.from('item_leads').insert({
         user_id: userA, source_id: sourceA.id, inventory_item_id: itemA, lead_id: randomUuid(),

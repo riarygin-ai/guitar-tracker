@@ -58,6 +58,11 @@ export interface ItemContextRelatedData {
   realizedGain: number | null;
   realizedRoi: number | null;
   acquiredDate: string | null;
+  /** The completed Sell/Trade deal that REALIZED (sold/traded away) this item —
+   *  never the item's acquisition deal, and never a trade that brought the
+   *  item IN while it is still owned. NULL when the item has no exit deal
+   *  yet (still owned, or only ever acquired). See itemContextData.ts. */
+  exitDealId?: number | null;
   /** Every listing cycle for the item (all platforms, all statuses). */
   listingCycles?: ItemContextListingCycle[];
   /** Every lead for the item. */
@@ -273,6 +278,13 @@ export function buildItemContext(item: InventoryItem, related: ItemContextRelate
   pushLine(header, 'Purpose', related.purposeName);
   pushLine(header, 'Condition', item.condition);
   pushLine(header, 'Status', item.status);
+  // The completed EXIT deal (Sell, or the Trade the item went OUT on) —
+  // never the acquisition deal, and never shown for an item still owned.
+  // Omitted entirely (never "—") when there is no exit deal yet, matching
+  // this formatter's existing "no N/A filler" convention. The external
+  // ChatGPT lead workflow keys off this exact "Deal ID" label to write the
+  // linkage back into the Lead Log's deal_id column — never renamed.
+  pushLine(header, 'Deal ID', related.exitDealId);
 
   const sections: string[] = ['ITEM CONTEXT', '', header.join('\n')];
 

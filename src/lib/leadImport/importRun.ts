@@ -73,6 +73,7 @@ interface ApplyRowPayload extends Omit<AuditRowPayload, 'result' | 'lead_id' | '
   status: string;
   outcome_reason: string | null;
   notes: string | null;
+  deal_id: number | null;
   source_updated_at: string;
 }
 
@@ -155,6 +156,7 @@ function applyRowFor(row: RowValidationResult): ApplyRowPayload {
     status: n.status,
     outcome_reason: n.outcomeReason,
     notes: n.notes,
+    deal_id: n.dealId,
     source_updated_at: n.sourceUpdatedAt,
     classification: row.classification,
     issue_codes: issueCodesFor(row),

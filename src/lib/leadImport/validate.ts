@@ -57,6 +57,14 @@ export interface ValidationContext {
   // inventory_items.id -> owning app_users.id, for every item_id referenced
   // anywhere in the sheet.
   itemOwnerByItemId: Map<number, number>;
+  // deals.id -> owning app_users.id, for every deal_id referenced anywhere
+  // in the sheet.
+  dealOwnerByDealId: Map<number, number>;
+  // deals.id -> the set of inventory_items.id on that deal's OUTGOING
+  // ('out') side — a Sell's sold item(s), or a Trade's given-away item(s).
+  // Never the incoming/acquired side. Only entries for deal ids referenced
+  // anywhere in the sheet.
+  dealOutgoingItemIdsByDealId: Map<number, Set<number>>;
 }
 
 function issue(
@@ -279,6 +287,71 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
     outcomeReason = outcomeReasonRaw as OutcomeReason | null;
   }
 
+  // ── deal_id (nullable; Sheet column S — optional header, absent on an
+  // old A:R sheet, where every row's cells.deal_id is NULL) ───────────────
+  const dealIdParsed = cellToIntegerOrNull(cells.deal_id);
+  let dealId: number | null = null;
+  if (!dealIdParsed.ok) {
+    issues.push(issue('error', ROW_ISSUE.INVALID_DEAL_ID, 'deal_id is not a valid integer.', at2()));
+  } else if (dealIdParsed.value !== null && dealIdParsed.value <= 0) {
+    issues.push(issue('error', ROW_ISSUE.INVALID_DEAL_ID, 'deal_id must be a positive integer.', at2()));
+  } else {
+    dealId = dealIdParsed.value;
+  }
+
+  // ── deal_id <-> status semantics ──────────────────────────────────────
+  // A) deal_id set requires status COMPLETED — never silently changed here.
+  if (dealId !== null && leadStatus !== null && leadStatus !== 'COMPLETED') {
+    issues.push(
+      issue(
+        'error',
+        ROW_ISSUE.DEAL_ID_REQUIRES_COMPLETED_STATUS,
+        `deal_id is set but status is "${leadStatus}", not COMPLETED.`,
+        at2(),
+      ),
+    );
+  }
+  // B) COMPLETED with no deal_id stays VALID (historical rows predate
+  // linking) — a non-blocking warning only, so links can be backfilled
+  // gradually.
+  if (dealId === null && leadStatus === 'COMPLETED') {
+    issues.push(
+      issue(
+        'warning',
+        ROW_WARNING.COMPLETED_WITHOUT_DEAL_ID,
+        'status is COMPLETED with no deal_id — this lead has not yet been linked to a deal.',
+        at2(),
+      ),
+    );
+  }
+
+  // ── deal ownership + item-role validation ─────────────────────────────
+  // A lead represents buyer interest in the item being sold/traded OUT, so
+  // the deal must both belong to this source's own user (never trust the
+  // FK alone) and actually contain the lead's item on its OUTGOING side —
+  // never merely as a trade's incoming/acquired item.
+  if (dealId !== null) {
+    const dealOwnerUserId = ctx.dealOwnerByDealId.get(dealId);
+    if (dealOwnerUserId === undefined) {
+      issues.push(issue('error', ROW_ISSUE.DEAL_NOT_FOUND, `Deal ${dealId} was not found.`, at2()));
+    } else if (dealOwnerUserId !== ctx.sourceUserId) {
+      // Never reveal anything about the other user's deal beyond its id.
+      issues.push(issue('error', ROW_ISSUE.DEAL_NOT_OWNED_BY_SOURCE_USER, `Deal ${dealId} is not owned by this source's user.`, at2()));
+    } else if (itemId !== null) {
+      const outgoingItemIds = ctx.dealOutgoingItemIdsByDealId.get(dealId);
+      if (!outgoingItemIds || !outgoingItemIds.has(itemId)) {
+        issues.push(
+          issue(
+            'error',
+            ROW_ISSUE.DEAL_ITEM_MISMATCH,
+            `Deal ${dealId} does not have inventory item ${itemId} on its outgoing (sold/traded-away) side.`,
+            at2(),
+          ),
+        );
+      }
+    }
+  }
+
   // ── free-text passthrough fields (never validated beyond blank -> NULL) ─
   const tradeItem = cellToTrimmedStringOrNull(cells.trade_item);
   const notes = cellToTrimmedStringOrNull(cells.notes);
@@ -379,6 +452,7 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
           status: leadStatus,
           outcomeReason,
           notes,
+          dealId,
           sourceUpdatedAt,
         };
 

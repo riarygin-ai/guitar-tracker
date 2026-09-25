@@ -90,13 +90,25 @@ export const EXPECTED_HEADERS = [
 
 export type ExpectedHeader = (typeof EXPECTED_HEADERS)[number];
 
+// Sheet column S (appended after `updated_at`) — the Lead -> Deal linkage.
+// Optional, unlike EXPECTED_HEADERS: an older A:R sheet with no `deal_id`
+// column at all is still fully supported (every row's deal_id normalizes to
+// NULL). Never moves or reinterprets an existing column when absent.
+export const OPTIONAL_HEADERS = ['deal_id'] as const;
+export type OptionalHeader = (typeof OPTIONAL_HEADERS)[number];
+
+export const ALL_HEADERS = [...EXPECTED_HEADERS, ...OPTIONAL_HEADERS] as const;
+export type SheetHeader = ExpectedHeader | OptionalHeader;
+
 export type SheetCellValue = string | number | boolean | null;
 
-// One raw sheet row, keyed by expected header name, plus its 1-based sheet
-// row number (header row is row 1, so the first data row is row 2).
+// One raw sheet row, keyed by header name (required + optional), plus its
+// 1-based sheet row number (header row is row 1, so the first data row is
+// row 2). cells.deal_id is NULL both when the column is blank and when the
+// column doesn't exist in this sheet at all.
 export interface RawSheetRow {
   rowNumber: number;
-  cells: Record<ExpectedHeader, SheetCellValue>;
+  cells: Record<SheetHeader, SheetCellValue>;
 }
 
 export type IssueSeverity = 'error' | 'warning';
@@ -170,6 +182,8 @@ export interface NormalizedLeadRow {
   status: LeadStatus;
   outcomeReason: OutcomeReason | null;
   notes: string | null;
+  /** The completed Sell/Trade deal this lead is linked to (Sheet column S), or NULL. */
+  dealId: number | null;
   sourceUpdatedAt: string;
 }
 

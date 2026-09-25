@@ -49,6 +49,12 @@ export const ROW_ISSUE = {
   MISSING_STATUS: 'MISSING_STATUS',
   INVALID_STATUS: 'INVALID_STATUS',
   INVALID_OUTCOME_REASON: 'INVALID_OUTCOME_REASON',
+  // ── Lead -> Deal linkage (deal_id, Sheet column S — optional) ───────────
+  INVALID_DEAL_ID: 'INVALID_DEAL_ID',
+  DEAL_NOT_FOUND: 'DEAL_NOT_FOUND',
+  DEAL_NOT_OWNED_BY_SOURCE_USER: 'DEAL_NOT_OWNED_BY_SOURCE_USER',
+  DEAL_ITEM_MISMATCH: 'DEAL_ITEM_MISMATCH',
+  DEAL_ID_REQUIRES_COMPLETED_STATUS: 'DEAL_ID_REQUIRES_COMPLETED_STATUS',
 } as const;
 
 // ── Row-level warning (non-fatal, does not force INVALID) ───────────────────
@@ -57,4 +63,7 @@ export const ROW_WARNING = {
   // TRADE + blank cash_component: a straight trade has no cash by definition,
   // so the blank is normalized to 0 (never written back to the Sheet).
   TRADE_CASH_COMPONENT_DEFAULTED_TO_ZERO: 'TRADE_CASH_COMPONENT_DEFAULTED_TO_ZERO',
+  // status = COMPLETED with no deal_id — valid (historical rows predate
+  // linking), but worth surfacing so links can be backfilled gradually.
+  COMPLETED_WITHOUT_DEAL_ID: 'COMPLETED_WITHOUT_DEAL_ID',
 } as const;

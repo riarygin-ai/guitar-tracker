@@ -7,10 +7,15 @@
 // null) lives here too, shared by every row before per-field validation in
 // validate.ts runs.
 
-import { EXPECTED_HEADERS, type ExpectedHeader, type RawSheetRow, type SheetCellValue, type ValidationIssue } from './types';
+import { ALL_HEADERS, EXPECTED_HEADERS, type RawSheetRow, type SheetCellValue, type SheetHeader, type ValidationIssue } from './types';
 import { SOURCE_FATAL, SOURCE_WARNING } from './errorCodes';
 
-const EXPECTED_HEADER_SET = new Set<string>(EXPECTED_HEADERS);
+// Every header this importer recognizes by name (required + optional).
+// "extra column" warnings and "missing column" fatals are two different
+// sets on purpose: a recognized-but-optional header (deal_id) absent from
+// the sheet is neither — see the missing-headers check below, scoped to
+// EXPECTED_HEADERS only.
+const ALL_HEADER_SET = new Set<string>(ALL_HEADERS);
 
 function fatalIssue(code: string, message: string): ValidationIssue {
   return { rowNumber: null, leadId: null, itemId: null, classification: null, severity: 'error', code, message };
@@ -21,9 +26,11 @@ function warningIssue(code: string, message: string): ValidationIssue {
 }
 
 export interface HeaderParseResult {
-  // Maps expected header -> its column index in the sheet. Only present
-  // when parsing succeeded with no fatal issues.
-  headerIndex: Partial<Record<ExpectedHeader, number>>;
+  // Maps a recognized header (required or optional) -> its column index in
+  // the sheet. Only present when parsing succeeded with no fatal issues.
+  // A header this sheet doesn't have (deal_id on an old A:R sheet) is
+  // simply absent from this map — never an error.
+  headerIndex: Partial<Record<SheetHeader, number>>;
   fatalIssues: ValidationIssue[];
   warnings: ValidationIssue[];
 }
@@ -41,7 +48,7 @@ export function parseHeaders(headerRow: SheetCellValue[]): HeaderParseResult {
     if (!name) continue;
     seenCounts.set(name, (seenCounts.get(name) ?? 0) + 1);
   }
-  const duplicated = Array.from(seenCounts.entries()).filter(([name, count]) => count > 1 && EXPECTED_HEADER_SET.has(name));
+  const duplicated = Array.from(seenCounts.entries()).filter(([name, count]) => count > 1 && ALL_HEADER_SET.has(name));
   if (duplicated.length > 0) {
     fatalIssues.push(
       fatalIssue(
@@ -51,20 +58,23 @@ export function parseHeaders(headerRow: SheetCellValue[]): HeaderParseResult {
     );
   }
 
-  const headerIndex: Partial<Record<ExpectedHeader, number>> = {};
+  const headerIndex: Partial<Record<SheetHeader, number>> = {};
   for (let i = 0; i < rawNames.length; i++) {
     const name = rawNames[i];
-    if (EXPECTED_HEADER_SET.has(name) && !(name in headerIndex)) {
-      headerIndex[name as ExpectedHeader] = i;
+    if (ALL_HEADER_SET.has(name) && !(name in headerIndex)) {
+      headerIndex[name as SheetHeader] = i;
     }
   }
 
+  // Only the REQUIRED headers are fatal when absent — deal_id (optional) is
+  // never in this list, so an old A:R sheet with no deal_id column at all
+  // parses exactly as it always did.
   const missing = EXPECTED_HEADERS.filter((h) => !(h in headerIndex));
   if (missing.length > 0) {
     fatalIssues.push(fatalIssue(SOURCE_FATAL.MISSING_HEADERS, `Missing expected column(s): ${missing.join(', ')}.`));
   }
 
-  const extra = rawNames.filter((name) => name && !EXPECTED_HEADER_SET.has(name));
+  const extra = rawNames.filter((name) => name && !ALL_HEADER_SET.has(name));
   if (extra.length > 0) {
     warnings.push(warningIssue(SOURCE_WARNING.EXTRA_COLUMNS, `Extra column(s) ignored: ${Array.from(new Set(extra)).join(', ')}.`));
   }
@@ -81,16 +91,18 @@ function isRowBlank(row: SheetCellValue[]): boolean {
 // row number (header = row 1, so the first data row is row 2).
 export function buildRawRows(
   dataRows: SheetCellValue[][],
-  headerIndex: Partial<Record<ExpectedHeader, number>>,
+  headerIndex: Partial<Record<SheetHeader, number>>,
 ): RawSheetRow[] {
   const rows: RawSheetRow[] = [];
   for (let i = 0; i < dataRows.length; i++) {
     const row = dataRows[i];
     if (isRowBlank(row)) continue; // ignore completely blank trailing rows
 
-    const cells = {} as Record<ExpectedHeader, SheetCellValue>;
-    for (const header of EXPECTED_HEADERS) {
+    const cells = {} as Record<SheetHeader, SheetCellValue>;
+    for (const header of ALL_HEADERS) {
       const colIndex = headerIndex[header];
+      // Absent column (optional header not present in this sheet at all) ->
+      // NULL, same as a present-but-blank cell.
       cells[header] = colIndex === undefined ? null : (row[colIndex] ?? null);
     }
     rows.push({ rowNumber: i + 2, cells });

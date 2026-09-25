@@ -590,8 +590,9 @@ export default function InventoryForm({
     () => allPurposes.find((p) => p.id === purposeId)?.name ?? null,
     [allPurposes, purposeId],
   );
-  // Async: listing cycles, price history and leads are loaded at click time
-  // (4 queries total, see itemContextData.ts) so the snapshot is current.
+  // Async: listing cycles, price history, leads and the exit deal id are
+  // loaded at click time (6 queries total, see itemContextData.ts) so the
+  // snapshot is current.
   const getItemContextText = async (): Promise<string> => {
     if (!existingItem) return '';
     const history = await loadItemContextHistory(supabase, existingItem.id);
@@ -609,6 +610,7 @@ export default function InventoryForm({
         realizedGain,
         realizedRoi,
         acquiredDate,
+        exitDealId: history.exitDealId,
         listingCycles: history.listingCycles,
         leads: history.leads,
       });

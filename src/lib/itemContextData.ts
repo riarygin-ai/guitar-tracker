@@ -1,17 +1,23 @@
 // Loads the history that "Copy Item Context" adds on top of what the Item
 // Detail page already has in memory: every listing cycle (all platforms, all
-// statuses), each cycle's complete price history, and every lead for the
-// item. Read-only and free of the app's supabase singleton — the caller
-// passes its authenticated client, so everything is scoped by the caller's
-// own RLS (item_listings / item_listing_price_history / item_leads each
-// only expose the owner's rows; a foreign item id simply returns nothing).
+// statuses), each cycle's complete price history, every lead for the item,
+// and the item's completed EXIT deal (Sell, or the Trade it went OUT on —
+// never its acquisition deal). Read-only and free of the app's supabase
+// singleton — the caller passes its authenticated client, so everything is
+// scoped by the caller's own RLS (item_listings / item_listing_price_history
+// / item_leads / deal_items / deals each only expose the owner's rows; a
+// foreign item id simply returns nothing).
 //
-// No N+1: exactly four queries regardless of how many cycles/leads exist —
-//   1. item_listings          WHERE inventory_item_id = :item
-//   2. deal_channels          WHERE id IN (channels used by listings/leads)
-//   3. item_leads             WHERE inventory_item_id = :item
-//   4. item_listing_price_history WHERE item_listing_id IN (all cycle ids)
-// (1–3 run in parallel; 4 needs the listing ids).
+// No N+1: exactly six queries regardless of how many cycles/leads/deals
+// exist —
+//   1. item_listings              WHERE inventory_item_id = :item
+//   2. deal_channels               WHERE id IN (channels used by listings/leads)
+//   3. item_leads                  WHERE inventory_item_id = :item
+//   4. item_listing_price_history  WHERE item_listing_id IN (all cycle ids)
+//   5. deal_items (direction='out') WHERE item_id = :item
+//   6. deals                       WHERE id IN (deal ids from query 5)
+// (1, 3 and 5 run in parallel; 2 and 4 need the listing/channel ids from 1/3;
+// 6 needs the deal ids from 5).
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ItemContextLead, ItemContextListingCycle, ItemContextPriceChange } from './itemContext';
@@ -21,6 +27,54 @@ export class ItemContextLoadError extends Error {}
 export interface ItemContextHistory {
   listingCycles: ItemContextListingCycle[];
   leads: ItemContextLead[];
+  /** The item's completed exit (realization) deal id, or null — see module header. */
+  exitDealId: number | null;
+}
+
+// Deal types deal_items' 'out' direction is ever written for in this app —
+// mirrors analytics_item_lifecycle's own exit_deal CTE (is_realized = deal_type
+// IN ('sale', 'trade')): a Sell or a Trade the item went out on. 'out' rows are
+// never created for 'purchase'/'expense'/historical-import deals (those only
+// ever write 'in'), so this filter is defensive parity, not a load-bearing
+// distinction in practice.
+const REALIZED_EXIT_DEAL_TYPES = new Set(['sale', 'trade']);
+
+/**
+ * The completed deal that realized (sold/traded away) this item, or null.
+ * NEVER the acquisition deal, and NEVER a trade that brought the item IN
+ * while it is still owned — only a deal_items row on the item's OUTGOING
+ * ('out') side counts. An item can leave inventory at most once (a
+ * sold/traded item's status becomes terminal), so in practice at most one
+ * such row exists; the ORDER BY below is defensive in case that is ever
+ * violated (same tie-break as analytics_item_lifecycle's exit_deal CTE:
+ * latest deal_date, then latest deal_items.id).
+ */
+async function loadItemExitDealId(client: SupabaseClient, itemId: number): Promise<number | null> {
+  const { data: outRows, error: outError } = await client
+    .from('deal_items')
+    .select('id, deal_id')
+    .eq('item_id', itemId)
+    .eq('direction', 'out');
+  if (outError) throw new ItemContextLoadError(`deal_items (exit): ${outError.message}`);
+
+  const rows = (outRows ?? []) as { id: number; deal_id: number }[];
+  if (rows.length === 0) return null;
+
+  const dealIds = Array.from(new Set(rows.map((r) => r.deal_id)));
+  const { data: dealRows, error: dealError } = await client.from('deals').select('id, deal_date, deal_type').in('id', dealIds);
+  if (dealError) throw new ItemContextLoadError(`deals (exit): ${dealError.message}`);
+
+  const dealsById = new Map(((dealRows ?? []) as { id: number; deal_date: string; deal_type: string }[]).map((d) => [d.id, d]));
+  const realized = rows
+    .map((r) => ({ ...r, deal: dealsById.get(r.deal_id) }))
+    .filter((r): r is typeof r & { deal: { id: number; deal_date: string; deal_type: string } } => !!r.deal && REALIZED_EXIT_DEAL_TYPES.has(r.deal.deal_type));
+  if (realized.length === 0) return null;
+
+  realized.sort((a, b) => {
+    if (a.deal.deal_date !== b.deal.deal_date) return a.deal.deal_date < b.deal.deal_date ? 1 : -1;
+    return b.id - a.id;
+  });
+  return realized[0].deal_id;
 }
 
 const LISTING_COLUMNS = 'id, deal_channel_id, status, listed_at, ended_at, cancelled_at, asking_price, trade_value';
@@ -30,9 +84,10 @@ const LEAD_COLUMNS =
   'buyer_message_count, our_message_count';
 
 export async function loadItemContextHistory(client: SupabaseClient, itemId: number): Promise<ItemContextHistory> {
-  const [listingsRes, leadsRes] = await Promise.all([
+  const [listingsRes, leadsRes, exitDealId] = await Promise.all([
     client.from('item_listings').select(LISTING_COLUMNS).eq('inventory_item_id', itemId).order('listed_at', { ascending: true, nullsFirst: false }).order('id', { ascending: true }),
     client.from('item_leads').select(LEAD_COLUMNS).eq('inventory_item_id', itemId).order('first_contact_at', { ascending: true, nullsFirst: false }).order('id', { ascending: true }),
+    loadItemExitDealId(client, itemId),
   ]);
   if (listingsRes.error) throw new ItemContextLoadError(`listings: ${listingsRes.error.message}`);
   if (leadsRes.error) throw new ItemContextLoadError(`leads: ${leadsRes.error.message}`);
@@ -102,5 +157,5 @@ export async function loadItemContextHistory(client: SupabaseClient, itemId: num
     our_message_count: num(r.our_message_count),
   }));
 
-  return { listingCycles, leads };
+  return { listingCycles, leads, exitDealId };
 }

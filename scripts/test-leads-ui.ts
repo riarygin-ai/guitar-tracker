@@ -40,7 +40,7 @@ function mk(over: Partial<LeadRow> = {}): LeadRow {
     id, lead_id: `00000000-0000-4000-8000-${String(id).padStart(12, '0')}`, inventory_item_id: 100 + id, item_name: `Item ${id}`,
     first_contact_at: '2026-09-10', last_contact_at: '2026-09-12', source_channel: 'Marketplace', deal_channel_id: 1, channel_name: 'Marketplace',
     buyer_message_count: 5, our_message_count: 2, lead_quality: 'LOW', offer_type: 'NONE', initial_cash_offer: null, best_cash_offer: null,
-    trade_item: null, cash_component: null, trade_est_value: null, status: 'OPEN', outcome_reason: null, notes: null,
+    trade_item: null, cash_component: null, trade_est_value: null, status: 'OPEN', outcome_reason: null, notes: null, deal_id: null,
     source_updated_at: '2026-09-12T10:00:00Z', last_imported_at: null, ...over,
   };
 }

@@ -36,6 +36,8 @@ export interface LeadRow {
   status: LeadStatus;
   outcome_reason: string | null;
   notes: string | null;
+  /** The completed Sell/Trade deal (deals.id) this lead has been linked to via the Lead Log, or null. */
+  deal_id: number | null;
   source_updated_at: string;
   last_imported_at: string | null;
 }

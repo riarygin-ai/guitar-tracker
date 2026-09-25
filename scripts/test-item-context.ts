@@ -343,6 +343,79 @@ async function main() {
     check('CopyItemContextButton.tsx contains no console.* calls', !/console\.(log|error|warn|info|debug)\s*\(/.test(componentSource), 'console call found');
   }
 
+  console.log('\n[K — Deal ID: the completed EXIT deal, never the acquisition deal]');
+  {
+    const soldItem = { ...BASE_ITEM, status: 'sold' as const, sold_date: '2026-08-01' };
+    const tradedItem = { ...BASE_ITEM, status: 'traded' as const, sold_date: '2026-08-01' };
+    const ownedItem = { ...BASE_ITEM, status: 'owned' as const, sold_date: null };
+
+    // A. Bought item, still owned -> no completed exit Deal ID (line omitted, never "Deal ID: —").
+    {
+      const text = buildItemContext(ownedItem, { ...EMPTY_RELATED, exitDealId: null });
+      check('A: owned item omits the Deal ID line entirely', !text.includes('Deal ID'), text);
+    }
+
+    // B. Bought item, later SOLD -> Deal ID = the SELL deal id, never the acquisition deal id.
+    {
+      const text = buildItemContext(soldItem, { ...EMPTY_RELATED, exitDealId: 501 });
+      check('B: sold item shows "Deal ID: 501" (the sell deal, not an acquisition deal id)', text.includes('Deal ID: 501'), text);
+      check('B: exactly one Deal ID line is rendered', (text.match(/Deal ID:/g) ?? []).length === 1, text);
+    }
+
+    // C. Bought item, later TRADED AWAY -> Deal ID = the trade deal it went OUT on.
+    {
+      const text = buildItemContext(tradedItem, { ...EMPTY_RELATED, exitDealId: 777 });
+      check('C: traded-away item shows "Deal ID: 777" (the trade it went out on)', text.includes('Deal ID: 777'), text);
+    }
+
+    // D. Multi-item Sell -> every outgoing item's own context carries the SAME Sell Deal ID.
+    {
+      const itemX = buildItemContext({ ...soldItem, id: 901 }, { ...EMPTY_RELATED, exitDealId: 850 });
+      const itemY = buildItemContext({ ...soldItem, id: 902 }, { ...EMPTY_RELATED, exitDealId: 850 });
+      check('D: two items sold together both show the same Deal ID', itemX.includes('Deal ID: 850') && itemY.includes('Deal ID: 850'));
+    }
+
+    // E. Multi-item Trade -> every outgoing item's own context carries the SAME Trade Deal ID.
+    {
+      const itemX = buildItemContext({ ...tradedItem, id: 903 }, { ...EMPTY_RELATED, exitDealId: 860 });
+      const itemY = buildItemContext({ ...tradedItem, id: 904 }, { ...EMPTY_RELATED, exitDealId: 860 });
+      check('E: two items traded away together both show the same Deal ID', itemX.includes('Deal ID: 860') && itemY.includes('Deal ID: 860'));
+    }
+
+    // F. Incoming item from a trade, STILL OWNED -> must NOT expose that trade as an exit Deal ID.
+    // (The loader never returns an exitDealId for an item whose only deal_items row is 'in' — modeled
+    // here simply as exitDealId: null, since buildItemContext itself has no direction concept; the
+    // resolver-level guarantee is asserted separately below via itemContextData.ts's source.)
+    {
+      const text = buildItemContext(ownedItem, { ...EMPTY_RELATED, exitDealId: null });
+      check('F: an item only ever acquired (including via an incoming trade) and still owned has no Deal ID line', !text.includes('Deal ID'), text);
+    }
+
+    // G. Historical import / opening acquisition only -> not treated as an exit Deal ID.
+    {
+      const text = buildItemContext(ownedItem, { ...EMPTY_RELATED, exitDealId: null, acquiredDate: '2020-01-01' });
+      check('G: a historical-import-only item (acquisition recorded, never realized) has no Deal ID line', !text.includes('Deal ID'), text);
+    }
+
+    // Placement: near Status, and omitted (not "—") when null — matches this formatter's
+    // existing "no N/A filler" convention (contrast with sold/traded fields, which DO use "—"
+    // for a genuinely blank required-looking value elsewhere in this codebase's other UI).
+    {
+      const withDeal = buildItemContext(soldItem, { ...EMPTY_RELATED, exitDealId: 123 });
+      const lines = withDeal.split('\n');
+      const statusIdx = lines.findIndex((l) => l === 'Status: sold');
+      const dealIdx = lines.findIndex((l) => l === 'Deal ID: 123');
+      check('Deal ID line sits immediately after Status in the header', dealIdx === statusIdx + 1, { statusIdx, dealIdx, lines });
+      check('Deal ID is never rendered as "Deal ID: —"', !withDeal.includes('Deal ID: —'));
+    }
+
+    // itemContextData.ts's own exit-deal resolver: outgoing-only, realized-deal-type-only.
+    const dataSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'itemContextData.ts'), 'utf8');
+    check('the exit-deal loader only ever reads the OUTGOING (\'out\') side of deal_items', /\.eq\('direction', 'out'\)/.test(dataSource), 'no direction=out filter found');
+    check('the exit-deal loader restricts to realized deal types (sale/trade), mirroring analytics_item_lifecycle\'s exit_deal CTE', /REALIZED_EXIT_DEAL_TYPES/.test(dataSource) && /'sale'/.test(dataSource) && /'trade'/.test(dataSource));
+    check('the exit-deal loader never reads the acquisition (\'in\') side as an exit', !/eq\('direction',\s*'in'\)/.test(dataSource));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }

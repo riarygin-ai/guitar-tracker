@@ -150,6 +150,15 @@ export default function LeadDetailPanel({ lead, onClose }: { lead: LeadRow; onCl
               <Field label="Normalized channel"><span className="text-xs">{lead.channel_name ?? '— (none)'}</span></Field>
               <Field label="Source updated"><span className="text-xs" data-source-updated-at>{fmtTimestamp(lead.source_updated_at)}</span> <span className="font-mono text-[10px] text-slate-400">{lead.source_updated_at}</span></Field>
               <Field label="Last imported"><span className="text-xs">{fmtTimestamp(lead.last_imported_at)}</span></Field>
+              <Field label="Deal ID">
+                {lead.deal_id != null ? (
+                  <Link href={`/operations/${lead.deal_id}`} className="text-xs font-medium text-sky-700 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-sky-300" data-lead-deal-id>
+                    {lead.deal_id}
+                  </Link>
+                ) : (
+                  <span className="text-xs text-slate-400 dark:text-slate-500" data-lead-deal-id>—</span>
+                )}
+              </Field>
             </div>
           </details>
         </div>
