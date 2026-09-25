@@ -5,13 +5,26 @@
 //
 // The most important rule here exists because of an observed live failure:
 // the general Coach described "high leads + low realized deals" as "low deal
-// conversion ... lead management or listing presentation". There is NO
-// canonical lead_id -> deal_id linkage, so no conversion exists to be low or
-// high, and a gap between the two counts explains nothing on its own.
+// conversion ... lead management or listing presentation" — comparing raw
+// lead counts against realized_deal_count, an aggregate, UNLINKED fact, as
+// if that comparison were a conversion rate. That specific comparison is
+// still never a conversion (see below) and Listing Advice, whose evidence
+// never includes any linkage, can still never make a conversion claim.
 //
-// The same rules are enforced AFTER generation by findLeadDealViolations()
-// (pure, below): a response that asserts conversion or explains the
-// lead/deal gap as a cause is rejected by the validators rather than shown.
+// What HAS changed: a genuine, narrow, canonical linkage now exists wherever
+// item_leads.deal_id is populated (supabase/migrations/20260925000000_item_
+// leads_deal_id.sql onward) — the Coach (never Listing Advice) may receive
+// this as linked_deal_analytics (linkedDealAnalytics.ts), with its own
+// `linked_deal:*` citable sources. A conversion claim is allowed ONLY when a
+// card cites one of those sources; validateAdviceResponse.ts enforces this
+// per-card (a card's own findLeadDealViolations hit is only excused when
+// that card's source_ids include a `linked_deal:*` id) — the pure detector
+// below is unchanged, only its caller's gating is.
+//
+// LEAD_DEAL_GAP_EXPLAINED (a causal explanation of the lead/realized-deal
+// gap) stays unconditionally forbidden everywhere, linkage or not — that
+// rule is about NOT inventing a cause for an unlinked comparison, which
+// linkage doesn't change.
 
 export const PURPOSE_SEMANTICS = `Purpose semantics (apply consistently):
 - Business: inventory actively managed for realization and turnover.
@@ -19,11 +32,14 @@ export const PURPOSE_SEMANTICS = `Purpose semantics (apply consistently):
 - Personal: held primarily for enjoyment, collection, or appreciation — not a failure state.`;
 
 export const LEAD_DEAL_RULES = `Leads and deals (hard rules):
-- There is currently NO canonical lead_id -> deal_id linkage. Realized deals (realized_deal_count and realized_deal_count_by_recorded_channel) are factual Sell/Trade activity during a period; lead counts are recorded buyer conversations. They are two separate facts.
-- NEVER describe the relationship between lead counts and realized deal counts as conversion, conversion rate, low conversion, high conversion, poor conversion, lead-to-sale conversion, leads turning into deals, leads converting, close rate, or closing rate. Never state or imply a lead-to-deal conversion rate or funnel. If asked whether leads are converting, say that this cannot currently be determined from the evidence.
-- Do not calculate realized_deals / leads or any equivalent ratio, and do not imply that deals observed in a period originated from that period's leads. A deal may come from an earlier lead or from no logged lead.
+- Canonical Lead -> Deal linkage exists ONLY where item_leads.deal_id is populated for a specific lead — narrow, and historically incomplete. When available in this packet it is provided as linked_deal_analytics (source ids prefixed "linked_deal:"). Nothing else here is linkage: realized deals (realized_deal_count and realized_deal_count_by_recorded_channel) remain a SEPARATE, unlinked, aggregate fact — factual Sell/Trade activity during a period; lead counts are recorded buyer conversations. Comparing those two remains two separate facts, exactly as before.
+- NEVER describe the relationship between raw lead counts and realized deal counts as conversion, conversion rate, low conversion, high conversion, poor conversion, lead-to-sale conversion, leads turning into deals, leads converting, close rate, or closing rate. Never state or imply a lead-to-deal conversion rate or funnel from that comparison. If asked whether leads are converting and no linked_deal_analytics evidence is being cited, say that this cannot currently be determined from the evidence.
+- A conversion, "linked deal rate", or "conversion to date" claim may ONLY be made by explicitly citing linked_deal_analytics evidence (a linked_deal:* source id) for the specific cohort/channel discussed — never inferred from realized_deal_count or any other uncited combination of fields.
+- When citing linked_deal_analytics, always account for linkage coverage (completed_link_coverage_pct) before stating any rate: a low coverage means many historical COMPLETED leads simply have not been linked yet — that is INCOMPLETE LINKAGE, never a failed conversion. Never claim a lead "did not convert" merely because it has no deal_id — say it is unlinked, or not yet linked.
+- For a recent or still-OPEN lead cohort, call any such rate "linked deal rate to date" or "observed conversion to date" — never final or complete conversion; an open lead has not necessarily reached its final outcome.
+- Do not calculate realized_deals / leads or any other new ratio outside of linked_deal_analytics's own already-computed rates, and do not imply that deals observed in a period originated from that period's leads. A deal may come from an earlier lead or from no logged lead.
 - Factual side-by-side statements ARE allowed, for example "Recorded lead activity was high while realized deal activity in the same period was lower" or "Marketplace recorded 23 attributed leads and 0 realized deals by recorded channel in the latest week" — always keeping the distinction that they are not directly linked. Never turn such a statement into "converted poorly" or any equivalent.
-- A gap between lead activity and realized deals does NOT by itself indicate poor follow-up, bad listing presentation, bad pricing, negotiation failure, low-quality leads, or a poor sales process. Do not assert any of these as the explanation. You MAY name one as something worth CHECKING (for example reviewing offer history, pricing, or follow-up), clearly worded as a check or hypothesis, never as the cause.
+- A gap between unlinked lead activity and realized deals does NOT by itself indicate poor follow-up, bad listing presentation, bad pricing, negotiation failure, low-quality leads, or a poor sales process. Do not assert any of these as the explanation. You MAY name one as something worth CHECKING (for example reviewing offer history, pricing, or follow-up), clearly worded as a check or hypothesis, never as the cause.
 - Keep FACT separate from HYPOTHESIS/CHECK: state what the evidence shows first; put any possible explanation afterwards and label it as something to check ("may be worth checking", "a possible check", "if the gap persists").`;
 
 export const LISTING_DEMAND_SEMANTICS = `Listing Demand semantics (apply only when listing_demand is present; all rules above still apply):

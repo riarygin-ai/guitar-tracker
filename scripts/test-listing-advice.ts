@@ -132,7 +132,7 @@ async function main() {
     for (const [name, p] of [['general Business Coach', ADVICE_SYSTEM_PROMPT], ['Listing Advice', LISTING_ADVICE_SYSTEM_PROMPT]] as const) {
       check(`${name}: contains the ONE shared lead/deal rules block verbatim`, p.includes(LEAD_DEAL_RULES));
       check(`${name}: contains the shared Listing Demand semantics + Purpose semantics verbatim`, p.includes(LISTING_DEMAND_SEMANTICS) && p.includes(PURPOSE_SEMANTICS));
-      check(`${name}: states there is NO canonical lead_id -> deal_id linkage`, /NO canonical lead_id -> deal_id linkage/.test(p));
+      check(`${name}: states canonical linkage exists only where item_leads.deal_id is populated`, /Canonical Lead -> Deal linkage exists ONLY where item_leads\.deal_id is populated/.test(p));
       for (const term of ['conversion rate', 'low conversion', 'high conversion', 'lead-to-sale conversion', 'leads turning into deals', 'close rate', 'closing rate']) {
         check(`${name}: forbids "${term}"`, p.includes(term));
       }

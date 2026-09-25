@@ -55,6 +55,11 @@ export const ROW_ISSUE = {
   DEAL_NOT_OWNED_BY_SOURCE_USER: 'DEAL_NOT_OWNED_BY_SOURCE_USER',
   DEAL_ITEM_MISMATCH: 'DEAL_ITEM_MISMATCH',
   DEAL_ID_REQUIRES_COMPLETED_STATUS: 'DEAL_ID_REQUIRES_COMPLETED_STATUS',
+  // One linked lead per item: a DIFFERENT existing lead already holds this
+  // item's link (DB conflict), or two rows in THIS sheet both try to claim
+  // it (sheet-internal conflict — neither is trusted, both are rejected).
+  ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD: 'ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD',
+  DUPLICATE_DEAL_LINK_IN_SHEET: 'DUPLICATE_DEAL_LINK_IN_SHEET',
 } as const;
 
 // ── Row-level warning (non-fatal, does not force INVALID) ───────────────────

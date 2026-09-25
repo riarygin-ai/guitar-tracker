@@ -188,7 +188,7 @@ async function main() {
     const dis = strip(read('src', 'lib', 'analytics', 'listingAdvice', 'listingAdviceDismissal.ts'));
     check('reuses the existing dismissals table + 30-day resurface policy; never writes advice rows', /analytics_advice_dismissals/.test(dis) && /30 \* 24 \* 60 \* 60 \* 1000/.test(dis) && !/from\('listing_advice_runs'\)\s*\.(update|delete|insert)/.test(dis));
     const migs = fs.readdirSync(path.join(root, 'supabase', 'migrations')).sort();
-    check('orchestration change added no migration of its own (Listing Advice table is still the latest orchestration-era migration; the later one is the additive preferred_language column)', migs.includes('20260920000000_listing_advice_runs.sql') && migs[migs.length - 1] === '20260921000000_app_users_preferred_language.sql', migs[migs.length - 1]);
+    check('orchestration change added no migration of its own (Listing Advice table is still the latest orchestration-era migration; later migrations are unrelated features)', migs.includes('20260920000000_listing_advice_runs.sql') && migs.indexOf('20260920000000_listing_advice_runs.sql') === migs.indexOf('20260921000000_app_users_preferred_language.sql') - 1, migs);
   }
 
   // ── Real DB ────────────────────────────────────────────────────────────

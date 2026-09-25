@@ -65,6 +65,13 @@ export interface ValidationContext {
   // Never the incoming/acquired side. Only entries for deal ids referenced
   // anywhere in the sheet.
   dealOutgoingItemIdsByDealId: Map<number, Set<number>>;
+  // inventory_items.id -> the lowercased lead_id of the ONE existing
+  // item_leads row (for this source's user) whose deal_id is currently
+  // non-null — the item's current winning/linked lead, if any. Used to
+  // reject a DIFFERENT lead trying to claim an already-linked item
+  // (ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD) while still allowing that same
+  // winning lead to be updated/relinked (its own leadId matches).
+  existingLinkedLeadIdByItemId: Map<number, string>;
 }
 
 function issue(
@@ -349,6 +356,27 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
           ),
         );
       }
+    }
+  }
+
+  // ── one linked lead per item ──────────────────────────────────────────
+  // At most one lead may hold item ${itemId}'s link. A DIFFERENT existing
+  // lead already holding it is rejected; the SAME lead relinking (e.g.
+  // deal_id 500 -> 501) is allowed — it is not "another" lead. Sheet-
+  // internal conflicts (two rows in this same import both claiming the
+  // same item) are caught separately, after every row has been classified
+  // once — see preview.ts's applyDealLinkConflicts().
+  if (dealId !== null && itemId !== null) {
+    const existingLinkedLeadId = ctx.existingLinkedLeadIdByItemId.get(itemId);
+    if (existingLinkedLeadId !== undefined && existingLinkedLeadId !== leadId) {
+      issues.push(
+        issue(
+          'error',
+          ROW_ISSUE.ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD,
+          `Inventory item ${itemId} is already linked to a different lead's completed deal.`,
+          at2(),
+        ),
+      );
     }
   }
 

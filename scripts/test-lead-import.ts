@@ -166,12 +166,20 @@ async function main() {
   //   dealOutB         — user B's completed Sale of itemB (itemB on the 'out' side; owned by a different user).
   const dealOutA = await ensureDeal(admin, userA, 'sale', 'LEADIMPORT:dealOutA');
   await ensureDealItem(admin, userA, dealOutA, itemA, 'out');
+  // Multi-item deal: dealOutA also realizes itemA2 (its own separate outgoing
+  // slot) — models "same deal_id used for item 66 and item 67 in a multi-item
+  // deal", which stays allowed even under the new one-linked-lead-PER-ITEM rule.
+  await ensureDealItem(admin, userA, dealOutA, itemA2, 'out');
+  // A second real deal, also user A's, also itemA outgoing — for "relink
+  // the winning lead to a different deal" scenarios (still one lead, one link).
+  const dealOutA2 = await ensureDeal(admin, userA, 'trade', 'LEADIMPORT:dealOutA2');
+  await ensureDealItem(admin, userA, dealOutA2, itemA, 'out');
   const dealTradeInA = await ensureDeal(admin, userA, 'trade', 'LEADIMPORT:dealTradeInA');
   await ensureDealItem(admin, userA, dealTradeInA, itemA2, 'in');
   const dealOutB = await ensureDeal(admin, userB, 'sale', 'LEADIMPORT:dealOutB');
   await ensureDealItem(admin, userB, dealOutB, itemB, 'out');
 
-  console.log(`  userA=${userA} userB=${userB} itemA=${itemA} itemA2=${itemA2} itemB=${itemB} sourceA=${sourceA.id} sourceB=${sourceB.id} dealOutA=${dealOutA} dealTradeInA=${dealTradeInA} dealOutB=${dealOutB}`);
+  console.log(`  userA=${userA} userB=${userB} itemA=${itemA} itemA2=${itemA2} itemB=${itemB} sourceA=${sourceA.id} sourceB=${sourceB.id} dealOutA=${dealOutA} dealOutA2=${dealOutA2} dealTradeInA=${dealTradeInA} dealOutB=${dealOutB}`);
 
   const createdItemLeadIds: number[] = [];
   async function insertLead(row: Record<string, unknown>): Promise<{ id: number | null; error: string | null }> {
@@ -300,6 +308,13 @@ async function main() {
       check('1.11 fully blank historical optional fields succeed', id !== null, error);
     }
 
+    // These deal_id schema subtests (1.12-1.16) each clean up their own
+    // linked row(s) immediately after asserting on them — itemA/itemA2 must
+    // go into Section 3+ with NO existing link, or those scenarios' own
+    // "not yet linked" fixtures would collide with the new one-linked-lead-
+    // per-item partial unique index.
+    const deleteLead = async (id: number | null) => { if (id !== null) await admin.from('item_leads').delete().eq('id', id); };
+
     // 1.12 deal_id schema: != NULL requires status = COMPLETED (item_leads_deal_id_requires_completed_check)
     {
       const bad = await insertLead(baseLeadRow({ status: 'OPEN', deal_id: dealOutA }));
@@ -308,6 +323,8 @@ async function main() {
       check('1.12b deal_id set while status COMPLETED succeeds', good.id !== null, good.error);
       const goodNull = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: null }));
       check('1.12c COMPLETED with deal_id NULL still succeeds (historical backward compatibility)', goodNull.id !== null, goodNull.error);
+      await deleteLead(good.id);
+      await deleteLead(goodNull.id);
     }
 
     // 1.13 deal_id FK integrity — a nonexistent deals.id is rejected
@@ -316,11 +333,27 @@ async function main() {
       check('1.13 deal_id referencing a nonexistent deal is rejected (FK)', bad.id === null && !!bad.error, bad.error);
     }
 
-    // 1.14 deal_id is not unique — the same deal_id links to two different leads
+    // 1.14 deal_id is not GLOBALLY unique — the same deal_id may be stored on
+    // leads for two DIFFERENT items (a multi-item deal realizes several
+    // items, each with its own winning lead).
     {
       const a = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: dealOutA }));
-      const b = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: dealOutA }));
-      check('1.14 the same deal_id may be stored on more than one lead row (no UNIQUE constraint)', a.id !== null && b.id !== null && a.id !== b.id, { a, b });
+      const b = await insertLead({ ...baseLeadRow({ status: 'COMPLETED', deal_id: dealOutA }), inventory_item_id: itemA2 });
+      check('1.14 the same deal_id may be stored on leads for two different items (no global UNIQUE constraint on deal_id)', a.id !== null && b.id !== null && a.id !== b.id, { a, b });
+      await deleteLead(a.id);
+      await deleteLead(b.id);
+    }
+
+    // 1.16 one linked lead per item: a SECOND lead for the SAME item cannot
+    // also hold a non-null deal_id (idx_item_leads_one_linked_lead_per_item).
+    {
+      const first = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: dealOutA }));
+      check('1.16a first lead links itemA to a deal', first.id !== null, first.error);
+      const second = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: dealOutA }));
+      check('1.16b a second, different lead for the SAME item is rejected even with the SAME deal_id (partial unique index)', second.id === null && !!second.error && /idx_item_leads_one_linked_lead_per_item/.test(second.error ?? ''), second.error);
+      const secondOtherDeal = await insertLead(baseLeadRow({ status: 'COMPLETED', deal_id: dealOutA2 }));
+      check('1.16c a second, different lead for the SAME item is ALSO rejected with a DIFFERENT deal_id — the constraint is per-item, not per-deal', secondOtherDeal.id === null && !!secondOtherDeal.error, secondOtherDeal.error);
+      await deleteLead(first.id);
     }
 
     // 1.15 deal_id participates in the material-field / newer-source-required guard
@@ -342,6 +375,7 @@ async function main() {
           .eq('id', created.id).select('deal_id').maybeSingle();
         check('1.15d changing deal_id back to NULL is also a material change, accepted with a newer source_updated_at', revert.data?.deal_id === null, revert.error);
       }
+      await deleteLead(created.id);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -621,18 +655,67 @@ async function main() {
       check('3.26 missing header is fatal through the full pipeline', badResult.fatal && badResult.fatalIssues.some((i) => i.code === SOURCE_FATAL.MISSING_HEADERS));
     }
 
-    // Same deal_id may validly link to more than one lead — no uniqueness
-    // failure at any layer (isolated call: two otherwise-independent NEW rows).
+    // Multi-item deal: the SAME deal_id may validly link TWO DIFFERENT items
+    // (each its own lead) in one import — allowed, no uniqueness failure.
     {
       const twinValues = buildValues([
-        sheetRow({ lead_id: randomUuid(), status: 'COMPLETED', deal_id: dealOutA }),
-        sheetRow({ lead_id: randomUuid(), status: 'COMPLETED', deal_id: dealOutA }),
+        sheetRow({ lead_id: randomUuid(), item_id: itemA, status: 'COMPLETED', deal_id: dealOutA }),
+        sheetRow({ lead_id: randomUuid(), item_id: itemA2, status: 'COMPLETED', deal_id: dealOutA }),
       ]);
       const twinResult = await classifySheetValues(twinValues, sourceA, admin);
-      check('3.40 the same deal_id may validly link to more than one lead — both classify NEW, no uniqueness failure',
+      check('3.40 the same deal_id may validly link two DIFFERENT items in one import — both classify NEW, no uniqueness failure',
         !twinResult.fatal && twinResult.rows[0]?.classification === 'NEW' && twinResult.rows[1]?.classification === 'NEW' &&
-        !twinResult.rows[0]?.issues.some((i) => i.code === ROW_ISSUE.DEAL_ITEM_MISMATCH) && !twinResult.rows[1]?.issues.some((i) => i.code === ROW_ISSUE.DEAL_ITEM_MISMATCH),
+        !twinResult.rows[0]?.issues.some((i) => i.code === ROW_ISSUE.DEAL_ITEM_MISMATCH || i.code === ROW_ISSUE.ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD || i.code === ROW_ISSUE.DUPLICATE_DEAL_LINK_IN_SHEET) &&
+        !twinResult.rows[1]?.issues.some((i) => i.code === ROW_ISSUE.DEAL_ITEM_MISMATCH || i.code === ROW_ISSUE.ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD || i.code === ROW_ISSUE.DUPLICATE_DEAL_LINK_IN_SHEET),
         twinResult.rows);
+    }
+
+    // Sheet-internal conflict: TWO rows in the SAME sheet both try to link
+    // the SAME item — neither is trusted, both are rejected.
+    {
+      const conflictValues = buildValues([
+        sheetRow({ lead_id: randomUuid(), item_id: itemA, status: 'COMPLETED', deal_id: dealOutA }),
+        sheetRow({ lead_id: randomUuid(), item_id: itemA, status: 'COMPLETED', deal_id: dealOutA2 }),
+      ]);
+      const conflictResult = await classifySheetValues(conflictValues, sourceA, admin);
+      check('3.41 two Sheet rows linking the SAME item (even with different deal_ids) both classify INVALID with DUPLICATE_DEAL_LINK_IN_SHEET',
+        !conflictResult.fatal &&
+        conflictResult.rows[0]?.classification === 'INVALID' && conflictResult.rows[0]?.issues.some((i) => i.code === ROW_ISSUE.DUPLICATE_DEAL_LINK_IN_SHEET) &&
+        conflictResult.rows[1]?.classification === 'INVALID' && conflictResult.rows[1]?.issues.some((i) => i.code === ROW_ISSUE.DUPLICATE_DEAL_LINK_IN_SHEET),
+        conflictResult.rows);
+      {
+        const values3 = buildValues([
+          sheetRow({ lead_id: randomUuid(), item_id: itemA, status: 'COMPLETED', deal_id: dealOutA }),
+          sheetRow({ lead_id: randomUuid(), item_id: itemA, status: 'COMPLETED', deal_id: dealOutA2 }),
+          sheetRow({ lead_id: randomUuid(), item_id: itemA2, status: 'COMPLETED', deal_id: dealOutA }),
+        ]);
+        const result3 = await classifySheetValues(values3, sourceA, admin);
+        check('3.42b the unrelated third row still classifies NEW (no conflict code)', result3.rows[2]?.classification === 'NEW' && !result3.rows[2]?.issues.some((i) => i.code === ROW_ISSUE.DUPLICATE_DEAL_LINK_IN_SHEET));
+      }
+    }
+
+    // DB conflict: an item already linked to an EXISTING lead rejects a
+    // DIFFERENT new lead trying to claim it, but allows the SAME winning
+    // lead to relink to a different deal.
+    {
+      const winningLeadId = randomUuid();
+      const winning = await insertLead(baseLeadRow({ lead_id: winningLeadId, status: 'COMPLETED', deal_id: dealOutA, inventory_item_id: itemA }));
+      check('DB conflict fixture: the winning lead is linked directly', winning.id !== null, winning.error);
+
+      const rivalValues = buildValues([sheetRow({ lead_id: randomUuid(), item_id: itemA, status: 'COMPLETED', deal_id: dealOutA2 })]);
+      const rivalResult = await classifySheetValues(rivalValues, sourceA, admin);
+      check('3.43 a DIFFERENT lead trying to claim an already-linked item is INVALID with ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD',
+        rivalResult.rows[0]?.classification === 'INVALID' && rivalResult.rows[0]?.issues.some((i) => i.code === ROW_ISSUE.ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD),
+        rivalResult.rows);
+      check('3.43b the rejection message never reveals anything beyond the item id', !rivalResult.rows[0]?.issues.some((i) => /lead|uuid/i.test(i.message) && i.code === ROW_ISSUE.ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD && i.message.includes(winningLeadId)));
+
+      const relinkValues = buildValues([sheetRow({ lead_id: winningLeadId, item_id: itemA, status: 'COMPLETED', deal_id: dealOutA2, updated_at: T_NOW })]);
+      const relinkResult = await classifySheetValues(relinkValues, sourceA, admin);
+      check('3.44 the SAME winning lead relinking to a DIFFERENT deal is allowed (not "another" lead)',
+        relinkResult.rows[0]?.classification === 'UPDATE' && !relinkResult.rows[0]?.issues.some((i) => i.code === ROW_ISSUE.ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD),
+        relinkResult.rows);
+
+      await deleteLead(winning.id);
     }
 
     // Old-style A:R sheet (no deal_id column at all) still works — every row's
@@ -1284,10 +1367,7 @@ async function main() {
       const T3 = '2026-06-03T00:00:00Z';
       const T4 = '2026-06-04T00:00:00Z';
 
-      // A second real deal (also user A's, itemA outgoing) to relink onto.
-      const dealOutA2 = await ensureDeal(admin, userA, 'trade', 'LEADIMPORT:dealOutA2');
-      await ensureDealItem(admin, userA, dealOutA2, itemA, 'out');
-
+      // dealOutA2 (a second real deal, also itemA outgoing) is created once in the top-level fixtures.
       const sheetAt = (updatedAt: string, status: string, dealId: number | string | null) =>
         buildValues([sheetRow({ lead_id: dealLeadId, updated_at: updatedAt, status, deal_id: dealId })]);
 

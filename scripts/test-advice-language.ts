@@ -158,7 +158,7 @@ async function main() {
     check('Coach (ru) still carries the shared no-conversion / Listing Demand / Purpose blocks', cp.includes(LEAD_DEAL_RULES) && cp.includes(LISTING_DEMAND_SEMANTICS) && cp.includes(PURPOSE_SEMANTICS));
     const oa = strip(read('src', 'lib', 'openai.ts'));
     check('the model calls use the persisted packet\'s language (system prompt built from packet.language)', /adviceSystemPromptFor\(packetLanguage\(packet\)\)/.test(oa) && /listingAdviceSystemPromptFor\(packetLanguage\(packet\)\)/.test(oa));
-    check('schemas and prompt versions unchanged (no enum/schema weakening for Russian)', /advice_type: \{ type: 'string', enum: \['action', 'observation', 'watch'\] \}/.test(oa) && /maxItems: 3/.test(oa) && PROMPT_TEMPLATE_VERSION === 'analytics-advice-v2' && LISTING_ADVICE_PROMPT_VERSION === 'listing-advice-v1');
+    check('schemas and prompt versions unchanged (no enum/schema weakening for Russian)', /advice_type: \{ type: 'string', enum: \['action', 'observation', 'watch'\] \}/.test(oa) && /maxItems: 3/.test(oa) && PROMPT_TEMPLATE_VERSION === 'analytics-advice-v3' && LISTING_ADVICE_PROMPT_VERSION === 'listing-advice-v1');
     check('listing-DESCRIPTION generation is untouched (no language plumbing in generateListing)', !/language/i.test(oa.slice(oa.indexOf('export async function generateListing('))));
   }
 
@@ -248,13 +248,13 @@ async function main() {
   console.log('\n[G — migration + admin API + Admin UI (structure)]');
   {
     const migs = fs.readdirSync(path.join(root, 'supabase', 'migrations')).filter((f) => f.endsWith('.sql')).sort();
-    const last = migs[migs.length - 1];
-    const sql = read('supabase', 'migrations', last);
-    check('ONE new additive migration for preferred_language (latest, after the Listing Advice table)', last === '20260921000000_app_users_preferred_language.sql' && migs[migs.length - 2] === '20260920000000_listing_advice_runs.sql', last);
+    const langMigrationName = '20260921000000_app_users_preferred_language.sql';
+    const sql = read('supabase', 'migrations', langMigrationName);
+    check('ONE new additive migration for preferred_language exists, immediately after the Listing Advice table (later migrations are unrelated features)', migs.includes(langMigrationName) && migs.includes('20260920000000_listing_advice_runs.sql') && migs.indexOf(langMigrationName) === migs.indexOf('20260920000000_listing_advice_runs.sql') + 1, migs);
     check('adds text column preferred_language NOT NULL DEFAULT en on app_users (not auth.users, not an enum)', /ALTER TABLE public\.app_users\s+ADD COLUMN IF NOT EXISTS preferred_language text NOT NULL DEFAULT 'en'/.test(sql) && !/auth\.users/.test(sql.replace(/--.*$/gm, '')) && !/CREATE TYPE/i.test(sql));
     check('CHECK constraint restricts values to en, ru (easy to extend)', /CHECK \(preferred_language IN \('en', 'ru'\)\)/.test(sql));
     check('sets ru for the two real accounts by stable id (1, 2) — no blanket update, no name matching', /UPDATE public\.app_users\s+SET preferred_language = 'ru'\s+WHERE id IN \(1, 2\)/.test(sql) && !/display_name|email/.test(sql.replace(/--.*$/gm, '')));
-    check('no previously applied migration was edited (only one new file for this change)', migs.filter((m) => m >= '20260921').length === 1);
+    check('preferred_language stays a single, standalone migration (not edited by any later migration file)', migs.filter((m) => m.startsWith('20260921')).length === 1);
 
     const api = strip(read('src', 'app', 'api', 'admin', 'users', 'route.ts'));
     check('Admin API: GET + PATCH both gated by authorizeAdminApiRequest (existing admin auth)', (api.match(/authorizeAdminApiRequest\(req, ROUTE_TAG\)/g) ?? []).length === 2 && /export async function GET/.test(api) && /export async function PATCH/.test(api));

@@ -42,7 +42,7 @@ export function formatGeneratedAt(iso: string | null | undefined): string {
 
 export interface EvidenceBlock {
   sourceId: string;
-  kind: 'market' | 'channel' | 'item' | 'data_quality' | 'insight' | 'pattern' | 'hypothesis';
+  kind: 'market' | 'channel' | 'item' | 'data_quality' | 'insight' | 'pattern' | 'hypothesis' | 'linked_deal';
   title: string;
   /** Optional small label above the title (e.g. "Deterministic insight"). */
   badge?: string;

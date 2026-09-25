@@ -9,7 +9,7 @@ import { fetchSheetValues, GoogleSheetsError } from './googleSheets';
 import { buildRawRows, parseHeaders } from './normalize';
 import { validateAndClassifyRow, type ExistingLeadInfo, type ValidationContext } from './validate';
 import { KNOWN_CHANNEL_NAMES } from './types';
-import { SOURCE_FATAL } from './errorCodes';
+import { ROW_ISSUE, SOURCE_FATAL } from './errorCodes';
 import type { LeadImportSource, PreviewResult, RawSheetRow, RowValidationResult, SheetCellValue, ValidationIssue } from './types';
 
 // One classification pass over a whole sheet: `preview` is the
@@ -94,6 +94,72 @@ async function loadExistingLeadsByUser(
     });
   }
   return map;
+}
+
+// inventory_items.id -> the lowercased lead_id of this user's ONE existing
+// linked lead for that item (deal_id IS NOT NULL), if any. Loaded for every
+// item this user has ANY existing lead against (not scoped to the sheet's
+// own item ids) — cheap (this is normally a small, mostly-empty set) and
+// avoids a second round-trip once dealIds referenced in the sheet are known.
+async function loadExistingLinkedLeadIdByItemId(
+  serviceClient: SupabaseClient,
+  userId: number,
+): Promise<Map<number, string>> {
+  const { data, error } = await serviceClient
+    .from('item_leads')
+    .select('inventory_item_id, lead_id')
+    .eq('user_id', userId)
+    .not('deal_id', 'is', null);
+  if (error) throw new Error(`Failed to load existing linked leads: ${error.message}`);
+
+  const map = new Map<number, string>();
+  for (const row of (data ?? []) as { inventory_item_id: number; lead_id: string }[]) {
+    map.set(row.inventory_item_id, row.lead_id.toLowerCase());
+  }
+  return map;
+}
+
+// Sheet-internal conflict: two (or more) rows in the SAME sheet both carry
+// a non-null deal_id for the SAME inventory item. Neither is trusted more
+// than the other — both/all are rejected with a clear code, never applied,
+// and never guessed at. Only rows that otherwise parsed cleanly
+// (`normalized !== null`) participate: a row already INVALID for some
+// other reason doesn't need a second code. Runs once per whole-sheet
+// classification pass, after every row has its own initial result, so it
+// sees the complete set of candidate item ids at once.
+function applyDealLinkConflicts(rows: RowValidationResult[]): RowValidationResult[] {
+  const rowNumbersByItemId = new Map<number, number[]>();
+  for (const row of rows) {
+    if (!row.normalized || row.normalized.dealId === null) continue;
+    const list = rowNumbersByItemId.get(row.normalized.inventoryItemId) ?? [];
+    list.push(row.rowNumber);
+    rowNumbersByItemId.set(row.normalized.inventoryItemId, list);
+  }
+
+  const conflictingRowNumbers = new Set<number>();
+  for (const rowNumbers of Array.from(rowNumbersByItemId.values())) {
+    if (rowNumbers.length > 1) rowNumbers.forEach((n: number) => conflictingRowNumbers.add(n));
+  }
+  if (conflictingRowNumbers.size === 0) return rows;
+
+  return rows.map((row) => {
+    if (!conflictingRowNumbers.has(row.rowNumber)) return row;
+    const conflictIssue: ValidationIssue = {
+      rowNumber: row.rowNumber,
+      leadId: row.leadId,
+      itemId: row.itemId,
+      classification: 'INVALID',
+      severity: 'error',
+      code: ROW_ISSUE.DUPLICATE_DEAL_LINK_IN_SHEET,
+      message: `Inventory item ${row.itemId} has more than one Sheet row with a non-null deal_id in this import — ambiguous, none applied.`,
+    };
+    return {
+      ...row,
+      classification: 'INVALID',
+      issues: [...row.issues.map((i) => ({ ...i, classification: 'INVALID' as const })), conflictIssue],
+      normalized: null,
+    };
+  });
 }
 
 async function loadItemOwnerByItemId(
@@ -224,11 +290,12 @@ export async function classifySheetValuesDetailed(
   const itemIds = collectCandidateIds((r) => r.cells.item_id);
   const dealIds = collectCandidateIds((r) => r.cells.deal_id);
 
-  const [channelNameToId, existingLeadsByLeadId, itemOwnerByItemId, dealContext] = await Promise.all([
+  const [channelNameToId, existingLeadsByLeadId, itemOwnerByItemId, dealContext, existingLinkedLeadIdByItemId] = await Promise.all([
     loadChannelNameToId(serviceClient),
     loadExistingLeadsByUser(serviceClient, source.user_id),
     loadItemOwnerByItemId(serviceClient, itemIds),
     loadDealContextByDealId(serviceClient, dealIds),
+    loadExistingLinkedLeadIdByItemId(serviceClient, source.user_id),
   ]);
 
   const ctx: ValidationContext = {
@@ -238,9 +305,10 @@ export async function classifySheetValuesDetailed(
     itemOwnerByItemId,
     dealOwnerByDealId: dealContext.dealOwnerByDealId,
     dealOutgoingItemIdsByDealId: dealContext.dealOutgoingItemIdsByDealId,
+    existingLinkedLeadIdByItemId,
   };
 
-  const rows: RowValidationResult[] = rawRows.map((raw) => validateAndClassifyRow(raw, ctx));
+  const rows: RowValidationResult[] = applyDealLinkConflicts(rawRows.map((raw) => validateAndClassifyRow(raw, ctx)));
 
   const counts = emptyCounts();
   counts.rowsScanned = rows.length;

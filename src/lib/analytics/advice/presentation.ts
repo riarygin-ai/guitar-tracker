@@ -92,6 +92,7 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   confirmed_pattern: 'Confirmed Pattern',
   preliminary_hypothesis: 'Preliminary Hypothesis',
   listing_demand: 'Listing Demand',
+  linked_deal_analytics: 'Lead → Deal Linkage',
 };
 
 export function formatSourceType(sourceType: string | null | undefined): string {

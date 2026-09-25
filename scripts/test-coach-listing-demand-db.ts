@@ -217,8 +217,8 @@ async function main() {
     check('the persisted input_packet contains the exact demand block the Coach saw', !!packet.listing_demand && packet.listing_demand.window_weeks === 4 && packet.listing_demand.items.highest_activity.some((i) => i.item_id === p1));
     check('demand:* ids are in allowed_source_ids alongside the insight id', packet.allowed_source_ids.includes('demand:market_trend') && packet.allowed_source_ids.includes(`demand:item:${p1}`) && packet.allowed_source_ids.includes(`insight:OPEN_INVENTORY_PRIORITY:item:${p1}`));
     check('the persisted hash equals the hash of the persisted packet (auditable)', advRow!.canonical_input_hash === hashCanonicalInputPacket(packet));
-    check('the packet rebuilt from the saved snapshot + the persisted demand block reproduces the hash exactly', hashCanonicalInputPacket(buildAdviceInputPacket({ runId: run.id as number, analyticsVersion: '2.13', evidenceScope: 'shared_business_population', snapshot: (await admin.from('analytics_runs').select('snapshot').eq('id', run.id).single()).data!.snapshot, listingDemand: packet.listing_demand ?? null }).packet) === advRow!.canonical_input_hash);
-    check('revision records the new prompt template version', advRow!.prompt_template_version === 'analytics-advice-v2');
+    check('the packet rebuilt from the saved snapshot + the persisted demand/linked-deal blocks reproduces the hash exactly', hashCanonicalInputPacket(buildAdviceInputPacket({ runId: run.id as number, analyticsVersion: '2.13', evidenceScope: 'shared_business_population', snapshot: (await admin.from('analytics_runs').select('snapshot').eq('id', run.id).single()).data!.snapshot, listingDemand: packet.listing_demand ?? null, linkedDealAnalytics: packet.linked_deal_analytics ?? null }).packet) === advRow!.canonical_input_hash);
+    check('revision records the new prompt template version', advRow!.prompt_template_version === 'analytics-advice-v3');
     check('the persisted packet is free of raw lead data', !/SECRET|John Smith|4321|B-ONLY/.test(JSON.stringify(packet)));
 
     console.log('\n[E — failure isolation: demand evidence failing must not stop the Coach]');
@@ -241,7 +241,8 @@ async function main() {
     const { data: rows2 } = await admin.from('analytics_run_advice').select('revision_number, input_packet').eq('analytics_run_id', run.id).order('revision_number', { ascending: true });
     const p2Packet = rows2![1].input_packet as AdviceInputPacket;
     check('the second revision\'s packet simply has NO listing_demand block (no fabricated fallback)', rows2!.length === 2 && !('listing_demand' in p2Packet) && !p2Packet.allowed_source_ids.some((id) => id.startsWith('demand:')));
-    check('its existing insight context is intact', p2Packet.allowed_source_ids.join() === `insight:OPEN_INVENTORY_PRIORITY:item:${p1}` && p2Packet.deterministic_insights.length === 1);
+    check('its existing insight context is intact', p2Packet.allowed_source_ids.filter((id) => !id.startsWith('linked_deal:')).join() === `insight:OPEN_INVENTORY_PRIORITY:item:${p1}` && p2Packet.deterministic_insights.length === 1);
+    check('linked_deal_analytics is unaffected by the demand-evidence outage (an independent enrichment)', 'linked_deal_analytics' in p2Packet && p2Packet.allowed_source_ids.includes('linked_deal:overall'));
 
     console.log('\n[F — performance & size]');
     const seqStart = Date.now();

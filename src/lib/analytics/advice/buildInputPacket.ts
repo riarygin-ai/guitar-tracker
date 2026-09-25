@@ -14,6 +14,7 @@
 // by construction of the caller).
 
 import { buildListingDemandSources, type ListingDemandContext } from './listingDemandContext';
+import { buildLinkedDealAnalyticsSources, type LinkedDealAnalyticsContext } from './linkedDealAnalytics';
 import { DEFAULT_ADVICE_LANGUAGE, type AdviceLanguage } from './adviceLanguage';
 import type {
   AdviceInputPacket,
@@ -181,6 +182,11 @@ export interface BuildAdviceInputPacketParams {
    *  yields exactly the packet this function always produced. It never makes an
    *  otherwise evidence-less run generatable. */
   listingDemand?: ListingDemandContext | null;
+  /** Optional deterministic Lead -> Deal linkage analytics, fetched by the
+   *  caller at generation time (see linkedDealAnalytics.ts). Purely
+   *  additive, same contract as listingDemand: absent/null yields exactly
+   *  the packet this function always produced without it. */
+  linkedDealAnalytics?: LinkedDealAnalyticsContext | null;
   /** Requested advice language; part of the hashed packet. Defaults to 'en'. */
   language?: AdviceLanguage;
 }
@@ -243,6 +249,7 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
   const allSources = [...deterministicInsights, ...confirmedPatterns, ...preliminaryHypotheses];
 
   const demandSources = params.listingDemand ? buildListingDemandSources(params.listingDemand) : [];
+  const linkedDealSources = params.linkedDealAnalytics ? buildLinkedDealAnalyticsSources(params.linkedDealAnalytics) : [];
 
   const packet: AdviceInputPacket = {
     packet_version: '1.0',
@@ -253,7 +260,8 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
     pattern_selection_summary: selectionSummary,
     language: params.language ?? DEFAULT_ADVICE_LANGUAGE,
     ...(params.listingDemand ? { listing_demand: params.listingDemand } : {}),
-    allowed_source_ids: [...allSources.map((s) => s.source_id), ...demandSources.map((s) => s.source_id)],
+    ...(params.linkedDealAnalytics ? { linked_deal_analytics: params.linkedDealAnalytics } : {}),
+    allowed_source_ids: [...allSources.map((s) => s.source_id), ...demandSources.map((s) => s.source_id), ...linkedDealSources.map((s) => s.source_id)],
   };
 
   const sourceRegistry: SourceRegistryEntry[] = allSources.map((s) => {
@@ -292,6 +300,22 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
       confidence: null,
       key_metrics: d.key_metrics,
       limitations: d.limitations,
+    });
+  }
+
+  // Lead -> Deal linkage sources: citable exactly like any other source.
+  // Never item-level (item_id always null) — these are cohort/channel
+  // aggregates, never a single lead or item's own row.
+  for (const l of linkedDealSources) {
+    sourceRegistry.push({
+      source_id: l.source_id,
+      source_type: 'linked_deal_analytics',
+      item_id: l.item_id,
+      headline: l.headline,
+      summary: l.summary,
+      confidence: null,
+      key_metrics: l.key_metrics,
+      limitations: l.limitations,
     });
   }
 

@@ -5,12 +5,16 @@
 // the packet below is derived.
 
 import type { ListingDemandContext } from './listingDemandContext';
+import type { LinkedDealAnalyticsContext } from './linkedDealAnalytics';
 import type { AdviceLanguage } from './adviceLanguage';
 
 export const ADVICE_SCHEMA_VERSION = '1.0';
 // v2: adds the optional listing_demand packet block, its `demand:*` sources and the
 // Listing Demand semantics to the system prompt (all existing rules unchanged).
-export const PROMPT_TEMPLATE_VERSION = 'analytics-advice-v2';
+// v3: adds the optional linked_deal_analytics packet block, its `linked_deal:*`
+// sources, and the LEAD_DEAL_RULES update allowing a conversion claim ONLY when
+// citing a linked_deal:* source (all existing rules/fields otherwise unchanged).
+export const PROMPT_TEMPLATE_VERSION = 'analytics-advice-v3';
 export const ADVICE_PROVIDER = 'openai';
 
 export type AdviceStatus = 'pending' | 'generating' | 'completed' | 'failed';
@@ -60,7 +64,7 @@ export type AnalyticsRunAdviceMeta = Omit<AnalyticsRunAdviceRow, 'advice' | 'sou
 // target-user item_id a Business/Hybrid open-inventory insight already
 // legitimately carries.
 
-export type SourceType = 'deterministic_insight' | 'confirmed_pattern' | 'preliminary_hypothesis' | 'listing_demand';
+export type SourceType = 'deterministic_insight' | 'confirmed_pattern' | 'preliminary_hypothesis' | 'listing_demand' | 'linked_deal_analytics';
 
 export interface SourceRegistryEntry {
   source_id: string;
@@ -128,6 +132,12 @@ export interface AdviceInputPacket {
    *  block the Coach saw is auditable. Omitted entirely (never fabricated) when
    *  the enrichment was unavailable. Its `demand:*` source ids are in allowed_source_ids. */
   listing_demand?: ListingDemandContext;
+  /** Deterministic Lead -> Deal linkage analytics, built ONLY from
+   *  item_leads.deal_id — fetched live at generation time and persisted with
+   *  the packet, same pattern as listing_demand. Omitted entirely (never
+   *  fabricated) when unavailable. Its `linked_deal:*` source ids are in
+   *  allowed_source_ids — a conversion claim may only cite one of these. */
+  linked_deal_analytics?: LinkedDealAnalyticsContext;
   allowed_source_ids: string[];
 }
 

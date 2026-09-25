@@ -15,6 +15,7 @@ import { generateAnalyticsAdvice, ADVICE_MODEL_ID } from '@/lib/openai';
 import { sanitizeErrorMessage } from '@/lib/analytics/runAnalytics';
 import { buildAdviceInputPacket } from './buildInputPacket';
 import { loadListingDemandContext, type ListingDemandContext } from './listingDemandContext';
+import { loadLinkedDealAnalyticsContext, type LinkedDealAnalyticsContext } from './linkedDealAnalytics';
 import { hashCanonicalInputPacket } from './canonicalHash';
 import { validateAdviceResponse } from './validateAdviceResponse';
 import { getUserPreferredLanguage } from './userLanguage';
@@ -190,13 +191,24 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
     console.error('[generateAdvice] listing demand enrichment unavailable for run', runId, '- continuing without it:', sanitizeErrorMessage(demandError));
   }
 
-  // ── 4. Build the deterministic packet from the SAVED snapshot (+ the optional live Listing Demand block). ──
+  // Lead -> Deal linkage analytics: same "enrich, never block" contract as
+  // Listing Demand above — computed live from item_leads.deal_id, and any
+  // failure simply omits the block rather than failing generation.
+  let linkedDealAnalytics: LinkedDealAnalyticsContext | null = null;
+  try {
+    linkedDealAnalytics = await loadLinkedDealAnalyticsContext({ appUserId: requestingUserId, serviceClient });
+  } catch (linkedDealError) {
+    console.error('[generateAdvice] linked deal analytics unavailable for run', runId, '- continuing without it:', sanitizeErrorMessage(linkedDealError));
+  }
+
+  // ── 4. Build the deterministic packet from the SAVED snapshot (+ the optional live Listing Demand / Lead-Deal linkage blocks). ──
   const { packet, sourceRegistry, notes } = buildAdviceInputPacket({
     runId: run.id as number,
     analyticsVersion: run.analytics_version as string,
     evidenceScope: run.evidence_scope as string,
     snapshot: run.snapshot,
     listingDemand,
+    linkedDealAnalytics,
     language,
   });
 

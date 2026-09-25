@@ -418,7 +418,7 @@ async function main() {
   check('system prompt explicitly forbids causal framing', /causal|causation|caused/i.test(ADVICE_SYSTEM_PROMPT));
   check('system prompt explicitly forbids promising financial outcomes', /promise/i.test(ADVICE_SYSTEM_PROMPT));
   check('advice_schema_version constant is "1.0"', ADVICE_SCHEMA_VERSION === '1.0');
-  check('prompt_template_version constant is "analytics-advice-v2"', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v2');
+  check('prompt_template_version constant is "analytics-advice-v2"', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v3');
   check('provider constant is "openai"', ADVICE_PROVIDER === 'openai');
 
   // ══════════════════════════════════════════════════════════════════════
@@ -765,7 +765,7 @@ async function main() {
     if (outcome.status === 'completed') {
       const row = outcome.row;
       check('completed advice carries the configured provider/model', row.provider === 'openai' && row.model === ADVICE_MODEL_ID, { provider: row.provider, model: row.model });
-      check('completed advice carries the exact expected schema/prompt versions', row.advice_schema_version === '1.0' && row.prompt_template_version === 'analytics-advice-v2');
+      check('completed advice carries the exact expected schema/prompt versions', row.advice_schema_version === '1.0' && row.prompt_template_version === 'analytics-advice-v3');
       check('completed advice canonical_input_hash is a real 64-char hex digest', /^[0-9a-f]{64}$/.test(row.canonical_input_hash ?? ''), row.canonical_input_hash);
       // The packet now optionally carries the live Listing Demand block that was persisted WITH it, so the
       // independent recomputation must include that exact persisted block (or its absence) to reproduce the hash.

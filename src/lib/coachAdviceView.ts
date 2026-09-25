@@ -7,6 +7,7 @@
 // analytics data is consulted, so the drawer shows exactly what the Coach saw.
 
 import type { AdviceCard, AdviceInputPacket, AdviceInputPacketSource, SourceRegistryEntry } from './analytics/advice/types';
+import type { LinkedDealAnalyticsContext, LinkedDealMetrics } from './analytics/advice/linkedDealAnalytics';
 import { formatLimitation, humanizeCode } from './analytics/advice/presentation';
 import {
   adviceActions as demandActions, resolveEvidence as resolveDemandEvidence,
@@ -19,6 +20,7 @@ const SOURCE_BADGE: Record<string, { kind: EvidenceBlock['kind']; badge: string 
   deterministic_insight: { kind: 'insight', badge: 'Deterministic insight' },
   confirmed_pattern: { kind: 'pattern', badge: 'Confirmed pattern' },
   preliminary_hypothesis: { kind: 'hypothesis', badge: 'Preliminary hypothesis' },
+  linked_deal_analytics: { kind: 'linked_deal', badge: 'Lead → Deal linkage' },
 };
 
 /** Every non-demand source persisted with the revision (packet first, registry fallback). */
@@ -42,10 +44,33 @@ function sourceBlock(s: PersistedSource): EvidenceBlock {
   return { sourceId: s.source_id, kind: meta.kind, badge: meta.badge, title: s.headline, text: s.summary, facts, weeks: [] };
 }
 
+function linkedDealMetricsToFacts(m: LinkedDealMetrics): { label: string; value: string }[] {
+  return Object.entries(m)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => ({ label: humanizeCode(k), value: metricValue(v) }));
+}
+
+/** Resolves one linked_deal:* source id from the persisted context — pure pass-through, never re-queried. */
+function resolveLinkedDealEvidence(ctx: LinkedDealAnalyticsContext, sourceId: string): EvidenceBlock | null {
+  if (sourceId === ctx.overall.source_id) {
+    const { source_id, ...rest } = ctx.overall;
+    return { sourceId: source_id, kind: 'linked_deal', badge: 'Lead → Deal linkage — overall', title: 'Lead → Deal linkage — overall', facts: linkedDealMetricsToFacts(rest), weeks: [] };
+  }
+  const channel = ctx.by_channel.find((c) => c.source_id === sourceId);
+  if (channel) {
+    const { source_id, channel_id, channel_name, ...rest } = channel;
+    return { sourceId: source_id, kind: 'linked_deal', badge: 'Lead → Deal linkage', title: `Lead → Deal linkage — ${channel_name}`, facts: linkedDealMetricsToFacts(rest), weeks: [] };
+  }
+  return null;
+}
+
 /** Resolves one stored source id to evidence, or null when it is not in the persisted revision. */
 export function resolveCoachEvidence(sourceId: string, packet: AdviceInputPacket | null, registry: SourceRegistryEntry[] | null): EvidenceBlock | null {
   if (sourceId.startsWith('demand:')) {
     return packet?.listing_demand ? resolveDemandEvidence({ listing_demand: packet.listing_demand }, sourceId) : null;
+  }
+  if (sourceId.startsWith('linked_deal:')) {
+    return packet?.linked_deal_analytics ? resolveLinkedDealEvidence(packet.linked_deal_analytics, sourceId) : null;
   }
   const s = persistedSources(packet, registry).find((x) => x.source_id === sourceId);
   return s ? sourceBlock(s) : null;
@@ -63,6 +88,7 @@ export function coachLimitations(card: AdviceCard, packet: AdviceInputPacket | n
   const cited = new Set(card.source_ids);
   for (const s of persistedSources(packet, registry)) if (cited.has(s.source_id)) (s.limitations ?? []).forEach(add);
   if (packet?.listing_demand && cited.has(packet.listing_demand.data_quality.source_id)) packet.listing_demand.data_quality.limitations.forEach(add);
+  if (packet?.linked_deal_analytics && cited.has(packet.linked_deal_analytics.overall.source_id)) packet.linked_deal_analytics.limitations.forEach(add);
   return out;
 }
 

@@ -250,14 +250,14 @@ async function main() {
   console.log('\n[G — Coach instructions]');
   {
     const p = ADVICE_SYSTEM_PROMPT;
-    check('prompt template version bumped for the new semantics', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v2');
+    check('prompt template version bumped for the new semantics', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v3');
     check('describes the listing_demand block and demand:* sources', /listing_demand/.test(p) && /demand:/.test(p));
     check('normalize by exposure: leads_per_100_channel_listing_days preferred, compare leads with exposure', /leads_per_100_channel_listing_days is the preferred normalized channel-response metric/.test(p) && /Compare lead volume TOGETHER WITH exposure/.test(p));
     check('channel_listing_days vs item_listing_days defined', /channel_listing_days measures item x channel x calendar-day exposure/.test(p) && /item_listing_days measures item x calendar-day exposure/.test(p));
     check('highest-ever lead_quality + Serious+ definition', /highest intent level a lead has reached/.test(p) && /Serious\+ means SERIOUS or HIGH_INTENT/.test(p));
     check('Offers definition', /Offers \(offer_attributed_leads\) counts leads with a recorded CASH, TRADE, or MIXED offer/.test(p));
     check('item vs channel attribution + NULL-channel case', /Item-attributed means/.test(p) && /Channel-attributed additionally requires matching item\/channel listing exposure/.test(p) && /no normalized channel can still be item-attributed/.test(p));
-    check('no lead->deal conversion assumption', /NO canonical lead_id -> deal_id linkage/.test(p) && /never state or imply a lead-to-deal conversion rate or funnel/i.test(p) && /cannot currently be determined/.test(p));
+    check('no lead->deal conversion assumption from unlinked evidence', /Canonical Lead -> Deal linkage exists ONLY where item_leads\.deal_id is populated/.test(p) && /never state or imply a lead-to-deal conversion rate or funnel/i.test(p) && /cannot currently be determined/.test(p));
     check('observational, non-causal wording rule', /never claim that listing on a channel, cross-listing, or any action caused demand/.test(p) && /associated with/.test(p) && /coincided with/.test(p));
     check('channel interpretation: experiments allowed, never remove a channel just for a low rate', /Never recommend removing or abandoning a channel merely because its lead rate is low/.test(p) && /realized deals are a separate fact/.test(p));
     check('sample size / logging-completeness caveat', /small counts are weak evidence/.test(p) && /incomplete logging/.test(p));
@@ -286,7 +286,7 @@ async function main() {
   {
     const gen = strip(read('src', 'lib', 'analytics', 'advice', 'generateAdvice.ts'));
     check('generateAdviceForRun wraps the enrichment in try/catch and continues without it', /let listingDemand: ListingDemandContext \| null = null;\s*try \{\s*listingDemand = await loadListingDemandContext\(/.test(gen) && /catch \(demandError\)/.test(gen));
-    check('the failure is logged, and no fallback metrics are fabricated', /console\.error\('\[generateAdvice\] listing demand enrichment unavailable/.test(gen) && /listingDemand,\s*language,\s*\}\)/.test(gen));
+    check('the failure is logged, and no fallback metrics are fabricated', /console\.error\('\[generateAdvice\] listing demand enrichment unavailable/.test(gen) && /listingDemand,\s*linkedDealAnalytics,\s*language,\s*\}\)/.test(gen));
     check('the demand context is fetched server-side, at generation time (not from the /listings client cache)', /loadListingDemandContext\(\{ appUserId: requestingUserId, serviceClient \}\)/.test(gen) && !/listingsCache|swrCache/.test(gen + strip(read('src', 'lib', 'analytics', 'advice', 'listingDemandContext.ts'))));
     let rejected = false;
     const failing = { rpc: async () => ({ data: null, error: { message: 'boom' } }) } as never;

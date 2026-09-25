@@ -176,19 +176,40 @@ export function validateAdviceResponse(rawJson: string, sourceRegistry: SourceRe
     limitations: limitations!,
   };
 
-  // There is no canonical lead -> deal linkage, so a response that asserts a
-  // lead/deal "conversion" (or explains the lead/deal gap as a cause) is
-  // rejected in full rather than shown — same guard the Listing Advice
-  // validator applies (see sharedSemantics.ts). Only model-written prose is
-  // scanned, never source ids.
-  const prose = collectStrings({
-    run_summary: { headline: runSummary.headline, summary: runSummary.summary },
-    cards: cards.map((c) => ({ headline: c.headline, advice: c.advice, why: c.why_it_matters, limitations: c.limitations })),
-    limitations: response.limitations,
-  });
-  const violations = new Set(prose.flatMap((t) => findLeadDealViolations(t)));
-  if (violations.size > 0) {
-    return { valid: false, response: null, reasons: Array.from(violations).map((v) => `LEAD_DEAL_${v}`) };
+  // Canonical Lead -> Deal linkage exists only where item_leads.deal_id is
+  // populated (linked_deal_analytics, `linked_deal:*` source ids). A
+  // CONVERSION_CLAIM is only excused when the unit of text making it (a
+  // card, or the run summary) cites at least one `linked_deal:*` source —
+  // otherwise it is exactly the same unlinked/inferred claim this guard has
+  // always rejected (e.g. comparing raw leads against realized_deal_count).
+  // LEAD_DEAL_GAP_EXPLAINED stays unconditionally rejected regardless of
+  // citations — linkage doesn't license inventing a CAUSE for the gap.
+  // Listing Advice's own guard (listingAdvice.ts) is untouched: its packet
+  // never carries linked_deal_analytics, so it can never satisfy this
+  // citation requirement and a conversion claim there is still always
+  // rejected outright.
+  const globalReasons = new Set<string>();
+
+  const isLinkedDealSource = (id: string) => id.startsWith('linked_deal:');
+
+  const checkUnit = (texts: string[], sourceIds: string[]) => {
+    const violations = new Set(texts.flatMap((t) => findLeadDealViolations(t)));
+    if (violations.has('LEAD_DEAL_GAP_EXPLAINED')) globalReasons.add('LEAD_DEAL_LEAD_DEAL_GAP_EXPLAINED');
+    if (violations.has('CONVERSION_CLAIM') && !sourceIds.some(isLinkedDealSource)) {
+      globalReasons.add('LEAD_DEAL_CONVERSION_CLAIM');
+    }
+  };
+
+  checkUnit(collectStrings({ headline: runSummary.headline, summary: runSummary.summary }), runSummary.source_ids);
+  for (const c of cards) {
+    checkUnit(collectStrings({ headline: c.headline, advice: c.advice, why: c.why_it_matters, limitations: c.limitations }), c.source_ids);
+  }
+  // Top-level response.limitations carries no source_ids of its own — never
+  // excused by any citation.
+  checkUnit(collectStrings(response.limitations), []);
+
+  if (globalReasons.size > 0) {
+    return { valid: false, response: null, reasons: Array.from(globalReasons) };
   }
 
   return { valid: true, response, reasons: [] };
