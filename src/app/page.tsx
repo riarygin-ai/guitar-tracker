@@ -407,12 +407,16 @@ export default function HomePage() {
           section renders nothing at all — not even an empty-state message
           — until a completed Advice revision is actually found; a user
           with no Advice history simply sees the rest of the Dashboard.
-          Advice Dismissal / Resurface v1: when the revision HAS cards but
-          every one of them is currently dismissed, the section is hidden
-          the same way — never a large empty panel. */}
+          Advice Dismissal / Resurface v1 — FIXED (2026-10): a revision that
+          HAS cards but where every one is currently dismissed used to hide
+          this whole section (header included), which made a Business Coach
+          that keeps correctly re-raising the same unresolved finding every
+          week look like it had stopped producing advice entirely. The
+          section now always renders once a completed revision exists —
+          matching ListingAdviceSection.tsx's own "all dismissed" state —
+          and shows AL.allCoachAdviceDismissed instead of silently
+          vanishing, so the header/timestamp still confirm the Coach ran. */}
       {!adviceLoading && !dismissalsLoading && latestCompletedAdvice && (
-        (latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 || visibleAdviceCards.length > 0
-      ) && (
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
@@ -434,6 +438,8 @@ export default function HomePage() {
                 <p className="break-words text-sm font-semibold text-slate-900 dark:text-white">{latestCompletedAdvice.advice.advice?.run_summary.headline}</p>
                 <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{latestCompletedAdvice.advice.advice?.run_summary.summary}</p>
               </div>
+            ) : visibleAdviceCards.length === 0 ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400" data-advice-all-dismissed>{AL.allCoachAdviceDismissed}</p>
             ) : (
               <div className="grid gap-3 lg:grid-cols-3">
                 {visibleAdviceCards.map((card) => (

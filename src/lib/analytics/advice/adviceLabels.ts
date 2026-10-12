@@ -53,6 +53,7 @@ export interface AdviceLabels {
   runAnalytics: string;
   noMaterialAdvice: string;
   allDismissed: string;
+  allCoachAdviceDismissed: string;
   lastFailure: string;
   // debug / audit
   debugAudit: string;
@@ -104,6 +105,7 @@ const EN: AdviceLabels = {
   runAnalytics: 'Run Analytics',
   noMaterialAdvice: 'No material listing advice for this window.',
   allDismissed: "You've dismissed all current Listing Advice. New advice appears after the next Analytics run.",
+  allCoachAdviceDismissed: "You've dismissed every card from the latest Business Coach run. New advice appears after the next Analytics run; previously dismissed items stay hidden until their 30-day period ends.",
   lastFailure: 'The most recent Listing Advice update failed ({code}); the previous advice is shown.',
   debugAudit: 'Debug / audit',
   model: 'Model',
@@ -154,6 +156,7 @@ const RU: AdviceLabels = {
   runAnalytics: 'Запустить аналитику',
   noMaterialAdvice: 'Существенных советов по объявлениям для этого периода нет.',
   allDismissed: 'Вы скрыли все текущие советы по объявлениям. Новые появятся после следующего запуска аналитики.',
+  allCoachAdviceDismissed: 'Вы скрыли все карточки из последнего запуска Бизнес-коуча. Новые советы появятся после следующего запуска аналитики; ранее скрытые карточки останутся скрытыми до истечения их 30-дневного периода.',
   lastFailure: 'Последнее обновление советов по объявлениям не удалось ({code}); показаны предыдущие советы.',
   debugAudit: 'Отладка / аудит',
   model: 'Модель',
