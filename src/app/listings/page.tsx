@@ -142,7 +142,7 @@ export default function ListingsPage() {
       )}
 
       {evidence && (
-        <OverviewSection evidence={evidence} />
+        <OverviewSection evidence={evidence} refreshing={listingRes.isRefreshing} />
       )}
 
       {/* AI Listing Advice: optional enrichment with its own cache/fetch/error state — never gates any other section. */}
@@ -260,12 +260,15 @@ function StatTile({ label, value, caption, href, icon, tone }: { label: string; 
   return <div className={className}>{inner}</div>;
 }
 
-function OverviewSection({ evidence }: { evidence: ListingEvidence }) {
+function OverviewSection({ evidence, refreshing = false }: { evidence: ListingEvidence; refreshing?: boolean }) {
   const p = evidence.population_summary;
   const equityTone: Tone = (p.listed_estimated_equity ?? 0) >= 0 ? 'emerald' : 'rose';
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:p-5">
-      <p className="section-title">Overview</p>
+      <p className="section-title inline-flex items-center gap-1.5">
+        Overview
+        {refreshing && <span role="status" className="text-[11px] font-normal text-slate-400 dark:text-slate-500">Updating…</span>}
+      </p>
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile label="Listed Items" value={String(p.distinct_listed_item_count)} caption={`of ${p.open_item_count} open`} href={inventoryUrl({ listing: 'listed' })} icon="list" tone="blue" />
         <StatTile label="Listed Cost Basis" value={fmtMoney(p.listed_cost_basis)} caption="total acquisition cost" icon="tag" tone="violet" />

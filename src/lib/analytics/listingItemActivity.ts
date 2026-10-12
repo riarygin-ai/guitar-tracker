@@ -7,6 +7,7 @@
 // and a service-role client (same convention as listingDemandEvidence.ts).
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logListingFailure, logListingSuccess } from './listingDiagnostics';
 
 export interface ItemActivityChannel {
   channel_id: number;
@@ -33,12 +34,28 @@ export async function getListingItemActivity(params: {
   startDate: string;
   endDate: string;
 }): Promise<ItemActivityEntry[]> {
-  const { data, error } = await params.serviceClient.rpc('listing_demand_item_activity_v1_0', {
-    p_target_user_id: params.appUserId,
-    p_period_start: params.startDate,
-    p_period_end: params.endDate,
-  });
-  if (error) throw new ListingItemActivityError(`item activity: ${error.message}`);
+  const diag = { endpoint: 'listing-item-activity:listing_demand_item_activity_v1_0', appUserId: params.appUserId, params: { startDate: params.startDate, endDate: params.endDate } };
+  const startedAt = Date.now();
+
+  let data: unknown, error: unknown;
+  try {
+    ({ data, error } = await params.serviceClient.rpc('listing_demand_item_activity_v1_0', {
+      p_target_user_id: params.appUserId,
+      p_period_start: params.startDate,
+      p_period_end: params.endDate,
+    }));
+  } catch (thrown) {
+    logListingFailure(diag, Date.now() - startedAt, thrown);
+    throw new ListingItemActivityError('item activity: request failed');
+  }
+
+  if (error) {
+    // Structured diagnostics only (see listingDiagnostics.ts) — the public
+    // message stays generic; the API route never forwards this detail.
+    logListingFailure(diag, Date.now() - startedAt, error);
+    throw new ListingItemActivityError('item activity: computation failed');
+  }
+  logListingSuccess(diag, Date.now() - startedAt);
   return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
     item_id: Number(r.item_id),
     item_display_name: String(r.item_display_name ?? ''),

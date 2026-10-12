@@ -315,7 +315,7 @@ async function main() {
       check('OverviewSection renders exactly 4 StatTile calls', (overviewSource.match(/<StatTile/g) ?? []).length === 4, overviewSource.match(/<StatTile/g));
       // OverviewSection's own signature only accepts Listing Evidence — by
       // construction it cannot vary with Trend Window/Demand Evidence.
-      check('OverviewSection only takes `evidence: ListingEvidence` as a prop (never demandEvidence/trendWeeks)', /function OverviewSection\(\{ evidence \}: \{ evidence: ListingEvidence \}\)/.test(pageSource));
+      check('OverviewSection only takes Listing Evidence + its own refresh flag as props (never demandEvidence/trendWeeks)', /function OverviewSection\(\{ evidence, refreshing = false \}: \{ evidence: ListingEvidence; refreshing\?: boolean \}\)/.test(pageSource));
     }
 
     console.log('\n[M — removed KPIs/sections no longer render anywhere on the page]');

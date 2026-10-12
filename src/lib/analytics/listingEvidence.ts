@@ -12,6 +12,7 @@
 // site.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logListingFailure, logListingSuccess } from './listingDiagnostics';
 
 export const LISTING_EVIDENCE_SCHEMA_VERSION = '1.0';
 const BUILDER_RPC = 'build_listing_evidence_v1_0';
@@ -307,15 +308,30 @@ export async function getListingEvidenceForCurrentUser(params: {
   serviceClient: SupabaseClient;
 }): Promise<ListingEvidence> {
   const { appUserId, serviceClient } = params;
+  const diag = { endpoint: `listing-evidence:${BUILDER_RPC}`, appUserId };
+  const startedAt = Date.now();
 
-  const { data, error } = await serviceClient.rpc(BUILDER_RPC, {
-    p_target_user_id: appUserId,
-  });
-
-  if (error) {
-    console.error('[listingEvidence] build_listing_evidence_v1_0 failed:', error.message);
+  let data: unknown, error: unknown;
+  try {
+    ({ data, error } = await serviceClient.rpc(BUILDER_RPC, { p_target_user_id: appUserId }));
+  } catch (thrown) {
+    // A genuinely thrown exception (e.g. the underlying fetch itself
+    // failing) rather than a resolved {error} — same structured logging,
+    // classified as its own category by listingDiagnostics.ts.
+    logListingFailure(diag, Date.now() - startedAt, thrown);
     throw new ListingEvidenceError('Failed to compute listing evidence', 500);
   }
+
+  if (error) {
+    // Structured failure diagnostics (duration, category — statement
+    // timeout / connection issue / SQL error / etc., DB error code and a
+    // truncated message; never raw lead/listing rows) — see
+    // listingDiagnostics.ts. The browser only ever gets the fixed
+    // publicMessage below, never this detail.
+    logListingFailure(diag, Date.now() - startedAt, error);
+    throw new ListingEvidenceError('Failed to compute listing evidence', 500);
+  }
+  logListingSuccess(diag, Date.now() - startedAt);
 
   if (!isValidListingEvidence(data)) {
     console.error('[listingEvidence] build_listing_evidence_v1_0 returned an unexpected shape');

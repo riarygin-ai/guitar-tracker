@@ -5,6 +5,19 @@ import {
   ListingEvidenceError,
 } from '@/lib/analytics/listingEvidence';
 
+// Safety margin, not the primary fix (2026-10 /listings performance
+// investigation — see supabase/migrations/20261012000001_listing_evidence_
+// use_v2_1_cohort.sql and 20261012000000_listings_performance_indexes.sql
+// for the actual fixes). Measured locally: this endpoint's heaviest
+// dependency (the Analytics open-inventory cohort match) took up to ~2.6s
+// against an 8x-larger-than-current-production fixture (1200 items,
+// ~12,000 leads) after optimization. Vercel's default Next.js function
+// timeout (10s on the Hobby tier) leaves little margin once hosted-DB
+// network latency and connection-pool queuing are added on top — exactly
+// the kind of INTERMITTENT slowdown the reported 500s describe. Raising
+// this is a margin for that variance, not a substitute for the SQL work.
+export const maxDuration = 30;
+
 const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;

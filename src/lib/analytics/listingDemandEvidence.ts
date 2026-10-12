@@ -20,6 +20,7 @@
 // function's own default.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logListingFailure, logListingSuccess } from './listingDiagnostics';
 
 export const LISTING_DEMAND_EVIDENCE_SCHEMA_VERSION = '1.0';
 const BUILDER_RPC = 'build_listing_demand_evidence_v1_1';
@@ -332,17 +333,29 @@ export async function getListingDemandEvidence(params: GetListingDemandEvidenceP
     throw new ListingDemandEvidenceError('trend_weeks must be one of 4, 8, 12', 400);
   }
 
-  const { data, error } = await serviceClient.rpc(BUILDER_RPC, {
-    p_target_user_id: appUserId,
-    p_start_date: startDate,
-    p_end_date: endDate,
-    p_trend_weeks: trendWeeks,
-  });
+  const diag = { endpoint: `listing-demand-evidence:${BUILDER_RPC}`, appUserId, params: { startDate, endDate, trendWeeks } };
+  const startedAt = Date.now();
 
-  if (error) {
-    console.error('[listingDemandEvidence] build_listing_demand_evidence_v1_1 failed:', error.message);
+  let data: unknown, error: unknown;
+  try {
+    ({ data, error } = await serviceClient.rpc(BUILDER_RPC, {
+      p_target_user_id: appUserId,
+      p_start_date: startDate,
+      p_end_date: endDate,
+      p_trend_weeks: trendWeeks,
+    }));
+  } catch (thrown) {
+    logListingFailure(diag, Date.now() - startedAt, thrown);
     throw new ListingDemandEvidenceError('Failed to compute listing demand evidence', 500);
   }
+
+  if (error) {
+    // Structured diagnostics only — the browser only ever sees the fixed
+    // publicMessage below. See src/lib/analytics/listingDiagnostics.ts.
+    logListingFailure(diag, Date.now() - startedAt, error);
+    throw new ListingDemandEvidenceError('Failed to compute listing demand evidence', 500);
+  }
+  logListingSuccess(diag, Date.now() - startedAt);
 
   if (!isValidListingDemandEvidence(data)) {
     console.error('[listingDemandEvidence] build_listing_demand_evidence_v1_1 returned an unexpected shape');
