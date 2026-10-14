@@ -2,11 +2,13 @@
 
 export const dynamic = 'force-dynamic'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { safeLoginRedirect } from '@/lib/oauthConsentReturn'
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -26,7 +28,9 @@ export default function LoginPage() {
       return
     }
 
-    router.push('/')
+    // Only ever honors an internal /oauth/consent target (OAuth consent
+    // flow) — see oauthConsentReturn.ts. Anything else falls back to '/'.
+    router.push(safeLoginRedirect(searchParams.get('redirect_to')) ?? '/')
   }
 
   return (

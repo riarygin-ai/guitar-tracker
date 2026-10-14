@@ -10,6 +10,9 @@
     "photos:compress": "tsx scripts/compress-existing-photos.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@supabase/middleware": "^1.0.0",
+    "@supabase/server": "^1.0.0",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.106.0",
     "browser-image-compression": "^2.0.2",
@@ -18,7 +21,8 @@
     "openai": "^6.42.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "tailwindcss": "latest"
+    "tailwindcss": "latest",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.4",
