@@ -87,6 +87,14 @@ export function evaluateWeeklyTorontoWindow(utcDate: Date = new Date()): WeeklyW
   return { inWindow, localPeriodKey, torontoHour: wall.hour, torontoWeekday: wall.weekday };
 }
 
+/** The America/Toronto calendar date (YYYY-MM-DD) for `utcDate` — the
+ *  business's own "today", independent of the server's (UTC) clock. Same
+ *  value evaluateWeeklyTorontoWindow reports as localPeriodKey. */
+export function torontoLocalDate(utcDate: Date = new Date()): string {
+  const wall = getTorontoWallClock(utcDate);
+  return `${wall.year}-${pad2(wall.month)}-${pad2(wall.day)}`;
+}
+
 // ── Weekly-status display support ───────────────────────────────────────
 // Additive, read-only helpers for the Analytics page's "Weekly Automation"
 // status panel. These never feed the cron route's own window decision

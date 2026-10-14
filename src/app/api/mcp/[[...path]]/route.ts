@@ -126,7 +126,8 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
         'review ("review my whole inventory"); use optional filters for narrower questions (e.g. ' +
         '"how are my Gibsons doing?" -> { brand: ["Gibson"] }). Calling with no filters never ' +
         'restricts to one brand, purpose, platform, or listed-only inventory — it is the full ' +
-        'current picture.',
+        'current picture. Includes complete listing history but NOT lead-demand history — for ' +
+        'stale/weak-demand or rotation conclusions, combine it with get_lead_activity (join on item_id).',
       inputSchema: z.object({
         item_ids: z.array(z.number().int().positive()).optional().describe('Restrict to these inventory item ids.'),
         status: z.array(z.enum(['listed', 'unlisted'])).optional()
@@ -151,17 +152,30 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
     'get_lead_activity',
     {
       description:
-        'Returns lead/buyer activity grouped by inventory item, for the user\'s currently listed ' +
-        'items (an item can only accrue attributed leads while it has listing exposure, so this ' +
-        'has never covered unlisted items). Call with no filters for the full current lead picture ' +
-        '(the last 4 weeks, the app\'s own default period) — e.g. "which items are getting ' +
-        'attention but not converting?". Use filters when investigating particular items, ' +
-        'platforms/channels, or a specific period.',
+        'Returns lead/buyer demand by inventory item for the same open-inventory items ' +
+        'get_inventory_analysis returns (listed AND unlisted; join on item_id), in three layers: ' +
+        '(1) current_period — the individual leads of the newest calendar period (offers, trade ' +
+        'items, quality, status, notes), plus ongoing leads first contacted earlier; (2) periods — ' +
+        'calendar week (Mon-Sun) or month aggregates for trend comparison; (3) lifetime — the ' +
+        "item's full lead history (totals, offers, Serious/High Intent, channels, first/last lead " +
+        'dates), independent of the window. Use empty arguments for a normal weekly review ' +
+        '(current week + 4 complete prior weeks). Use bucket="month" for month-over-month ' +
+        'analysis, or from_date/to_date for a specific range. Recent activity is supplementary ' +
+        'evidence and must not be read as complete historical demand — always weigh lifetime. ' +
+        'Buckets with is_partial=true are incomplete periods. Items with no leads ever are listed ' +
+        'in items_without_leads. For one item\'s complete individual lead history use get_item_context.',
       inputSchema: z.object({
+        bucket: z.enum(['week', 'month']).optional()
+          .describe('Calendar grouping: "week" (Monday-Sunday, default) or "month" (1st-last day).'),
+        periods: z.number().int().min(0).max(52).optional()
+          .describe('Number of COMPLETE calendar periods before the current one (default 4). The current, possibly partial, period is always included in addition. Not allowed with from_date/to_date.'),
+        from_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+          .describe('YYYY-MM-DD, inclusive. Switches to explicit-range mode: buckets are the calendar weeks/months intersecting [from_date, to_date], clipped to the range (clipped buckets are is_partial). The last bucket is current_period.'),
+        to_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+          .describe('YYYY-MM-DD, inclusive. Requires from_date. Defaults to today; a later date is capped to today.'),
         item_ids: z.array(z.number().int().positive()).optional().describe('Restrict to these inventory item ids.'),
-        channel: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) match against a channel the item is currently listed on, e.g. "Reverb".'),
-        from_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD, inclusive. Defaults to 28 days before to_date.'),
-        to_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD, inclusive. Defaults to today.'),
+        channel: z.array(z.string().trim().max(100)).optional()
+          .describe('Only count leads from these channels (case-insensitive, e.g. "Marketplace", "Kijiji", "Reverb") in all three layers. Omit to get every channel plus by_channel breakdowns.'),
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },

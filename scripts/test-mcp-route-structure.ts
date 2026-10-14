@@ -96,6 +96,24 @@ function main() {
     check('no user id is ever passed as an RPC parameter from either new service (p_target_user_id never appears)', !/p_target_user_id/.test(inventoryAnalysisService) && !/p_target_user_id/.test(leadActivityService));
   }
 
+  console.log('\n[C4 — 2026-10-14 get_lead_activity redesign: self-scoped data path + three-layer schema]');
+  {
+    const leadRpcs = Array.from(leadActivityService.matchAll(/\.rpc\(\s*'([a-zA-Z0-9_]+)'/g)).map((m) => m[1]);
+    check('leadActivityService calls exactly one RPC: the self-scoped open-inventory wrapper (same item set as get_inventory_analysis)', JSON.stringify(leadRpcs) === JSON.stringify(['build_listing_evidence_v1_0_for_current_user']), leadRpcs);
+    const tables = Array.from(leadActivityService.matchAll(/\.from\(\s*'([a-zA-Z0-9_]+)'/g)).map((m) => m[1]).sort();
+    check('leadActivityService reads only item_leads and deal_channels tables (both RLS/grant-protected), through the caller\'s client', JSON.stringify(tables) === JSON.stringify(['deal_channels', 'item_leads']), tables);
+    check('leadActivityService never filters by an application-supplied user id (RLS is the boundary)', !/\.eq\(\s*'user_id'/.test(leadActivityService) && !/appUserId|app_user_id/.test(leadActivityService));
+    check('leadActivityService creates no client of its own (no createClient / env keys)', !/createClient|process\.env/.test(leadActivityService));
+    const schemaStart = route.indexOf("'get_lead_activity'");
+    const schema = route.slice(schemaStart, route.indexOf('annotations', schemaStart));
+    for (const field of ['bucket', 'periods', 'from_date', 'to_date', 'item_ids', 'channel']) {
+      check(`get_lead_activity schema exposes ${field}`, new RegExp(`\\b${field}:\\s*z\\.`).test(schema));
+    }
+    check('get_lead_activity schema exposes no lead-level status/quality/offer_type filter', !/\b(status|quality|lead_quality|offer_type):\s*z\./.test(schema));
+    check('get_lead_activity description states the three layers and that recent activity is not complete demand', /current_period/.test(schema) && /lifetime/.test(schema) && /bucket="month"/.test(schema) && /supplementary/.test(schema));
+    check('get_inventory_analysis description points to get_lead_activity for demand conclusions', /NOT lead-demand history[\s\S]*get_lead_activity/.test(route));
+  }
+
   console.log('\n[C2 — 2026-10-14 regression: explicit env (not ambient SUPABASE_URL) + catch-all routing]');
   {
     check('withSupabase is given an explicit env.url/publishableKeys (never relies on the bare SUPABASE_URL this project does not set)', /env:\s*\{\s*url:\s*SUPABASE_URL/.test(route) && /publishableKeys:\s*\{\s*default:\s*SUPABASE_ANON_KEY\s*\}/.test(route));
