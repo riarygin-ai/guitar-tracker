@@ -13,7 +13,7 @@
  * `npm run build` are the real compile-correctness check for this file —
  * this script instead locks down the SECURITY-CRITICAL invariants that
  * are visible from the source text alone and must never regress:
- *   - exactly two tools, exactly these two names
+ *   - exactly four tools, exactly these four names
  *   - no tool input schema ever mentions a user/account/owner identifier
  *   - auth is 'user' (RLS-scoped), never service_role / admin
  *   - no mutation call (insert/update/delete/upsert/rpc) anywhere in the
@@ -41,12 +41,18 @@ function main() {
   const route = strip(read('src', 'app', 'api', 'mcp', '[[...path]]', 'route.ts'));
   const itemContextService = strip(read('src', 'lib', 'analytics', 'itemContextService.ts'));
   const searchService = strip(read('src', 'lib', 'inventorySearchService.ts'));
+  const inventoryAnalysisService = strip(read('src', 'lib', 'analytics', 'inventoryAnalysisService.ts'));
+  const leadActivityService = strip(read('src', 'lib', 'analytics', 'leadActivityService.ts'));
 
-  console.log('\n[A — exactly the two intended tools, read-only]');
+  console.log('\n[A — exactly the four intended tools, read-only]');
   {
     const toolNames = Array.from(route.matchAll(/registerTool\(\s*'([a-zA-Z0-9_]+)'/g)).map((m) => m[1]);
-    check('exactly two tools registered', toolNames.length === 2, toolNames);
-    check('the two tools are exactly search_inventory and get_item_context (no extra, no renamed)', JSON.stringify([...toolNames].sort()) === JSON.stringify(['get_item_context', 'search_inventory']), toolNames);
+    check('exactly four tools registered', toolNames.length === 4, toolNames);
+    check(
+      'the four tools are exactly search_inventory, get_item_context, get_inventory_analysis and get_lead_activity (no extra, no renamed)',
+      JSON.stringify([...toolNames].sort()) === JSON.stringify(['get_inventory_analysis', 'get_item_context', 'get_lead_activity', 'search_inventory']),
+      toolNames,
+    );
     const readOnlyCount = (route.match(/readOnlyHint:\s*true/g) ?? []).length;
     check('every tool is annotated readOnlyHint: true', readOnlyCount === toolNames.length, readOnlyCount);
     const destructiveFalseCount = (route.match(/destructiveHint:\s*false/g) ?? []).length;
@@ -64,8 +70,30 @@ function main() {
   {
     check("uses withSupabase({ auth: 'user', ... }) — never 'service_role' or 'admin'", /withSupabase\(\s*\{\s*auth:\s*'user'/.test(route));
     check('route.ts never references a service_role / admin client', !/service_role|SERVICE_ROLE|createAdminClient|admin:\s*true/.test(route));
-    check('neither shared service file ever references service_role', !/service_role|SERVICE_ROLE/.test(itemContextService) && !/service_role|SERVICE_ROLE/.test(searchService));
-    check('every tool handler is called with the request-scoped `supabase` from the pipeline context, not a module-level client', /searchInventoryForUser\(supabase,/.test(route) && /getItemContextForUser\(supabase,/.test(route));
+    check(
+      'none of the four shared service files ever references service_role',
+      !/service_role|SERVICE_ROLE/.test(itemContextService) && !/service_role|SERVICE_ROLE/.test(searchService) &&
+      !/service_role|SERVICE_ROLE/.test(inventoryAnalysisService) && !/service_role|SERVICE_ROLE/.test(leadActivityService),
+    );
+    check(
+      'every tool handler is called with the request-scoped `supabase` from the pipeline context, not a module-level client',
+      /searchInventoryForUser\(supabase,/.test(route) && /getItemContextForUser\(supabase,/.test(route) &&
+      /getInventoryAnalysisForUser\(supabase,/.test(route) && /getLeadActivityForUser\(supabase,/.test(route),
+    );
+  }
+
+  console.log('\n[C3 — the two new analytics tools use ONLY the self-scoped RPC wrappers (migration 20261013000000), never the original trusted-parameter functions]');
+  {
+    const rpcCalls = Array.from((inventoryAnalysisService + leadActivityService).matchAll(/\.rpc\(\s*'([a-zA-Z0-9_]+)'/g)).map((m) => m[1]);
+    check('at least one RPC call found in the two new services', rpcCalls.length >= 2, rpcCalls);
+    check(
+      'every RPC call is one of the two self-scoped "_for_current_user" wrappers — never the original service_role-only functions with a parameter',
+      rpcCalls.every((name) => name === 'build_listing_evidence_v1_0_for_current_user' || name === 'listing_demand_item_activity_v1_0_for_current_user'),
+      rpcCalls,
+    );
+    check('neither new service ever calls the original trusted-parameter RPC directly (build_listing_evidence_v1_0 / listing_demand_item_activity_v1_0 without the _for_current_user suffix)',
+      !/\.rpc\(\s*'build_listing_evidence_v1_0'/.test(inventoryAnalysisService) && !/\.rpc\(\s*'listing_demand_item_activity_v1_0'/.test(leadActivityService));
+    check('no user id is ever passed as an RPC parameter from either new service (p_target_user_id never appears)', !/p_target_user_id/.test(inventoryAnalysisService) && !/p_target_user_id/.test(leadActivityService));
   }
 
   console.log('\n[C2 — 2026-10-14 regression: explicit env (not ambient SUPABASE_URL) + catch-all routing]');
@@ -77,25 +105,30 @@ function main() {
     check('GET, POST, DELETE and OPTIONS are all exported (OPTIONS needed for the metadata route\'s own CORS preflight)', /export async function GET\(/.test(route) && /export async function POST\(/.test(route) && /export async function DELETE\(/.test(route) && /export async function OPTIONS\(/.test(route));
   }
 
-  console.log('\n[D — no mutation path reachable from either tool]');
+  console.log('\n[D — no mutation path reachable from any of the four tools]');
   {
     const mutationPattern = /\.(insert|update|upsert|delete)\s*\(/;
     check('route.ts contains no mutation call', !mutationPattern.test(route));
     check('itemContextService.ts contains no mutation call (read-only assembly)', !mutationPattern.test(itemContextService));
     check('inventorySearchService.ts contains no mutation call (read-only search)', !mutationPattern.test(searchService));
-    check('no raw .rpc( call anywhere in the MCP surface (no generic/arbitrary-RPC escape hatch)', !/\.rpc\(/.test(route) && !/\.rpc\(/.test(itemContextService) && !/\.rpc\(/.test(searchService));
+    check('inventoryAnalysisService.ts contains no mutation call (read-only assembly)', !mutationPattern.test(inventoryAnalysisService));
+    check('leadActivityService.ts contains no mutation call (read-only assembly)', !mutationPattern.test(leadActivityService));
+    check(
+      'route.ts and the two simpler services (search/item-context) call no raw RPC at all — only the two new analytics services do, and only the two named self-scoped wrappers (checked in C3)',
+      !/\.rpc\(/.test(route) && !/\.rpc\(/.test(itemContextService) && !/\.rpc\(/.test(searchService),
+    );
   }
 
   console.log('\n[E — no generic SQL/table/RPC-name tool surface]');
   {
-    check('no tool parameter resembles a raw table name, filter object, or SQL string', !/table_name|sql|raw_query|rpc_name/.test(route));
+    check('no tool parameter resembles a raw table name, filter object, SQL string, or RPC name chosen by the caller', !/table_name|sql|raw_query|rpc_name/.test(route));
   }
 
   console.log('\n[F — no secrets ever surface in a tool response]');
   {
     const responseBuilders = route.match(/return \{ content: \[[\s\S]*?\] *(, isError: true)? *\};/g) ?? [];
-    check('found both tool return statements to inspect', responseBuilders.length >= 2, responseBuilders.length);
-    check('neither tool response embeds an env var / key / secret reference', !/process\.env|SERVICE_ROLE_KEY|service_role|secret/i.test(responseBuilders.join('\n')));
+    check('found at least four tool return statements to inspect (one per tool, some tools have more than one)', responseBuilders.length >= 4, responseBuilders.length);
+    check('no tool response embeds an env var / key / secret reference', !/process\.env|SERVICE_ROLE_KEY|service_role|secret/i.test(responseBuilders.join('\n')));
   }
 
   console.log('\n[G — this is the official Supabase OAuth MCP pattern, not a custom auth implementation]');

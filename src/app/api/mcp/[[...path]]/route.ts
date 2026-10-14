@@ -1,5 +1,6 @@
-// Remote MCP server for Guitar Tracker — READ-ONLY v1, exactly two tools:
-// search_inventory and get_item_context. Built on Supabase's official
+// Remote MCP server for Guitar Tracker — READ-ONLY, exactly four tools:
+// search_inventory, get_item_context, get_inventory_analysis, and
+// get_lead_activity. Built on Supabase's official
 // OAuth 2.1 / MCP authentication middleware (NOT a custom /authorize,
 // /token, client registry, or JWT implementation — Supabase Auth's own
 // OAuth 2.1 server issues and verifies every token; see
@@ -52,6 +53,8 @@ import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getItemContextForUser } from '@/lib/analytics/itemContextService';
 import { searchInventoryForUser, INVENTORY_SEARCH_MAX_RESULTS } from '@/lib/inventorySearchService';
+import { getInventoryAnalysisForUser } from '@/lib/analytics/inventoryAnalysisService';
+import { getLeadActivityForUser, LeadActivityServiceError } from '@/lib/analytics/leadActivityService';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
@@ -108,6 +111,70 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
         return { content: [{ type: 'text', text: 'Item not found.' }], isError: true };
       }
       return { content: [{ type: 'text', text }] };
+    },
+  );
+
+  server.registerTool(
+    'get_inventory_analysis',
+    {
+      description:
+        'Returns the authenticated user\'s current inventory and listing-analysis dataset — the ' +
+        'same data behind "Copy Analysis Data" / "Download Analysis Data": every currently-open ' +
+        'item (listed AND unlisted), each with channel summary, category/purpose breakdowns, and ' +
+        'full listing history (every listing cycle, including ended/cancelled ones, with its ' +
+        'complete price-change history). Call with no filters for a complete weekly inventory ' +
+        'review ("review my whole inventory"); use optional filters for narrower questions (e.g. ' +
+        '"how are my Gibsons doing?" -> { brand: ["Gibson"] }). Calling with no filters never ' +
+        'restricts to one brand, purpose, platform, or listed-only inventory — it is the full ' +
+        'current picture.',
+      inputSchema: z.object({
+        item_ids: z.array(z.number().int().positive()).optional().describe('Restrict to these inventory item ids.'),
+        status: z.array(z.enum(['listed', 'unlisted'])).optional()
+          .describe('Restrict to currently listed items, currently unlisted (but open) items, or both. Omit for both.'),
+        purpose: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) match against the item\'s assigned Purpose name, e.g. "Business" or "Personal".'),
+        brand: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) match against brand name, e.g. "Gibson".'),
+        category: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) match against item category name.'),
+        type: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) match against item type/subtype name.'),
+        min_days_listed: z.number().int().min(0).optional().describe('Only items whose current (longest-running) listing age is at least this many days. Excludes unlisted items.'),
+        max_days_listed: z.number().int().min(0).optional().describe('Only items whose current (longest-running) listing age is at most this many days. Excludes unlisted items.'),
+        include_listing_history: z.boolean().optional().describe('Default true. Set false to omit per-listing price history and shrink the response for broad questions that only need summary numbers.'),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (filters) => {
+      const result = await getInventoryAnalysisForUser(supabase, filters);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.registerTool(
+    'get_lead_activity',
+    {
+      description:
+        'Returns lead/buyer activity grouped by inventory item, for the user\'s currently listed ' +
+        'items (an item can only accrue attributed leads while it has listing exposure, so this ' +
+        'has never covered unlisted items). Call with no filters for the full current lead picture ' +
+        '(the last 4 weeks, the app\'s own default period) — e.g. "which items are getting ' +
+        'attention but not converting?". Use filters when investigating particular items, ' +
+        'platforms/channels, or a specific period.',
+      inputSchema: z.object({
+        item_ids: z.array(z.number().int().positive()).optional().describe('Restrict to these inventory item ids.'),
+        channel: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) match against a channel the item is currently listed on, e.g. "Reverb".'),
+        from_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD, inclusive. Defaults to 28 days before to_date.'),
+        to_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD, inclusive. Defaults to today.'),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (filters) => {
+      try {
+        const result = await getLeadActivityForUser(supabase, filters);
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      } catch (err) {
+        if (err instanceof LeadActivityServiceError) {
+          return { content: [{ type: 'text', text: err.message }], isError: true };
+        }
+        throw err;
+      }
     },
   );
 
