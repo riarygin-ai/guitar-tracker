@@ -7,6 +7,16 @@
 // supabase.com/docs/guides/ai-tools/byo-mcp for the "outside Supabase Edge
 // Functions" deployment shape this file follows).
 //
+// Optional catch-all ([[...path]]), not a plain `route.ts` under
+// src/app/api/mcp/ — withOAuthProtectedResource() serves OAuth Protected
+// Resource Metadata at `GET {resource}/oauth-protected-resource`, i.e.
+// /api/mcp/oauth-protected-resource here. A non-catch-all route only ever
+// matches the exact /api/mcp path, so that nested metadata request 404'd
+// at the Next.js router before our code ever ran — ChatGPT's "Couldn't
+// discover OAuth settings" error (2026-10-14 investigation). This file
+// matches /api/mcp AND any nested path under it, so both the base MCP
+// endpoint and the metadata document reach the same pipeline below.
+//
 // Pipeline (outside-in): withOAuthProtectedResource() publishes the OAuth
 // Protected Resource Metadata document + WWW-Authenticate challenge so MCP
 // clients can discover Supabase as this server's authorization server,
@@ -23,6 +33,17 @@
 // (ES256/RS256) and the OAuth 2.1 Server to be enabled in the Supabase
 // Dashboard — both are Dashboard-side prerequisites, not something this
 // file can turn on. See the session's final report for exact steps.
+//
+// env is passed explicitly to withSupabase (2026-10-14 investigation):
+// @supabase/server auto-detects its OWN env var names (bare SUPABASE_URL /
+// SUPABASE_PUBLISHABLE_KEY), which this project does not set — it uses
+// NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+// everywhere else (see every other API route under src/app/api). Without
+// this, every request — authenticated or not — 500'd with
+// MISSING_SUPABASE_URL before the OAuth challenge was ever produced. JWKS
+// is left unset deliberately: @supabase/server derives it from `url`
+// itself (`{url}/auth/v1/.well-known/jwks.json`), which is exactly this
+// project's already-live ES256 JWKS endpoint.
 
 import { McpServer, createMcpHandler } from '@modelcontextprotocol/server';
 import { pipeline } from '@supabase/middleware';
@@ -33,6 +54,7 @@ import { getItemContextForUser } from '@/lib/analytics/itemContextService';
 import { searchInventoryForUser, INVENTORY_SEARCH_MAX_RESULTS } from '@/lib/inventorySearchService';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 
 function buildMcpServer(supabase: SupabaseClient): McpServer {
   const server = new McpServer({ name: 'guitar-tracker', version: '1.0.0' });
@@ -96,16 +118,17 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
 // `pipeline`'s own generics infer it from the entries array (accumulating
 // withOAuthProtectedResource's + withSupabase's contributions); annotating
 // it explicitly defeats that contextual inference and widens `ctx` to a
-// bare `object`, which is exactly what broke `tsc` the first time this was
-// written (verified against the installed @supabase/middleware/@supabase/
-// server types — see the session's final report).
+// bare `object`.
 const fetchHandler = pipeline(
   [
     withOAuthProtectedResource({
       resourceServer: (req) => new URL(req.url).origin + '/api/mcp',
       authorizationServer: fromSupabaseUrl(SUPABASE_URL),
     }),
-    withSupabase({ auth: 'user' }),
+    withSupabase({
+      auth: 'user',
+      env: { url: SUPABASE_URL, publishableKeys: { default: SUPABASE_ANON_KEY } },
+    }),
   ],
   async (req, { supabase }) => {
     const handler = createMcpHandler(() => buildMcpServer(supabase));
@@ -116,11 +139,15 @@ const fetchHandler = pipeline(
 // Exported as single-argument wrappers, not `fetchHandler` directly — Next
 // 15's route-handler type-checker inspects the exported function's own
 // parameter list and rejects a second parameter typed as a bare `object`
-// (it expects `undefined` or its own `{ params }` RouteContext shape for
-// dynamic segments, neither of which applies to this static route). Calling
-// `fetchHandler(req)` with no second argument is exactly what the pipeline
-// itself expects for a standalone deployment (it self-seeds a fresh
-// context) — this changes nothing about runtime behavior.
+// (it expects `undefined`, or its own `{ params }` RouteContext shape for
+// this route's own [[...path]] segment — neither of which this pipeline's
+// type produces). Calling `fetchHandler(req)` with no second argument is
+// exactly what the pipeline itself expects for a standalone deployment (it
+// self-seeds a fresh context) — this changes nothing about runtime
+// behavior, and the `path` segment itself is never read: the pipeline
+// decides what to serve from the full request URL/method, not from Next's
+// parsed route params.
 export async function GET(req: Request) { return fetchHandler(req); }
 export async function POST(req: Request) { return fetchHandler(req); }
 export async function DELETE(req: Request) { return fetchHandler(req); }
+export async function OPTIONS(req: Request) { return fetchHandler(req); }

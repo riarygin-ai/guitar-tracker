@@ -38,7 +38,7 @@ const read = (...p: string[]) => fs.readFileSync(path.join(root, ...p), 'utf8');
 const strip = (s: string) => s.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
 
 function main() {
-  const route = strip(read('src', 'app', 'api', 'mcp', 'route.ts'));
+  const route = strip(read('src', 'app', 'api', 'mcp', '[[...path]]', 'route.ts'));
   const itemContextService = strip(read('src', 'lib', 'analytics', 'itemContextService.ts'));
   const searchService = strip(read('src', 'lib', 'inventorySearchService.ts'));
 
@@ -62,10 +62,19 @@ function main() {
 
   console.log('\n[C — auth is user-scoped RLS, never service_role/admin]');
   {
-    check("uses withSupabase({ auth: 'user' }) — never 'service_role' or 'admin'", /withSupabase\(\s*\{\s*auth:\s*'user'\s*\}\s*\)/.test(route));
+    check("uses withSupabase({ auth: 'user', ... }) — never 'service_role' or 'admin'", /withSupabase\(\s*\{\s*auth:\s*'user'/.test(route));
     check('route.ts never references a service_role / admin client', !/service_role|SERVICE_ROLE|createAdminClient|admin:\s*true/.test(route));
     check('neither shared service file ever references service_role', !/service_role|SERVICE_ROLE/.test(itemContextService) && !/service_role|SERVICE_ROLE/.test(searchService));
     check('every tool handler is called with the request-scoped `supabase` from the pipeline context, not a module-level client', /searchInventoryForUser\(supabase,/.test(route) && /getItemContextForUser\(supabase,/.test(route));
+  }
+
+  console.log('\n[C2 — 2026-10-14 regression: explicit env (not ambient SUPABASE_URL) + catch-all routing]');
+  {
+    check('withSupabase is given an explicit env.url/publishableKeys (never relies on the bare SUPABASE_URL this project does not set)', /env:\s*\{\s*url:\s*SUPABASE_URL/.test(route) && /publishableKeys:\s*\{\s*default:\s*SUPABASE_ANON_KEY\s*\}/.test(route));
+    check('SUPABASE_ANON_KEY is sourced from this project\'s own NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY convention', /NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY/.test(route));
+    check('route file lives under the optional catch-all segment (api/mcp/[[...path]]), so /api/mcp/oauth-protected-resource reaches this pipeline too', fs.existsSync(path.join(root, 'src', 'app', 'api', 'mcp', '[[...path]]', 'route.ts')));
+    check('the old non-catch-all src/app/api/mcp/route.ts no longer exists (superseded, not duplicated)', !fs.existsSync(path.join(root, 'src', 'app', 'api', 'mcp', 'route.ts')));
+    check('GET, POST, DELETE and OPTIONS are all exported (OPTIONS needed for the metadata route\'s own CORS preflight)', /export async function GET\(/.test(route) && /export async function POST\(/.test(route) && /export async function DELETE\(/.test(route) && /export async function OPTIONS\(/.test(route));
   }
 
   console.log('\n[D — no mutation path reachable from either tool]');
