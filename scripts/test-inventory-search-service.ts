@@ -116,7 +116,7 @@ async function main() {
     check('user B has results', bResults.length > 0);
     const aIds = new Set(aResults.map((r) => r.item_id));
     const bIds = new Set(bResults.map((r) => r.item_id));
-    check('no item_id appears in both users\' result sets (disjoint inventories)', [...aIds].every((id) => !bIds.has(id)));
+    check('no item_id appears in both users\' result sets (disjoint inventories)', Array.from(aIds).every((id) => !bIds.has(id)));
 
     const bSearchingForAsBrand = await searchInventoryForUser(clientB, { query: 'Fender' });
     check('user B searching for a term that matches user A\'s items never returns user A\'s item ids', bSearchingForAsBrand.every((r) => !aIds.has(r.item_id)));

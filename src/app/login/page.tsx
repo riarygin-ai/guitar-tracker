@@ -1,12 +1,24 @@
 'use client'
 
 export const dynamic = 'force-dynamic'
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { safeLoginRedirect } from '@/lib/oauthConsentReturn'
 
+// useSearchParams() requires a Suspense boundary for the production build's
+// prerender step (Next.js' own requirement — unrelated to this page's auth
+// logic). The form below is unchanged; only split out so the boundary can
+// wrap just the part that reads the query string.
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  )
+}
+
+function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
 

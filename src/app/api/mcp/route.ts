@@ -55,7 +55,7 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ query, status, brand, purpose }: { query?: string; status?: string[]; brand?: string; purpose?: string }) => {
+    async ({ query, status, brand, purpose }) => {
       const results = await searchInventoryForUser(supabase, { query, status, brand, purpose });
       return {
         content: [{
@@ -80,7 +80,7 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ item_id }: { item_id: number }) => {
+    async ({ item_id }) => {
       const text = await getItemContextForUser(supabase, item_id);
       if (text === null) {
         return { content: [{ type: 'text', text: 'Item not found.' }], isError: true };
@@ -92,20 +92,35 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
   return server;
 }
 
+// No explicit type annotation on the handler's `ctx` parameter below —
+// `pipeline`'s own generics infer it from the entries array (accumulating
+// withOAuthProtectedResource's + withSupabase's contributions); annotating
+// it explicitly defeats that contextual inference and widens `ctx` to a
+// bare `object`, which is exactly what broke `tsc` the first time this was
+// written (verified against the installed @supabase/middleware/@supabase/
+// server types — see the session's final report).
 const fetchHandler = pipeline(
   [
     withOAuthProtectedResource({
-      resourceServer: (req: Request) => new URL(req.url).origin + '/api/mcp',
+      resourceServer: (req) => new URL(req.url).origin + '/api/mcp',
       authorizationServer: fromSupabaseUrl(SUPABASE_URL),
     }),
     withSupabase({ auth: 'user' }),
   ],
-  async (req: Request, { supabase }: { supabase: SupabaseClient }) => {
+  async (req, { supabase }) => {
     const handler = createMcpHandler(() => buildMcpServer(supabase));
     return handler.fetch(req);
   },
 );
 
-export const GET = fetchHandler;
-export const POST = fetchHandler;
-export const DELETE = fetchHandler;
+// Exported as single-argument wrappers, not `fetchHandler` directly — Next
+// 15's route-handler type-checker inspects the exported function's own
+// parameter list and rejects a second parameter typed as a bare `object`
+// (it expects `undefined` or its own `{ params }` RouteContext shape for
+// dynamic segments, neither of which applies to this static route). Calling
+// `fetchHandler(req)` with no second argument is exactly what the pipeline
+// itself expects for a standalone deployment (it self-seeds a fresh
+// context) — this changes nothing about runtime behavior.
+export async function GET(req: Request) { return fetchHandler(req); }
+export async function POST(req: Request) { return fetchHandler(req); }
+export async function DELETE(req: Request) { return fetchHandler(req); }
