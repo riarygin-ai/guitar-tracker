@@ -236,7 +236,8 @@ async function main() {
     const lead = async (userId: number, srcId: number, itemId: number, o: Record<string, unknown>) => {
       const { data, error } = await admin.from('item_leads').insert({
         user_id: userId, source_id: srcId, inventory_item_id: itemId, lead_id: crypto.randomUUID(), lead_quality: 'LOW', offer_type: 'NONE', status: 'OPEN',
-        source_updated_at: new Date().toISOString(), ...o,
+        source_updated_at: new Date().toISOString(),
+        contact_name_source: o.contact_name ? 'LEAD_LOG' : null, ...o,
       }).select('id').single();
       if (error) throw error;
       leadIds.push(data.id as number);
@@ -272,6 +273,53 @@ async function main() {
     check('possible matches kept separate: John S. / Johnny Smith / John Smith Jr (never "John Smithson")', JSON.stringify(c1.possible_matches.map((p) => p.lead_id).sort()) === JSON.stringify([L4, L5, L8].sort()), c1.possible_matches.map((p) => [p.contact_name, p.match_reason]));
     check('possible matches carry reason + score, and are not counted as history', c1.possible_matches.every((p) => !!p.match_reason && p.match_score > 0) && c1.summary.exact_match_count === 2 && c1.summary.possible_match_count === 3);
     check('coverage reports leads without a contact name', c1.coverage.leads_without_contact_name >= 1 && c1.coverage.leads_with_contact_name === 7, c1.coverage);
+
+    check('provenance is returned per record (LEAD_LOG for sheet-recorded names)', c1.exact_matches.every((m) => m.contact_name_source === 'LEAD_LOG'));
+
+    console.log('\n[C1b — historical notes backfill: extract_lead_contact_name_from_notes_v1 (migration 20261020000000)]');
+    {
+      // Synthetic notes mirroring every accepted / rejected production shape observed 2026-10-19.
+      const cases: [string | null, string | null][] = [
+        ['Jane Doe — offered a straight trade; no later outcome.', 'Jane Doe'],
+        ['darren — asked about trades.', 'darren'],
+        ['Mo Q — Strat-only trade declined.', 'Mo Q'],
+        ['Michael J. Molnar — offered cash.', 'Michael J. Molnar'],
+        ["T-j Crites-O'Keefe — asked the price.", "T-j Crites-O'Keefe"],
+        ["Sam's Gear Shop — offered a pedalboard.", "Sam's Gear Shop"],
+        ['Zoë — asked the asking price.', 'Zoë'],
+        ['  Jane   Doe   —   spacing collapsed', 'Jane Doe'],
+        ['Nick (collector) — offered LP + $500–1,000; gap too high.', 'Nick'],
+        ['Nick (ES-325) — straight trade declined.', 'Nick'],
+        ['Jane Doe — first part — second dash ignored', 'Jane Doe'],
+        ['Kijiji amp collector — offered an amp.', null],
+        ['Anonymous Reverb lead — no messages.', null],
+        ['Kijiji Seller — asked about shipping.', null],
+        ['Sam Lee from Oakville — repeat contact.', null],
+        ['Pizza for Alex Kim — initial inquiry.', null],
+        ['initiated_by=ME. Alex Kim — user initiated.', null],
+        ['Craig asked the cash price, then said he would think about it.', null],
+        ['Alex Kim. Previously offered a Gretsch.', null],
+        ['Pat Lee: offered an ESP — later declined.', null],
+        ['Agreed to Gretsch + $3k — later reconsidered.', null],
+        ['Sep 30 — warehouse fees discussed.', null],
+        ['One Two Three Four Five — too many words.', null],
+        ['Jane Doe—no spaces around the dash', null],
+        ['Jane Doe - hyphen is not the convention', null],
+        ['— leading dash only', null],
+        ['', null],
+        [null, null],
+      ];
+      const mismatches: unknown[] = [];
+      for (const [notes, expected] of cases) {
+        const { data, error } = await admin.rpc('extract_lead_contact_name_from_notes_v1', { p_notes: notes });
+        if (error || (data ?? null) !== expected) mismatches.push({ notes, expected, got: data, error: error?.message });
+      }
+      check(`all ${cases.length} accepted/rejected note shapes extract exactly as specified`, mismatches.length === 0, mismatches);
+      const { error: anonErr } = await anon.rpc('extract_lead_contact_name_from_notes_v1', { p_notes: 'Jane Doe — x' });
+      check('the extraction function is not callable by anon (service_role only)', !!anonErr);
+      const { error: authErr } = await clientA.rpc('extract_lead_contact_name_from_notes_v1', { p_notes: 'Jane Doe — x' });
+      check('…nor by an authenticated user', !!authErr);
+    }
 
     console.log('\n[C2 — other query shapes]');
     const c2 = await findContactHistoryForUser(clientA, { contact_name: 'john smith' });

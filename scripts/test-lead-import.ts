@@ -1489,10 +1489,12 @@ async function main() {
       const renamed = outcomeOf(await importSheet(sourceA, sheetAtC('2026-07-02T00:00:00Z', 'John Smith Jr')));
       check('6.22d a newer row with a different contact_name is an UPDATE', renamed?.counts.updated === 1, renamed?.counts);
       stored = await leadByLeadId(userA, contactLeadId);
-      check('6.22e stored contact_name follows the newer source', stored?.contact_name === 'John Smith Jr', stored?.contact_name);
+      check('6.22e stored contact_name follows the newer source, marked LEAD_LOG', stored?.contact_name === 'John Smith Jr' && stored?.contact_name_source === 'LEAD_LOG', stored);
 
-      const cleared = outcomeOf(await importSheet(sourceA, sheetAtC('2026-07-03T00:00:00Z', '   ')));
-      check('6.22f a blank contact_name on a newer row clears it to NULL', cleared?.counts.updated === 1 && (await leadByLeadId(userA, contactLeadId))?.contact_name == null, cleared?.counts);
+      // 20261020000000: a blank/absent sheet value never erases a stored name (protects notes backfill).
+      const blank = outcomeOf(await importSheet(sourceA, sheetAtC('2026-07-03T00:00:00Z', '   ')));
+      stored = await leadByLeadId(userA, contactLeadId);
+      check('6.22f a blank contact_name on a newer row applies the row but KEEPS the stored name', blank?.counts.updated === 1 && stored?.contact_name === 'John Smith Jr' && stored?.contact_name_source === 'LEAD_LOG', stored);
 
       // Stale source cannot silently rewrite contact_name (newer-source guard covers the column).
       const direct = await admin.from('item_leads').update({ contact_name: 'Sneaky Rename' }).eq('user_id', userA).eq('lead_id', contactLeadId).select('contact_name');
@@ -1511,6 +1513,21 @@ async function main() {
       const row = sheetRow({ lead_id: noColLead, updated_at: '2026-07-01T00:00:00Z' });
       const noColOutcome = outcomeOf(await importSheet(sourceA, [[...headersNoContact], headersNoContact.map((h) => row[h])]));
       check('6.22j a sheet without the contact_name column imports normally with contact_name NULL', noColOutcome?.counts.inserted === 1 && (await leadByLeadId(userA, noColLead))?.contact_name == null, noColOutcome?.counts);
+
+      // A notes-backfilled name (NOTES_PREFIX_V1) survives a newer re-import from a sheet
+      // WITHOUT column T, and is replaced (as LEAD_LOG) once the sheet supplies a name.
+      // Simulate the one-time backfill exactly as the migration does: the guard trigger is
+      // bypassed there, so here we advance source_updated_at alongside the name instead.
+      await admin.from('item_leads').update({ contact_name: 'Backfilled Name', contact_name_source: 'NOTES_PREFIX_V1', source_updated_at: '2026-07-01T12:00:00Z' }).eq('user_id', userA).eq('lead_id', noColLead);
+      const row2 = sheetRow({ lead_id: noColLead, updated_at: '2026-07-05T00:00:00Z', notes: 'Backfilled Name — newer narrative' });
+      const reimport = outcomeOf(await importSheet(sourceA, [[...headersNoContact], headersNoContact.map((h) => row2[h])]));
+      let kept = await leadByLeadId(userA, noColLead);
+      check('6.22k a newer re-import from a sheet without column T keeps the backfilled name and its provenance', reimport?.counts.updated === 1 && kept?.contact_name === 'Backfilled Name' && kept?.contact_name_source === 'NOTES_PREFIX_V1', kept);
+      const withName = outcomeOf(await importSheet(sourceA, buildValues([sheetRow({ lead_id: noColLead, updated_at: '2026-07-06T00:00:00Z', contact_name: 'Sheet Name' })])));
+      kept = await leadByLeadId(userA, noColLead);
+      check('6.22l a non-blank sheet contact_name replaces it and is marked LEAD_LOG', withName?.counts.updated === 1 && kept?.contact_name === 'Sheet Name' && kept?.contact_name_source === 'LEAD_LOG', kept);
+      const bad = await admin.from('item_leads').update({ contact_name_source: null, source_updated_at: '2026-07-07T00:00:00Z' }).eq('user_id', userA).eq('lead_id', noColLead).select('id');
+      check('6.22m CHECK: a name without a provenance value is rejected', !!bad.error, bad);
     }
 
     console.log('\n=== Section 7: Import security (authenticated clients) ===');

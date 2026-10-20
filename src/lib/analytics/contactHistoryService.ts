@@ -43,6 +43,8 @@ export interface ContactLeadRecord {
   same_item: boolean;
   channel: string;
   contact_name: string;
+  /** LEAD_LOG = structured sheet column; NOTES_PREFIX_V1 = backfilled from a historical "<name> — …" note (migration 20261020000000). */
+  contact_name_source: string | null;
   first_contact_at: string | null;
   last_contact_at: string | null;
   quality: string;
@@ -103,6 +105,7 @@ const SEMANTICS = [
   'A name is not an identity. exact_matches share the normalized name (and the channel, when one was given); summary counts use exact_matches only.',
   'other_channel_matches share the name but were recorded on another channel and are NOT assumed to be the same person.',
   'possible_matches follow a few explicit patterns (last-name initial, first-name prefix, extra middle name/suffix, first-name-only query) and carry match_reason/match_score; treat them as leads to verify, not history.',
+  'contact_name_source: LEAD_LOG = recorded in the Lead Log name column; NOTES_PREFIX_V1 = recovered from a historical note that began "<name> — …".',
   'No time window: full history, including leads on sold/traded items. Leads without a recorded contact_name cannot be found (see coverage).',
   'linked_deal_id is the completed Sell/Trade this lead was linked to; use get_operation_context(deal_id) for details.',
 ];
@@ -111,7 +114,7 @@ const PAGE = 1000;
 const ID_CHUNK = 150;
 const QUALITY_RANK = Object.fromEntries(LEAD_QUALITIES.map((q, i) => [q, i])) as Record<string, number>;
 
-type LoadedLead = Omit<LeadRow, 'item_name' | 'contact_name'> & { contact_name: string };
+type LoadedLead = Omit<LeadRow, 'item_name' | 'contact_name'> & { contact_name: string; contact_name_source: string | null };
 
 function num(v: unknown): number | null {
   return v == null ? null : Number(v);
@@ -120,7 +123,7 @@ function num(v: unknown): number | null {
 async function loadNamedLeads(client: SupabaseClient): Promise<{ leads: LoadedLead[]; withoutName: number }> {
   const raw: Record<string, unknown>[] = [];
   for (let offset = 0; ; offset += PAGE) {
-    const { data, error } = await client.from('item_leads').select(LEAD_COLUMNS)
+    const { data, error } = await client.from('item_leads').select(`${LEAD_COLUMNS}, contact_name_source`)
       .not('contact_name', 'is', null)
       .order('id', { ascending: true })
       .range(offset, offset + PAGE - 1);
@@ -217,6 +220,7 @@ export async function findContactHistoryForUser(client: SupabaseClient, query: C
     same_item: query.item_id != null && l.inventory_item_id === query.item_id,
     channel: leadChannelLabel(l),
     contact_name: l.contact_name,
+    contact_name_source: l.contact_name_source,
     first_contact_at: l.first_contact_at,
     last_contact_at: l.last_contact_at,
     quality: QUALITY_LABEL[l.lead_quality] ?? l.lead_quality,
