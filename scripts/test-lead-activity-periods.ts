@@ -36,7 +36,7 @@ function lead(itemId: number, o: Partial<LoadedLead>): LoadedLead {
     first_contact_at: null, last_contact_at: null, source_channel: null, deal_channel_id: null, channel_name: null,
     buyer_message_count: null, our_message_count: null, lead_quality: 'LOW', offer_type: 'NONE',
     initial_cash_offer: null, best_cash_offer: null, trade_item: null, cash_component: null, trade_est_value: null,
-    status: 'OPEN', outcome_reason: null, notes: null, deal_id: null, source_updated_at: '2026-10-01T00:00:00Z', last_imported_at: null,
+    status: 'OPEN', outcome_reason: null, notes: null, deal_id: null, contact_name: null, source_updated_at: '2026-10-01T00:00:00Z', last_imported_at: null,
     ...o,
   };
 }

@@ -51,6 +51,8 @@ export const ROW_ISSUE = {
   INVALID_OUTCOME_REASON: 'INVALID_OUTCOME_REASON',
   // ── Lead -> Deal linkage (deal_id, Sheet column S — optional) ───────────
   INVALID_DEAL_ID: 'INVALID_DEAL_ID',
+  // ── contact_name (Sheet column T — optional) ─────────────────────────────
+  INVALID_CONTACT_NAME: 'INVALID_CONTACT_NAME',
   DEAL_NOT_FOUND: 'DEAL_NOT_FOUND',
   DEAL_NOT_OWNED_BY_SOURCE_USER: 'DEAL_NOT_OWNED_BY_SOURCE_USER',
   DEAL_ITEM_MISMATCH: 'DEAL_ITEM_MISMATCH',

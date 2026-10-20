@@ -68,6 +68,7 @@ export interface LeadActivityLeadDetail {
   first_contact_at: string | null;
   last_contact_at: string | null;
   channel: string;
+  contact_name: string | null;
   quality: LeadQuality;
   status: LeadRow['status'];
   outcome_reason: string | null;
@@ -205,6 +206,7 @@ function toDetail(lead: LoadedLead): LeadActivityLeadDetail {
     first_contact_at: lead.first_contact_at,
     last_contact_at: lead.last_contact_at,
     channel: leadChannelLabel(lead),
+    contact_name: lead.contact_name,
     quality: lead.lead_quality,
     status: lead.status,
     outcome_reason: lead.outcome_reason,

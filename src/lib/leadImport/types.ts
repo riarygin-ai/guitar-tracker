@@ -94,7 +94,11 @@ export type ExpectedHeader = (typeof EXPECTED_HEADERS)[number];
 // Optional, unlike EXPECTED_HEADERS: an older A:R sheet with no `deal_id`
 // column at all is still fully supported (every row's deal_id normalizes to
 // NULL). Never moves or reinterprets an existing column when absent.
-export const OPTIONAL_HEADERS = ['deal_id'] as const;
+//
+// Sheet column T (appended after `deal_id`) — the buyer/trader's name
+// (contact_name), also optional and NULL when absent. Used by the MCP
+// find_contact_history tool; stored verbatim, never treated as identity.
+export const OPTIONAL_HEADERS = ['deal_id', 'contact_name'] as const;
 export type OptionalHeader = (typeof OPTIONAL_HEADERS)[number];
 
 export const ALL_HEADERS = [...EXPECTED_HEADERS, ...OPTIONAL_HEADERS] as const;
@@ -184,6 +188,8 @@ export interface NormalizedLeadRow {
   notes: string | null;
   /** The completed Sell/Trade deal this lead is linked to (Sheet column S), or NULL. */
   dealId: number | null;
+  /** Buyer/trader name as recorded (Sheet column T), trimmed; NULL when blank or the column is absent. */
+  contactName: string | null;
   sourceUpdatedAt: string;
 }
 

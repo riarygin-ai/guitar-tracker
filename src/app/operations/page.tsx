@@ -13,6 +13,7 @@ import type { DealChannel, InventoryExpense, InventoryTag } from '@/types';
 import { splitSearchTerms } from '@/lib/search';
 import type { Brand, Deal, DealItem, InventoryItemWithValue } from '@/types';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
+import { dealCashImpact, dealRealizedProfit } from '@/lib/operations/operationFinancials';
 
 const BATCH_SIZE = 25;
 const SESSION_KEY = 'operations-list-state';
@@ -350,23 +351,12 @@ export default function OperationsPage() {
     return `$${Math.abs(value).toFixed(2)}`;
   };
 
-  const getCashForDeal = (deal: Deal): number => {
-    if (deal.deal_type === 'sale')     return deal.cash_received ?? 0;
-    if (deal.deal_type === 'purchase') return -(deal.cash_paid ?? 0);
-    if (deal.deal_type === 'trade')    return (deal.cash_received ?? 0) - (deal.cash_paid ?? 0);
-    if (deal.deal_type === 'expense')  return -(deal.cash_paid ?? 0);
-    return 0;
-  };
+  // Canonical operation financials (src/lib/operations/operationFinancials.ts),
+  // shared with the MCP operations tools.
+  const getCashForDeal = (deal: Deal): number => dealCashImpact(deal);
 
-  const getProfitForDeal = (deal: Deal): number | null => {
-    if (deal.deal_type !== 'sale' && deal.deal_type !== 'trade') return null;
-    const items = dealItemsByDealId[deal.id] ?? [];
-    const out = items.filter((di) => di.direction === 'out');
-    const outValue    = out.reduce((s, di) => s + Number(di.total_value ?? 0), 0);
-    const outCost     = out.reduce((s, di) => s + Number(valueInByItemId[di.item_id] ?? 0), 0);
-    const outExpenses = out.reduce((s, di) => s + (expensesByItemId[di.item_id] ?? 0), 0);
-    return outValue - outCost - outExpenses;
-  };
+  const getProfitForDeal = (deal: Deal): number | null =>
+    dealRealizedProfit(deal, dealItemsByDealId[deal.id] ?? [], valueInByItemId, expensesByItemId);
 
   const getCashColor = (v: number) => v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-slate-600';
 

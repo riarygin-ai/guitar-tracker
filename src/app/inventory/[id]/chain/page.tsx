@@ -6,14 +6,18 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { getItemLineage, getDealChannels, getInventoryExpensesByItemIds, type ItemTimelineData } from '@/lib/supabase';
 import type { Deal, DealChannel, DealItem, InventoryItemWithValue } from '@/types';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface ChainStep {
-  deal:     Deal;
-  incoming: DealItem[];
-  outgoing: DealItem[];
-}
+import {
+  buildChainContext,
+  computeMainLineageItemIds,
+  buildCapitalChain,
+  flattenTerminalNodes,
+  buildLineageSteps,
+  computeRunningProfits,
+  lineageStepProfit,
+  type ChainStep,
+  type ChainNode,
+  type CapitalChainResult,
+} from '@/lib/tradeChain';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -73,20 +77,12 @@ function DealCard({
   deal, primaryIn, outgoing, bundleItems, mainItemIds,
   itemMap, brandMap, channelMap, photoByItemId, expensesByItemId, runningProfit,
 }: DealCardProps) {
-  const isValueDeal  = deal.deal_type === 'sale' || deal.deal_type === 'trade';
   const cashPaid     = Number(deal.cash_paid ?? 0);
   const cashReceived = Number(deal.cash_received ?? 0);
 
   // Only count profit for main-chain items — bundle siblings must not inflate this
-  const profit = isValueDeal
-    ? outgoing
-        .filter((di) => mainItemIds.has(di.item_id))
-        .reduce((sum, di) => {
-          const item         = itemMap[di.item_id];
-          const itemExpenses = expensesByItemId[di.item_id] ?? 0;
-          return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0) - itemExpenses);
-        }, 0)
-    : null;
+  // Shared with the MCP get_deal_chain tool (src/lib/tradeChain.ts).
+  const profit = lineageStepProfit({ deal, incoming: [], outgoing }, mainItemIds, itemMap, expensesByItemId);
 
   const typeColor = DEAL_TYPE_COLORS[deal.deal_type] ?? DEAL_TYPE_COLORS.purchase;
 
@@ -271,80 +267,57 @@ function ChainTimeline({
   );
 }
 
-// ── Chain summary ─────────────────────────────────────────────────────────────
+// ── Capital summary ───────────────────────────────────────────────────────────
+// Full-capital-tree accounting (src/lib/tradeChain.ts buildCapitalChain) —
+// Total Invested / Cash Extracted / Current Assets / Profit / ROI are
+// computed from every deal and every descendant item reachable from the
+// chain's root acquisition(s), not just the single item-to-item lineage
+// shown below in "Item Lineage". See that module's own header for why:
+// the old single-lineage ROI silently dropped sibling assets/cash created
+// by multi-item trades, which in real chains can be the majority of the
+// value. Real cash (deal.cash_paid / deal.cash_received) and current
+// estimated_sold_value drive every figure here — never the assigned
+// per-item trade-value deltas the old "Running Profit" used.
 
-interface ChainSummaryProps {
-  steps:              ChainStep[];
-  mainItemIds:        Set<number>;
-  itemMap:            Record<number, InventoryItemWithValue>;
-  finalRunningProfit: number;
-  totalChainExpenses: number;
+interface CapitalSummaryProps {
+  capitalChain: CapitalChainResult;
+  startedDate:  string | null;
 }
 
-function ChainSummary({ steps, mainItemIds, itemMap, finalRunningProfit, totalChainExpenses }: ChainSummaryProps) {
-  // Cost basis = only the selected item's acquisition value, not full bundle deal cost
-  const startingCost = steps[0]?.incoming
-    .filter((di) => mainItemIds.has(di.item_id))
-    .reduce((s, di) => s + Number(di.total_value ?? 0), 0) ?? 0;
-
-  const cashExtracted = steps.reduce(
-    (s, step) => s + Number(step.deal.cash_received ?? 0), 0,
-  );
-
-  // Only count currently-held items that are on the main chain
-  const heldValues = new Map<number, number>();
-  steps.forEach((step) => {
-    [...step.incoming, ...step.outgoing]
-      .filter((di) => mainItemIds.has(di.item_id))
-      .forEach((di) => {
-        if (heldValues.has(di.item_id)) return;
-        const item = itemMap[di.item_id];
-        if (item?.status === 'owned' || item?.status === 'listed') {
-          heldValues.set(di.item_id, Number(item.estimated_sold_value ?? 0));
-        }
-      });
-  });
-  const currentAssetValue = Array.from(heldValues.values()).reduce((a, b) => a + b, 0);
-
-  const totalValueCreated = cashExtracted + currentAssetValue;
-  const totalInvested     = startingCost + totalChainExpenses;
-  const chainRoi          = totalInvested > 0 ? ((totalValueCreated / totalInvested) - 1) * 100 : null;
+function CapitalSummary({ capitalChain, startedDate }: CapitalSummaryProps) {
+  const { totalInvested, cashExtracted, currentAssets, profit, roi } = capitalChain;
 
   const metrics: { label: string; value: string; accent?: string }[] = [
-    { label: 'Started', value: steps[0]?.deal.deal_date ? formatDate(steps[0].deal.deal_date) : '—' },
-    { label: 'Operations', value: String(steps.length) },
-    { label: 'Cost Basis', value: startingCost > 0 ? fmtMoney(startingCost) : '—' },
+    { label: 'Total Invested', value: totalInvested > 0 ? fmtMoney(totalInvested) : '—' },
     {
       label: 'Cash Extracted',
       value: cashExtracted > 0 ? fmtMoney(cashExtracted) : '—',
       accent: cashExtracted > 0 ? 'text-emerald-600 dark:text-emerald-400' : undefined,
     },
+    { label: 'Current Assets', value: fmtMoney(currentAssets) },
     {
-      label: 'Running Profit',
-      value: finalRunningProfit !== 0
-        ? (finalRunningProfit >= 0 ? '+' : '−') + fmtMoney(finalRunningProfit)
-        : '—',
-      accent: finalRunningProfit > 0
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : finalRunningProfit < 0
-        ? 'text-rose-600 dark:text-rose-400'
-        : undefined,
+      label: 'Profit',
+      value: profit !== 0 ? (profit >= 0 ? '+' : '−') + fmtMoney(profit) : '—',
+      accent: profit > 0 ? 'text-emerald-600 dark:text-emerald-400' : profit < 0 ? 'text-rose-600 dark:text-rose-400' : undefined,
     },
-    { label: 'Current Assets', value: fmtMoney(currentAssetValue) },
-    ...(chainRoi !== null ? [{
+    ...(roi !== null ? [{
       label: 'ROI',
-      value: (chainRoi >= 0 ? '+' : '') + chainRoi.toFixed(0) + '%',
-      accent: chainRoi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400',
+      value: (roi >= 0 ? '+' : '') + roi.toFixed(0) + '%',
+      accent: roi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400',
     }] : []),
   ];
 
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
       <div className="mb-4">
-        <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Chain Summary</p>
-        <h2 className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">Deal Chain Summary</h2>
+        <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Capital Summary</p>
+        <h2 className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">Full Chain Accounting</h2>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          {startedDate ? `Started ${formatDate(startedDate)} · ` : ''}
+          Every asset and dollar descended from the original purchase, not just this item&apos;s own path.
+        </p>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {metrics.map(({ label, value, accent }) => (
           <div key={label} className="rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
             <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-slate-400 dark:text-slate-500">{label}</p>
@@ -353,6 +326,61 @@ function ChainSummary({ steps, mainItemIds, itemMap, finalRunningProfit, totalCh
             </p>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+// ── Other descendants ───────────────────────────────────────────────────────
+// Terminal (held or sold) items descended from the same root that are NOT
+// part of the currently-viewed item's own linear lineage — i.e. exactly
+// the value the old single-lineage summary silently dropped.
+
+interface OtherDescendantsProps {
+  nodes:      ChainNode[];
+  itemMap:    Record<number, InventoryItemWithValue>;
+  brandMap:   Record<number, string>;
+}
+
+function OtherDescendants({ nodes, itemMap, brandMap }: OtherDescendantsProps) {
+  if (nodes.length === 0) return null;
+
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+      <div className="mb-4">
+        <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Other Descendants</p>
+        <h2 className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">Other Assets From This Root</h2>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Sibling items created by multi-item trades along this chain, outside this item&apos;s own lineage.
+        </p>
+      </div>
+      <div className="space-y-2">
+        {nodes.map((node) => {
+          const item = itemMap[node.itemId];
+          const brand = item ? (brandMap[item.brand_id] ?? 'Unknown') : 'Unknown';
+          const name = item ? `${brand} ${item.model}` : `Item #${node.itemId}`;
+          const isHeld = node.resolution.kind === 'held';
+          const value = isHeld
+            ? (node.resolution as { estimatedSoldValue: number }).estimatedSoldValue
+            : (node.resolution as { cashReceived: number }).cashReceived;
+          const statusLabel = isHeld ? (item?.status === 'listed' ? 'Listed' : 'Held') : 'Sold';
+
+          return (
+            <Link
+              key={node.itemId}
+              href={`/inventory/${node.itemId}`}
+              className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:bg-slate-700/60"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-900 dark:text-white">{name}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{statusLabel}{isHeld ? ' · estimated' : ' · cash received'}</p>
+              </div>
+              <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+                {fmtMoney(value)}
+              </span>
+            </Link>
+          );
+        })}
       </div>
     </section>
   );
@@ -405,11 +433,6 @@ export default function TradeChainPage() {
     () => Object.fromEntries(channels.map((c) => [c.id, c.name])),
     [channels],
   );
-  const dealItemsByDealId = useMemo(() => {
-    const map: Record<number, DealItem[]> = {};
-    (data?.dealItems ?? []).forEach((di) => { map[di.deal_id] ??= []; map[di.deal_id].push(di); });
-    return map;
-  }, [data]);
 
   // Direct lineage walk — avoids sibling-branch pollution.
   //
@@ -426,93 +449,67 @@ export default function TradeChainPage() {
   //   Siblings (other items received in the SAME bundle deal) are in
   //   inItemsByDealId[deal], NOT outItemsByDealId[deal]. They are never
   //   added here, so their future deals never appear in steps.
-  const mainItemIds = useMemo(() => {
-    const ids = new Set<number>([itemId]);
+  // Shared lookup context (src/lib/tradeChain.ts) — the single source of
+  // truth for "acquisition deal for item X" / "disposal deal for item X" /
+  // etc., used by BOTH the linear lineage below and the full capital tree.
+  const chainContext = useMemo(
+    () => buildChainContext(data?.deals ?? [], data?.dealItems ?? []),
+    [data],
+  );
 
-    const acqDealByItemId:      Record<number, number>   = {};
-    const disposalDealByItemId: Record<number, number>   = {};
-    const inItemsByDealId:      Record<number, number[]> = {};
-    const outItemsByDealId:     Record<number, number[]> = {};
-    const dealTypeById:         Record<number, string>   = {};
-
-    for (const deal of data?.deals ?? []) {
-      dealTypeById[deal.id] = deal.deal_type;
-    }
-    for (const di of data?.dealItems ?? []) {
-      if (di.direction === 'in') {
-        if (acqDealByItemId[di.item_id] === undefined) acqDealByItemId[di.item_id] = di.deal_id;
-        (inItemsByDealId[di.deal_id] ??= []).push(di.item_id);
-      } else {
-        disposalDealByItemId[di.item_id] = di.deal_id;
-        (outItemsByDealId[di.deal_id] ??= []).push(di.item_id);
-      }
-    }
-
-    const walkBackward = (id: number) => {
-      const acqDeal = acqDealByItemId[id];
-      if (acqDeal === undefined || dealTypeById[acqDeal] !== 'trade') return;
-      for (const prevId of outItemsByDealId[acqDeal] ?? []) {
-        if (!ids.has(prevId)) { ids.add(prevId); walkBackward(prevId); }
-      }
-    };
-
-    const walkForward = (id: number) => {
-      const disposalDeal = disposalDealByItemId[id];
-      if (disposalDeal === undefined || dealTypeById[disposalDeal] !== 'trade') return;
-      for (const nextId of inItemsByDealId[disposalDeal] ?? []) {
-        if (!ids.has(nextId)) { ids.add(nextId); walkForward(nextId); }
-      }
-    };
-
-    walkBackward(itemId);
-    walkForward(itemId);
-
-    return ids;
-  }, [data, itemId]);
+  // Linear item lineage — "how did THIS specific item get here?" —
+  // unchanged algorithm, now shared via src/lib/tradeChain.ts. Deliberately
+  // excludes bundle siblings; see that module's own header.
+  const mainItemIds = useMemo(
+    () => computeMainLineageItemIds(itemId, chainContext),
+    [chainContext, itemId],
+  );
 
   // Only include deals where at least one main-chain item is directly involved.
   // Deals that only contain siblings are excluded entirely.
   const steps: ChainStep[] = useMemo(
-    () => (data?.deals ?? [])
-      .filter((deal) => {
-        const slots = dealItemsByDealId[deal.id] ?? [];
-        return slots.some((di) => mainItemIds.has(di.item_id));
-      })
-      .map((deal) => {
-        const slots = dealItemsByDealId[deal.id] ?? [];
-        return {
-          deal,
-          incoming: slots.filter((di) => di.direction === 'in'),
-          outgoing: slots.filter((di) => di.direction === 'out'),
-        };
-      }),
-    [data, dealItemsByDealId, mainItemIds],
+    () => buildLineageSteps(data?.deals ?? [], data?.dealItems ?? [], mainItemIds),
+    [data, mainItemIds],
   );
 
-  const runningProfits = useMemo(() => {
-    let running = 0;
-    return steps.map((step) => {
-      if (step.deal.deal_type === 'sale' || step.deal.deal_type === 'trade') {
-        running += step.outgoing
-          .filter((di) => mainItemIds.has(di.item_id))
-          .reduce((sum, di) => {
-            const item         = itemMap[di.item_id];
-            const itemExpenses = expensesByItemId[di.item_id] ?? 0;
-            return sum + (Number(di.total_value ?? 0) - Number(item?.value_in ?? 0) - itemExpenses);
-          }, 0);
-      }
-      return running;
-    });
-  }, [steps, itemMap, expensesByItemId, mainItemIds]);
+  const runningProfits = useMemo(
+    () => computeRunningProfits(steps, mainItemIds, itemMap, expensesByItemId),
+    [steps, itemMap, expensesByItemId, mainItemIds],
+  );
 
-  const finalRunningProfit = runningProfits[runningProfits.length - 1] ?? 0;
-  // Expenses scoped to main-chain items only
-  const totalChainExpenses = Array.from(mainItemIds).reduce(
-    (sum, id) => sum + (expensesByItemId[id] ?? 0), 0,
+  // Full capital-tree accounting (src/lib/tradeChain.ts) — Total Invested/
+  // Cash Extracted/Current Assets/Profit/ROI computed from EVERY deal and
+  // EVERY descendant item reachable from the chain's root acquisition(s),
+  // not just mainItemIds. See CapitalSummary's own header comment.
+  const capitalChain: CapitalChainResult = useMemo(
+    () => buildCapitalChain({
+      startItemId: itemId,
+      deals: data?.deals ?? [],
+      dealItems: data?.dealItems ?? [],
+      itemsById: itemMap,
+      expensesByItemId,
+    }),
+    [data, itemId, itemMap, expensesByItemId],
+  );
+
+  // Terminal descendants from the full tree that are NOT on this item's
+  // own linear lineage — exactly the sibling value the old summary dropped.
+  const otherDescendantNodes: ChainNode[] = useMemo(
+    () => flattenTerminalNodes(capitalChain.roots).filter((n) => !mainItemIds.has(n.itemId)),
+    [capitalChain, mainItemIds],
   );
 
   const rootItem  = itemMap[itemId];
   const rootBrand = brandMap[rootItem?.brand_id ?? 0] ?? '';
+
+  const startedDate = useMemo(() => {
+    const dates = capitalChain.rootItemIds
+      .map((id) => chainContext.acqDealByItemId[id])
+      .filter((dealId): dealId is number => dealId !== undefined)
+      .map((dealId) => chainContext.dealById[dealId]?.deal_date)
+      .filter((d): d is string => !!d);
+    return dates.length > 0 ? dates.sort()[0] : null;
+  }, [capitalChain, chainContext]);
 
   return (
     <div className="space-y-6">
@@ -536,19 +533,19 @@ export default function TradeChainPage() {
         </p>
       </section>
 
-      {/* Chain summary */}
+      {/* Capital summary — full tree accounting */}
       {!loading && !error && steps.length > 0 && (
-        <ChainSummary
-          steps={steps}
-          mainItemIds={mainItemIds}
-          itemMap={itemMap}
-          finalRunningProfit={finalRunningProfit}
-          totalChainExpenses={totalChainExpenses}
-        />
+        <CapitalSummary capitalChain={capitalChain} startedDate={startedDate} />
       )}
 
-      {/* Chain timeline */}
+      {/* Item lineage — "how did THIS item get here?" */}
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+        <div className="mb-4">
+          <p className="text-sm uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Item Lineage</p>
+          <h2 className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
+            {steps.length > 0 ? `${steps.length} operation${steps.length === 1 ? '' : 's'}` : 'Trade Chain'}
+          </h2>
+        </div>
         {loading ? (
           <div className="flex items-center gap-2.5 py-4">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600 dark:border-slate-700 dark:border-t-slate-300" />
@@ -571,6 +568,11 @@ export default function TradeChainPage() {
           />
         )}
       </section>
+
+      {/* Other descendants — sibling branches from the same root */}
+      {!loading && !error && (
+        <OtherDescendants nodes={otherDescendantNodes} itemMap={itemMap} brandMap={brandMap} />
+      )}
 
     </div>
   );

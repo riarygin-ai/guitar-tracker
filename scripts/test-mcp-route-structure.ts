@@ -13,7 +13,7 @@
  * `npm run build` are the real compile-correctness check for this file —
  * this script instead locks down the SECURITY-CRITICAL invariants that
  * are visible from the source text alone and must never regress:
- *   - exactly four tools, exactly these four names
+ *   - exactly eight tools, exactly these eight names
  *   - no tool input schema ever mentions a user/account/owner identifier
  *   - auth is 'user' (RLS-scoped), never service_role / admin
  *   - no mutation call (insert/update/delete/upsert/rpc) anywhere in the
@@ -43,14 +43,27 @@ function main() {
   const searchService = strip(read('src', 'lib', 'inventorySearchService.ts'));
   const inventoryAnalysisService = strip(read('src', 'lib', 'analytics', 'inventoryAnalysisService.ts'));
   const leadActivityService = strip(read('src', 'lib', 'analytics', 'leadActivityService.ts'));
+  // 2026-10-19: the four business tools' services and the shared modules they call.
+  const businessServices: Record<string, string> = {
+    contactHistoryService: strip(read('src', 'lib', 'analytics', 'contactHistoryService.ts')),
+    operationsService: strip(read('src', 'lib', 'analytics', 'operationsService.ts')),
+    dealChainService: strip(read('src', 'lib', 'analytics', 'dealChainService.ts')),
+    itemLineageData: strip(read('src', 'lib', 'itemLineageData.ts')),
+    tradeChain: strip(read('src', 'lib', 'tradeChain.ts')),
+    operationFinancials: strip(read('src', 'lib', 'operations', 'operationFinancials.ts')),
+    contactName: strip(read('src', 'lib', 'leads', 'contactName.ts')),
+  };
 
-  console.log('\n[A — exactly the four intended tools, read-only]');
+  console.log('\n[A — exactly the eight intended tools, read-only]');
   {
     const toolNames = Array.from(route.matchAll(/registerTool\(\s*'([a-zA-Z0-9_]+)'/g)).map((m) => m[1]);
-    check('exactly four tools registered', toolNames.length === 4, toolNames);
+    check('exactly eight tools registered', toolNames.length === 8, toolNames);
     check(
-      'the four tools are exactly search_inventory, get_item_context, get_inventory_analysis and get_lead_activity (no extra, no renamed)',
-      JSON.stringify([...toolNames].sort()) === JSON.stringify(['get_inventory_analysis', 'get_item_context', 'get_lead_activity', 'search_inventory']),
+      'the eight tools are exactly the four originals plus find_contact_history, get_operations_analysis, get_operation_context, get_deal_chain (no extra, no renamed)',
+      JSON.stringify([...toolNames].sort()) === JSON.stringify([
+        'find_contact_history', 'get_deal_chain', 'get_inventory_analysis', 'get_item_context',
+        'get_lead_activity', 'get_operation_context', 'get_operations_analysis', 'search_inventory',
+      ]),
       toolNames,
     );
     const readOnlyCount = (route.match(/readOnlyHint:\s*true/g) ?? []).length;
@@ -123,7 +136,35 @@ function main() {
     check('GET, POST, DELETE and OPTIONS are all exported (OPTIONS needed for the metadata route\'s own CORS preflight)', /export async function GET\(/.test(route) && /export async function POST\(/.test(route) && /export async function DELETE\(/.test(route) && /export async function OPTIONS\(/.test(route));
   }
 
-  console.log('\n[D — no mutation path reachable from any of the four tools]');
+  console.log('\n[C5 — 2026-10-19 business tools: same security model]');
+  {
+    for (const [name, src] of Object.entries(businessServices)) {
+      check(`${name}: no service_role / admin client / env keys`, !/service_role|SERVICE_ROLE|createClient|process\.env/.test(src));
+      if (name === 'tradeChain' || name === 'operationFinancials' || name === 'contactName') {
+        check(`${name}: pure module — never touches a database client`, !/SupabaseClient|\.from\(\s*'/.test(src));
+      } else {
+        check(`${name}: no mutation call`, !/\.(insert|update|upsert|delete)\s*\(/.test(src));
+      }
+      check(`${name}: no RPC call (plain RLS-scoped table reads only)`, !/\.rpc\(/.test(src));
+      check(`${name}: never filters by an application-supplied user id`, !/\.eq\(\s*'user_id'/.test(src) && !/appUserId|p_target_user_id/.test(src));
+    }
+    check(
+      'each new tool handler receives the request-scoped `supabase` client',
+      /findContactHistoryForUser\(supabase,/.test(route) && /getOperationsAnalysisForUser\(supabase,/.test(route) &&
+      /getOperationContextForUser\(supabase,/.test(route) && /getDealChainForUser\(supabase,/.test(route),
+    );
+    const schemaOf = (tool: string) => {
+      const start = route.indexOf(`'${tool}'`);
+      return route.slice(start, route.indexOf('annotations', start));
+    };
+    check('find_contact_history schema: contact_name required; channel/item_id/include_possible_matches optional; no time filter',
+      /contact_name:\s*z\.string\(\)\.trim\(\)\.min\(1\)/.test(schemaOf('find_contact_history')) && !/from_date|to_date/.test(schemaOf('find_contact_history')));
+    check('get_operation_context takes exactly deal_id (no operation_id alias)', /deal_id:\s*z\./.test(schemaOf('get_operation_context')) && !/operation_id/.test(route));
+    check('get_deal_chain takes exactly item_id, no time filter', /item_id:\s*z\./.test(schemaOf('get_deal_chain')) && !/from_date|to_date/.test(schemaOf('get_deal_chain')));
+    check('get_operations_analysis description states the default period and the turnover limitation', /last 6 months/.test(schemaOf('get_operations_analysis')) && /no separate "revenue"\/"turnover"/.test(schemaOf('get_operations_analysis')));
+  }
+
+  console.log('\n[D — no mutation path reachable from any of the eight tools]');
   {
     const mutationPattern = /\.(insert|update|upsert|delete)\s*\(/;
     check('route.ts contains no mutation call', !mutationPattern.test(route));

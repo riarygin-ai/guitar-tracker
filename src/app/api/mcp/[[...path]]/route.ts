@@ -1,6 +1,7 @@
-// Remote MCP server for Guitar Tracker — READ-ONLY, exactly four tools:
-// search_inventory, get_item_context, get_inventory_analysis, and
-// get_lead_activity. Built on Supabase's official
+// Remote MCP server for Guitar Tracker — READ-ONLY, exactly eight tools:
+// search_inventory, get_item_context, get_inventory_analysis,
+// get_lead_activity, find_contact_history, get_operations_analysis,
+// get_operation_context and get_deal_chain. Built on Supabase's official
 // OAuth 2.1 / MCP authentication middleware (NOT a custom /authorize,
 // /token, client registry, or JWT implementation — Supabase Auth's own
 // OAuth 2.1 server issues and verifies every token; see
@@ -55,6 +56,9 @@ import { getItemContextForUser } from '@/lib/analytics/itemContextService';
 import { searchInventoryForUser, INVENTORY_SEARCH_MAX_RESULTS } from '@/lib/inventorySearchService';
 import { getInventoryAnalysisForUser } from '@/lib/analytics/inventoryAnalysisService';
 import { getLeadActivityForUser, LeadActivityServiceError } from '@/lib/analytics/leadActivityService';
+import { findContactHistoryForUser, ContactHistoryServiceError } from '@/lib/analytics/contactHistoryService';
+import { getOperationsAnalysisForUser, getOperationContextForUser, OperationsServiceError, OPERATION_TYPES } from '@/lib/analytics/operationsService';
+import { getDealChainForUser } from '@/lib/analytics/dealChainService';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
@@ -192,6 +196,121 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
     },
   );
 
+  server.registerTool(
+    'find_contact_history',
+    {
+      description:
+        "Searches the authenticated user's full historical lead/contact history by contact name. Use this " +
+        'when a new buyer/trader contacts the user and you want to know whether they have interacted ' +
+        'before, on the same item or another item, and what happened (offers, quality, status, notes, ' +
+        'linked completed deal). Includes leads on sold/traded/closed inventory. No time window is ' +
+        'applied. Exact matches (same normalized name, and same channel when channel is given), same-name ' +
+        'matches on OTHER channels, and conservative possible matches (with match_reason/match_score) are ' +
+        'kept separate; only exact matches count as confirmed history. coverage tells how many leads have ' +
+        'no recorded contact name and therefore cannot be found. Follow linked_deal_id with get_operation_context.',
+      inputSchema: z.object({
+        contact_name: z.string().trim().min(1).max(200).describe('The person\'s name as shown in the new message, e.g. "John Smith".'),
+        channel: z.string().trim().max(100).optional().describe('DealChannel the new contact came from, e.g. "Marketplace". Same-name leads on other channels are returned separately, not as exact matches.'),
+        item_id: z.number().int().positive().optional().describe('The item the new contact is asking about. Only MARKS same-item history (same_item: true); never limits the search.'),
+        include_possible_matches: z.boolean().optional().describe('Default true. Set false to return only exact and other-channel matches.'),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (query) => {
+      try {
+        const result = await findContactHistoryForUser(supabase, query);
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      } catch (err) {
+        if (err instanceof ContactHistoryServiceError) return { content: [{ type: 'text', text: err.message }], isError: true };
+        throw err;
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_operations_analysis',
+    {
+      description:
+        'Returns operations/deals and business-performance aggregates for a selected period, with optional ' +
+        'DealChannel, operation type, item, brand, category, type and purpose filters. Use this for ' +
+        'realized profit, cash-in/out, net cash impact, sales cash, turnover-style and channel-performance ' +
+        'questions ("How did September perform?", "Compare Reverb and Kijiji"). Returns summary, ' +
+        'by_channel, by_operation_type, every operation row (items in/out with realized gain per item, ' +
+        'cash, expenses) and a definitions block. Read definitions before naming a metric: Guitar ' +
+        'Tracker has no separate "revenue"/"turnover" metric; exit_value_total (assigned value out of ' +
+        'Sell/Trade, includes non-cash trade value) and sales_cash_received are the closest. Default ' +
+        'period when both dates are omitted: the last 6 months ending today (same as the Operations ' +
+        'screen default); the effective period is always returned. Filters combine with AND across ' +
+        'fields and OR within a field. Use get_operation_context(deal_id) for one operation in depth.',
+      inputSchema: z.object({
+        from_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD, inclusive. If only to_date is given, defaults to 6 months before it.'),
+        to_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD, inclusive. Defaults to today (America/Toronto).'),
+        channel: z.array(z.string().trim().max(100)).optional().describe('DealChannel names, case-insensitive, e.g. ["Marketplace","Reverb"]. "No channel" matches operations with none. Omit for all channels.'),
+        operation_type: z.array(z.enum(OPERATION_TYPES)).optional().describe('Stored operation types: purchase (Buy), sale (Sell), trade, expense, or the legacy Historical Import/Purchase/Trade. Omit for all.'),
+        item_ids: z.array(z.number().int().positive()).optional().describe('Only operations involving at least one of these items.'),
+        brand: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) brand names; an operation matches if any involved item matches.'),
+        category: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) item category names.'),
+        type: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) item type (subtype) names.'),
+        purpose: z.array(z.string().trim().max(100)).optional().describe('Exact (case-insensitive) purpose names, e.g. "Business".'),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (filters) => {
+      try {
+        const result = await getOperationsAnalysisForUser(supabase, filters);
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      } catch (err) {
+        if (err instanceof OperationsServiceError) return { content: [{ type: 'text', text: err.message }], isError: true };
+        throw err;
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_operation_context',
+    {
+      description:
+        'Returns the full authoritative context for one Guitar Tracker deal/operation (the /operations/[id] ' +
+        'page): date, type, DealChannel, notes, a plain-language Gave/Received summary, every item given ' +
+        '(with value out, cost, expenses, realized gain/ROI and where it was acquired) and received (with ' +
+        'assigned value, estimate, potential reward and any later disposal), cash paid/received, cash ' +
+        'impact, linked expenses, cash-flow entries, realized profit and any leads linked to this deal. ' +
+        'Only works for an operation belonging to the signed-in user; any other id behaves exactly like ' +
+        'a nonexistent one.',
+      inputSchema: z.object({
+        deal_id: z.number().int().positive().describe('The operation deal id, e.g. from get_operations_analysis or a lead linked_deal_id.'),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ deal_id }) => {
+      const result = await getOperationContextForUser(supabase, deal_id);
+      if (result === null) return { content: [{ type: 'text', text: 'Operation not found.' }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.registerTool(
+    'get_deal_chain',
+    {
+      description:
+        'Returns the complete trade/sale lineage for one inventory item using Guitar Tracker\'s Trade ' +
+        'Chain logic (the /inventory/[id]/chain page): the item\'s chronological lineage steps (what was ' +
+        'given and received in each deal, cash, step and running profit), the full capital tree from the ' +
+        'original acquisition including multi-item trade siblings, and the Capital Summary (total ' +
+        'invested, cash extracted, current assets, profit, ROI; real cash only). Use for "what did this ' +
+        'guitar turn into?" or "how much cash did this chain generate?". No time filter. Only works for ' +
+        'an item belonging to the signed-in user.',
+      inputSchema: z.object({
+        item_id: z.number().int().positive().describe('Any inventory item in the chain, e.g. from search_inventory.'),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ item_id }) => {
+      const result = await getDealChainForUser(supabase, item_id);
+      if (result === null) return { content: [{ type: 'text', text: 'Item not found.' }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
   return server;
 }
 

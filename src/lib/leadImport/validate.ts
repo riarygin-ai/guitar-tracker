@@ -383,6 +383,10 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
   // ── free-text passthrough fields (never validated beyond blank -> NULL) ─
   const tradeItem = cellToTrimmedStringOrNull(cells.trade_item);
   const notes = cellToTrimmedStringOrNull(cells.notes);
+  const contactName = cellToTrimmedStringOrNull(cells.contact_name);
+  if (contactName !== null && contactName.length > 200) {
+    issues.push(issue('error', ROW_ISSUE.INVALID_CONTACT_NAME, 'contact_name must be at most 200 characters.', at2()));
+  }
 
   // ── item ownership (Part 5) — runs whenever item_id parsed, regardless
   // of other field errors ───────────────────────────────────────────────
@@ -481,6 +485,7 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
           outcomeReason,
           notes,
           dealId,
+          contactName,
           sourceUpdatedAt,
         };
 

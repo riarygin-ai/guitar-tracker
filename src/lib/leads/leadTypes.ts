@@ -38,6 +38,8 @@ export interface LeadRow {
   notes: string | null;
   /** The completed Sell/Trade deal (deals.id) this lead has been linked to via the Lead Log, or null. */
   deal_id: number | null;
+  /** Buyer/trader name as recorded in the Lead Log (optional Sheet column T), or null. */
+  contact_name: string | null;
   source_updated_at: string;
   last_imported_at: string | null;
 }

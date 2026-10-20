@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { invalidateListingsCache, listingsUserGuard } from './listingsCacheStore'
 import { splitSearchTerms } from '@/lib/search';
+import { loadItemLineage } from '@/lib/itemLineageData';
 import type { AnalyticsRunAdviceMeta, AnalyticsRunAdviceRow } from '@/lib/analytics/advice/types';
 import type { LeadImportSource, NewLeadImportSource } from '@/lib/leadImport/types';
 import type {
@@ -1054,82 +1055,21 @@ export async function deleteItemPhoto(
 }
 
 // ─── Item lineage ──────────────────────────────────────────────────────────────
-// BFS traversal across the item-deal graph starting from rootItemId.
-// Each iteration: mark queued items visited → find their unvisited deals →
-// find all items in those deals → enqueue unvisited ones → repeat.
-// Stops when no new deals are found or MAX_DEPTH is reached (cycle guard).
-// Final batch: fetch deals, deal_items, items, brands, photos in parallel.
+// BFS traversal across the item-deal graph starting from rootItemId — the
+// traversal itself lives in src/lib/itemLineageData.ts (shared with the MCP
+// get_deal_chain tool, which runs it on a request-scoped client); this
+// browser wrapper runs it on the app's own client and adds display photos.
 
 export async function getItemLineage(
   rootItemId: number,
 ): Promise<{ data: ItemTimelineData | null; error: string | null }> {
-  const empty: ItemTimelineData = { deals: [], dealItems: [], inventoryItems: [], brands: [], photoByItemId: {} };
-
-  const visitedDealIds = new Set<number>();
-  const visitedItemIds = new Set<number>();
-  const MAX_DEPTH = 10;
-
-  let itemQueue: number[] = [rootItemId];
-
-  for (let depth = 0; depth < MAX_DEPTH && itemQueue.length > 0; depth++) {
-    itemQueue.forEach((id) => visitedItemIds.add(id));
-
-    // Find deals involving any item in the current queue
-    const { data: itemSlots, error: e1 } = await supabase
-      .from('deal_items')
-      .select('deal_id, item_id')
-      .in('item_id', itemQueue);
-
-    if (e1) return { data: null, error: e1.message };
-    if (!itemSlots?.length) break;
-
-    const newDealIds = Array.from(
-      new Set((itemSlots as { deal_id: number }[]).map((s) => s.deal_id))
-    ).filter((id) => !visitedDealIds.has(id));
-
-    if (newDealIds.length === 0) break;
-    newDealIds.forEach((id) => visitedDealIds.add(id));
-
-    // Find all items in those new deals
-    const { data: dealSlots, error: e2 } = await supabase
-      .from('deal_items')
-      .select('deal_id, item_id')
-      .in('deal_id', newDealIds);
-
-    if (e2) return { data: null, error: e2.message };
-    if (!dealSlots) break;
-
-    // Enqueue items we haven't visited yet
-    itemQueue = Array.from(
-      new Set((dealSlots as { item_id: number }[]).map((s) => s.item_id))
-    ).filter((id) => !visitedItemIds.has(id));
-  }
-
-  if (visitedDealIds.size === 0) return { data: empty, error: null };
-
-  const dealIdList = Array.from(visitedDealIds);
-  const itemIdList = Array.from(visitedItemIds);
-
-  const [dealsRes, allSlotsRes, itemsRes, brandsRes, photoByItemId] = await Promise.all([
-    supabase.from('deals').select('*').in('id', dealIdList).order('deal_date', { ascending: true }),
-    supabase.from('deal_items').select('*').in('deal_id', dealIdList),
-    supabase.from('inventory_items_with_value').select('*').in('id', itemIdList),
-    supabase.from('brands').select('*').order('name', { ascending: true }),
-    getDisplayPhotosForItems(itemIdList),
-  ]);
-
-  if (dealsRes.error) return { data: null, error: dealsRes.error.message };
-
-  return {
-    data: {
-      deals:          (dealsRes.data    ?? []) as Deal[],
-      dealItems:      (allSlotsRes.data ?? []) as DealItem[],
-      inventoryItems: (itemsRes.data    ?? []) as InventoryItemWithValue[],
-      brands:         (brandsRes.data   ?? []) as Brand[],
-      photoByItemId,
-    },
-    error: null,
-  };
+  const { data, error } = await loadItemLineage(supabase, rootItemId);
+  if (error || !data) return { data: null, error };
+  if (data.deals.length === 0) return { data: { ...data, photoByItemId: {} }, error: null };
+  // Same id set the traversal visited: the root plus every item in every reached deal.
+  const itemIdList = Array.from(new Set([rootItemId, ...data.dealItems.map((di) => di.item_id)]));
+  const photoByItemId = await getDisplayPhotosForItems(itemIdList);
+  return { data: { ...data, photoByItemId }, error: null };
 }
 
 // ─── Item timeline (direct deals only) ────────────────────────────────────────

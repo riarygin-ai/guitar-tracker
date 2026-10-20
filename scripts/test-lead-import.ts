@@ -384,10 +384,14 @@ async function main() {
     // 2.0 deal_id header contract: optional, not required; ALL_HEADERS = EXPECTED_HEADERS + OPTIONAL_HEADERS
     {
       check('2.0a deal_id is an OPTIONAL header, not a required one', (OPTIONAL_HEADERS as readonly string[]).includes('deal_id') && !(EXPECTED_HEADERS as readonly string[]).includes('deal_id'));
-      check('2.0b ALL_HEADERS is exactly EXPECTED_HEADERS + OPTIONAL_HEADERS', ALL_HEADERS.length === EXPECTED_HEADERS.length + OPTIONAL_HEADERS.length && ALL_HEADERS.slice(-1)[0] === 'deal_id');
+      check('2.0b ALL_HEADERS is exactly EXPECTED_HEADERS + OPTIONAL_HEADERS', ALL_HEADERS.length === EXPECTED_HEADERS.length + OPTIONAL_HEADERS.length && ALL_HEADERS.slice(-2).join() === 'deal_id,contact_name');
       const { headerIndex, fatalIssues } = parseHeaders([...EXPECTED_HEADERS]);
       check('2.0c a sheet with only the required headers (no deal_id column) is not fatal for missing headers', fatalIssues.length === 0, fatalIssues);
       check('2.0d deal_id is simply absent from headerIndex when the sheet has no such column', headerIndex.deal_id === undefined);
+      check('2.0e contact_name (column T) is an OPTIONAL header, appended after deal_id', (OPTIONAL_HEADERS as readonly string[]).join() === 'deal_id,contact_name' && !(EXPECTED_HEADERS as readonly string[]).includes('contact_name'));
+      check('2.0f contact_name is simply absent from headerIndex when the sheet has no such column', headerIndex.contact_name === undefined);
+      const withDealOnly = parseHeaders([...EXPECTED_HEADERS, 'deal_id']);
+      check('2.0g an A:S sheet (deal_id but no contact_name) is still not fatal', withDealOnly.fatalIssues.length === 0 && withDealOnly.headerIndex.contact_name === undefined, withDealOnly.fatalIssues);
     }
 
     // 2.1 header order independence
@@ -527,6 +531,7 @@ async function main() {
         lead_id: randomUuid(),
         updated_at: T_NOW,
         deal_id: null,
+        contact_name: null,
       };
       return { ...base, ...overrides };
     };
@@ -1464,6 +1469,50 @@ async function main() {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+
+    // ── 6.22 contact_name (optional Sheet column T): stored verbatim
+    // (trimmed, blank -> NULL), follows the newer source, absent column ->
+    // NULL, over-long value rejected before any write ──────────────────────
+    {
+      const contactLeadId = randomUuid();
+      const sheetAtC = (updatedAt: string, contactName: string | null) =>
+        buildValues([sheetRow({ lead_id: contactLeadId, updated_at: updatedAt, contact_name: contactName })]);
+
+      const outcome1 = outcomeOf(await importSheet(sourceA, sheetAtC('2026-07-01T00:00:00Z', '  John   Smith  ')));
+      check('6.22a a row with contact_name imports as NEW', outcome1?.counts.inserted === 1, outcome1?.counts);
+      let stored = await leadByLeadId(userA, contactLeadId);
+      check('6.22b contact_name is stored trimmed but otherwise verbatim (inner spacing untouched — normalization is read-side only)', stored?.contact_name === 'John   Smith', stored?.contact_name);
+
+      const same = outcomeOf(await importSheet(sourceA, sheetAtC('2026-07-01T00:00:00Z', '  John   Smith  ')));
+      check('6.22c identical re-import is UNCHANGED (idempotent)', same?.counts.unchanged === 1 && same?.counts.updated === 0, same?.counts);
+
+      const renamed = outcomeOf(await importSheet(sourceA, sheetAtC('2026-07-02T00:00:00Z', 'John Smith Jr')));
+      check('6.22d a newer row with a different contact_name is an UPDATE', renamed?.counts.updated === 1, renamed?.counts);
+      stored = await leadByLeadId(userA, contactLeadId);
+      check('6.22e stored contact_name follows the newer source', stored?.contact_name === 'John Smith Jr', stored?.contact_name);
+
+      const cleared = outcomeOf(await importSheet(sourceA, sheetAtC('2026-07-03T00:00:00Z', '   ')));
+      check('6.22f a blank contact_name on a newer row clears it to NULL', cleared?.counts.updated === 1 && (await leadByLeadId(userA, contactLeadId))?.contact_name == null, cleared?.counts);
+
+      // Stale source cannot silently rewrite contact_name (newer-source guard covers the column).
+      const direct = await admin.from('item_leads').update({ contact_name: 'Sneaky Rename' }).eq('user_id', userA).eq('lead_id', contactLeadId).select('contact_name');
+      check('6.22g changing contact_name without advancing source_updated_at is refused by the trigger', !!direct.error, direct);
+
+      const tooLongLead = randomUuid();
+      const tooLongValues = buildValues([sheetRow({ lead_id: tooLongLead, updated_at: '2026-07-01T00:00:00Z', contact_name: 'x'.repeat(201) })]);
+      const preview = await classifySheetValues(tooLongValues, sourceA, admin);
+      check('6.22h a contact_name over 200 characters is INVALID_CONTACT_NAME in Preview', preview.rows[0]?.classification === 'INVALID' && preview.rows[0]?.issues.some((i) => i.code === ROW_ISSUE.INVALID_CONTACT_NAME));
+      const tooLong = outcomeOf(await importSheet(sourceA, tooLongValues));
+      check('6.22i Import agrees: the over-long row is skipped, nothing written', tooLong?.counts.invalid === 1 && (await leadByLeadId(userA, tooLongLead)) === null, tooLong?.counts);
+
+      // Old A:S sheet with no contact_name column at all still imports, contact_name NULL.
+      const noColLead = randomUuid();
+      const headersNoContact = ALL_HEADERS.filter((h) => h !== 'contact_name');
+      const row = sheetRow({ lead_id: noColLead, updated_at: '2026-07-01T00:00:00Z' });
+      const noColOutcome = outcomeOf(await importSheet(sourceA, [[...headersNoContact], headersNoContact.map((h) => row[h])]));
+      check('6.22j a sheet without the contact_name column imports normally with contact_name NULL', noColOutcome?.counts.inserted === 1 && (await leadByLeadId(userA, noColLead))?.contact_name == null, noColOutcome?.counts);
+    }
+
     console.log('\n=== Section 7: Import security (authenticated clients) ===');
 
     // Everything below runs as a real signed-in `authenticated` user — not
