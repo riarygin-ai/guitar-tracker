@@ -44,6 +44,7 @@ import {
 import { LEAD_COLUMNS } from '../leads/leadsServer';
 import { leadChannelLabel, formatOfferSummary } from '../leads/leadFormat';
 import { SERIOUS_PLUS_QUALITIES, type LeadRow, type LeadQuality } from '../leads/leadTypes';
+import { HIGH_INTENT_PLUS_STAGES, LEAD_STAGES, NEGOTIATING_PLUS_STAGES, type LeadStage } from '../leads/semantics';
 
 export class LeadActivityServiceError extends Error {}
 
@@ -69,7 +70,18 @@ export interface LeadActivityLeadDetail {
   last_contact_at: string | null;
   channel: string;
   contact_name: string | null;
-  quality: LeadQuality;
+  channel_detail: string | null;
+  /** Highest observable stage reached (INQUIRY..CONVERTED); null only for a not-yet-backfilled legacy row. */
+  peak_stage: LeadStage | null;
+  peak_stage_source: string | null;
+  negotiation_rounds: number;
+  waiting_on: LeadRow['waiting_on'];
+  unanswered_followups: number;
+  reopen_count: number;
+  offer_assessment: string | null;
+  latest_cash_offer: number | null;
+  /** LEGACY Lead Log quality (null for direct-write leads). Kept for one release. */
+  quality: LeadQuality | null;
   status: LeadRow['status'];
   outcome_reason: string | null;
   offer_type: LeadRow['offer_type'];
@@ -88,6 +100,13 @@ export interface LeadActivityLeadDetail {
 export interface LeadCounts {
   lead_count: number;
   offer_count: number;
+  /** Peak-stage counts (UNSET = legacy row not yet backfilled). */
+  stage_counts: Record<LeadStage | 'UNSET', number>;
+  /** NEGOTIATING + HIGH_INTENT + CONVERTED — the replacement for legacy serious_plus. */
+  negotiating_plus_count: number;
+  /** HIGH_INTENT + CONVERTED. */
+  high_intent_plus_count: number;
+  /** LEGACY (one release) from here: counts by legacy lead_quality. */
   serious_plus_count: number;
   high_intent_count: number;
   serious_count: number;
@@ -102,6 +121,7 @@ export interface LeadLifetimeSummary extends LeadCounts {
   first_lead_date: string | null;
   last_lead_date: string | null;
   last_serious_plus_lead_date: string | null;
+  last_negotiating_plus_lead_date: string | null;
   /** Leads with no first_contact_at: counted in lifetime totals, absent from every period bucket. */
   undated_lead_count: number;
   by_status: Record<string, number>;
@@ -152,21 +172,35 @@ const SEMANTICS: string[] = [
   'Leads are grouped into periods by first_contact_at. Undated leads appear only in lifetime totals.',
   'week = Monday-Sunday calendar week; month = calendar month. is_partial=true means the bucket covers fewer days than its full calendar period (in progress or clipped) — do not compare it to complete periods as equivalent.',
   'lifetime ignores the reporting window: it is the item\'s full stored lead history (a channel filter, if given, still applies).',
-  'offer = offer_type other than NONE. serious_plus = SERIOUS + HIGH_INTENT. Channel = canonical deal channel name, else the raw source channel, else "Unknown".',
-  'Listing state, price history and exposure come from get_inventory_analysis (join on item_id). For one item\'s complete lead notes use get_item_context.',
+  'peak_stage = highest observable stage reached: INQUIRY < ENGAGED < NEGOTIATING < HIGH_INTENT < CONVERTED (definitions: record_lead_interaction). negotiating_plus = NEGOTIATING + HIGH_INTENT + CONVERTED (replaces legacy Serious+); high_intent_plus = HIGH_INTENT + CONVERTED. stage_counts.UNSET = legacy rows not yet backfilled.',
+  'LEGACY (kept for one release): quality / serious_plus_count / high_intent_count / serious_count / engaged_count / low_count / last_serious_plus_lead_date count the subjective Lead Log lead_quality, which direct-write leads do not have. Prefer the stage fields.',
+  'offer = offer_type other than NONE (offer fields = the latest BUYER position). Channel = canonical deal channel name, else the raw source channel, else "Unknown". waiting_on: US = we owe a reply, BUYER = waiting for them, NONE = nothing pending, null = unknown (legacy).',
+  'Listing state, price history and exposure come from get_inventory_analysis (join on item_id). For one item\'s full lead notes and event history use get_item_context.',
 ];
 
 const PAGE = 1000;
 const ID_CHUNK = 150;
 
+/** Same rule as public.lead_is_negotiating_plus: peak_stage, legacy quality only while unset. */
+export function isNegotiatingPlus(l: Pick<LoadedLead, 'peak_stage' | 'lead_quality'>): boolean {
+  return l.peak_stage != null ? NEGOTIATING_PLUS_STAGES.includes(l.peak_stage) : l.lead_quality != null && SERIOUS_PLUS_QUALITIES.includes(l.lead_quality);
+}
+export function isHighIntentPlus(l: Pick<LoadedLead, 'peak_stage' | 'lead_quality'>): boolean {
+  return l.peak_stage != null ? HIGH_INTENT_PLUS_STAGES.includes(l.peak_stage) : l.lead_quality === 'HIGH_INTENT';
+}
+
 function emptyCounts(): LeadCounts {
-  return { lead_count: 0, offer_count: 0, serious_plus_count: 0, high_intent_count: 0, serious_count: 0, engaged_count: 0, low_count: 0, by_channel: {} };
+  const stage_counts = Object.fromEntries([...LEAD_STAGES, 'UNSET'].map((k) => [k, 0])) as LeadCounts['stage_counts'];
+  return { lead_count: 0, offer_count: 0, stage_counts, negotiating_plus_count: 0, high_intent_plus_count: 0, serious_plus_count: 0, high_intent_count: 0, serious_count: 0, engaged_count: 0, low_count: 0, by_channel: {} };
 }
 
 function addLead(c: LeadCounts, lead: LoadedLead): void {
   c.lead_count++;
   if (lead.offer_type !== 'NONE') c.offer_count++;
-  if (SERIOUS_PLUS_QUALITIES.includes(lead.lead_quality)) c.serious_plus_count++;
+  c.stage_counts[lead.peak_stage ?? 'UNSET']++;
+  if (isNegotiatingPlus(lead)) c.negotiating_plus_count++;
+  if (isHighIntentPlus(lead)) c.high_intent_plus_count++;
+  if (lead.lead_quality != null && SERIOUS_PLUS_QUALITIES.includes(lead.lead_quality)) c.serious_plus_count++;
   if (lead.lead_quality === 'HIGH_INTENT') c.high_intent_count++;
   else if (lead.lead_quality === 'SERIOUS') c.serious_count++;
   else if (lead.lead_quality === 'ENGAGED') c.engaged_count++;
@@ -176,7 +210,7 @@ function addLead(c: LeadCounts, lead: LoadedLead): void {
 }
 
 function emptyLifetime(): LeadLifetimeSummary {
-  return { ...emptyCounts(), first_lead_date: null, last_lead_date: null, last_serious_plus_lead_date: null, undated_lead_count: 0, by_status: {} };
+  return { ...emptyCounts(), first_lead_date: null, last_lead_date: null, last_serious_plus_lead_date: null, last_negotiating_plus_lead_date: null, undated_lead_count: 0, by_status: {} };
 }
 
 function addLifetime(s: LeadLifetimeSummary, lead: LoadedLead): void {
@@ -186,8 +220,11 @@ function addLifetime(s: LeadLifetimeSummary, lead: LoadedLead): void {
   if (d == null) { s.undated_lead_count++; return; }
   if (s.first_lead_date == null || d < s.first_lead_date) s.first_lead_date = d;
   if (s.last_lead_date == null || d > s.last_lead_date) s.last_lead_date = d;
-  if (SERIOUS_PLUS_QUALITIES.includes(lead.lead_quality) && (s.last_serious_plus_lead_date == null || d > s.last_serious_plus_lead_date)) {
+  if (lead.lead_quality != null && SERIOUS_PLUS_QUALITIES.includes(lead.lead_quality) && (s.last_serious_plus_lead_date == null || d > s.last_serious_plus_lead_date)) {
     s.last_serious_plus_lead_date = d;
+  }
+  if (isNegotiatingPlus(lead) && (s.last_negotiating_plus_lead_date == null || d > s.last_negotiating_plus_lead_date)) {
+    s.last_negotiating_plus_lead_date = d;
   }
 }
 
@@ -207,6 +244,15 @@ function toDetail(lead: LoadedLead): LeadActivityLeadDetail {
     last_contact_at: lead.last_contact_at,
     channel: leadChannelLabel(lead),
     contact_name: lead.contact_name,
+    channel_detail: lead.channel_detail ?? null,
+    peak_stage: lead.peak_stage ?? null,
+    peak_stage_source: lead.peak_stage_source ?? null,
+    negotiation_rounds: lead.negotiation_rounds ?? 0,
+    waiting_on: lead.waiting_on ?? null,
+    unanswered_followups: lead.unanswered_followups ?? 0,
+    reopen_count: lead.reopen_count ?? 0,
+    offer_assessment: lead.offer_assessment ?? null,
+    latest_cash_offer: lead.latest_cash_offer ?? null,
     quality: lead.lead_quality,
     status: lead.status,
     outcome_reason: lead.outcome_reason,
@@ -366,6 +412,7 @@ async function loadLeadsForItems(client: SupabaseClient, itemIds: number[]): Pro
       best_cash_offer: num(r.best_cash_offer),
       cash_component: num(r.cash_component),
       trade_est_value: num(r.trade_est_value),
+      latest_cash_offer: num(r.latest_cash_offer),
       channel_name: lead.deal_channel_id != null ? channelNames.get(lead.deal_channel_id) ?? null : null,
     };
   });

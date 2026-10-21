@@ -119,6 +119,7 @@ export const STATUS_LABEL: Record<LeadStatus, string> = {
   AGREED: 'Agreed',
   FAILED_AFTER_AGREEMENT: 'Failed after agreement',
   COMPLETED: 'Completed',
+  CLOSED: 'Closed',
 };
 
 export const OFFER_TYPE_LABEL: Record<OfferType, string> = {

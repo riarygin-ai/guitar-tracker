@@ -18,7 +18,9 @@ const ID_CHUNK = 150;
 export const LEAD_COLUMNS =
   'id, lead_id, inventory_item_id, first_contact_at, last_contact_at, source_channel, deal_channel_id, ' +
   'buyer_message_count, our_message_count, lead_quality, offer_type, initial_cash_offer, best_cash_offer, ' +
-  'trade_item, cash_component, trade_est_value, status, outcome_reason, notes, deal_id, contact_name, source_updated_at, last_imported_at';
+  'trade_item, cash_component, trade_est_value, status, outcome_reason, notes, deal_id, contact_name, source_updated_at, last_imported_at, ' +
+  'peak_stage, peak_stage_source, peak_stage_at, negotiation_rounds, latest_cash_offer, offer_is_concrete, offer_assessment, ' +
+  'offer_assessment_source, last_inbound_at, last_outbound_at, waiting_on, unanswered_followups, reopen_count, channel_detail, origin, version';
 
 export class LeadsLoadError extends Error {}
 

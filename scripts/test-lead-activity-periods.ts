@@ -18,6 +18,7 @@ import {
 import { buildLeadActivity, type LoadedLead, type OpenItemRef } from '../src/lib/analytics/leadActivityService';
 import { torontoLocalDate } from '../src/lib/analytics/automation/torontoSchedule';
 
+import { LEAD_SNAPSHOT_DEFAULTS } from '../src/lib/leads/leadTypes';
 let passed = 0;
 let failed = 0;
 function check(label: string, condition: boolean, detail?: unknown) {
@@ -36,7 +37,7 @@ function lead(itemId: number, o: Partial<LoadedLead>): LoadedLead {
     first_contact_at: null, last_contact_at: null, source_channel: null, deal_channel_id: null, channel_name: null,
     buyer_message_count: null, our_message_count: null, lead_quality: 'LOW', offer_type: 'NONE',
     initial_cash_offer: null, best_cash_offer: null, trade_item: null, cash_component: null, trade_est_value: null,
-    status: 'OPEN', outcome_reason: null, notes: null, deal_id: null, contact_name: null, source_updated_at: '2026-10-01T00:00:00Z', last_imported_at: null,
+    status: 'OPEN', outcome_reason: null, notes: null, deal_id: null, contact_name: null, source_updated_at: '2026-10-01T00:00:00Z', last_imported_at: null, ...LEAD_SNAPSHOT_DEFAULTS,
     ...o,
   };
 }

@@ -84,7 +84,7 @@ export default function LeadDetailPanel({ lead, onClose }: { lead: LeadRow; onCl
               {leadChannelLabel(lead)} · first contact {fmtLeadDateFull(lead.first_contact_at)}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <QualityBadge quality={lead.lead_quality} />
+              <QualityBadge quality={lead.lead_quality} stage={lead.peak_stage} />
               <StatusBadge status={lead.status} />
             </div>
           </div>
@@ -112,7 +112,8 @@ export default function LeadDetailPanel({ lead, onClose }: { lead: LeadRow; onCl
             <Field label="First contact">{fmtLeadDateFull(lead.first_contact_at)}</Field>
             <Field label="Last contact">{fmtLeadDateFull(lead.last_contact_at)}</Field>
             <Field label="Channel">{leadChannelLabel(lead)}</Field>
-            <Field label="Quality"><QualityBadge quality={lead.lead_quality} /> <span className="text-[11px] text-slate-500 dark:text-slate-400">highest reached</span></Field>
+            <Field label="Quality"><QualityBadge quality={lead.lead_quality} stage={lead.peak_stage} /> <span className="text-[11px] text-slate-500 dark:text-slate-400">{lead.lead_quality ? 'legacy, highest reached' : 'peak stage'}</span></Field>
+            <Field label="Peak stage">{lead.peak_stage ?? '—'}</Field>
             <Field label="Status"><StatusBadge status={lead.status} /></Field>
             <Field label="Outcome reason">{outcomeReasonLabel(lead.outcome_reason)}</Field>
           </Section>

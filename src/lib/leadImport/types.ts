@@ -190,6 +190,10 @@ export interface NormalizedLeadRow {
   dealId: number | null;
   /** Buyer/trader name as recorded (Sheet column T), trimmed; NULL when blank or the column is absent. */
   contactName: string | null;
+  /** Strong match key for contactName (src/lib/leads/classification.ts contactKey). */
+  contactKey: string | null;
+  /** LEGACY_STRUCTURED peak stage computed from this row's structured fields. */
+  peakStage: string;
   sourceUpdatedAt: string;
 }
 
@@ -220,6 +224,7 @@ export type ImportRowResult =
   | 'SKIPPED_SOURCE_OLDER'
   | 'SKIPPED_INVALID'
   | 'SKIPPED_NOT_APPLIED'
+  | 'SKIPPED_DIRECT_OWNED'
   | 'FAILED';
 
 // Mirrors public.lead_import_runs.

@@ -21,6 +21,7 @@ import { LISTING_HELP } from '../src/lib/listingHelpText';
 import type { ListingDemandEvidence } from '../src/lib/analytics/listingDemandEvidence';
 import type { LeadRow } from '../src/lib/leads/leadTypes';
 
+import { LEAD_SNAPSHOT_DEFAULTS } from '../src/lib/leads/leadTypes';
 let passed = 0;
 let failed = 0;
 function check(label: string, condition: boolean, detail?: unknown) {
@@ -107,7 +108,7 @@ console.log('\n[D — /leads item_attributed semantics]');
   const mk = (id: number, first: string): LeadRow => ({
     id, lead_id: `u-${id}`, inventory_item_id: 55, item_name: 'X', first_contact_at: first, last_contact_at: first, source_channel: null, deal_channel_id: null, channel_name: null,
     buyer_message_count: 1, our_message_count: 1, lead_quality: 'LOW', offer_type: 'NONE', initial_cash_offer: null, best_cash_offer: null, trade_item: null, cash_component: null,
-    trade_est_value: null, status: 'OPEN', outcome_reason: null, notes: null, deal_id: null, contact_name: null, source_updated_at: '2020-01-30T00:00:00Z', last_imported_at: null,
+    trade_est_value: null, status: 'OPEN', outcome_reason: null, notes: null, deal_id: null, contact_name: null, source_updated_at: '2020-01-30T00:00:00Z', last_imported_at: null, ...LEAD_SNAPSHOT_DEFAULTS,
   });
   const rows = [mk(1, '2020-01-02'), mk(2, '2020-01-10'), mk(3, '2020-01-20')];
   check('raw filter returns every in-window lead of the item', applyLeadFilters(rows, raw, null, null).length === 2);

@@ -1,3 +1,5 @@
+import type { LeadStage } from './semantics';
+
 // Read-only Lead types for the /leads screen. Vocabularies mirror the
 // item_leads CHECK constraints (20260908000001_item_leads.sql) exactly.
 
@@ -7,10 +9,10 @@ export type LeadQuality = (typeof LEAD_QUALITIES)[number];
 export const OFFER_TYPES = ['NONE', 'CASH', 'TRADE', 'MIXED'] as const;
 export type OfferType = (typeof OFFER_TYPES)[number];
 
-export const LEAD_STATUSES = ['OPEN', 'GHOSTED', 'DECLINED_BY_ME', 'DECLINED_BY_THEM', 'AGREED', 'FAILED_AFTER_AGREEMENT', 'COMPLETED'] as const;
+export const LEAD_STATUSES = ['OPEN', 'GHOSTED', 'DECLINED_BY_ME', 'DECLINED_BY_THEM', 'AGREED', 'FAILED_AFTER_AGREEMENT', 'COMPLETED', 'CLOSED'] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
-/** Quality levels that count as "Serious+" (same set Listing Demand Evidence uses). */
+/** LEGACY: quality levels that counted as "Serious+". Superseded by NEGOTIATING_PLUS_STAGES (semantics.ts). */
 export const SERIOUS_PLUS_QUALITIES: readonly LeadQuality[] = ['SERIOUS', 'HIGH_INTENT'];
 
 /** One item_leads row plus the display-only joins (item name, canonical channel name). */
@@ -26,7 +28,24 @@ export interface LeadRow {
   channel_name: string | null;
   buyer_message_count: number | null;
   our_message_count: number | null;
-  lead_quality: LeadQuality;
+  /** LEGACY Lead Log quality — null on direct-write leads. */
+  lead_quality: LeadQuality | null;
+  peak_stage: LeadStage | null;
+  peak_stage_source: string | null;
+  peak_stage_at: string | null;
+  negotiation_rounds: number;
+  latest_cash_offer: number | null;
+  offer_is_concrete: boolean | null;
+  offer_assessment: string | null;
+  offer_assessment_source: string | null;
+  last_inbound_at: string | null;
+  last_outbound_at: string | null;
+  waiting_on: 'BUYER' | 'US' | 'NONE' | null;
+  unanswered_followups: number;
+  reopen_count: number;
+  channel_detail: string | null;
+  origin: 'SHEET' | 'DIRECT';
+  version: number;
   offer_type: OfferType;
   initial_cash_offer: number | null;
   best_cash_offer: number | null;
@@ -57,3 +76,13 @@ export interface LeadsPayload {
   /** item_leads.id set for the requested ITEM-attributed cohort; null when none was requested. */
   item_attributed_lead_ids: number[] | null;
 }
+
+/** Neutral values for the 2026-10 snapshot columns (fixtures / legacy rows without events). */
+export const LEAD_SNAPSHOT_DEFAULTS: Pick<LeadRow,
+  'peak_stage' | 'peak_stage_source' | 'peak_stage_at' | 'negotiation_rounds' | 'latest_cash_offer' | 'offer_is_concrete' |
+  'offer_assessment' | 'offer_assessment_source' | 'last_inbound_at' | 'last_outbound_at' | 'waiting_on' | 'unanswered_followups' |
+  'reopen_count' | 'channel_detail' | 'origin' | 'version'> = {
+  peak_stage: null, peak_stage_source: null, peak_stage_at: null, negotiation_rounds: 0, latest_cash_offer: null, offer_is_concrete: null,
+  offer_assessment: null, offer_assessment_source: null, last_inbound_at: null, last_outbound_at: null, waiting_on: null,
+  unanswered_followups: 0, reopen_count: 0, channel_detail: null, origin: 'SHEET', version: 1,
+};

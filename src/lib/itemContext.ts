@@ -42,7 +42,7 @@ export interface ItemContextListingCycle {
 export type ItemContextLead = Pick<LeadRow,
   | 'id' | 'first_contact_at' | 'last_contact_at' | 'channel_name' | 'source_channel' | 'lead_quality' | 'status'
   | 'offer_type' | 'initial_cash_offer' | 'best_cash_offer' | 'trade_item' | 'cash_component' | 'trade_est_value'
-  | 'outcome_reason' | 'notes' | 'buyer_message_count' | 'our_message_count'>;
+  | 'outcome_reason' | 'notes' | 'buyer_message_count' | 'our_message_count'> & { peak_stage?: LeadRow['peak_stage'] };
 
 export interface ItemContextRelatedData {
   brandName: string | null;
@@ -237,7 +237,7 @@ function leadsSection(leads: ItemContextLead[]): string[] {
     const parts: string[] = [
       l.first_contact_at ?? 'undated',
       leadChannelLabel(l),
-      QUALITY_LABEL[l.lead_quality],
+      l.peak_stage ? `Stage ${l.peak_stage}` : l.lead_quality ? QUALITY_LABEL[l.lead_quality] : 'Stage unknown',
       formatOfferSummary(l),
     ];
     if ((l.offer_type === 'TRADE' || l.offer_type === 'MIXED') && l.trade_est_value != null) {

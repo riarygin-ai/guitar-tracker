@@ -58,6 +58,7 @@ const ROW_RESULT_LABELS: Record<ImportRowResult, string> = {
   SKIPPED_SOURCE_OLDER: 'Skipped — source older',
   SKIPPED_INVALID: 'Skipped — invalid',
   SKIPPED_NOT_APPLIED: 'Not applied',
+  SKIPPED_DIRECT_OWNED: 'Skipped — maintained by direct (chat) writes',
   FAILED: 'Failed',
 };
 

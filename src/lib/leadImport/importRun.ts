@@ -75,6 +75,8 @@ interface ApplyRowPayload extends Omit<AuditRowPayload, 'result' | 'lead_id' | '
   notes: string | null;
   deal_id: number | null;
   contact_name: string | null;
+  contact_key: string | null;
+  peak_stage: string;
   source_updated_at: string;
 }
 
@@ -159,6 +161,8 @@ function applyRowFor(row: RowValidationResult): ApplyRowPayload {
     notes: n.notes,
     deal_id: n.dealId,
     contact_name: n.contactName,
+    contact_key: n.contactKey,
+    peak_stage: n.peakStage,
     source_updated_at: n.sourceUpdatedAt,
     classification: row.classification,
     issue_codes: issueCodesFor(row),
@@ -317,7 +321,7 @@ export async function runLeadImport({
     const applyRows = eligible.map(applyRowFor);
     const skipRows = rows
       .filter((r) => r.classification !== 'NEW' && r.classification !== 'UPDATE')
-      .map((r) => auditRowFor(r, SKIP_RESULT_BY_CLASSIFICATION[r.classification] ?? 'SKIPPED_INVALID'));
+      .map((r) => auditRowFor(r, r.issues.some((i) => i.code === 'DIRECT_OWNED_LEAD') ? 'SKIPPED_DIRECT_OWNED' : SKIP_RESULT_BY_CLASSIFICATION[r.classification] ?? 'SKIPPED_INVALID'));
 
     const { data: applyData, error: applyError } = await serviceClient.rpc('apply_lead_import_batch', {
       p_run_id: runId,

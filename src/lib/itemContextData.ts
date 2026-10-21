@@ -81,7 +81,7 @@ const LISTING_COLUMNS = 'id, deal_channel_id, status, listed_at, ended_at, cance
 const LEAD_COLUMNS =
   'id, first_contact_at, last_contact_at, source_channel, deal_channel_id, lead_quality, status, offer_type, ' +
   'initial_cash_offer, best_cash_offer, trade_item, cash_component, trade_est_value, outcome_reason, notes, ' +
-  'buyer_message_count, our_message_count';
+  'buyer_message_count, our_message_count, peak_stage';
 
 export async function loadItemContextHistory(client: SupabaseClient, itemId: number): Promise<ItemContextHistory> {
   const [listingsRes, leadsRes, exitDealId] = await Promise.all([

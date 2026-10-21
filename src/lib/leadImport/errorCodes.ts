@@ -62,6 +62,9 @@ export const ROW_ISSUE = {
   // it (sheet-internal conflict — neither is trusted, both are rejected).
   ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD: 'ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD',
   DUPLICATE_DEAL_LINK_IN_SHEET: 'DUPLICATE_DEAL_LINK_IN_SHEET',
+  // Direct-write coexistence: a NEW sheet row whose item + channel + contact
+  // strongly matches a lead created by a direct (MCP/UI) write.
+  POSSIBLE_DUPLICATE_OF_DIRECT_LEAD: 'POSSIBLE_DUPLICATE_OF_DIRECT_LEAD',
 } as const;
 
 // ── Row-level warning (non-fatal, does not force INVALID) ───────────────────
@@ -73,4 +76,7 @@ export const ROW_WARNING = {
   // status = COMPLETED with no deal_id — valid (historical rows predate
   // linking), but worth surfacing so links can be backfilled gradually.
   COMPLETED_WITHOUT_DEAL_ID: 'COMPLETED_WITHOUT_DEAL_ID',
+  // The stored lead is direct-owned (created by, or last written through,
+  // MCP/UI): the Sheet row is never applied over it (result SKIPPED_DIRECT_OWNED).
+  DIRECT_OWNED_LEAD: 'DIRECT_OWNED_LEAD',
 } as const;

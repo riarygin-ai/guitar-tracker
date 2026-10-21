@@ -32,6 +32,7 @@ import {
   type ValidationIssue,
 } from './types';
 import { ROW_ISSUE, ROW_WARNING } from './errorCodes';
+import { baseChannelKey, contactKey, legacyStructuredStage } from '../leads/classification';
 import {
   cellToDateStringOrNull,
   cellToIntegerOrNull,
@@ -44,7 +45,10 @@ import {
 export interface ExistingLeadInfo {
   inventoryItemId: number;
   sourceUpdatedAt: string; // ISO 8601 UTC
-  leadQuality: LeadQuality;
+  /** Legacy quality; null on direct-write leads. */
+  leadQuality: LeadQuality | null;
+  /** Created by, or last written through, a direct (MCP/UI) write — never overwritten by the Sheet. */
+  directOwned?: boolean;
 }
 
 export interface ValidationContext {
@@ -72,6 +76,8 @@ export interface ValidationContext {
   // (ITEM_ALREADY_LINKED_TO_ANOTHER_LEAD) while still allowing that same
   // winning lead to be updated/relinked (its own leadId matches).
   existingLinkedLeadIdByItemId: Map<number, string>;
+  /** "item|base channel|contact_key" of every direct-write lead, for POSSIBLE_DUPLICATE_OF_DIRECT_LEAD. */
+  directLeadKeys?: Set<string>;
 }
 
 function issue(
@@ -387,6 +393,14 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
   if (contactName !== null && contactName.length > 200) {
     issues.push(issue('error', ROW_ISSUE.INVALID_CONTACT_NAME, 'contact_name must be at most 200 characters.', at2()));
   }
+  const rowContactKey = contactKey(contactName);
+  if (
+    rowContactKey !== null && itemId !== null && ctx.directLeadKeys &&
+    !(leadId !== null && ctx.existingLeadsByLeadId.has(leadId)) &&
+    ctx.directLeadKeys.has(`${itemId}|${baseChannelKey(sourceChannel)}|${rowContactKey}`)
+  ) {
+    issues.push(issue('error', ROW_ISSUE.POSSIBLE_DUPLICATE_OF_DIRECT_LEAD, `A direct-write lead already exists for this contact on inventory item ${itemId} / this channel — log further activity through chat instead of a new Sheet row.`, at2()));
+  }
 
   // ── item ownership (Part 5) — runs whenever item_id parsed, regardless
   // of other field errors ───────────────────────────────────────────────
@@ -414,7 +428,7 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
         ),
       );
     }
-    if (leadQuality !== null && LEAD_QUALITY_RANK[leadQuality] < LEAD_QUALITY_RANK[existing.leadQuality]) {
+    if (leadQuality !== null && existing.leadQuality !== null && LEAD_QUALITY_RANK[leadQuality] < LEAD_QUALITY_RANK[existing.leadQuality]) {
       issues.push(
         issue(
           'error',
@@ -425,7 +439,17 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
       );
     }
 
-    if (sourceUpdatedAt !== null) {
+    if (existing.directOwned) {
+      classification = 'SOURCE_OLDER';
+      issues.push(
+        issue(
+          'warning',
+          ROW_WARNING.DIRECT_OWNED_LEAD,
+          'This lead is maintained by direct (chat) writes — the Sheet row will not be applied.',
+          at2(),
+        ),
+      );
+    } else if (sourceUpdatedAt !== null) {
       if (sourceUpdatedAt > existing.sourceUpdatedAt) {
         classification = 'UPDATE';
       } else if (sourceUpdatedAt === existing.sourceUpdatedAt) {
@@ -486,6 +510,12 @@ export function validateAndClassifyRow(raw: RawSheetRow, ctx: ValidationContext)
           notes,
           dealId,
           contactName,
+          contactKey: rowContactKey,
+          peakStage: legacyStructuredStage({
+            status: leadStatus, deal_id: dealId, offer_type: offerType,
+            cash_component: cashComponentValue, initial_cash_offer: initialCashParsed.ok ? initialCashParsed.value : null,
+            best_cash_offer: bestCashParsed.ok ? bestCashParsed.value : null, trade_item: tradeItem, lead_quality: leadQuality,
+          }),
           sourceUpdatedAt,
         };
 

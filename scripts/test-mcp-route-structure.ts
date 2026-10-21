@@ -13,7 +13,7 @@
  * `npm run build` are the real compile-correctness check for this file —
  * this script instead locks down the SECURITY-CRITICAL invariants that
  * are visible from the source text alone and must never regress:
- *   - exactly eight tools, exactly these eight names
+ *   - exactly ten tools: the eight read-only names + the two lead write tools
  *   - no tool input schema ever mentions a user/account/owner identifier
  *   - auth is 'user' (RLS-scoped), never service_role / admin
  *   - no mutation call (insert/update/delete/upsert/rpc) anywhere in the
@@ -54,22 +54,27 @@ function main() {
     contactName: strip(read('src', 'lib', 'leads', 'contactName.ts')),
   };
 
-  console.log('\n[A — exactly the eight intended tools, read-only]');
+  console.log('\n[A — exactly the ten intended tools: eight read-only + two lead write tools]');
   {
     const toolNames = Array.from(route.matchAll(/registerTool\(\s*'([a-zA-Z0-9_]+)'/g)).map((m) => m[1]);
-    check('exactly eight tools registered', toolNames.length === 8, toolNames);
+    check('exactly ten tools registered', toolNames.length === 10, toolNames);
     check(
-      'the eight tools are exactly the four originals plus find_contact_history, get_operations_analysis, get_operation_context, get_deal_chain (no extra, no renamed)',
+      'the ten tools are the eight read-only tools plus record_lead_interaction and void_lead_event (no extra, no renamed)',
       JSON.stringify([...toolNames].sort()) === JSON.stringify([
         'find_contact_history', 'get_deal_chain', 'get_inventory_analysis', 'get_item_context',
-        'get_lead_activity', 'get_operation_context', 'get_operations_analysis', 'search_inventory',
+        'get_lead_activity', 'get_operation_context', 'get_operations_analysis', 'record_lead_interaction', 'search_inventory', 'void_lead_event',
       ]),
       toolNames,
     );
-    const readOnlyCount = (route.match(/readOnlyHint:\s*true/g) ?? []).length;
-    check('every tool is annotated readOnlyHint: true', readOnlyCount === toolNames.length, readOnlyCount);
-    const destructiveFalseCount = (route.match(/destructiveHint:\s*false/g) ?? []).length;
-    check('every tool is annotated destructiveHint: false', destructiveFalseCount === toolNames.length, destructiveFalseCount);
+    const block = (name: string) => { const i = route.indexOf(`registerTool(\n    '${name}'`); const j = route.indexOf('registerTool(', i + 10); return route.slice(i, j < 0 ? undefined : j); };
+    const readOnly = toolNames.filter((n) => !['record_lead_interaction', 'void_lead_event'].includes(n));
+    check('the eight read tools are annotated readOnlyHint: true + destructiveHint: false', readOnly.every((n) => /readOnlyHint:\s*true/.test(block(n)) && /destructiveHint:\s*false/.test(block(n))), readOnly.filter((n) => !/readOnlyHint:\s*true/.test(block(n))));
+    check('record_lead_interaction: readOnlyHint false, destructiveHint false (append-only), idempotentHint true', /readOnlyHint:\s*false,\s*destructiveHint:\s*false,\s*idempotentHint:\s*true/.test(block('record_lead_interaction')));
+    check('void_lead_event: readOnlyHint false, destructiveHint true, idempotentHint true', /readOnlyHint:\s*false,\s*destructiveHint:\s*true,\s*idempotentHint:\s*true/.test(block('void_lead_event')));
+    check('exactly two tools are not read-only', (route.match(/readOnlyHint:\s*false/g) ?? []).length === 2);
+    check('void_lead_event is described as a correction/repair, not normal logging', /CORRECTION \/ REPAIR/.test(block('void_lead_event')) && /not normal lead logging/.test(block('void_lead_event')));
+    check('record_lead_interaction never accepts LEGACY_SNAPSHOT (agent event enum)', /type:\s*z\.enum\(AGENT_EVENT_TYPES\)/.test(block('record_lead_interaction')));
+    check('record_lead_interaction has no notes-replacement input', !/notes:\s*z\./.test(block('record_lead_interaction')));
   }
 
   console.log('\n[B — no tool schema ever accepts a user/account/owner identifier]');
@@ -90,7 +95,8 @@ function main() {
     );
     check(
       'every tool handler is called with the request-scoped `supabase` from the pipeline context, not a module-level client',
-      /searchInventoryForUser\(supabase,/.test(route) && /getItemContextForUser\(supabase,/.test(route) &&
+      /searchInventoryForUser\(supabase,/.test(route) && /getItemContextForMcp\(supabase,/.test(route) &&
+      /recordLeadInteraction\(supabase,/.test(route) && /voidLeadEvent\(supabase,/.test(route) &&
       /getInventoryAnalysisForUser\(supabase,/.test(route) && /getLeadActivityForUser\(supabase,/.test(route),
     );
   }
@@ -194,6 +200,22 @@ function main() {
   {
     check('imports withOAuthProtectedResource and withSupabase from @supabase/server (never hand-rolled)', /from '@supabase\/server'/.test(route) && /withOAuthProtectedResource/.test(route) && /withSupabase/.test(route));
     check('no custom /authorize, /token, or JWT-signing code anywhere in this file', !/jsonwebtoken|jwt\.sign|'\/authorize'|'\/token'/.test(route));
+  }
+
+  console.log('\n[H — 2026-10-21 lead write tools: narrow, user-scoped write path]');
+  {
+    const writeService = strip(read('src', 'lib', 'leads', 'leadWriteService.ts'));
+    const classification = strip(read('src', 'lib', 'leads', 'classification.ts'));
+    const semantics = strip(read('src', 'lib', 'leads', 'semantics.ts'));
+    check('write service: no service_role / admin client / env keys', !/service_role|SERVICE_ROLE|createClient|process\.env/.test(writeService));
+    check('write service: the ONLY RPC is apply_lead_interaction', JSON.stringify(Array.from(new Set(Array.from(writeService.matchAll(/\.rpc\(\s*'([a-zA-Z0-9_]+)'/g)).map((m) => m[1])))) === JSON.stringify(['apply_lead_interaction']));
+    check('write service: no direct table insert/update/upsert/delete', !/\.from\([^)]*\)[\s\S]{0,80}?\.(insert|update|upsert|delete)\s*\(/.test(writeService));
+    check('write service: never filters or writes by an application-supplied user id', !/\.eq\(\s*'user_id'/.test(writeService) && !/user_id:\s*(?!number\b)[a-zA-Z]/.test(writeService));
+    check('classification + semantics are pure (no database client)', !/SupabaseClient|\.from\(\s*'/.test(classification) && !/SupabaseClient|\.from\(\s*'/.test(semantics));
+    const migration = read('supabase', 'migrations', '20261021000000_lead_events_direct_writes.sql');
+    check('apply_lead_interaction is SECURITY DEFINER with an explicit search_path and resolves identity via get_app_user_id()', /FUNCTION public\.apply_lead_interaction\(p_request jsonb\)[\s\S]*?SECURITY DEFINER\s+SET search_path = public, pg_temp[\s\S]*?get_app_user_id\(\)/.test(migration));
+    check('apply_lead_interaction: EXECUTE revoked from PUBLIC/anon, granted to authenticated only', /REVOKE ALL ON FUNCTION public\.apply_lead_interaction\(jsonb\) FROM PUBLIC, anon;/.test(migration) && /GRANT EXECUTE ON FUNCTION public\.apply_lead_interaction\(jsonb\) TO authenticated;/.test(migration));
+    check('lead_events: authenticated gets SELECT only', /GRANT SELECT ON public\.lead_events TO authenticated;/.test(migration) && !/GRANT[^;]*(INSERT|UPDATE|DELETE)[^;]*lead_events TO authenticated/.test(migration));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

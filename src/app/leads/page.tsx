@@ -308,7 +308,7 @@ export default function LeadsPage() {
                           </button>
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-slate-700 dark:text-slate-200">{leadChannelLabel(lead)}</td>
-                        <td className="px-3 py-2"><QualityBadge quality={lead.lead_quality} /></td>
+                        <td className="px-3 py-2"><QualityBadge quality={lead.lead_quality} stage={lead.peak_stage} /></td>
                         <td className="max-w-[16rem] break-words px-3 py-2 text-slate-700 dark:text-slate-200">{formatOfferSummary(lead)}</td>
                         <td className="px-3 py-2"><StatusBadge status={lead.status} /></td>
                         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-700 dark:text-slate-200">{fmtMessages(lead)}</td>
@@ -334,7 +334,7 @@ export default function LeadsPage() {
                       </p>
                       <p className="mt-0.5 break-words text-base font-semibold leading-snug text-slate-900 dark:text-white">{lead.item_name}</p>
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                        <QualityBadge quality={lead.lead_quality} />
+                        <QualityBadge quality={lead.lead_quality} stage={lead.peak_stage} />
                         <StatusBadge status={lead.status} />
                       </div>
                       <p className="mt-2 break-words text-sm text-slate-700 dark:text-slate-200">{formatOfferSummary(lead)}</p>

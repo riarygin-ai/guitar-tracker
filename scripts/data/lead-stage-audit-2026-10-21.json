@@ -1,0 +1,1415 @@
+{
+ "description": "Read-only lead classification audit of production item_leads (2026-10-21). Keys are production item_leads.id; stage codes: I=INQUIRY, E=ENGAGED, N1=NEGOTIATING (single concrete offer), N2=NEGOTIATING (multi-round), H=HIGH_INTENT, C=CONVERTED. confidence: H/M/L (LOW/ENGAGED legacy leads got a quicker pass, all M). AI judgement from structured fields + notes; not individually user-reviewed. Used by scripts/backfill-lead-semantics.ts as peak_stage_source LEGACY_AUDIT.",
+ "audited_at": "2026-10-21",
+ "lead_count": 352,
+ "leads": {
+  "1": {
+   "stage": "H",
+   "confidence": "M"
+  },
+  "2": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "3": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "4": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "5": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "6": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "7": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "8": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "9": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "10": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "11": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "12": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "13": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "14": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "15": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "16": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "17": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "18": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "19": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "20": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "21": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "22": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "23": {
+   "stage": "H",
+   "confidence": "M"
+  },
+  "24": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "25": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "26": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "27": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "28": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "29": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "30": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "31": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "32": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "33": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "34": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "35": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "36": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "37": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "38": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "39": {
+   "stage": "H",
+   "confidence": "M"
+  },
+  "40": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "41": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "42": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "43": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "44": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "45": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "46": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "47": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "48": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "49": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "50": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "51": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "52": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "53": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "54": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "55": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "56": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "57": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "58": {
+   "stage": "H",
+   "confidence": "M"
+  },
+  "59": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "60": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "61": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "62": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "63": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "64": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "65": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "66": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "67": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "68": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "69": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "70": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "71": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "72": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "73": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "74": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "75": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "76": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "77": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "78": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "79": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "80": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "81": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "82": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "83": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "84": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "85": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "86": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "87": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "88": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "89": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "90": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "91": {
+   "stage": "H",
+   "confidence": "L"
+  },
+  "92": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "93": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "94": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "95": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "96": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "97": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "98": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "99": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "100": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "101": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "102": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "103": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "104": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "105": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "106": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "107": {
+   "stage": "E",
+   "confidence": "H"
+  },
+  "108": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "109": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "110": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "111": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "112": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "113": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "114": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "115": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "116": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "117": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "118": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "119": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "120": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "121": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "122": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "123": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "124": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "125": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "126": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "127": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "128": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "129": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "133": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "134": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "135": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "136": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "137": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "138": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "139": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "140": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "141": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "142": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "143": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "144": {
+   "stage": "E",
+   "confidence": "L"
+  },
+  "145": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "146": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "147": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "148": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "149": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "150": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "151": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "152": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "153": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "154": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "155": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "156": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "157": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "158": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "159": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "160": {
+   "stage": "E",
+   "confidence": "H"
+  },
+  "161": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "165": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "166": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "167": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "168": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "169": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "170": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "172": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "175": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "176": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "177": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "178": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "179": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "180": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "181": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "182": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "183": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "184": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "185": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "188": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "189": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "190": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "191": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "192": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "193": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "194": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "195": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "196": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "197": {
+   "stage": "H",
+   "confidence": "M"
+  },
+  "198": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "199": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "200": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "201": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "202": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "203": {
+   "stage": "H",
+   "confidence": "M"
+  },
+  "210": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "211": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "212": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "213": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "214": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "215": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "216": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "217": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "218": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "219": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "220": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "221": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "228": {
+   "stage": "H",
+   "confidence": "M"
+  },
+  "229": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "230": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "231": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "232": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "233": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "234": {
+   "stage": "H",
+   "confidence": "L"
+  },
+  "235": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "236": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "237": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "238": {
+   "stage": "E",
+   "confidence": "L"
+  },
+  "239": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "240": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "241": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "242": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "243": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "244": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "245": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "246": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "247": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "248": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "249": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "258": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "259": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "260": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "261": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "262": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "264": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "265": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "266": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "267": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "268": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "269": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "279": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "280": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "281": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "282": {
+   "stage": "H",
+   "confidence": "M"
+  },
+  "283": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "284": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "285": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "286": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "287": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "288": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "289": {
+   "stage": "E",
+   "confidence": "H"
+  },
+  "290": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "291": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "292": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "293": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "294": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "295": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "296": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "297": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "299": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "300": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "301": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "302": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "303": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "304": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "311": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "312": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "313": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "314": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "315": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "316": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "317": {
+   "stage": "E",
+   "confidence": "H"
+  },
+  "318": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "319": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "320": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "321": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "322": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "323": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "324": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "325": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "326": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "327": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "328": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "332": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "333": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "334": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "335": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "336": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "337": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "338": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "339": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "340": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "341": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "342": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "343": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "344": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "345": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "346": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "347": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "348": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "349": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "350": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "352": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "353": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "354": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "355": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "356": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "357": {
+   "stage": "N2",
+   "confidence": "L"
+  },
+  "358": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "359": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "360": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "361": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "364": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "365": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "366": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "367": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "368": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "369": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "370": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "371": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "372": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "373": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "374": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "375": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "376": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "382": {
+   "stage": "N2",
+   "confidence": "M"
+  },
+  "387": {
+   "stage": "I",
+   "confidence": "H"
+  },
+  "388": {
+   "stage": "E",
+   "confidence": "L"
+  },
+  "389": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "390": {
+   "stage": "H",
+   "confidence": "L"
+  },
+  "391": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "392": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "393": {
+   "stage": "N1",
+   "confidence": "L"
+  },
+  "394": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "395": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "396": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "402": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "403": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "404": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "405": {
+   "stage": "C",
+   "confidence": "H"
+  },
+  "406": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "408": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "409": {
+   "stage": "H",
+   "confidence": "H"
+  },
+  "410": {
+   "stage": "I",
+   "confidence": "M"
+  },
+  "411": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "412": {
+   "stage": "C",
+   "confidence": "M"
+  },
+  "414": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "415": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "416": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "417": {
+   "stage": "N2",
+   "confidence": "H"
+  },
+  "418": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "419": {
+   "stage": "E",
+   "confidence": "M"
+  },
+  "420": {
+   "stage": "N1",
+   "confidence": "H"
+  },
+  "421": {
+   "stage": "N1",
+   "confidence": "M"
+  },
+  "422": {
+   "stage": "N1",
+   "confidence": "M"
+  }
+ }
+}

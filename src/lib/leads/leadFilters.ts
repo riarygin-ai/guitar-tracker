@@ -31,6 +31,7 @@ import {
   LEAD_QUALITIES, OFFER_TYPES, LEAD_STATUSES, SERIOUS_PLUS_QUALITIES,
   type LeadRow, type LeadQuality, type OfferType, type LeadStatus,
 } from './leadTypes';
+import { NEGOTIATING_PLUS_STAGES } from './semantics';
 
 export const NO_CHANNEL = 'none' as const;
 
@@ -175,7 +176,8 @@ export function applyLeadFilters(
     if (f.channel === NO_CHANNEL && l.deal_channel_id !== null) return false;
     if (typeof f.channel === 'number' && l.deal_channel_id !== f.channel) return false;
     if (f.quality && l.lead_quality !== f.quality) return false;
-    if (f.seriousPlus && !SERIOUS_PLUS_QUALITIES.includes(l.lead_quality)) return false;
+    // Serious+ links now mean Negotiating+ (same rule as the listing-demand SQL: peak_stage, legacy quality while unset).
+    if (f.seriousPlus && !(l.peak_stage != null ? NEGOTIATING_PLUS_STAGES.includes(l.peak_stage) : l.lead_quality != null && SERIOUS_PLUS_QUALITIES.includes(l.lead_quality))) return false;
     if (f.offerType && l.offer_type !== f.offerType) return false;
     if (f.offers && l.offer_type === 'NONE') return false;
     if (f.status && l.status !== f.status) return false;

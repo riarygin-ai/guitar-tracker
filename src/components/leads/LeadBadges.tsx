@@ -4,6 +4,9 @@
 
 import { QUALITY_LABEL, STATUS_LABEL } from '@/lib/leads/leadFormat';
 import type { LeadQuality, LeadStatus } from '@/lib/leads/leadTypes';
+import type { LeadStage } from '@/lib/leads/semantics';
+
+const STAGE_LABEL: Record<LeadStage, string> = { INQUIRY: 'Inquiry', ENGAGED: 'Engaged', NEGOTIATING: 'Negotiating', HIGH_INTENT: 'High intent', CONVERTED: 'Converted' };
 
 const QUALITY_CLASS: Record<LeadQuality, string> = {
   LOW: 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600',
@@ -20,11 +23,16 @@ const STATUS_CLASS: Record<LeadStatus, string> = {
   AGREED: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800/60',
   FAILED_AFTER_AGREEMENT: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800/60',
   COMPLETED: 'bg-emerald-100 text-emerald-800 ring-emerald-300 dark:bg-emerald-900/50 dark:text-emerald-200 dark:ring-emerald-700/70',
+  CLOSED: 'bg-slate-100 text-slate-500 ring-slate-200 dark:bg-slate-700 dark:text-slate-400 dark:ring-slate-600',
 };
 
 const BASE = 'inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset';
 
-export function QualityBadge({ quality }: { quality: LeadQuality }) {
+/** Legacy Lead Log quality. Direct-write leads have none; their peak stage is shown instead. */
+export function QualityBadge({ quality, stage }: { quality: LeadQuality | null; stage?: LeadStage | null }) {
+  if (quality == null) {
+    return <span className={`${BASE} bg-slate-50 text-slate-600 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-600`} data-stage={stage ?? ''}>{stage ? STAGE_LABEL[stage] : '—'}</span>;
+  }
   return <span className={`${BASE} ${QUALITY_CLASS[quality]}`} data-quality={quality}>{QUALITY_LABEL[quality]}</span>;
 }
 

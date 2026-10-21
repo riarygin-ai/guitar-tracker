@@ -1530,6 +1530,52 @@ async function main() {
       check('6.22m CHECK: a name without a provenance value is rejected', !!bad.error, bad);
     }
 
+    console.log('\n=== Section 6.23: Direct-write coexistence (20261021000001) ===');
+    {
+      // New sheet rows carry the application contact_key and a LEGACY_STRUCTURED peak stage.
+      const keyLead = randomUuid();
+      await importSheet(sourceA, buildValues([sheetRow({ lead_id: keyLead, updated_at: '2026-08-01T00:00:00Z', channel: 'Marketplace', contact_name: '  Nick  (Collector) ', offer_type: 'CASH', initial_cash_offer: 900, best_cash_offer: 900, lead_quality: 'SERIOUS' })]));
+      const keyed = await leadByLeadId(userA, keyLead) as Record<string, unknown> | null;
+      check('6.23a sheet insert stores contact_key (qualifier kept) and a LEGACY_STRUCTURED stage', keyed?.contact_key === 'nick (collector)' && keyed?.peak_stage === 'NEGOTIATING' && keyed?.peak_stage_source === 'LEGACY_STRUCTURED', keyed);
+
+      // A lead that became direct-owned is never overwritten by the Sheet, even with a newer updated_at.
+      await admin.from('item_leads').update({ last_write_source: 'MCP', notes: 'direct-owned now' }).eq('user_id', userA).eq('lead_id', keyLead);
+      const newerValues = buildValues([sheetRow({ lead_id: keyLead, updated_at: '2026-09-01T00:00:00Z', channel: 'Marketplace', contact_name: 'Nick (collector)', offer_type: 'NONE', lead_quality: 'SERIOUS', notes: 'stale sheet text' })]);
+      const pv = await classifySheetValues(newerValues, sourceA, admin);
+      check('6.23b Preview: a direct-owned lead is SOURCE_OLDER with DIRECT_OWNED_LEAD', pv.rows[0]?.classification === 'SOURCE_OLDER' && pv.rows[0]?.issues.some((i) => i.code === ROW_WARNING.DIRECT_OWNED_LEAD), pv.rows[0]);
+      const owned = outcomeOf(await importSheet(sourceA, newerValues));
+      const afterOwned = await leadByLeadId(userA, keyLead) as Record<string, unknown> | null;
+      check('6.23c Import never overwrites the direct-owned lead', owned?.counts.updated === 0 && afterOwned?.notes === 'direct-owned now' && afterOwned?.offer_type === 'CASH', { counts: owned?.counts, afterOwned });
+      const { data: ownedAudit } = await admin.from('lead_import_run_rows').select('result, issue_codes').eq('import_run_id', owned!.runId).eq('lead_id', keyLead);
+      check('6.23d audit row result is SKIPPED_DIRECT_OWNED', ownedAudit?.[0]?.result === 'SKIPPED_DIRECT_OWNED', ownedAudit);
+
+      // A NEW sheet row that strongly matches a DIRECT lead (item + channel + contact) is rejected.
+      const { data: direct, error: directErr } = await admin.from('item_leads').insert({
+        user_id: userA, source_id: null, inventory_item_id: itemA2, lead_id: randomUuid(), source_channel: 'Kijiji', lead_quality: null,
+        offer_type: 'NONE', status: 'OPEN', source_updated_at: '2026-10-01T00:00:00Z', contact_name: 'Jane Direct', contact_name_source: 'DIRECT',
+        contact_key: 'jane direct', origin: 'DIRECT', last_write_source: 'MCP', peak_stage: 'INQUIRY', peak_stage_source: 'DERIVED',
+      }).select('id').single();
+      check('6.23e fixture DIRECT lead inserted (no legacy quality, no source)', !directErr, directErr);
+      const dupLead = randomUuid();
+      const dupValues = buildValues([sheetRow({ lead_id: dupLead, item_id: itemA2, updated_at: '2026-10-02T00:00:00Z', channel: 'kijiji', contact_name: 'JANE   direct' })]);
+      const dupPreview = await classifySheetValues(dupValues, sourceA, admin);
+      check('6.23f Preview flags POSSIBLE_DUPLICATE_OF_DIRECT_LEAD (INVALID)', dupPreview.rows[0]?.classification === 'INVALID' && dupPreview.rows[0]?.issues.some((i) => i.code === ROW_ISSUE.POSSIBLE_DUPLICATE_OF_DIRECT_LEAD), dupPreview.rows[0]);
+      const dupOutcome = outcomeOf(await importSheet(sourceA, dupValues));
+      check('6.23g Import skips it: no duplicate lead created', dupOutcome?.counts.invalid === 1 && (await leadByLeadId(userA, dupLead)) === null, dupOutcome?.counts);
+      const otherName = randomUuid();
+      const okOutcome = outcomeOf(await importSheet(sourceA, buildValues([sheetRow({ lead_id: otherName, item_id: itemA2, updated_at: '2026-10-02T00:00:00Z', channel: 'Kijiji', contact_name: 'Jane Other' })])));
+      check('6.23h a different contact on the same item/channel still imports', okOutcome?.counts.inserted === 1, okOutcome?.counts);
+
+      // The Sheet has no CLOSED status: its OPEN never reopens a neutral-closed lead.
+      const closedLead = randomUuid();
+      await importSheet(sourceA, buildValues([sheetRow({ lead_id: closedLead, updated_at: '2026-08-01T00:00:00Z' })]));
+      await admin.from('item_leads').update({ status: 'CLOSED', outcome_reason: 'ITEM_UNAVAILABLE', last_write_source: 'SYSTEM' }).eq('user_id', userA).eq('lead_id', closedLead);
+      await importSheet(sourceA, buildValues([sheetRow({ lead_id: closedLead, updated_at: '2026-08-05T00:00:00Z', notes: 'edited in sheet' })]));
+      const stillClosed = await leadByLeadId(userA, closedLead) as Record<string, unknown> | null;
+      check('6.23i a newer Sheet OPEN row keeps CLOSED / ITEM_UNAVAILABLE (other fields still apply)', stillClosed?.status === 'CLOSED' && stillClosed?.outcome_reason === 'ITEM_UNAVAILABLE' && stillClosed?.notes === 'edited in sheet', stillClosed);
+      if (direct) await admin.from('item_leads').delete().eq('id', direct.id);
+    }
+
     console.log('\n=== Section 7: Import security (authenticated clients) ===');
 
     // Everything below runs as a real signed-in `authenticated` user — not

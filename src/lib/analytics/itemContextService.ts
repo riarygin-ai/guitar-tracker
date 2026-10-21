@@ -45,6 +45,16 @@ export async function getItemContextForUser(
   client: SupabaseClient,
   itemId: number,
 ): Promise<string | null> {
+  const assembled = await assembleItemContext(client, itemId, { omitLeads: false });
+  return assembled?.text ?? null;
+}
+
+/** Shared assembly. omitLeads drops the compact LEADS text section (the MCP tool returns leads as structured JSON instead). */
+export async function assembleItemContext(
+  client: SupabaseClient,
+  itemId: number,
+  opts: { omitLeads: boolean },
+): Promise<{ text: string; itemStatus: string } | null> {
   if (!Number.isInteger(itemId) || itemId <= 0) return null;
 
   // ── 1. Base item (ownership check happens HERE, via RLS: a foreign or
@@ -137,7 +147,7 @@ export async function getItemContextForUser(
     updated_at: item.updated_at,
   };
 
-  return buildItemContext(baseItem, {
+  const text = buildItemContext(baseItem, {
     brandName,
     categoryName,
     typeName: item.item_subtype_name ?? null,
@@ -153,8 +163,9 @@ export async function getItemContextForUser(
     acquiredDate,
     exitDealId: history.exitDealId,
     listingCycles: history.listingCycles,
-    leads: history.leads,
+    leads: opts.omitLeads ? [] : history.leads,
   });
+  return { text, itemStatus: item.status };
 }
 
 export { ItemContextLoadError };

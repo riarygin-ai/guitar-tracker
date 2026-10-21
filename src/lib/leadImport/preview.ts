@@ -8,6 +8,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { fetchSheetValues, GoogleSheetsError } from './googleSheets';
 import { buildRawRows, parseHeaders } from './normalize';
 import { validateAndClassifyRow, type ExistingLeadInfo, type ValidationContext } from './validate';
+import { baseChannelKey } from '../leads/classification';
 import { KNOWN_CHANNEL_NAMES } from './types';
 import { ROW_ISSUE, SOURCE_FATAL } from './errorCodes';
 import type { LeadImportSource, PreviewResult, RawSheetRow, RowValidationResult, SheetCellValue, ValidationIssue } from './types';
@@ -78,22 +79,27 @@ async function loadChannelNameToId(serviceClient: SupabaseClient): Promise<Map<s
 async function loadExistingLeadsByUser(
   serviceClient: SupabaseClient,
   userId: number,
-): Promise<Map<string, ExistingLeadInfo>> {
+): Promise<{ byLeadId: Map<string, ExistingLeadInfo>; directKeys: Set<string> }> {
   const { data, error } = await serviceClient
     .from('item_leads')
-    .select('lead_id, inventory_item_id, source_updated_at, lead_quality')
+    .select('lead_id, inventory_item_id, source_updated_at, lead_quality, origin, last_write_source, source_channel, contact_key')
     .eq('user_id', userId);
   if (error) throw new Error(`Failed to load existing item_leads: ${error.message}`);
 
   const map = new Map<string, ExistingLeadInfo>();
-  for (const row of (data ?? []) as { lead_id: string; inventory_item_id: number; source_updated_at: string; lead_quality: ExistingLeadInfo['leadQuality'] }[]) {
+  const directKeys = new Set<string>();
+  type Row = { lead_id: string; inventory_item_id: number; source_updated_at: string; lead_quality: ExistingLeadInfo['leadQuality']; origin: string; last_write_source: string; source_channel: string | null; contact_key: string | null };
+  for (const row of (data ?? []) as Row[]) {
+    const directOwned = row.origin === 'DIRECT' || row.last_write_source === 'MCP' || row.last_write_source === 'UI';
     map.set(row.lead_id.toLowerCase(), {
       inventoryItemId: row.inventory_item_id,
       sourceUpdatedAt: new Date(row.source_updated_at).toISOString(),
       leadQuality: row.lead_quality,
+      directOwned,
     });
+    if (row.origin === 'DIRECT' && row.contact_key) directKeys.add(`${row.inventory_item_id}|${baseChannelKey(row.source_channel)}|${row.contact_key}`);
   }
-  return map;
+  return { byLeadId: map, directKeys };
 }
 
 // inventory_items.id -> the lowercased lead_id of this user's ONE existing
@@ -290,7 +296,7 @@ export async function classifySheetValuesDetailed(
   const itemIds = collectCandidateIds((r) => r.cells.item_id);
   const dealIds = collectCandidateIds((r) => r.cells.deal_id);
 
-  const [channelNameToId, existingLeadsByLeadId, itemOwnerByItemId, dealContext, existingLinkedLeadIdByItemId] = await Promise.all([
+  const [channelNameToId, existingLeads, itemOwnerByItemId, dealContext, existingLinkedLeadIdByItemId] = await Promise.all([
     loadChannelNameToId(serviceClient),
     loadExistingLeadsByUser(serviceClient, source.user_id),
     loadItemOwnerByItemId(serviceClient, itemIds),
@@ -301,11 +307,12 @@ export async function classifySheetValuesDetailed(
   const ctx: ValidationContext = {
     sourceUserId: source.user_id,
     channelNameToId,
-    existingLeadsByLeadId,
+    existingLeadsByLeadId: existingLeads.byLeadId,
     itemOwnerByItemId,
     dealOwnerByDealId: dealContext.dealOwnerByDealId,
     dealOutgoingItemIdsByDealId: dealContext.dealOutgoingItemIdsByDealId,
     existingLinkedLeadIdByItemId,
+    directLeadKeys: existingLeads.directKeys,
   };
 
   const rows: RowValidationResult[] = applyDealLinkConflicts(rawRows.map((raw) => validateAndClassifyRow(raw, ctx)));
