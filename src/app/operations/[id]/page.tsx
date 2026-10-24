@@ -16,6 +16,7 @@ import {
   getDisplayPhotosForItems,
 } from '@/lib/supabase';
 import type { Brand, Deal, DealChannel, DealItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
+import { formatCalendarDate } from '@/lib/dateUtils';
 
 const editableDealTypes = new Set(['purchase', 'sale', 'trade', 'expense']);
 
@@ -216,7 +217,7 @@ export default function OperationDetailPage() {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Date</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{new Date(deal.deal_date).toLocaleDateString()}</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{formatCalendarDate(deal.deal_date)}</p>
               </div>
 
               <div>
@@ -369,7 +370,7 @@ export default function OperationDetailPage() {
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Transaction date</p>
-                        <p className="mt-2 text-sm text-slate-900 dark:text-white">{new Date(cf.transaction_date).toLocaleDateString()}</p>
+                        <p className="mt-2 text-sm text-slate-900 dark:text-white">{formatCalendarDate(cf.transaction_date)}</p>
                       </div>
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Description</p>
@@ -449,7 +450,7 @@ export default function OperationDetailPage() {
                       <div className="grid gap-4 sm:grid-cols-2">
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-600 dark:text-slate-400">Expense date</p>
-                          <p className="mt-2 text-sm text-slate-900 dark:text-white">{new Date(exp.expense_date).toLocaleDateString()}</p>
+                          <p className="mt-2 text-sm text-slate-900 dark:text-white">{formatCalendarDate(exp.expense_date)}</p>
                         </div>
 
                         <div>

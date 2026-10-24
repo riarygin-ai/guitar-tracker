@@ -111,6 +111,8 @@ export interface VoidLeadEventInput {
 
 export interface WriteContext {
   clientLabel?: string | null;
+  /** Where the write originates: the MCP tools (default) or the app UI (operation forms). Recorded on each submitted event. */
+  source?: 'MCP' | 'UI';
   now?: Date;
 }
 
@@ -193,7 +195,7 @@ interface PendingEvent extends ClassifiableEvent {
   summary: string;
   provenance: string;
   actor: 'USER' | 'AI' | 'SYSTEM';
-  source: 'MCP' | 'SYSTEM';
+  source: 'MCP' | 'UI' | 'SYSTEM';
   client_label: string | null;
   mutation_seq: number;
   content_hash: string;
@@ -498,7 +500,7 @@ function normalizeInput(input: RecordLeadInteractionInput, ctx: WriteContext): N
     const ev = {
       event_type: e.type, direction: e.direction, occurred_at: t.iso, occurred_at_precision: t.precision, summary,
       message_count: messageCount, expects_reply: e.expects_reply ?? defaultExpectsReply(e), payload,
-      provenance: e.provenance ?? 'OBSERVED', actor: (e.provenance === 'STATED' ? 'USER' : 'AI') as 'USER' | 'AI', source: 'MCP' as const,
+      provenance: e.provenance ?? 'OBSERVED', actor: (e.provenance === 'STATED' ? 'USER' : 'AI') as 'USER' | 'AI', source: ctx.source ?? 'MCP',
       client_label: ctx.clientLabel?.slice(0, 64) ?? null, is_agent: true, content_hash: '',
     };
     ev.content_hash = contentHash(ev);

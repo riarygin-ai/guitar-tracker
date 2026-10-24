@@ -17,6 +17,7 @@ import {
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types';
 import { todayLocalDate } from '@/lib/dateUtils';
 import { truncateDescription } from '@/lib/text';
+import OperationLeadPicker, { LeadLinkFailure, leadDisplayName, useOperationLeadLink } from '@/components/leads/OperationLeadPicker';
 
 interface SoldLineItem {
   item: InventorySearchItem;
@@ -59,6 +60,8 @@ export default function SellOperationForm({
   const [itemMetrics, setItemMetrics] = useState<Record<number, { valueIn: number | null; expenses: number }>>({});
   const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lead = useOperationLeadLink();
+  const outgoingItemIds = useMemo(() => items.map((li) => li.item.id), [items]);
 
   const brandMap = useMemo(
     () => Object.fromEntries(brands.map((brand) => [brand.id, brand.name])),
@@ -187,6 +190,12 @@ export default function SellOperationForm({
     setError(null);
     setSuccessMessage(null);
 
+    // The sale is already saved; only the lead link is outstanding.
+    if (lead.pendingLink) {
+      await retryLeadLink();
+      return;
+    }
+
     if (items.length === 0) {
       setError('At least one item is required.');
       return;
@@ -208,6 +217,11 @@ export default function SellOperationForm({
 
     if (!channelId) {
       setError('Channel is required.');
+      return;
+    }
+
+    if (lead.missingChoice) {
+      setError('Choose the winning lead, or "No matching lead" if the buyer wasn\'t logged.');
       return;
     }
 
@@ -235,14 +249,24 @@ export default function SellOperationForm({
           cfDescription,
         });
 
-    setSaving(false);
-
     if (result.error) {
+      setSaving(false);
       setError(result.error.message || (isEdit ? 'Could not update sale.' : 'Could not save sale.'));
       return;
     }
 
-    router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations');
+    const savedDealId = isEdit ? dealId! : Number((result.data as { deal_id?: number } | null)?.deal_id);
+    const linked = await lead.linkAfterSave(savedDealId);
+    setSaving(false);
+    if (linked) router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations');
+  };
+
+  const retryLeadLink = async () => {
+    if (!lead.pendingLink) return;
+    setSaving(true);
+    const linked = await lead.linkAfterSave(lead.pendingLink.dealId);
+    setSaving(false);
+    if (linked) router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations');
   };
 
   const totalCashReceived = items.reduce((sum, li) => sum + (Number(li.value) || 0), 0);
@@ -504,6 +528,15 @@ export default function SellOperationForm({
               </select>
             </div>
 
+            <OperationLeadPicker
+              itemIds={outgoingItemIds}
+              value={lead.choice}
+              onChange={lead.setChoice}
+              onAvailabilityChange={lead.setAvailability}
+              dealId={dealId}
+              disabled={saving || lead.pendingLink != null}
+            />
+
             <div className="space-y-3">
               <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Notes</label>
               <textarea
@@ -557,6 +590,16 @@ export default function SellOperationForm({
           </div>
         )}
 
+        {lead.pendingLink && lead.choice.kind === 'lead' && (
+          <LeadLinkFailure
+            message={lead.pendingLink.message}
+            leadName={leadDisplayName(lead.choice.lead)}
+            retrying={saving}
+            onRetry={retryLeadLink}
+            onSkip={() => router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations')}
+          />
+        )}
+
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
           {isEdit ? (
             <button
@@ -574,6 +617,7 @@ export default function SellOperationForm({
               setChannelId(null);
               setNotes('');
               setItems([]);
+              lead.reset();
               setShowNewItemForm(false);
               clearSearch();
               setError(null);

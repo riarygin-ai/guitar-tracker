@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { createCashFlow } from '@/lib/supabase';
 import type { CashFlow, Deal, NewCashFlow } from '@/types';
+import { todayLocalDate } from '@/lib/dateUtils';
 
 interface CashFlowFormProps {
   latestBalance: number;
@@ -11,7 +12,7 @@ interface CashFlowFormProps {
 }
 
 export default function CashFlowForm({ latestBalance, deals, onSaved }: CashFlowFormProps) {
-  const [transactionDate, setTransactionDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [transactionDate, setTransactionDate] = useState(() => todayLocalDate());
   const [cashIn, setCashIn] = useState('');
   const [cashOut, setCashOut] = useState('');
   const [description, setDescription] = useState('');

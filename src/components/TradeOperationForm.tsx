@@ -7,6 +7,7 @@ import InventoryForm from '@/components/InventoryForm'
 import { createTradeOperation, editTradeOperation, getBrands, getDealChannels, searchInventoryItems, getDisplayPhotosForItems } from '@/lib/supabase'
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types'
 import { todayLocalDate } from '@/lib/dateUtils'
+import OperationLeadPicker, { LeadLinkFailure, leadDisplayName, useOperationLeadLink } from '@/components/leads/OperationLeadPicker'
 
 type TradeItem = {
     item: InventorySearchItem
@@ -65,6 +66,8 @@ export default function TradeOperationForm({
     const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({})
 
     const [saving, setSaving] = useState(false)
+    const lead = useOperationLeadLink()
+    const outgoingItemIds = useMemo(() => outgoingItems.map((ti) => ti.item.id), [outgoingItems])
 
     const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -219,6 +222,12 @@ export default function TradeOperationForm({
         setError(null)
         setSuccessMessage(null)
 
+        // The trade is already saved; only the lead link is outstanding.
+        if (lead.pendingLink) {
+            await retryLeadLink()
+            return
+        }
+
         if (outgoingItems.length === 0) {
             setError('Add at least one item you are giving.')
             return
@@ -269,6 +278,11 @@ export default function TradeOperationForm({
         const today = todayLocalDate()
         if (dealDate && dealDate > today) {
             setError('Date cannot be in the future.')
+            return
+        }
+
+        if (lead.missingChoice) {
+            setError('Choose the winning lead, or "No matching lead" if the trader wasn\'t logged.')
             return
         }
 
@@ -324,14 +338,24 @@ export default function TradeOperationForm({
                 cfDescription: cfDescriptionValue,
             })
 
-        setSaving(false)
-
         if (result.error) {
+            setSaving(false)
             setError(result.error.message || (isEdit ? 'Could not update trade.' : 'Could not save trade.'))
             return
         }
 
-        router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations')
+        const savedDealId = isEdit ? dealId! : Number((result.data as { deal_id?: number } | null)?.deal_id)
+        const linked = await lead.linkAfterSave(savedDealId)
+        setSaving(false)
+        if (linked) router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations')
+    }
+
+    async function retryLeadLink() {
+        if (!lead.pendingLink) return
+        setSaving(true)
+        const linked = await lead.linkAfterSave(lead.pendingLink.dealId)
+        setSaving(false)
+        if (linked) router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations')
     }
 
     return (
@@ -842,6 +866,15 @@ export default function TradeOperationForm({
                             </select>
                         </div>
 
+                        <OperationLeadPicker
+                            itemIds={outgoingItemIds}
+                            value={lead.choice}
+                            onChange={lead.setChoice}
+                            onAvailabilityChange={lead.setAvailability}
+                            dealId={dealId}
+                            disabled={saving || lead.pendingLink != null}
+                        />
+
                         <div className="space-y-3">
                             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Notes</label>
                             <textarea
@@ -890,6 +923,16 @@ export default function TradeOperationForm({
                     </div>
                 )}
 
+                {lead.pendingLink && lead.choice.kind === 'lead' && (
+                    <LeadLinkFailure
+                        message={lead.pendingLink.message}
+                        leadName={leadDisplayName(lead.choice.lead)}
+                        retrying={saving}
+                        onRetry={retryLeadLink}
+                        onSkip={() => router.push(isEdit ? `/operations/${dealId}?updated=1` : '/operations')}
+                    />
+                )}
+
                 {!isBalanced && (outgoingItems.length > 0 || incomingItems.length > 0) && (
                     <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
                         Trade must be balanced before saving.
@@ -910,6 +953,7 @@ export default function TradeOperationForm({
                         type="button"
                         onClick={() => {
                             setOutgoingItems([])
+                            lead.reset()
                             setIncomingItems([])
                             setIncomingSearchQuery('')
                             setIncomingSearchResults([])
