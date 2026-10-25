@@ -102,6 +102,49 @@ export interface ItemContextMcpResult {
 
 const num = (v: unknown) => (v == null ? null : Number(v));
 
+/** The current-snapshot fields every MCP lead view shares (get_item_context, get_leads) — one serializer, one set of rules. */
+export type LeadSnapshotView = Omit<ItemContextMcpLead, 'legacy_notes' | 'events_total' | 'events_voided' | 'events_omitted' | 'events'>;
+
+export function leadSnapshotView(
+  r: LeadSnapshotRow,
+  ctx: { channelNames: Map<number, string>; itemUnavailable: boolean; now: Date },
+): LeadSnapshotView {
+  const resp = deriveResponsiveness(r, ctx.now);
+  const needs: string[] = [];
+  if (r.status === 'AGREED' && ctx.itemUnavailable) needs.push('ITEM_UNAVAILABLE_WHILE_AGREED');
+  if (r.status === 'COMPLETED' && r.deal_id == null) needs.push('COMPLETED_WITHOUT_DEAL_LINK');
+  return {
+    lead_id: r.id,
+    version: r.version,
+    origin: r.origin,
+    contact_name: r.contact_name,
+    channel: (r.deal_channel_id != null ? ctx.channelNames.get(r.deal_channel_id) : null) ?? r.source_channel ?? 'Unknown',
+    channel_detail: r.channel_detail,
+    first_contact_at: r.first_contact_at,
+    last_contact_at: r.last_contact_at,
+    peak_stage: r.peak_stage,
+    peak_stage_source: r.peak_stage_source,
+    status: r.status,
+    outcome_reason: r.outcome_reason,
+    negotiation_rounds: r.negotiation_rounds,
+    responsiveness: {
+      waiting_on: r.waiting_on, days_waiting: resp.days_waiting, days_since_last_event: resp.days_since_last_event, label: resp.label,
+      unanswered_followups: r.unanswered_followups, reopen_count: r.reopen_count, last_inbound_at: r.last_inbound_at, last_outbound_at: r.last_outbound_at,
+    },
+    latest_buyer_offer: {
+      offer_type: r.offer_type, latest_cash_offer: num(r.latest_cash_offer), cash_component: num(r.cash_component), trade_item: r.trade_item,
+      trade_est_value: num(r.trade_est_value), offer_is_concrete: r.offer_is_concrete, initial_cash_offer: num(r.initial_cash_offer), best_cash_offer: num(r.best_cash_offer),
+    },
+    offer_assessment: r.offer_assessment,
+    offer_assessment_source: r.offer_assessment_source,
+    buyer_message_count: r.buyer_message_count,
+    our_message_count: r.our_message_count,
+    deal_id: r.deal_id,
+    needs_resolution: needs,
+    legacy_quality: r.lead_quality,
+  };
+}
+
 function eventView(e: LeadEventRow, full: boolean): ItemContextLeadEvent {
   let payload = e.payload ?? {};
   if (e.event_type === 'LEGACY_SNAPSHOT' && !full) {
@@ -162,42 +205,11 @@ export async function getItemContextForMcp(
     const active = r.status === 'OPEN' || r.status === 'AGREED' || (r.peak_stage != null && HIGH_INTENT_PLUS_STAGES.includes(r.peak_stage as LeadStage));
     const limit = full ? pool.length : active ? ACTIVE_LEAD_EVENT_LIMIT : CLOSED_LEAD_EVENT_LIMIT;
     const shown = pool.slice(Math.max(0, pool.length - limit));
-    const resp = deriveResponsiveness(r, now);
-    const needs: string[] = [];
-    if (r.status === 'AGREED' && itemUnavailable) needs.push('ITEM_UNAVAILABLE_WHILE_AGREED');
-    if (r.status === 'COMPLETED' && r.deal_id == null) needs.push('COMPLETED_WITHOUT_DEAL_LINK');
     byStage[r.peak_stage ?? 'UNSET'] = (byStage[r.peak_stage ?? 'UNSET'] ?? 0) + 1;
     byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
     if (r.waiting_on === 'US' && !['COMPLETED', 'CLOSED'].includes(r.status)) awaitingUs++;
     return {
-      lead_id: r.id,
-      version: r.version,
-      origin: r.origin,
-      contact_name: r.contact_name,
-      channel: (r.deal_channel_id != null ? channelNames.get(r.deal_channel_id) : null) ?? r.source_channel ?? 'Unknown',
-      channel_detail: r.channel_detail,
-      first_contact_at: r.first_contact_at,
-      last_contact_at: r.last_contact_at,
-      peak_stage: r.peak_stage,
-      peak_stage_source: r.peak_stage_source,
-      status: r.status,
-      outcome_reason: r.outcome_reason,
-      negotiation_rounds: r.negotiation_rounds,
-      responsiveness: {
-        waiting_on: r.waiting_on, days_waiting: resp.days_waiting, days_since_last_event: resp.days_since_last_event, label: resp.label,
-        unanswered_followups: r.unanswered_followups, reopen_count: r.reopen_count, last_inbound_at: r.last_inbound_at, last_outbound_at: r.last_outbound_at,
-      },
-      latest_buyer_offer: {
-        offer_type: r.offer_type, latest_cash_offer: num(r.latest_cash_offer), cash_component: num(r.cash_component), trade_item: r.trade_item,
-        trade_est_value: num(r.trade_est_value), offer_is_concrete: r.offer_is_concrete, initial_cash_offer: num(r.initial_cash_offer), best_cash_offer: num(r.best_cash_offer),
-      },
-      offer_assessment: r.offer_assessment,
-      offer_assessment_source: r.offer_assessment_source,
-      buyer_message_count: r.buyer_message_count,
-      our_message_count: r.our_message_count,
-      deal_id: r.deal_id,
-      needs_resolution: needs,
-      legacy_quality: r.lead_quality,
+      ...leadSnapshotView(r, { channelNames, itemUnavailable, now }),
       legacy_notes: r.notes,
       events_total: live.length,
       events_voided: all.length - live.length,

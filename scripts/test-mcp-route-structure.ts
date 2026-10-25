@@ -13,7 +13,7 @@
  * `npm run build` are the real compile-correctness check for this file —
  * this script instead locks down the SECURITY-CRITICAL invariants that
  * are visible from the source text alone and must never regress:
- *   - exactly ten tools: the eight read-only names + the two lead write tools
+ *   - exactly eleven tools: the nine read-only names + the two lead write tools
  *   - no tool input schema ever mentions a user/account/owner identifier
  *   - auth is 'user' (RLS-scoped), never service_role / admin
  *   - no mutation call (insert/update/delete/upsert/rpc) anywhere in the
@@ -54,21 +54,21 @@ function main() {
     contactName: strip(read('src', 'lib', 'leads', 'contactName.ts')),
   };
 
-  console.log('\n[A — exactly the ten intended tools: eight read-only + two lead write tools]');
+  console.log('\n[A — exactly the eleven intended tools: nine read-only + two lead write tools]');
   {
     const toolNames = Array.from(route.matchAll(/registerTool\(\s*'([a-zA-Z0-9_]+)'/g)).map((m) => m[1]);
-    check('exactly ten tools registered', toolNames.length === 10, toolNames);
+    check('exactly eleven tools registered', toolNames.length === 11, toolNames);
     check(
-      'the ten tools are the eight read-only tools plus record_lead_interaction and void_lead_event (no extra, no renamed)',
+      'the eleven tools are the nine read-only tools plus record_lead_interaction and void_lead_event (no extra, no renamed)',
       JSON.stringify([...toolNames].sort()) === JSON.stringify([
         'find_contact_history', 'get_deal_chain', 'get_inventory_analysis', 'get_item_context',
-        'get_lead_activity', 'get_operation_context', 'get_operations_analysis', 'record_lead_interaction', 'search_inventory', 'void_lead_event',
+        'get_lead_activity', 'get_leads', 'get_operation_context', 'get_operations_analysis', 'record_lead_interaction', 'search_inventory', 'void_lead_event',
       ]),
       toolNames,
     );
     const block = (name: string) => { const i = route.indexOf(`registerTool(\n    '${name}'`); const j = route.indexOf('registerTool(', i + 10); return route.slice(i, j < 0 ? undefined : j); };
     const readOnly = toolNames.filter((n) => !['record_lead_interaction', 'void_lead_event'].includes(n));
-    check('the eight read tools are annotated readOnlyHint: true + destructiveHint: false', readOnly.every((n) => /readOnlyHint:\s*true/.test(block(n)) && /destructiveHint:\s*false/.test(block(n))), readOnly.filter((n) => !/readOnlyHint:\s*true/.test(block(n))));
+    check('the nine read tools are annotated readOnlyHint: true + destructiveHint: false', readOnly.every((n) => /readOnlyHint:\s*true/.test(block(n)) && /destructiveHint:\s*false/.test(block(n))), readOnly.filter((n) => !/readOnlyHint:\s*true/.test(block(n))));
     check('record_lead_interaction: readOnlyHint false, destructiveHint false (append-only), idempotentHint true', /readOnlyHint:\s*false,\s*destructiveHint:\s*false,\s*idempotentHint:\s*true/.test(block('record_lead_interaction')));
     check('void_lead_event: readOnlyHint false, destructiveHint true, idempotentHint true', /readOnlyHint:\s*false,\s*destructiveHint:\s*true,\s*idempotentHint:\s*true/.test(block('void_lead_event')));
     check('exactly two tools are not read-only', (route.match(/readOnlyHint:\s*false/g) ?? []).length === 2);

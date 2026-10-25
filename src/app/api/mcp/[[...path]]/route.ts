@@ -1,6 +1,6 @@
-// Remote MCP server for Guitar Tracker — exactly ten tools: eight read-only
+// Remote MCP server for Guitar Tracker — exactly eleven tools: nine read-only
 // (search_inventory, get_item_context, get_inventory_analysis,
-// get_lead_activity, find_contact_history, get_operations_analysis,
+// get_lead_activity, find_contact_history, get_leads, get_operations_analysis,
 // get_operation_context, get_deal_chain) and two lead WRITE tools
 // (record_lead_interaction, void_lead_event — src/lib/leads/leadWriteService.ts,
 // writing only through the SECURITY DEFINER apply_lead_interaction RPC with the
@@ -63,7 +63,8 @@ import { findContactHistoryForUser, ContactHistoryServiceError } from '@/lib/ana
 import { getOperationsAnalysisForUser, getOperationContextForUser, OperationsServiceError, OPERATION_TYPES } from '@/lib/analytics/operationsService';
 import { getDealChainForUser } from '@/lib/analytics/dealChainService';
 import { recordLeadInteraction, voidLeadEvent, RESOLUTION_ACTIONS, type RecordLeadInteractionInput, type VoidLeadEventInput } from '@/lib/leads/leadWriteService';
-import { AGENT_EVENT_TYPES, LEAD_CHANNELS, renderLeadSemanticsForPrompt } from '@/lib/leads/semantics';
+import { AGENT_EVENT_TYPES, LEAD_CHANNELS, LEAD_STAGES, LEAD_STATUSES, renderLeadSemanticsForPrompt } from '@/lib/leads/semantics';
+import { getLeadsForUser, GetLeadsError, GET_LEADS_DEFAULT_LIMIT, GET_LEADS_MAX_ITEM_IDS, GET_LEADS_MAX_LIMIT } from '@/lib/analytics/leadsMcp';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
@@ -232,6 +233,46 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (err) {
         if (err instanceof ContactHistoryServiceError) return { content: [{ type: 'text', text: err.message }], isError: true };
+        throw err;
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_leads',
+    {
+      description:
+        "Returns the authenticated user's RAW lead records across their complete historical inventory — owned, listed, " +
+        'sold and traded items alike, no date window. Use for bulk lead audits (e.g. every lead with a missing contact ' +
+        'name), reviewing all OPEN/AGREED leads, stage/status filtering (NEGOTIATING+ history), channel or origin slices, ' +
+        'inconsistent data (needs_resolution), and any question needing individual lead rows rather than item-level ' +
+        'aggregates. Each row has the same snapshot as get_item_context (peak_stage, status/outcome, negotiation_rounds, ' +
+        'responsiveness incl. waiting_on, latest_buyer_offer, offer_assessment, message counts, deal_id, needs_resolution, ' +
+        'version) plus item identity (brand/model/year/color/status/category/type/purpose), contact_name_source and ' +
+        'last_activity_date. Filters combine with AND across fields and OR within a list. summary counts describe the whole ' +
+        'filtered set, not just the page; page with offset/next_offset. Ordered by last_activity_date (latest real contact) ' +
+        'then lead_id, newest first. legacy_notes only with include_notes: true (then complete, never truncated). No events: ' +
+        "for one lead's full event history use get_item_context with lead_id + full_history. For demand trends / lifetime " +
+        'demand per open item use get_lead_activity; to look up one known person use find_contact_history.',
+      inputSchema: z.object({
+        item_ids: z.array(z.number().int().positive()).max(GET_LEADS_MAX_ITEM_IDS).optional().describe('Only leads on these inventory items (any item status).'),
+        status: z.array(z.enum(LEAD_STATUSES)).optional().describe('Lifecycle status, OR within the list, e.g. ["OPEN", "AGREED"].'),
+        peak_stage: z.array(z.enum(LEAD_STAGES)).optional().describe('Highest stage reached, OR within the list. Negotiating+ = ["NEGOTIATING", "HIGH_INTENT", "CONVERTED"].'),
+        channel: z.array(z.string().trim().min(1).max(100)).optional().describe('Channel names, case-insensitive, e.g. ["Marketplace", "Kijiji", "Reverb", "Other"].'),
+        contact_name: z.enum(['all', 'present', 'missing']).optional().describe('"missing" = no stored contact name; "present" = named leads. Default "all".'),
+        origin: z.array(z.enum(['SHEET', 'DIRECT'])).optional().describe('SHEET = from the Lead Log; DIRECT = logged in the app / via chat.'),
+        include_notes: z.boolean().optional().describe('Return each lead\'s COMPLETE legacy notes as legacy_notes. Default false (notes omitted).'),
+        limit: z.number().int().min(1).max(GET_LEADS_MAX_LIMIT).optional().describe(`Page size, default ${GET_LEADS_DEFAULT_LIMIT}, max ${GET_LEADS_MAX_LIMIT}.`),
+        offset: z.number().int().min(0).optional().describe('Rows to skip (use summary.next_offset). Default 0.'),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        const result = await getLeadsForUser(supabase, args);
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      } catch (err) {
+        if (err instanceof GetLeadsError) return { content: [{ type: 'text', text: err.message }], isError: true };
         throw err;
       }
     },
