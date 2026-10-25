@@ -9,6 +9,7 @@
 //   listing-demand:<weeks>:<start>:<end>      Demand Evidence for one Trend Window
 //                                             + the exact current-period dates
 //   listing-item-activity:<weeks>:<from>:<to> Lead Activity by Item for one exact window
+//   listing-item-activity:lifetime           Lead Activity by Item (lifetime, open items with leads)
 
 import type { SwrCache } from './swrCache';
 
@@ -21,6 +22,9 @@ export const LISTING_ADVICE_KEY = 'listing-advice:latest';
 export function listingDemandKey(trendWeeks: number, startDate: string, endDate: string): string {
   return `${LISTING_DEMAND_PREFIX}${trendWeeks}:${startDate}:${endDate}`;
 }
+
+/** Lead Activity by Item (lifetime). Shares the item-activity prefix, so the same invalidator covers it. */
+export const ITEM_LEAD_ACTIVITY_KEY = `${ITEM_ACTIVITY_PREFIX}lifetime`;
 
 export function itemActivityKey(trendWeeks: number, from: string, to: string): string {
   return `${ITEM_ACTIVITY_PREFIX}${trendWeeks}:${from}:${to}`;

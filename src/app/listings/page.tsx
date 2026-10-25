@@ -14,6 +14,7 @@
 // Overview or Unlisted Inventory sections, which stay fully usable off
 // Listing Evidence alone.
 
+import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import CompactPageHeader from '@/components/CompactPageHeader';
@@ -24,14 +25,15 @@ import Sparkline from '@/components/Sparkline';
 import { fetchListingEvidence } from '@/lib/analytics/listingEvidenceClient';
 import type { ListingEvidence } from '@/lib/analytics/listingEvidence';
 import { fetchListingDemandEvidenceForCurrentUser } from '@/lib/analytics/listingDemandEvidenceClient';
-import { fetchListingItemActivity } from '@/lib/analytics/listingItemActivityClient';
-import { LISTING_EVIDENCE_KEY, itemActivityKey, listingDemandKey } from '@/lib/listingsCacheKeys';
+import { fetchItemLeadActivity } from '@/lib/analytics/itemLeadActivityClient';
+import { ITEM_LEAD_ACTIVITY_KEY, LISTING_EVIDENCE_KEY, listingDemandKey } from '@/lib/listingsCacheKeys';
 import { listingsCache } from '@/lib/listingsCacheStore';
 import { currentListingsReturnTo } from '@/lib/listingsReturn';
 import { useSwrResource } from '@/lib/useSwrResource';
 import type { ListingDemandEvidence } from '@/lib/analytics/listingDemandEvidence';
-import { channelAttributedLeadsUrl, channelSeriousPlusUrl, itemAttributedLeadsUrl, itemOffersUrl, itemSeriousPlusUrl, marketWeekLeadsUrl, marketWeekSeriousPlusUrl, type DrillPeriod } from '@/lib/leads/leadDrilldownUrls';
-import { itemActiveChannelsLabel, itemActivityWindow, sortItemActivity, type ItemActivityEntry, type ItemActivityWindow } from '@/lib/listingItemActivityHelpers';
+import { channelAttributedLeadsUrl, channelSeriousPlusUrl, marketWeekLeadsUrl, marketWeekSeriousPlusUrl, type DrillPeriod } from '@/lib/leads/leadDrilldownUrls';
+import { leadsUrl } from '@/lib/leads/leadFilters';
+import { ITEM_ACTIVITY_SORTS, itemLeadStatusLabel, parseItemActivitySort, viewItemLeadActivity, type ItemActivitySort, type ItemLeadActivityRow } from '@/lib/itemLeadActivityView';
 import { fmtLeadDate } from '@/lib/leads/leadFormat';
 import { LISTING_HELP, type ListingHelpKey } from '@/lib/listingHelpText';
 import { fmtMoney, inventoryUrl, findPurposeId } from '@/lib/listingDashboardHelpers';
@@ -94,21 +96,15 @@ export default function ListingsPage() {
   const demandLoading = demandRes.isLoading;
   const demandError = demandRes.error;
 
-  // Lead Activity by Item — ONE compact request per exact window, over the
-  // window Listing Demand Evidence reports (first weekly bucket's start ->
-  // last bucket's end). The key includes weeks + exact from/to, so it can
-  // never show a different window from Market/Channel Activity; cached data
-  // for the SAME window renders immediately and revalidates in background.
-  const itemWindow: ItemActivityWindow | null = itemActivityWindow(demandEvidence);
-  const itemKey = itemWindow ? itemActivityKey(trendWeeks, itemWindow.from, itemWindow.to) : null;
-  const itemRes = useSwrResource<ItemActivityEntry[]>(listingsCache, itemKey, async () => {
-    const result = await fetchListingItemActivity(itemWindow!.from, itemWindow!.to);
+  // Lead Activity by Item — ONE request for the whole section: every open
+  // item (listed or not) with >= 1 lead, lifetime counts + Last Activity.
+  // Independent of the Trend Window and of Demand Evidence; search / sort
+  // run client-side over the full, bounded row set.
+  const itemRes = useSwrResource<ItemLeadActivityRow[]>(listingsCache, ITEM_LEAD_ACTIVITY_KEY, async () => {
+    const result = await fetchItemLeadActivity();
     if (result.status !== 'success') throw new Error(result.message);
     return result.items;
   });
-  // Until the window is known, the section is loading (or shows the demand error).
-  const itemLoading = itemKey === null ? demandError === null : itemRes.isLoading;
-  const itemErrorMessage = itemKey === null ? demandError : itemRes.error;
 
   // The exact current Listings URL (path + real query string) travels with
   // every drill-down as return_to, so Back restores this exact state.
@@ -154,7 +150,7 @@ export default function ListingsPage() {
 
       <ChannelActivitySection evidence={demandEvidence} loading={demandLoading} error={demandError} refreshing={demandRes.isRefreshing} returnTo={returnTo} />
 
-      <ItemActivitySection items={itemRes.data ?? null} window={itemWindow} trendWeeks={trendWeeks} loading={itemLoading} error={itemErrorMessage} refreshing={itemRes.isRefreshing} returnTo={returnTo} />
+      <ItemActivitySection items={itemRes.data ?? null} loading={itemRes.isLoading} error={itemRes.error} refreshing={itemRes.isRefreshing} returnTo={returnTo} sort={parseItemActivitySort(searchParams.get('item_sort'))} onSortChange={(v) => { const sp = new URLSearchParams(searchParams.toString()); if (v === 'recent') sp.delete('item_sort'); else sp.set('item_sort', v); router.replace(`/listings${sp.toString() ? `?${sp}` : ''}`, { scroll: false }); }} />
 
       {evidence && (
         <UnlistedSection evidence={evidence} businessPurposeId={businessPurposeId} hybridPurposeId={hybridPurposeId} />
@@ -591,54 +587,81 @@ function ChannelActivitySection({ evidence, loading, error, refreshing, returnTo
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Lead Activity by Item — currently listed items over the SAME Trend
-// Window as Market/Channel Activity (exact window = first weekly bucket's
-// start .. last bucket's end, straight off Listing Demand Evidence). Every
-// number comes from the server-side listing_demand_item_activity_v1_0
-// helper: ITEM-attributed leads (the item had listing exposure, on any
-// channel, on first_contact_at). Zero-activity listings stay visible.
-// Item name -> Inventory item detail; the count values -> the exact
-// attributed cohort on /leads (zero counts are plain text, never links).
+// Lead Activity by Item — every OPEN inventory item (listed or not) that
+// has at least one lead (/api/lead-activity-by-item). Leads / Negotiating+
+// / Offers / Channel Days are LIFETIME values; Last Activity is the latest
+// real contact on any of the item's leads, and the default order (Recent
+// activity) follows it. Search + sort are client-side over the full row
+// set (bounded: one row per open item with leads). Item name -> Inventory
+// item detail; counts -> that item's leads on /leads (zero counts are plain
+// text, never links). Sort is kept in the URL (item_sort) so Back restores it.
 // ══════════════════════════════════════════════════════════════════════
 
 function ItemActivitySection({
   items,
-  window: win,
-  trendWeeks,
   loading,
   error,
   refreshing,
   returnTo,
+  sort,
+  onSortChange,
 }: {
-  items: ItemActivityEntry[] | null;
-  window: ItemActivityWindow | null;
-  trendWeeks: TrendWeeks;
+  items: ItemLeadActivityRow[] | null;
   loading: boolean;
   error: string | null;
   refreshing: boolean;
   returnTo: string;
+  sort: ItemActivitySort;
+  onSortChange: (s: ItemActivitySort) => void;
 }) {
-  const rows = items ? sortItemActivity(items) : [];
+  const [query, setQuery] = useState('');
+  const rows = items ? viewItemLeadActivity(items, query, sort) : [];
   const hasData = items !== null;
-  const drill = (item: ItemActivityEntry) => ({
-    itemId: item.item_id,
-    leads: item.item_attributed_leads,
-    seriousPlus: item.serious_plus_attributed_leads,
-    offers: item.offer_attributed_leads,
-  });
+  const link = (item: ItemLeadActivityRow, n: number, extra: { seriousPlus?: boolean; offers?: boolean } = {}) =>
+    n > 0 ? leadsUrl({ itemId: item.item_id, returnTo, ...extra }) : undefined;
+  const subline = (item: ItemLeadActivityRow) => [
+    item.is_listed ? item.active_channel_names.join(', ') || 'Listed' : 'Not listed',
+    itemLeadStatusLabel(item),
+  ].filter(Boolean).join(' · ');
 
   return (
     <DemandSectionShell
       title="Lead Activity by Item"
       titleHelp="leadActivityByItem"
-      helpText={win ? `${fmtWeekLabel(win.from, win.to)} · ${trendWeeks}W Trend Window` : `${trendWeeks}W Trend Window`}
+      helpText="Open items with leads · lifetime counts"
+      action={hasData && items.length > 0 ? (
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search items…"
+            aria-label="Search items"
+            data-item-search
+            className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white sm:w-48"
+          />
+          <label className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            Sort
+            <select
+              value={sort}
+              onChange={(e) => onSortChange(e.target.value as ItemActivitySort)}
+              data-item-sort
+              className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+            >
+              {ITEM_ACTIVITY_SORTS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </label>
+        </div>
+      ) : undefined}
       loading={loading}
       refreshing={refreshing}
       error={error}
       hasData={hasData}
     >
-      {rows.length === 0 ? (
-        <p className="text-sm text-slate-500 dark:text-slate-400">No currently listed items.</p>
+      {items !== null && items.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">No open items have leads yet.</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">No items match &ldquo;{query}&rdquo;.</p>
       ) : (
         <>
           {/* Desktop table */}
@@ -647,11 +670,11 @@ function ItemActivitySection({
               <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 dark:bg-slate-700/60 dark:text-slate-400">
                 <tr>
                   <th className="px-3 py-2 text-left font-semibold">Item</th>
-                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel text="Leads" icon="message" tone="cyan" /></th>
-                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="seriousPlus" icon="zap" tone="violet" /></th>
-                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="offersAttributed" /></th>
-                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="channelDays" icon="eye" tone="blue" /></th>
-                  <th className="px-3 py-2 text-left font-semibold">Last Lead</th>
+                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="itemLeads" icon="message" tone="cyan" /></th>
+                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="itemNegotiatingPlus" icon="zap" tone="violet" /></th>
+                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="itemOffers" /></th>
+                  <th className="px-3 py-2 text-right font-semibold"><MetricLabel help="itemChannelDays" icon="eye" tone="blue" /></th>
+                  <th className="px-3 py-2 text-left font-semibold"><MetricLabel help="itemLastActivity" /></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
@@ -661,17 +684,17 @@ function ItemActivitySection({
                       <Link href={`/inventory/${item.item_id}`} className="break-words font-medium text-slate-900 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-white">
                         {item.item_display_name}
                       </Link>
-                      {itemActiveChannelsLabel(item) && <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{itemActiveChannelsLabel(item)}</p>}
+                      <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{subline(item)}</p>
                     </td>
                     <td className="px-3 py-2 text-right">
                       <span className={`inline-block rounded-md px-2 py-0.5 font-bold tabular-nums ${TONE.cyan.pill}`}>
-                        <DrillValue href={win ? itemAttributedLeadsUrl(win, drill(item), returnTo) ?? undefined : undefined}>{item.item_attributed_leads}</DrillValue>
+                        <DrillValue href={link(item, item.lead_count)}>{item.lead_count}</DrillValue>
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={win ? itemSeriousPlusUrl(win, drill(item), returnTo) ?? undefined : undefined} className={`font-medium ${TONE.violet.text}`}>{item.serious_plus_attributed_leads}</DrillValue></td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={win ? itemOffersUrl(win, drill(item), returnTo) ?? undefined : undefined} className="font-medium text-slate-700 dark:text-slate-200">{item.offer_attributed_leads}</DrillValue></td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">{item.channel_listing_days}</td>
-                    <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-500 dark:text-slate-400">{item.last_attributed_lead_date ? fmtLeadDate(item.last_attributed_lead_date) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={link(item, item.negotiating_plus_count, { seriousPlus: true })} className={`font-medium ${TONE.violet.text}`}>{item.negotiating_plus_count}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={link(item, item.offer_count, { offers: true })} className="font-medium text-slate-700 dark:text-slate-200">{item.offer_count}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">{item.channel_days ?? '—'}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-500 dark:text-slate-400">{item.last_activity_date ? fmtLeadDate(item.last_activity_date) : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -685,15 +708,15 @@ function ItemActivitySection({
                 <Link href={`/inventory/${item.item_id}`} className="break-words font-semibold leading-snug text-slate-900 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-white">
                   {item.item_display_name}
                 </Link>
-                {itemActiveChannelsLabel(item) && <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{itemActiveChannelsLabel(item)}</p>}
+                <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{subline(item)}</p>
                 <div className="mt-2 grid grid-cols-4 gap-2">
-                  <MiniStat label="Leads" value={<DrillValue href={win ? itemAttributedLeadsUrl(win, drill(item), returnTo) ?? undefined : undefined}>{item.item_attributed_leads}</DrillValue>} tone="cyan" />
-                  <MiniStat label={<MetricLabel help="seriousPlus" />} value={<DrillValue href={win ? itemSeriousPlusUrl(win, drill(item), returnTo) ?? undefined : undefined}>{item.serious_plus_attributed_leads}</DrillValue>} tone="violet" />
-                  <MiniStat label={<MetricLabel help="offersAttributed" />} value={<DrillValue href={win ? itemOffersUrl(win, drill(item), returnTo) ?? undefined : undefined}>{item.offer_attributed_leads}</DrillValue>} tone="slate" />
-                  <MiniStat label={<MetricLabel help="channelDays" />} value={item.channel_listing_days} />
+                  <MiniStat label="Leads" value={<DrillValue href={link(item, item.lead_count)}>{item.lead_count}</DrillValue>} tone="cyan" />
+                  <MiniStat label={<MetricLabel help="itemNegotiatingPlus" />} value={<DrillValue href={link(item, item.negotiating_plus_count, { seriousPlus: true })}>{item.negotiating_plus_count}</DrillValue>} tone="violet" />
+                  <MiniStat label={<MetricLabel help="itemOffers" />} value={<DrillValue href={link(item, item.offer_count, { offers: true })}>{item.offer_count}</DrillValue>} tone="slate" />
+                  <MiniStat label={<MetricLabel help="itemChannelDays" />} value={item.channel_days ?? '—'} />
                 </div>
                 <p className="mt-2 border-t border-slate-100 pt-2 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                  Last Lead <span className="ml-1 tabular-nums text-slate-700 dark:text-slate-200">{item.last_attributed_lead_date ? fmtLeadDate(item.last_attributed_lead_date) : '—'}</span>
+                  Last Activity <span className="ml-1 tabular-nums text-slate-700 dark:text-slate-200">{item.last_activity_date ? fmtLeadDate(item.last_activity_date) : '—'}</span>
                 </p>
               </div>
             ))}

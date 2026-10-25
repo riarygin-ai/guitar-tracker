@@ -135,7 +135,7 @@ console.log('\n[D — /leads item_attributed semantics]');
   check('/api/leads validates item cohort params (item_id + item_from + item_to together) and stays GET-only', /item_from/.test(route) && /itemAttribution/.test(route) && !/export async function (POST|PUT|PATCH|DELETE)/.test(route));
 }
 
-console.log('\n[E — /listings: section placement, window, fetching]');
+console.log('\n[E — /listings: section placement, fetching]');
 {
   const src = read('src', 'app', 'listings', 'page.tsx');
   const page = strip(src);
@@ -143,14 +143,11 @@ console.log('\n[E — /listings: section placement, window, fetching]');
   const order = ['<OverviewSection evidence', '<MarketActivitySection', '<ChannelActivitySection', '<ItemActivitySection', '<UnlistedSection evidence'].map(idx);
   check('section order: Overview, Market, Channel, Lead Activity by Item, Unlisted', order.every((i) => i > 0) && order.every((v, i) => i === 0 || v > order[i - 1]), order);
   check('exactly one Trend Window control (no second selector for items)', (page.match(/<TrendWindowControl/g) ?? []).length === 1 && (page.match(/TREND_WEEKS_OPTIONS\.map/g) ?? []).length === 1);
-  check('item section takes the page-level trendWeeks', /<ItemActivitySection[^>]*trendWeeks=\{trendWeeks\}/.test(page));
-  check('window comes from Listing Demand Evidence weekly_trend via itemActivityWindow(demandEvidence)', /itemActivityWindow\(demandEvidence\)/.test(page) && !/new Date|Date\.UTC|setDate/.test(page));
-  check('item data derives from Demand Evidence of the CURRENT trend window (trend_window_weeks === trendWeeks)', /demandRes\.data\.trend_window_weeks === trendWeeks/.test(page) && /itemActivityWindow\(demandEvidence\)/.test(page));
-  check('one compact request per window, keyed on weeks + exact from/to (never per item / per row)', /itemActivityKey\(trendWeeks, itemWindow\.from, itemWindow\.to\)/.test(page) && (page.match(/fetchListingItemActivity\(/g) ?? []).length === 1 && !/\/api\/leads/.test(page));
-  check('other windows are never shown (data is looked up by the CURRENT window key)', /useSwrResource<ItemActivityEntry\[\]>\(listingsCache, itemKey/.test(page));
-  check('no fixed 7-day item table', !/resolveDayCountPreset\(7\)[\s\S]{0,200}fetchListingItemActivity/.test(page));
+  check('Lead Activity by Item is lifetime: no Trend Window / item window props', !/<ItemActivitySection[^>]*(trendWeeks|window)=/.test(page) && !/itemActivityWindow\(/.test(page));
+  check('one request for the whole section, never per item / per row', /useSwrResource<ItemLeadActivityRow\[\]>\(listingsCache, ITEM_LEAD_ACTIVITY_KEY/.test(page) && (page.match(/fetchItemLeadActivity\(/g) ?? []).length === 1 && !/\/api\/leads/.test(page));
   check('no duplicate/local trend state', !/useState<TrendWeeks>/.test(page) && /parseTrendWeeksParam\(searchParams\.get\('trend_weeks'\)\)/.test(page));
-  check('Overview and Unlisted stay snapshot-only (no trendWeeks/itemWindow)', !/function OverviewSection[\s\S]*?\n}\n/.exec(page)?.[0].match(/trendWeeks|itemWindow/) && !/function UnlistedSection[\s\S]*?\n}\n/.exec(page)?.[0].match(/trendWeeks|itemWindow/));
+  check('item sort lives in the URL (item_sort), so Back restores it', /parseItemActivitySort\(searchParams\.get\('item_sort'\)\)/.test(page));
+  check('Overview and Unlisted stay snapshot-only (no trendWeeks)', !/function OverviewSection[\s\S]*?\n}\n/.exec(page)?.[0].match(/trendWeeks/) && !/function UnlistedSection[\s\S]*?\n}\n/.exec(page)?.[0].match(/trendWeeks/));
 }
 
 console.log('\n[F — Lead Activity by Item UI]');
@@ -158,24 +155,17 @@ console.log('\n[F — Lead Activity by Item UI]');
   const src = read('src', 'app', 'listings', 'page.tsx');
   const page = strip(src);
   const sec = page.slice(page.indexOf('function ItemActivitySection'), page.indexOf('function UnlistedSection'));
-  const heads = (sec.match(/<th [^>]*>([\s\S]*?)<\/th>/g) ?? []).map((h) => h.replace(/<[^>]+>/g, '').replace(/\{[^}]*\}/g, '').trim());
-  check('desktop columns: Item / Leads / Serious+ / Offers / Channel Days / Last Lead', heads.length === 6 && heads[0] === 'Item' && heads[5] === 'Last Lead', heads);
   check('desktop table exists and is hidden below md; mobile cards are md:hidden', /hidden overflow-x-auto[^"]*md:block/.test(sec) && /md:hidden/.test(sec) && /data-item-card/.test(sec) && /data-item-row/.test(sec));
-  check('uses sortItemActivity (default order) and keeps zero-lead items', /sortItemActivity\(items\)/.test(sec) && !/filter\(\(?i(tem)?\)? =>[^)]*item_attributed_leads/.test(sec));
-  check('active channel names under the item name', /itemActiveChannelsLabel\(item\)/.test(sec));
   check('item name links to Inventory item detail (both layouts)', (sec.match(/href=\{`\/inventory\/\$\{item\.item_id\}`\}/g) ?? []).length === 2);
-  check('Leads / Serious+ / Offers drill-downs use the URL builders (desktop + mobile)', ['itemAttributedLeadsUrl', 'itemSeriousPlusUrl', 'itemOffersUrl'].every((b) => (sec.match(new RegExp(`${b}\\(win`, 'g')) ?? []).length === 2));
-  check('Channel Days and Last Lead are NOT links', !/DrillValue[^>]*>\{item\.channel_listing_days|DrillValue[^>]*>\{item\.last_attributed_lead_date/.test(sec) && !/<Link[^>]*>\s*\{item\.(channel_listing_days|last_attributed_lead_date)/.test(sec));
-  check('rows are not whole-row clickable (item nav vs lead drill-down stay distinct)', !/<tr[^>]*onClick/.test(sec) && !/onClick/.test(sec));
-  check('no scores / hot-cold / recommendations / message or money columns', !/\b(hot|cold|score|recommend)/i.test(sec) && !/message|best_cash|trade_est|cash_component|roi|profit|purpose|notes|lead_id/i.test(sec.replace(/MetricLabel|md:hidden|icon="message"/g, '')));
-  check('empty state keeps the section (no items)', /No currently listed items\./.test(sec));
-  check('InfoTips: section title, Offers, Channel Days', /titleHelp="leadActivityByItem"/.test(sec) && /help="offersAttributed"/.test(sec) && /help="channelDays"/.test(sec));
-  check('help copy matches spec', LISTING_HELP.leadActivityByItem.text === 'Buyer lead activity attributed to currently listed items during the selected Trend Window.'
-    && LISTING_HELP.channelDays.text === 'Total item-channel listing exposure during the selected Trend Window. One item listed on one channel for one day equals one Channel Day.'
-    && LISTING_HELP.offersAttributed.text === 'Attributed leads with a recorded CASH, TRADE, or MIXED offer.');
-  check('semantic colors: Leads cyan pill, Serious+ violet, Offers restrained slate, exposure subdued', /TONE\.cyan\.pill/.test(sec) && /TONE\.violet\.text/.test(sec) && /text-slate-700 dark:text-slate-200/.test(sec) && /text-slate-500 dark:text-slate-400">\{item\.channel_listing_days/.test(sec));
+  check('Channel Days and Last Activity are NOT links', !/DrillValue[^>]*>\{item\.channel_days|DrillValue[^>]*>\{item\.last_activity_date/.test(sec));
+  check('rows are not whole-row clickable', !/<tr[^>]*onClick/.test(sec));
+  check('no scores / hot-cold / recommendations / money columns', !/\b(hot|cold|score|recommend)/i.test(sec) && !/best_cash|trade_est|cash_component|roi|profit|notes|lead_id/i.test(sec));
+  check('empty state keeps the section', /No open items have leads yet\./.test(sec));
+  check('InfoTips: section title + every metric column', /titleHelp="leadActivityByItem"/.test(sec) && ['itemLeads', 'itemNegotiatingPlus', 'itemOffers', 'itemChannelDays', 'itemLastActivity'].every((k) => sec.includes(`help="${k}"`)));
+  check('help copy describes the lifetime / open-item scope', /listed or not/.test(LISTING_HELP.leadActivityByItem.text) && /every channel and listing cycle/.test(LISTING_HELP.itemChannelDays.text) && /not when the newest lead first appeared/.test(LISTING_HELP.itemLastActivity.text));
+  check('semantic colors: Leads cyan pill, Negotiating+ violet, Offers slate, exposure subdued', /TONE\.cyan\.pill/.test(sec) && /TONE\.violet\.text/.test(sec) && /text-slate-700 dark:text-slate-200/.test(sec) && /text-slate-500 dark:text-slate-400">\{item\.channel_days/.test(sec));
   check('no hardcoded channel names', !/['"`>](Reverb|Marketplace|Kijiji)['"`<]/.test(sec));
-  check('mobile card is compact: 4-up stat grid + one Last Lead line', /grid grid-cols-4 gap-2/.test(sec) && /Last Lead/.test(sec));
+  check('mobile card is compact: 4-up stat grid + one Last Activity line', /grid grid-cols-4 gap-2/.test(sec) && /Last Activity/.test(sec));
 }
 
 console.log('\n[G — error isolation (Listing Evidence vs Demand Evidence)]');

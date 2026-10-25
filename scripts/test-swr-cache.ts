@@ -291,13 +291,13 @@ async function main() {
     check('a CacheClearedError is not surfaced as a page error', /CacheClearedError/.test(hook));
 
     const page = strip(read('src', 'app', 'listings', 'page.tsx'));
-    check('all three sources use the shared cache hook', (page.match(/useSwrResource</g) ?? []).length === 3 && /LISTING_EVIDENCE_KEY/.test(page) && /listingDemandKey\(trendWeeks, demandStart, demandEnd\)/.test(page) && /itemActivityKey\(trendWeeks, itemWindow\.from, itemWindow\.to\)/.test(page));
+    check('all three sources use the shared cache hook', (page.match(/useSwrResource</g) ?? []).length === 3 && /LISTING_EVIDENCE_KEY/.test(page) && /listingDemandKey\(trendWeeks, demandStart, demandEnd\)/.test(page) && /useSwrResource<ItemLeadActivityRow\[\]>\(listingsCache, ITEM_LEAD_ACTIVITY_KEY/.test(page));
     check('Market + Channel Activity share ONE demand resource (single fetch site)', (page.match(/fetchListingDemandEvidenceForCurrentUser\(/g) ?? []).length === 1);
     check('no ad-hoc fetch effects remain in the page', !/useEffect/.test(page) && !/\.then\(\(result\)/.test(page));
     check('background refresh never dims or hides content (no opacity mask, subtle "Updating…" only)', !/opacity-60/.test(page) && /Updating…/.test(page) && /role="status"/.test(page));
     check('stale demand data is validated against the selected trend window', /demandRes\.data\.trend_window_weeks === trendWeeks/.test(page));
     check('Listing Evidence failure still does not hide demand sections (independence preserved)', !/<MarketActivitySection|<ChannelActivitySection|<ItemActivitySection/.test(Array.from(page.matchAll(/\{evidence && \(([\s\S]*?)\n {6}\)\}/g)).map((m) => m[1]).join('\n')));
-    check('the Trend Window is still URL-driven (no local trend state)', /parseTrendWeeksParam\(searchParams\.get\('trend_weeks'\)\)/.test(page) && !/useState/.test(page));
+    check('the Trend Window is still URL-driven (no local trend state)', /parseTrendWeeksParam\(searchParams\.get\('trend_weeks'\)\)/.test(page) && !/useState<TrendWeeks>|useState\(trend/.test(page) && (page.match(/useState\(/g) ?? []).length === 1 && /const \[query, setQuery\] = useState\(''\)/.test(page));
   }
 
   console.log('\n[M — invalidation wiring (existing mutations)]');

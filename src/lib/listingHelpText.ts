@@ -26,7 +26,27 @@ export const LISTING_HELP = {
   },
   leadActivityByItem: {
     label: 'Lead Activity by Item',
-    text: 'Buyer lead activity attributed to currently listed items during the selected Trend Window.',
+    text: 'Open inventory items (listed or not) that have generated leads. Counts cover each item’s full lead history; sorted by most recent buyer activity by default.',
+  },
+  itemLeads: {
+    label: 'Leads',
+    text: 'All leads ever recorded for the item.',
+  },
+  itemNegotiatingPlus: {
+    label: 'Negotiating+',
+    text: 'Leads that reached Negotiating, High Intent or Converted (peak stage — the highest stage reached, not the current one).',
+  },
+  itemOffers: {
+    label: 'Offers',
+    text: 'Leads with a recorded CASH, TRADE, or MIXED offer.',
+  },
+  itemChannelDays: {
+    label: 'Channel Days',
+    text: 'Total days the item has been listed, summed across every channel and listing cycle. One item listed on one channel for one day equals one Channel Day.',
+  },
+  itemLastActivity: {
+    label: 'Last Activity',
+    text: 'The most recent contact on any of the item’s leads (messages or offers), not when the newest lead first appeared.',
   },
   channelDays: {
     label: 'Channel Days',

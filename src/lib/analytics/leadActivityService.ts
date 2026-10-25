@@ -380,7 +380,7 @@ async function loadOpenItems(client: SupabaseClient): Promise<OpenItemRef[]> {
 }
 
 /** Stored item_leads for the given items, through the caller's RLS-scoped client, with canonical channel names resolved. */
-async function loadLeadsForItems(client: SupabaseClient, itemIds: number[]): Promise<LoadedLead[]> {
+export async function loadLeadsForItems(client: SupabaseClient, itemIds: number[]): Promise<LoadedLead[]> {
   const raw: Record<string, unknown>[] = [];
   for (let i = 0; i < itemIds.length; i += ID_CHUNK) {
     const chunk = itemIds.slice(i, i + ID_CHUNK);
