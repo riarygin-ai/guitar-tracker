@@ -55,7 +55,7 @@ import { pipeline } from '@supabase/middleware';
 import { fromSupabaseUrl, withOAuthProtectedResource, withSupabase } from '@supabase/server';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getItemContextForMcp } from '@/lib/analytics/itemContextMcp';
+import { buildItemContextToolResult } from '@/lib/analytics/itemContextToolResult';
 import { searchInventoryForUser, INVENTORY_SEARCH_MAX_RESULTS } from '@/lib/inventorySearchService';
 import { getInventoryAnalysisForUser } from '@/lib/analytics/inventoryAnalysisService';
 import { getLeadActivityForUser, LeadActivityServiceError } from '@/lib/analytics/leadActivityService';
@@ -110,7 +110,8 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
         '(never truncated), current snapshot (peak_stage, status/outcome, negotiation_rounds, responsiveness incl. ' +
         'waiting_on, latest buyer offer, offer_assessment, message totals, deal_id, needs_resolution, version) and its ' +
         'lead_events history. Default event policy returns the most recent events per lead and states events_omitted; ' +
-        'pass lead_id + full_history: true for every event. Use the lead_id/version from here for record_lead_interaction ' +
+        'pass lead_id + full_history: true for every event. When the item has a stored photo it follows the JSON as one ' +
+        'image content block (JPEG/PNG/WebP). Use the lead_id/version from here for record_lead_interaction ' +
         "and void_lead_event. Only works for an item belonging to the signed-in user — any other item_id behaves exactly " +
         'like an unavailable item.',
       inputSchema: z.object({
@@ -120,12 +121,7 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ item_id, lead_id, full_history }) => {
-      const result = await getItemContextForMcp(supabase, item_id, { lead_id, full_history });
-      if (result === null) return { content: [{ type: 'text', text: 'Item not found.' }], isError: true };
-      if ('error' in result) return { content: [{ type: 'text', text: 'Lead not found on this item.' }], isError: true };
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-    },
+    async ({ item_id, lead_id, full_history }) => buildItemContextToolResult(supabase, { item_id, lead_id, full_history }),
   );
 
   server.registerTool(

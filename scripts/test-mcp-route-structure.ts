@@ -95,7 +95,7 @@ function main() {
     );
     check(
       'every tool handler is called with the request-scoped `supabase` from the pipeline context, not a module-level client',
-      /searchInventoryForUser\(supabase,/.test(route) && /getItemContextForMcp\(supabase,/.test(route) &&
+      /searchInventoryForUser\(supabase,/.test(route) && /buildItemContextToolResult\(supabase,/.test(route) &&
       /recordLeadInteraction\(supabase,/.test(route) && /voidLeadEvent\(supabase,/.test(route) &&
       /getInventoryAnalysisForUser\(supabase,/.test(route) && /getLeadActivityForUser\(supabase,/.test(route),
     );
