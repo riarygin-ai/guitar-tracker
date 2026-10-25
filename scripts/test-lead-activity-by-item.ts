@@ -121,7 +121,7 @@ function structureChecks() {
   check('search input + sort select present', sec.includes('data-item-search') && sec.includes('data-item-sort') && sec.includes('ITEM_ACTIVITY_SORTS.map'));
   check('search + sort over the full row set (viewItemLeadActivity on all items)', sec.includes('viewItemLeadActivity(items, query, sort)'));
   check('one request for the section (new endpoint), no Trend Window / item window dependency', page.includes('useSwrResource<ItemLeadActivityRow[]>(listingsCache, ITEM_LEAD_ACTIVITY_KEY') && (page.match(/fetchItemLeadActivity\(/g) ?? []).length === 1 && !/itemActivityWindow|fetchListingItemActivity/.test(page) && !/trendWeeks/.test(sec));
-  check('drill-downs: item\'s leads on /leads (Negotiating+ / Offers filters)', sec.includes('leadsUrl({ itemId: item.item_id, returnTo, ...extra })') && sec.includes('{ seriousPlus: true }') && sec.includes('{ offers: true }'));
+  check('drill-downs: item\'s leads on /leads (Negotiating+ / Offers filters)', sec.includes('leadsUrl({ itemId: item.item_id, returnTo, ...extra })') && sec.includes('{ negotiatingPlus: true }') && sec.includes('{ offers: true }'));
   check('unlisted items say so; current status shown', sec.includes("'Not listed'") && sec.includes('itemLeadStatusLabel(item)'));
   const svc = src('src/lib/analytics/itemLeadActivity.ts');
   check('service: open inventory from listing evidence; leads chunked via loadLeadsForItems (no N+1); no service_role', svc.includes("rpc('build_listing_evidence_v1_0_for_current_user')") && svc.includes('loadLeadsForItems(client, items.map') && !/SERVICE_ROLE|serviceClient/.test(svc));

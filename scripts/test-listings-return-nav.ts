@@ -91,11 +91,11 @@ console.log('\n[D — return_to survives /leads interactions]');
   const f = parse(itemAttributedLeadsUrl(win, item, '/listings?trend_weeks=8')!);
   check('patching a filter keeps return_to', patchLeadFilters(f, { status: 'OPEN' }).returnTo === '/listings?trend_weeks=8');
   check('removing the cohort / editing dates keeps return_to', patchLeadFilters(f, { itemAttributed: false }).returnTo === f.returnTo && patchLeadFilters(f, { from: '2026-01-01' }).returnTo === f.returnTo);
-  check('leadsUrl re-emits return_to and round-trips', parse(leadsUrl(patchLeadFilters(f, { quality: 'SERIOUS' }))).returnTo === '/listings?trend_weeks=8');
+  check('leadsUrl re-emits return_to and round-trips', parse(leadsUrl(patchLeadFilters(f, { stage: 'NEGOTIATING' }))).returnTo === '/listings?trend_weeks=8');
   check('EMPTY filters have no return_to', EMPTY_LEAD_FILTERS.returnTo === null && leadsUrl(EMPTY_LEAD_FILTERS) === '/leads');
   const page = strip(read('src', 'app', 'leads', 'page.tsx'));
-  check('"Clear filters" keeps return_to', /router\.push\(leadsUrl\(\{ returnTo: filters\.returnTo \}\)/.test(page));
-  check('"Clear filters" does not appear just because return_to exists', /leadsUrl\(\{ \.\.\.filters, expected: null, returnTo: null \}\) !== '\/leads'/.test(page));
+  check('"Clear filters" keeps return_to', /router\.push\(leadsUrl\(\{ returnTo: filters\.returnTo, sort: filters\.sort, dir: filters\.dir \}\)/.test(page));
+  check('"Clear filters" does not appear just because return_to exists', /leadsUrl\(\{ \.\.\.filters, expected: null, returnTo: null, sort: null \}\) !== '\/leads'/.test(page));
 }
 
 console.log('\n[E — Inventory-style back arrow on /leads]');

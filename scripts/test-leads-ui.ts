@@ -78,14 +78,14 @@ console.log('\n[B — filters]');
     mk({ item_name: '2015 Gibson ES-335', deal_channel_id: 1, channel_name: 'Marketplace', lead_quality: 'SERIOUS', offer_type: 'TRADE', trade_item: 'Fender Stratocaster', cash_component: 0, status: 'OPEN', first_contact_at: '2026-09-11', notes: 'wants to swap' }),
     mk({ item_name: 'Marshall JCM800', deal_channel_id: 2, channel_name: 'Kijiji', lead_quality: 'HIGH_INTENT', offer_type: 'CASH', best_cash_offer: 900, status: 'COMPLETED', first_contact_at: '2026-09-15' }),
     mk({ item_name: 'Boss DS-1', deal_channel_id: null, channel_name: null, source_channel: 'Other', lead_quality: 'LOW', offer_type: 'NONE', status: 'GHOSTED', first_contact_at: '2026-08-01' }),
-    mk({ item_name: 'Fender Twin', deal_channel_id: 3, channel_name: 'Reverb', lead_quality: 'ENGAGED', offer_type: 'MIXED', trade_item: 'Vox AC30', cash_component: -200, status: 'AGREED', first_contact_at: null }),
+    mk({ item_name: 'Fender Twin', deal_channel_id: 3, channel_name: 'Reverb', lead_quality: 'ENGAGED', peak_stage: 'ENGAGED', offer_type: 'MIXED', trade_item: 'Vox AC30', cash_component: -200, status: 'AGREED', first_contact_at: null }),
   ];
   const f = (patch: Partial<typeof EMPTY_LEAD_FILTERS>) => applyLeadFilters(rows, { ...EMPTY_LEAD_FILTERS, ...patch }, null).map((r) => r.item_name);
   check('no filters -> everything (incl. undated)', f({}).length === 4);
   check('channel', JSON.stringify(f({ channel: 2 })) === JSON.stringify(['Marshall JCM800']));
   check('channel "none" -> no normalized channel', JSON.stringify(f({ channel: NO_CHANNEL })) === JSON.stringify(['Boss DS-1']));
-  check('quality', JSON.stringify(f({ quality: 'ENGAGED' })) === JSON.stringify(['Fender Twin']));
-  check('Serious+ = SERIOUS + HIGH_INTENT', JSON.stringify(f({ seriousPlus: true })) === JSON.stringify(['2015 Gibson ES-335', 'Marshall JCM800']));
+  check('stage filter uses peak_stage', JSON.stringify(f({ stage: 'ENGAGED' })) === JSON.stringify(['Fender Twin']) && f({ stage: 'NEGOTIATING' }).length === 0);
+  check('Negotiating+ falls back to legacy SERIOUS/HIGH_INTENT only while peak_stage is unset', JSON.stringify(f({ negotiatingPlus: true })) === JSON.stringify(['2015 Gibson ES-335', 'Marshall JCM800']));
   check('offer type', JSON.stringify(f({ offerType: 'MIXED' })) === JSON.stringify(['Fender Twin']));
   check('Offers quick = offer_type != NONE', f({ offers: true }).length === 3 && !f({ offers: true }).includes('Boss DS-1'));
   check('status', JSON.stringify(f({ status: 'COMPLETED' })) === JSON.stringify(['Marshall JCM800']));
@@ -103,10 +103,10 @@ console.log('\n[B — filters]');
 
 console.log('\n[C — URL is the source of truth; invalid values fail safely]');
 {
-  const full = parseLeadFilters(params('search=gibson&channel_id=2&quality=SERIOUS&serious_plus=1&offer_type=TRADE&status=OPEN&from=2026-09-01&to=2026-09-30&item_id=42&offers=1'));
-  check('every documented param parses', full.search === 'gibson' && full.channel === 2 && full.quality === 'SERIOUS' && full.seriousPlus && full.offerType === 'TRADE' && full.status === 'OPEN' && full.from === '2026-09-01' && full.to === '2026-09-30' && full.itemId === 42 && full.offers);
+  const full = parseLeadFilters(params('search=gibson&name=Matt%20Maccallum&channel_id=2&stage=NEGOTIATING&negotiating_plus=1&offer_type=TRADE&status=OPEN&from=2026-09-01&to=2026-09-30&item_id=42&offers=1&sort=offer&dir=desc'));
+  check('every documented param parses', full.search === 'gibson' && full.name === 'Matt Maccallum' && full.channel === 2 && full.stage === 'NEGOTIATING' && full.negotiatingPlus && full.sort === 'offer' && full.dir === 'desc' && full.offerType === 'TRADE' && full.status === 'OPEN' && full.from === '2026-09-01' && full.to === '2026-09-30' && full.itemId === 42 && full.offers);
   check('no params -> no filters', JSON.stringify(parseLeadFilters(params(''))) === JSON.stringify(EMPTY_LEAD_FILTERS));
-  const bad = parseLeadFilters(params('channel_id=abc&quality=BOGUS&offer_type=x&status=nope&from=2026-13-40&to=yesterday&item_id=-3&serious_plus=yes&expected=abc'));
+  const bad = parseLeadFilters(params('channel_id=abc&stage=BOGUS&quality=SERIOUS&sort=bogus&dir=sideways&name=%20%20&offer_type=x&status=nope&from=2026-13-40&to=yesterday&item_id=-3&serious_plus=yes&expected=abc'));
   check('invalid values are ignored, not thrown', JSON.stringify(bad) === JSON.stringify(EMPTY_LEAD_FILTERS), bad);
   check('impossible calendar date rejected', !isValidDateParam('2026-02-30') && isValidDateParam('2026-02-28') && !isValidDateParam('2026-2-3'));
   check('attributed needs channel + both dates, else ignored', !parseLeadFilters(params('attributed=1&channel_id=1')).attributed && !parseLeadFilters(params('attributed=1&from=2026-09-01&to=2026-09-07')).attributed && parseLeadFilters(params('attributed=1&channel_id=1&from=2026-09-01&to=2026-09-07')).attributed);
@@ -120,14 +120,14 @@ console.log('\n[C — URL is the source of truth; invalid values fail safely]');
   check('any patch clears the diagnostic expected count', patchLeadFilters({ ...attributed, expected: 16 }, { status: 'OPEN' }).expected === null);
   check('attributionRequest only for a complete cohort', attributionRequest(attributed)?.channelId === 1 && attributionRequest(EMPTY_LEAD_FILTERS) === null);
   check('quick filters map to real params', activeQuickFilter(EMPTY_LEAD_FILTERS) === 'all' && activeQuickFilter(patchLeadFilters(EMPTY_LEAD_FILTERS, quickFilterPatch('open'))) === 'open'
-    && activeQuickFilter(patchLeadFilters(EMPTY_LEAD_FILTERS, quickFilterPatch('serious'))) === 'serious' && activeQuickFilter(patchLeadFilters(EMPTY_LEAD_FILTERS, quickFilterPatch('offers'))) === 'offers'
+    && activeQuickFilter(patchLeadFilters(EMPTY_LEAD_FILTERS, quickFilterPatch('negotiating'))) === 'negotiating' && activeQuickFilter(patchLeadFilters(EMPTY_LEAD_FILTERS, quickFilterPatch('offers'))) === 'offers'
     && activeQuickFilter(patchLeadFilters(EMPTY_LEAD_FILTERS, quickFilterPatch('completed'))) === 'completed');
   check('exactly five quick filters', (read('src', 'lib', 'leads', 'leadFilters.ts').match(/\{ key: '/g) ?? []).length === 5);
 
   const page = strip(read('src', 'app', 'leads', 'page.tsx'));
   check('page derives filters from searchParams every render', /parseLeadFilters\(\(k\) => searchParams\.get\(k\)\)/.test(page));
   check('page has NO filter useState (no synced duplicate)', !/useState<LeadFilters/.test(page) && !/const \[(filters|search|channel|quality|status|offerType|from|to)\b/.test(page));
-  check('changes are written to the URL via router.push/replace', /router\[mode\]\(leadsUrl\(/.test(page) && /router\.push\(leadsUrl\(\{ returnTo: filters\.returnTo \}\)/.test(page));
+  check('changes are written to the URL via router.push/replace', /router\[mode\]\(leadsUrl\(/.test(page) && /router\.push\(leadsUrl\(\{ returnTo: filters\.returnTo, sort: filters\.sort, dir: filters\.dir \}\)/.test(page));
 }
 
 console.log('\n[D — main list, mobile cards, detail]');
@@ -136,15 +136,17 @@ console.log('\n[D — main list, mobile cards, detail]');
   const page = strip(src);
   const table = strip(src.slice(src.indexOf('{/* Desktop table */}'), src.indexOf('{/* Mobile cards */}')));
   const cards = strip(src.slice(src.indexOf('{/* Mobile cards */}')));
-  const headers = (table.match(/<th [^>]*>([\s\S]*?)<\/th>/g) ?? []).map((h) => h.replace(/<[^>]+>/g, '').replace(/\{[^}]*\}/g, '').trim());
-  check('desktop columns are exactly the important nine (Name added before Item)', JSON.stringify(headers) === JSON.stringify(['Date', 'Name', 'Item', 'Channel', 'Quality', 'Offer', 'Status', 'Messages', 'Last Contact']), headers);
+  const colBlock = src.slice(src.indexOf('const COLUMNS'), src.indexOf('];', src.indexOf('const COLUMNS')));
+  const headers = Array.from(colBlock.matchAll(/label: '([^']+)'/g)).map((m) => m[1]);
+  check('desktop columns are exactly the nine, Stage replacing Quality', JSON.stringify(headers) === JSON.stringify(['Date', 'Name', 'Item', 'Channel', 'Stage', 'Offer', 'Status', 'Messages', 'Last Contact']) && /COLUMNS\.map/.test(table), headers);
+  check('no legacy Quality in the main list or filters', !/Quality|QUALITY_LABEL|lead_quality|All qualities/.test(page) && /All stages/.test(page));
   check('main list never renders lead_id / UUIDs', !/lead_id|\.lead\.id/.test(table) && !/lead_id/.test(cards));
   check('main list omits detail-only fields', !/initial_cash_offer|best_cash_offer|trade_est_value|cash_component|outcome_reason|source_updated_at|last_imported_at|\.notes/.test(table + cards));
   check('offer via formatOfferSummary; messages via fmtMessages; channel via leadChannelLabel', /formatOfferSummary\(lead\)/.test(table) && /fmtMessages\(lead\)/.test(table) && /leadChannelLabel\(lead\)/.test(table));
   check('channels come from the payload (no hardcoded names)', !/['"`>](Reverb|Marketplace|Kijiji)['"`<]/.test(page) && /payload\?\.channels/.test(page));
   check('Messages header has the ⓘ help', /LEAD_HELP\.messages/.test(table));
   check('mobile cards exist (md:hidden) and desktop table is hidden on mobile', /md:hidden/.test(cards) && /hidden overflow-x-auto[^"]*md:block/.test(table));
-  check('mobile card: item name dominant, badges, offer, messages, last contact', /text-base font-semibold/.test(cards) && /QualityBadge/.test(cards) && /StatusBadge/.test(cards) && /formatOfferSummary/.test(cards) && /Last contact:/.test(cards));
+  check('mobile card: item name dominant, badges, offer, messages, last contact', /text-base font-semibold/.test(cards) && /StageBadge/.test(cards) && /StatusBadge/.test(cards) && /formatOfferSummary/.test(cards) && /Last contact:/.test(cards));
   check('filter controls are full-width/min-w-0 and the grid wraps', /min-w-0/.test(page) && /grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6/.test(page));
   check('page size 50 with a Show more control', /PAGE_SIZE = 50/.test(page) && /Show more/.test(page));
   check('concise count ("N leads")', /\{filtered\.length\} \{filtered\.length === 1 \? 'lead' : 'leads'\}/.test(page) && !/Showing \d/.test(page));
@@ -153,8 +155,8 @@ console.log('\n[D — main list, mobile cards, detail]');
   check('reconciliation diagnostic logs on mismatch', /drill-down count mismatch/.test(page));
   check('failures are local (error banner on /leads only)', /role="alert"/.test(page));
 
-  const detail = strip(read('src', 'components', 'leads', 'LeadDetailPanel.tsx'));
-  for (const label of ['First contact', 'Last contact', 'Channel', 'Quality', 'Status', 'Outcome reason', 'Buyer messages', 'Our messages', 'Offer type', 'Initial cash offer', 'Best cash offer', 'Trade item', 'Cash component', 'Trade est. value', 'Lead ID', 'Source channel', 'Source updated', 'Last imported']) {
+  const detail = strip(read('src', 'components', 'leads', 'LeadDetailPanel.tsx') + read('src', 'components', 'leads', 'LeadHistorySection.tsx'));
+  for (const label of ['First contact', 'Last contact', 'Channel', 'Peak stage', 'Status', 'Outcome reason', 'Buyer messages', 'Our messages', 'Offer type', 'Initial cash offer', 'Best cash offer', 'Trade item', 'Cash component', 'Trade est. value', 'Lead ID', 'Legacy quality', 'Source channel', 'Source updated', 'Last imported']) {
     check(`detail shows "${label}"`, detail.includes(`label="${label}`));
   }
   check('detail shows notes safely (React-escaped, wrapped)', /whitespace-pre-wrap break-words/.test(detail) && !/dangerouslySetInnerHTML/.test(detail));
@@ -166,13 +168,13 @@ console.log('\n[D — main list, mobile cards, detail]');
   check('dialog is accessible (role, aria-modal, Escape, focus return)', /role="dialog"/.test(detail) && /aria-modal="true"/.test(detail) && /Escape/.test(detail) && /previouslyFocused/.test(detail));
   check('mobile sheet + desktop drawer classes', /rounded-t-3xl/.test(detail) && /md:w-\[30rem\]/.test(detail));
   check('only edit control is the contact-name form; no textareas or direct table writes', (detail.match(/<form/g) ?? []).length === 1 && detail.includes('data-contact-name-form') && !/<form/.test(page) && !/<textarea|\.update\(|\.insert\(|\.upsert\(|method: 'P/.test(detail + page));
-  check('help definitions exist (Serious+, Messages, Trade Estimated Value, Cash Component)',
-    LEAD_HELP.seriousPlus.text === 'Leads that reached Serious or High Intent. Quality reflects the highest level the lead has reached.'
+  check('help definitions exist (Negotiating+, Stage, Messages, Trade Estimated Value, Cash Component)',
+    LEAD_HELP.negotiatingPlus.label === 'Negotiating+' && /Negotiating, High Intent or Converted/.test(LEAD_HELP.negotiatingPlus.text) && /Peak stage/.test(LEAD_HELP.stage.text)
     && LEAD_HELP.messages.text === 'Buyer messages / our messages. Counts are the current lifetime totals stored for this lead.'
     && LEAD_HELP.tradeEstValue.text.startsWith('Working estimated value recorded for the offered trade item.')
     && LEAD_HELP.cashComponent.text === 'Positive means cash to us. Negative means cash from us.');
   const badges = read('src', 'components', 'leads', 'LeadBadges.tsx');
-  check('badges always render a text label', /QUALITY_LABEL\[quality\]/.test(badges) && /STATUS_LABEL\[status\]/.test(badges));
+  check('badges always render a text label', /STAGE_LABEL\[stage\]/.test(badges) && !/QualityBadge/.test(badges) && /STATUS_LABEL\[status\]/.test(badges));
   check('no alarming red in badges', !/red-|rose-/.test(badges));
 }
 
@@ -180,9 +182,10 @@ console.log('\n[E — /listings drill-down wiring & URL builders]');
 {
   const period = { startDate: '2026-09-11', endDate: '2026-09-17' };
   check('market week Leads -> exact from/to (+expected)', marketWeekLeadsUrl({ startDate: '2026-09-11', endDate: '2026-09-17', leadsStarted: 9, seriousPlusLeads: 4 }) === '/leads?from=2026-09-11&to=2026-09-17&expected=9');
-  check('market week Serious+ adds serious_plus', marketWeekSeriousPlusUrl({ startDate: '2026-09-11', endDate: '2026-09-17', leadsStarted: 9, seriousPlusLeads: 4 }) === '/leads?from=2026-09-11&to=2026-09-17&serious_plus=1&expected=4');
+  check('market week Serious+ adds negotiating_plus', marketWeekSeriousPlusUrl({ startDate: '2026-09-11', endDate: '2026-09-17', leadsStarted: 9, seriousPlusLeads: 4 }) === '/leads?from=2026-09-11&to=2026-09-17&negotiating_plus=1&expected=4');
   check('channel Attributed Leads -> channel + exact period + attributed cohort', channelAttributedLeadsUrl(period, { dealChannelId: 1, attributedLeads: 16, seriousPlusLeads: 9 }) === '/leads?channel_id=1&from=2026-09-11&to=2026-09-17&attributed=1&expected=16');
-  check('channel Serious+ adds serious_plus on the same cohort', channelSeriousPlusUrl(period, { dealChannelId: 1, attributedLeads: 16, seriousPlusLeads: 9 }) === '/leads?channel_id=1&from=2026-09-11&to=2026-09-17&attributed=1&serious_plus=1&expected=9');
+  check('channel Serious+ adds negotiating_plus on the same cohort', channelSeriousPlusUrl(period, { dealChannelId: 1, attributedLeads: 16, seriousPlusLeads: 9 }) === '/leads?channel_id=1&from=2026-09-11&to=2026-09-17&attributed=1&negotiating_plus=1&expected=9');
+  check('old serious_plus=1 links still parse as Negotiating+', parseLeadFilters(params('serious_plus=1')).negotiatingPlus && leadsUrl(parseLeadFilters(params('serious_plus=1'))) === '/leads?negotiating_plus=1');
   check('zero counts produce no link', marketWeekLeadsUrl({ startDate: 'a', endDate: 'b', leadsStarted: 0, seriousPlusLeads: 0 }) === null && channelAttributedLeadsUrl(period, { dealChannelId: 1, attributedLeads: 0, seriousPlusLeads: 0 }) === null);
 
   const listings = strip(read('src', 'app', 'listings', 'page.tsx'));

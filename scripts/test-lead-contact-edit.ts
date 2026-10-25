@@ -87,9 +87,9 @@ function pureChecks() {
 function structureChecks() {
   console.log('\n[S1 — Leads list]');
   const page = src('src/app/leads/page.tsx');
-  check('desktop table has a Name column before Item', /<th[^>]*>Name<\/th>\s*<th[^>]*>Item<\/th>/.test(page));
-  check('name cell shows contact_name or a neutral dash (never "Unknown")', page.includes('{lead.contact_name ?? <span') && page.includes('>—</span>') && !/['"]Unknown['"]/.test(page));
-  check('mobile cards show the name too', /data-lead-name>\{lead\.contact_name \?\? <span[^>]*>No name<\/span>\}/.test(page));
+  check('desktop table has a Name column before Item', /\{ key: 'name', label: 'Name' \},\s*\{ key: 'item', label: 'Item' \}/.test(page));
+  check('name cell shows contact_name (as an exact-name filter) or a neutral dash (never "Unknown")', /\{lead\.contact_name \? \([\s\S]{0,120}data-filter-name/.test(page) && page.includes('aria-label="No name">—</span>') && !/['"]Unknown['"]/.test(page));
+  check('mobile cards show the name too', /data-lead-name>\s*\{lead\.contact_name \? \([\s\S]{0,200}data-filter-name[\s\S]{0,300}>No name<\/span>\}/.test(page));
   check('search hint mentions name', page.includes('placeholder="Name, item, trade item, or notes"'));
   check('rows / cards still open the detail panel', page.includes('onClick={() => setSelectedId(lead.id)}') && page.includes('data-lead-card'));
   check('saved edit patches the loaded row (no refetch)', page.includes('onLeadUpdated={patchLead}') && page.includes('leads.map((l) => (l.id === id ? { ...l, ...patch } : l))'));

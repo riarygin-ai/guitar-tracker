@@ -10,7 +10,7 @@
 // the full lead history.
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { QualityBadge, StatusBadge } from '@/components/leads/LeadBadges';
+import { StageBadge, StatusBadge } from '@/components/leads/LeadBadges';
 import { fmtLeadDate } from '@/lib/leads/leadFormat';
 import { calendarDateIn } from '@/lib/dateUtils';
 import {
@@ -107,7 +107,7 @@ function CandidateLine({ c, showItem }: { c: OperationLeadCandidate; showItem: b
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="truncate text-sm font-semibold text-slate-900 dark:text-white">{leadDisplayName(c)}</span>
         <StatusBadge status={c.status as LeadStatus} />
-        {c.peak_stage && <QualityBadge quality={null} stage={c.peak_stage} />}
+        {c.peak_stage && <StageBadge stage={c.peak_stage} />}
       </div>
       <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
         {channelText(c)} · {c.offer_summary}{last ? ` · ${last}` : ''}

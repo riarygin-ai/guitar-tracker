@@ -1,23 +1,30 @@
 'use client';
 
 // Lead detail: right-hand drawer on md+, bottom sheet on mobile.
-// Shows the stored structured values exactly as recorded so they can be
-// compared against the real conversation (Data QA). The one edit control is
-// the contact name (add / correct / clear) — saved through
-// /api/leads/:id/contact-name, which also updates contact_key and records
-// an audit note; nothing else about the lead changes.
+// Top = the current lead snapshot exactly as stored; below = the lead's
+// history: its lead_events as an oldest-first timeline (fetched when the
+// drawer opens — the list never loads events), with the legacy Lead Log
+// notes demoted to a collapsed section. A legacy lead without real events
+// shows its notes as the primary "Historical summary" instead.
+// The one edit control is the contact name (add / correct / clear) — saved
+// through /api/leads/:id/contact-name, which also updates contact_key and
+// records an audit note; nothing else about the lead changes.
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import InfoTip from '@/components/InfoTip';
-import { QualityBadge, StatusBadge } from '@/components/leads/LeadBadges';
+import { StageBadge, StatusBadge } from '@/components/leads/LeadBadges';
 import { LEAD_HELP, type LeadHelpKey } from '@/lib/leads/leadHelpText';
 import {
   describeCashComponent, fmtCad, fmtLeadDateFull, fmtTimestamp, formatOfferSummary,
-  leadChannelLabel, OFFER_TYPE_LABEL, outcomeReasonLabel,
+  leadChannelLabel, OFFER_TYPE_LABEL, outcomeReasonLabel, QUALITY_LABEL,
 } from '@/lib/leads/leadFormat';
-import { saveLeadContactName } from '@/lib/leads/leadsClient';
+import LeadHistorySection from '@/components/leads/LeadHistorySection';
+import { buildLeadHistory, type LeadHistory } from '@/lib/leads/leadEventHistory';
+import { fetchLeadEvents, saveLeadContactName } from '@/lib/leads/leadsClient';
 import type { LeadRow } from '@/lib/leads/leadTypes';
+
+const STAGE_SOURCE_LABEL: Record<string, string> = { DERIVED: 'from events', LEGACY_AUDIT: 'legacy audit', LEGACY_STRUCTURED: 'legacy fields' };
 
 const NAME_SOURCE_LABEL: Record<NonNullable<LeadRow['contact_name_source']>, string> = {
   LEAD_LOG: 'from the Lead Log', NOTES_PREFIX_V1: 'from the notes', DIRECT: 'logged directly', USER_EDIT: 'edited by you',
@@ -124,6 +131,19 @@ const FOCUSABLE = 'a[href], button:not([disabled]), summary, [tabindex]:not([tab
 export default function LeadDetailPanel({ lead, onClose, onLeadUpdated }: { lead: LeadRow; onClose: () => void; onLeadUpdated?: (id: number, patch: Partial<LeadRow>) => void }) {
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [loadedHistory, setLoadedHistory] = useState<{ key: string; history: LeadHistory | null; error: string | null } | null>(null);
+  const historyKey = `${lead.id}:${lead.version}`;
+
+  // History for THIS lead only, fetched on open (and after a rename bumps the version).
+  useEffect(() => {
+    let cancelled = false;
+    fetchLeadEvents(lead.id).then((r) => {
+      if (cancelled) return;
+      setLoadedHistory(r.status === 'success' ? { key: historyKey, history: buildLeadHistory(r.events), error: null } : { key: historyKey, history: null, error: r.message });
+    });
+    return () => { cancelled = true; };
+  }, [lead.id, historyKey]);
+  const historyState = loadedHistory?.key === historyKey ? loadedHistory : null;
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -168,7 +188,7 @@ export default function LeadDetailPanel({ lead, onClose, onLeadUpdated }: { lead
               {leadChannelLabel(lead)} · first contact {fmtLeadDateFull(lead.first_contact_at)}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <QualityBadge quality={lead.lead_quality} stage={lead.peak_stage} />
+              <StageBadge stage={lead.peak_stage} />
               <StatusBadge status={lead.status} />
             </div>
           </div>
@@ -197,8 +217,7 @@ export default function LeadDetailPanel({ lead, onClose, onLeadUpdated }: { lead
             <Field label="First contact">{fmtLeadDateFull(lead.first_contact_at)}</Field>
             <Field label="Last contact">{fmtLeadDateFull(lead.last_contact_at)}</Field>
             <Field label="Channel">{leadChannelLabel(lead)}</Field>
-            <Field label="Quality"><QualityBadge quality={lead.lead_quality} stage={lead.peak_stage} /> <span className="text-[11px] text-slate-500 dark:text-slate-400">{lead.lead_quality ? 'legacy, highest reached' : 'peak stage'}</span></Field>
-            <Field label="Peak stage">{lead.peak_stage ?? '—'}</Field>
+            <Field label="Peak stage"><StageBadge stage={lead.peak_stage} />{lead.peak_stage_source && <span className="ml-1 text-[11px] text-slate-500 dark:text-slate-400">{STAGE_SOURCE_LABEL[lead.peak_stage_source] ?? lead.peak_stage_source}</span>}</Field>
             <Field label="Status"><StatusBadge status={lead.status} /></Field>
             <Field label="Outcome reason">{outcomeReasonLabel(lead.outcome_reason)}</Field>
           </Section>
@@ -220,11 +239,7 @@ export default function LeadDetailPanel({ lead, onClose, onLeadUpdated }: { lead
             <Field label="Trade est. value" help="tradeEstValue">{fmtCad(lead.trade_est_value)}</Field>
           </Section>
 
-          <Section title="Notes">
-            <div className="col-span-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800 dark:bg-slate-700/50 dark:text-slate-100">
-              {lead.notes?.trim() ? lead.notes : <span className="text-slate-400 dark:text-slate-500">No notes recorded.</span>}
-            </div>
-          </Section>
+          <LeadHistorySection history={historyState?.history ?? null} notes={lead.notes} error={historyState?.error} />
 
           <details open className="group border-t border-slate-100 pt-4 dark:border-slate-700">
             <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-wider text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-400">
@@ -232,6 +247,7 @@ export default function LeadDetailPanel({ lead, onClose, onLeadUpdated }: { lead
             </summary>
             <div className="mt-2 grid grid-cols-1 gap-y-2 text-slate-600 dark:text-slate-300">
               <Field label="Lead ID"><span className="break-all font-mono text-[11px]">{lead.lead_id}</span></Field>
+              <Field label="Legacy quality"><span className="text-xs" data-legacy-quality>{lead.lead_quality ? `${QUALITY_LABEL[lead.lead_quality]} (Lead Log, superseded by peak stage)` : '— (none)'}</span></Field>
               <Field label="Source channel (as logged)"><span className="text-xs">{lead.source_channel?.trim() || '—'}</span></Field>
               <Field label="Normalized channel"><span className="text-xs">{lead.channel_name ?? '— (none)'}</span></Field>
               <Field label="Source updated"><span className="text-xs" data-source-updated-at>{fmtTimestamp(lead.source_updated_at)}</span> <span className="font-mono text-[10px] text-slate-400">{lead.source_updated_at}</span></Field>

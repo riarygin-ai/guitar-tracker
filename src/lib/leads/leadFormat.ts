@@ -3,6 +3,7 @@
 // "not recorded"/"unknown" phrase or an em-dash, never a guess.
 
 import type { LeadRow, LeadQuality, LeadStatus, OfferType } from './leadTypes';
+import type { LeadStage } from './semantics';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -111,6 +112,14 @@ export const QUALITY_LABEL: Record<LeadQuality, string> = {
   HIGH_INTENT: 'High intent',
 };
 
+export const STAGE_LABEL: Record<LeadStage, string> = {
+  INQUIRY: 'Inquiry',
+  ENGAGED: 'Engaged',
+  NEGOTIATING: 'Negotiating',
+  HIGH_INTENT: 'High intent',
+  CONVERTED: 'Converted',
+};
+
 export const STATUS_LABEL: Record<LeadStatus, string> = {
   OPEN: 'Open',
   GHOSTED: 'Ghosted',
@@ -139,6 +148,8 @@ const OUTCOME_LABEL: Record<string, string> = {
   CHANGED_MIND: 'Changed mind',
   FOUND_ANOTHER: 'Found another',
   UNKNOWN: 'Unknown',
+  ITEM_UNAVAILABLE: 'Item unavailable',
+  INACTIVE: 'Inactive',
 };
 
 export function outcomeReasonLabel(reason: string | null): string {

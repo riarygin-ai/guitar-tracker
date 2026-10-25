@@ -29,6 +29,8 @@ import { renderLeadSemanticsForPrompt, SEMANTICS_VERSION } from '../src/lib/lead
 import { getItemContextForMcp } from '../src/lib/analytics/itemContextMcp';
 import { findContactHistoryForUser } from '../src/lib/analytics/contactHistoryService';
 import { buildLeadActivity } from '../src/lib/analytics/leadActivityService';
+import { loadLeadEventsForUser } from '../src/lib/leads/leadsServer';
+import { buildLeadHistory } from '../src/lib/leads/leadEventHistory';
 
 let passed = 0;
 let failed = 0;
@@ -456,6 +458,39 @@ async function main() {
     check('matched the legacy lead; LEGACY_SNAPSHOT synthesized first (seq 0, SYSTEM)', lg.result === 'APPLIED_UPDATE' && lgEvents[0].event_type === 'LEGACY_SNAPSHOT' && lgEvents[0].mutation_seq === 0 && lgEvents[0].source === 'SYSTEM', lgEvents.map((e) => e.event_type));
     check('counts = legacy 3/1 + 2 buyer; peak kept LEGACY_AUDIT NEGOTIATING; legacy quality + notes untouched', lgRow.buyer_message_count === 5 && lgRow.our_message_count === 1 && lgRow.peak_stage === 'NEGOTIATING' && lgRow.peak_stage_source === 'LEGACY_AUDIT' && lgRow.lead_quality === 'SERIOUS' && lgRow.notes === 'Legacy prose note — must survive.', lgRow);
     check('legacy lead is now direct-owned (last_write_source MCP), source_updated_at advanced', lgRow.last_write_source === 'MCP' && Date.parse(String(lgRow.source_updated_at)) > Date.parse('2026-10-01'), lgRow);
+
+    console.log('\n[W12b — /leads drawer history (GET /api/leads/:id/events loader + timeline)]');
+    const directRaw = await loadLeadEventsForUser(cA, userA, L1);
+    const directHist = buildLeadHistory(directRaw ?? []);
+    check('direct lead: loader returns every stored event, oldest first', !!directRaw && directRaw.length === (await eventsOf(L1)).length && directRaw.every((e, i, a) => i === 0 || Date.parse(a[i - 1].occurred_at) <= Date.parse(e.occurred_at)), directRaw?.length);
+    check('direct lead: every non-hidden stored event is shown, oldest first', directHist.hasSubstantive && directHist.entries.length === (directRaw ?? []).filter((e) => !e.voided_at && e.event_type !== 'LEGACY_SNAPSHOT').length && directHist.entries[0].summary === 'Asked about neck profile and frets' && directHist.entries[0].who === 'BUYER', directHist.entries.map((e) => e.summary));
+    check('direct lead: structured offer details + logistics kind · state', directHist.entries.some((e) => e.typeLabel === 'Offer' && e.details.some((d) => d.text === 'Cash: $2,800')) && directHist.entries.some((e) => e.typeLabel === 'Meetup · Confirmed'), directHist.entries.map((e) => [e.typeLabel, e.details]));
+    const hz = await rec(cA, { lead: { item_id: Z, channel: 'Marketplace', contact_name: 'Hana History' }, events: [
+      msg('INBOUND', '2026-10-03T10:00:00-04:00', 'Sent photos and confirmed the original soft case', { substance: 'SUBSTANTIVE', evidence: ['PHOTOS'] }),
+      offer('INBOUND', '2026-10-03T11:00:00-04:00', 'Offered 2011 Fender American Standard Stratocaster', { offer: { cash_terms: 'STRAIGHT', cash_amount: null, items: [{ description: '2011 Fender American Standard Stratocaster', est_value: 1300 }] } }),
+      offer('OUTBOUND', '2026-10-03T12:00:00-04:00', 'We asked for the Strat + C$400', trade(['2011 Fender American Standard Stratocaster'], 'AMOUNT', 400)),
+      { type: 'AGREEMENT', direction: 'INBOUND', occurred_at: '2026-10-04T09:00:00-04:00', summary: 'Buyer accepted Strat + C$400', payload: { accepted_by: 'BUYER' } },
+    ] as AgentEventInput[] });
+    const hzHist = buildLeadHistory((await loadLeadEventsForUser(cA, userA, hz.lead_id!)) ?? []);
+    const hzLabels = hzHist.entries.map((e) => `${e.whoLabel}·${e.typeLabel}`);
+    check('modern lead: Buyer message -> Buyer offer -> Us offer -> Buyer agreement -> Internal status, in order', hz.result === 'APPLIED_CREATE' && JSON.stringify(hzLabels) === JSON.stringify(['Buyer·Message', 'Buyer·Offer', 'Us·Offer', 'Buyer·Agreement', 'Internal·Status']), hzLabels);
+    check('modern lead: offer item + est. value + straight trade, our cash ask, evidence, accepted-by, status transition', JSON.stringify(hzHist.entries[1].details.map((d) => d.text)) === JSON.stringify(['2011 Fender American Standard Stratocaster — est. value $1,300', 'Straight trade — no cash'])
+      && hzHist.entries[2].details.some((d) => d.text === 'Cash to us: $400') && hzHist.entries[0].details.some((d) => d.text === 'Shared: Photos')
+      && hzHist.entries[3].details.some((d) => d.text === 'Accepted by the buyer') && hzHist.entries[4].details.some((d) => d.text === 'Open → Agreed'), hzHist.entries.map((e) => e.details));
+    check('timed events carry a Toronto time; dates read "Oct 3, 2026"', hzHist.entries[0].date === 'Oct 3, 2026' && hzHist.entries[0].time === '10:00 AM', hzHist.entries[0]);
+    check('voided events are hidden from the timeline', (directRaw ?? []).some((e) => e.voided_at) && !directHist.entries.some((e) => (directRaw ?? []).find((r) => r.id === e.id)?.voided_at));
+    const lgHist = buildLeadHistory((await loadLeadEventsForUser(cA, userA, legacy!.id as number)) ?? []);
+    check('legacy lead touched by a direct write: LEGACY_SNAPSHOT hidden, the real message shown', lgHist.hasSubstantive && lgHist.entries.length === 1 && lgHist.entries[0].summary === 'Back again — still have it?' && lgHist.entries[0].details.some((d) => d.text === '2 messages'), lgHist.entries);
+    const { data: pureLegacy } = await admin.from('item_leads').insert({
+      user_id: userA, source_id: src!.id, inventory_item_id: Q, lead_id: uuid(), source_channel: 'Reverb', deal_channel_id: chanId('Reverb'), lead_quality: 'LOW', offer_type: 'NONE', status: 'CLOSED', outcome_reason: 'ITEM_UNAVAILABLE',
+      notes: 'Only the legacy narrative survives.', first_contact_at: '2026-08-01', last_contact_at: '2026-08-02', source_updated_at: '2026-08-02T00:00:00Z',
+    }).select('id').single();
+    const { error: bfErr } = await admin.from('lead_events').insert({ user_id: userA, item_lead_id: pureLegacy!.id, event_type: 'STATUS_CHANGE', direction: 'INTERNAL', occurred_at: new Date().toISOString(), summary: 'Backfill: item already sold/traded — open lead closed as ITEM_UNAVAILABLE', payload: { from: 'OPEN', to: 'CLOSED' }, provenance: 'SYSTEM', actor: 'SYSTEM', source: 'BACKFILL', content_hash: uuid() });
+    const pureRaw = await loadLeadEventsForUser(cA, userA, pureLegacy!.id as number);
+    const pureHist = buildLeadHistory(pureRaw ?? []);
+    check('pure legacy lead: BACKFILL bookkeeping hidden -> no substantive history (drawer shows the notes)', !bfErr && (pureRaw ?? []).length === 1 && pureHist.entries.length === 0 && !pureHist.hasSubstantive, { bfErr, pureRaw });
+    check('events loader: another user (even forging the owner id) gets null', (await loadLeadEventsForUser(cB, userB, L1)) === null && (await loadLeadEventsForUser(cB, userA, L1)) === null);
+    check('events loader: missing lead -> null', (await loadLeadEventsForUser(cA, userA, 999999999)) === null);
 
     console.log('\n[W14 — read tools: get_item_context (full notes + events), get_lead_activity, find_contact_history]');
     const longNote = 'Long legacy narrative. ' + 'Detail about frets, case, serial and negotiation. '.repeat(40);

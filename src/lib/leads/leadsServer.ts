@@ -11,6 +11,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { leadItemName } from './leadFormat';
 import type { LeadRow, LeadsPayload, LeadChannelOption } from './leadTypes';
+import type { LeadEventRecord } from './leadEventHistory';
 
 const PAGE = 1000;
 const ID_CHUNK = 150;
@@ -127,4 +128,27 @@ export async function loadLeadsForUser(params: {
   }
 
   return { leads, channels, attributed_lead_ids: attributedLeadIds, item_attributed_lead_ids: itemAttributedLeadIds };
+}
+
+export const LEAD_HISTORY_EVENT_COLUMNS = 'id, event_type, direction, occurred_at, occurred_at_precision, summary, message_count, payload, source, actor, voided_at';
+
+/**
+ * One lead's stored lead_events for the /leads drawer (loaded on open, never
+ * for the whole list). Same ownership rule as loadLeadsForUser: the caller's
+ * RLS client plus an explicit user_id check on the lead. null = no such lead
+ * for this user (foreign and missing are indistinguishable).
+ */
+export async function loadLeadEventsForUser(db: SupabaseClient, appUserId: number, leadId: number): Promise<LeadEventRecord[] | null> {
+  const { data: lead, error: leadError } = await db.from('item_leads').select('id').eq('id', leadId).eq('user_id', appUserId).maybeSingle();
+  if (leadError) throw new LeadsLoadError(`item_leads: ${leadError.message}`);
+  if (!lead) return null;
+  const { data, error } = await db
+    .from('lead_events')
+    .select(LEAD_HISTORY_EVENT_COLUMNS)
+    .eq('item_lead_id', leadId)
+    .eq('user_id', appUserId)
+    .order('occurred_at', { ascending: true })
+    .order('id', { ascending: true });
+  if (error) throw new LeadsLoadError(`lead_events: ${error.message}`);
+  return (data ?? []) as unknown as LeadEventRecord[];
 }

@@ -2,9 +2,13 @@
 // Definitions only — never an interpretation of a value.
 
 export const LEAD_HELP = {
-  seriousPlus: {
-    label: 'Serious+',
-    text: 'Leads that reached Serious or High Intent. Quality reflects the highest level the lead has reached.',
+  negotiatingPlus: {
+    label: 'Negotiating+',
+    text: 'Leads whose peak stage reached Negotiating, High Intent or Converted. Older Lead Log leads without a peak stage count when their legacy quality was Serious or High Intent.',
+  },
+  stage: {
+    label: 'Stage',
+    text: 'Peak stage: the highest point the lead has reached — Inquiry, Engaged, Negotiating, High intent, Converted.',
   },
   messages: {
     label: 'Messages',

@@ -1,18 +1,17 @@
-// Subtle quality/status chips for the /leads screen. Text labels are
+// Subtle stage/status chips for the /leads screen. Text labels are
 // always rendered — color is supplemental, never the only signal. No
 // alarming reds: even "Declined"/"Ghosted" stay neutral.
 
-import { QUALITY_LABEL, STATUS_LABEL } from '@/lib/leads/leadFormat';
-import type { LeadQuality, LeadStatus } from '@/lib/leads/leadTypes';
+import { STAGE_LABEL, STATUS_LABEL } from '@/lib/leads/leadFormat';
+import type { LeadStatus } from '@/lib/leads/leadTypes';
 import type { LeadStage } from '@/lib/leads/semantics';
 
-const STAGE_LABEL: Record<LeadStage, string> = { INQUIRY: 'Inquiry', ENGAGED: 'Engaged', NEGOTIATING: 'Negotiating', HIGH_INTENT: 'High intent', CONVERTED: 'Converted' };
-
-const QUALITY_CLASS: Record<LeadQuality, string> = {
-  LOW: 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600',
+const STAGE_CLASS: Record<LeadStage, string> = {
+  INQUIRY: 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600',
   ENGAGED: 'bg-cyan-50 text-cyan-700 ring-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-300 dark:ring-cyan-800/60',
-  SERIOUS: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-900/30 dark:text-violet-300 dark:ring-violet-800/60',
+  NEGOTIATING: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-900/30 dark:text-violet-300 dark:ring-violet-800/60',
   HIGH_INTENT: 'bg-indigo-100 text-indigo-800 ring-indigo-300 dark:bg-indigo-900/50 dark:text-indigo-200 dark:ring-indigo-700/70',
+  CONVERTED: 'bg-emerald-100 text-emerald-800 ring-emerald-300 dark:bg-emerald-900/50 dark:text-emerald-200 dark:ring-emerald-700/70',
 };
 
 const STATUS_CLASS: Record<LeadStatus, string> = {
@@ -28,12 +27,12 @@ const STATUS_CLASS: Record<LeadStatus, string> = {
 
 const BASE = 'inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset';
 
-/** Legacy Lead Log quality. Direct-write leads have none; their peak stage is shown instead. */
-export function QualityBadge({ quality, stage }: { quality: LeadQuality | null; stage?: LeadStage | null }) {
-  if (quality == null) {
-    return <span className={`${BASE} bg-slate-50 text-slate-600 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-600`} data-stage={stage ?? ''}>{stage ? STAGE_LABEL[stage] : '—'}</span>;
+/** Peak stage (INQUIRY..CONVERTED) — the primary lead classification. A lead without one shows an em-dash. */
+export function StageBadge({ stage }: { stage: LeadStage | null }) {
+  if (stage == null) {
+    return <span className={`${BASE} bg-slate-50 text-slate-400 ring-slate-200 dark:bg-slate-800 dark:text-slate-500 dark:ring-slate-600`} data-stage="" aria-label="No stage">—</span>;
   }
-  return <span className={`${BASE} ${QUALITY_CLASS[quality]}`} data-quality={quality}>{QUALITY_LABEL[quality]}</span>;
+  return <span className={`${BASE} ${STAGE_CLASS[stage]}`} data-stage={stage}>{STAGE_LABEL[stage]}</span>;
 }
 
 export function StatusBadge({ status }: { status: LeadStatus }) {

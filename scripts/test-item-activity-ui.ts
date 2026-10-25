@@ -83,12 +83,12 @@ console.log('\n[C — item drill-down URLs]');
   const win = { from: '2020-01-03', to: '2020-01-30' };
   const src = { itemId: 55, leads: 12, seriousPlus: 9, offers: 7 };
   check('Leads -> item_id + exact from/to + item_attributed=1', itemAttributedLeadsUrl(win, src) === '/leads?item_id=55&from=2020-01-03&to=2020-01-30&item_attributed=1&expected=12', itemAttributedLeadsUrl(win, src));
-  check('Serious+ adds serious_plus=1', itemSeriousPlusUrl(win, src) === '/leads?item_id=55&from=2020-01-03&to=2020-01-30&item_attributed=1&serious_plus=1&expected=9', itemSeriousPlusUrl(win, src));
+  check('Serious+ adds negotiating_plus=1', itemSeriousPlusUrl(win, src) === '/leads?item_id=55&from=2020-01-03&to=2020-01-30&item_attributed=1&negotiating_plus=1&expected=9', itemSeriousPlusUrl(win, src));
   check('Offers adds offers=1', itemOffersUrl(win, src) === '/leads?item_id=55&from=2020-01-03&to=2020-01-30&item_attributed=1&offers=1&expected=7', itemOffersUrl(win, src));
   check('zero values are not links', itemAttributedLeadsUrl(win, { ...src, leads: 0 }) === null && itemSeriousPlusUrl(win, { ...src, seriousPlus: 0 }) === null && itemOffersUrl(win, { ...src, offers: 0 }) === null);
   check('URLs carry no lead ids / no channel params', ![itemAttributedLeadsUrl(win, src), itemSeriousPlusUrl(win, src), itemOffersUrl(win, src)].some((u) => /channel_id|attributed=1&channel|lead_id/.test(u!)));
   const f = parseLeadFilters((k) => new URL(itemOffersUrl(win, src)!, 'http://x').searchParams.get(k));
-  check('URLs round-trip through parseLeadFilters', f.itemId === 55 && f.from === win.from && f.to === win.to && f.itemAttributed && f.offers && !f.seriousPlus && f.expected === 7);
+  check('URLs round-trip through parseLeadFilters', f.itemId === 55 && f.from === win.from && f.to === win.to && f.itemAttributed && f.offers && !f.negotiatingPlus && f.expected === 7);
 }
 
 console.log('\n[D — /leads item_attributed semantics]');

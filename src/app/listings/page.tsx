@@ -617,7 +617,7 @@ function ItemActivitySection({
   const [query, setQuery] = useState('');
   const rows = items ? viewItemLeadActivity(items, query, sort) : [];
   const hasData = items !== null;
-  const link = (item: ItemLeadActivityRow, n: number, extra: { seriousPlus?: boolean; offers?: boolean } = {}) =>
+  const link = (item: ItemLeadActivityRow, n: number, extra: { negotiatingPlus?: boolean; offers?: boolean } = {}) =>
     n > 0 ? leadsUrl({ itemId: item.item_id, returnTo, ...extra }) : undefined;
   const subline = (item: ItemLeadActivityRow) => [
     item.is_listed ? item.active_channel_names.join(', ') || 'Listed' : 'Not listed',
@@ -691,7 +691,7 @@ function ItemActivitySection({
                         <DrillValue href={link(item, item.lead_count)}>{item.lead_count}</DrillValue>
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={link(item, item.negotiating_plus_count, { seriousPlus: true })} className={`font-medium ${TONE.violet.text}`}>{item.negotiating_plus_count}</DrillValue></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={link(item, item.negotiating_plus_count, { negotiatingPlus: true })} className={`font-medium ${TONE.violet.text}`}>{item.negotiating_plus_count}</DrillValue></td>
                     <td className="px-3 py-2 text-right tabular-nums"><DrillValue href={link(item, item.offer_count, { offers: true })} className="font-medium text-slate-700 dark:text-slate-200">{item.offer_count}</DrillValue></td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">{item.channel_days ?? '—'}</td>
                     <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-500 dark:text-slate-400">{item.last_activity_date ? fmtLeadDate(item.last_activity_date) : '—'}</td>
@@ -711,7 +711,7 @@ function ItemActivitySection({
                 <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{subline(item)}</p>
                 <div className="mt-2 grid grid-cols-4 gap-2">
                   <MiniStat label="Leads" value={<DrillValue href={link(item, item.lead_count)}>{item.lead_count}</DrillValue>} tone="cyan" />
-                  <MiniStat label={<MetricLabel help="itemNegotiatingPlus" />} value={<DrillValue href={link(item, item.negotiating_plus_count, { seriousPlus: true })}>{item.negotiating_plus_count}</DrillValue>} tone="violet" />
+                  <MiniStat label={<MetricLabel help="itemNegotiatingPlus" />} value={<DrillValue href={link(item, item.negotiating_plus_count, { negotiatingPlus: true })}>{item.negotiating_plus_count}</DrillValue>} tone="violet" />
                   <MiniStat label={<MetricLabel help="itemOffers" />} value={<DrillValue href={link(item, item.offer_count, { offers: true })}>{item.offer_count}</DrillValue>} tone="slate" />
                   <MiniStat label={<MetricLabel help="itemChannelDays" />} value={item.channel_days ?? '—'} />
                 </div>

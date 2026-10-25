@@ -3,6 +3,7 @@
 
 import { supabase } from '@/lib/supabase';
 import type { LeadsPayload } from './leadTypes';
+import type { LeadEventRecord } from './leadEventHistory';
 
 export type LeadsFetchResult =
   | { status: 'success'; data: LeadsPayload }
@@ -82,4 +83,22 @@ export async function saveLeadContactName(leadId: number, contactName: string | 
   if (body?.result === 'CONFIRM_REQUIRED') return { status: 'confirm', message: body.message ?? 'A similar contact exists on this item.' };
   if (body?.result === 'NOT_FOUND') return { status: 'error', message: 'Lead not found.' };
   return { status: 'error', message: body?.message || body?.error || `Could not save the name (server returned ${res.status}).` };
+}
+
+export type LeadEventsFetchResult = { status: 'success'; events: LeadEventRecord[] } | { status: 'error'; message: string };
+
+/** GET /api/leads/:id/events — one lead's stored history, loaded when its drawer opens. */
+export async function fetchLeadEvents(leadId: number): Promise<LeadEventsFetchResult> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) return { status: 'error', message: 'Not signed in — please sign in again.' };
+  let res: Response;
+  try {
+    res = await fetch(`/api/leads/${leadId}/events`, { method: 'GET', headers: { Authorization: `Bearer ${session.access_token}` } });
+  } catch {
+    return { status: 'error', message: 'Could not reach the server. Please try again.' };
+  }
+  if (!res.ok) return { status: 'error', message: `Could not load the history (server returned ${res.status}).` };
+  const body = (await res.json().catch(() => null)) as { events?: unknown } | null;
+  if (!body || !Array.isArray(body.events)) return { status: 'error', message: 'History response had an unexpected shape.' };
+  return { status: 'success', events: body.events as LeadEventRecord[] };
 }

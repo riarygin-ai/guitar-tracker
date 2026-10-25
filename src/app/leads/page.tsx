@@ -10,6 +10,11 @@
 // what is on screen. (The search box is an uncontrolled input whose DOM
 // value is reconciled to the URL, not a second copy of the filter.)
 //
+// Table: every column header sorts (asc -> desc -> default; sort/dir in the
+// URL). Clicking a contact name filters to that EXACT displayed name (it
+// does not assert the rows are one person — e.g. "KijijiUser"); clicking an
+// item filters by item_id. Anywhere else on a row opens the drawer.
+//
 // The only edit is the contact name, from the detail panel (POST
 // /api/leads/:id/contact-name); the edited row is patched in place. No
 // import logic and no evidence recomputation here: rows are displayed as stored; the exact channel-attributed cohort behind
@@ -20,26 +25,42 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import CompactPageHeader from '@/components/CompactPageHeader';
 import BackLink from '@/components/BackLink';
 import InfoTip from '@/components/InfoTip';
-import { QualityBadge, StatusBadge } from '@/components/leads/LeadBadges';
+import { StageBadge, StatusBadge } from '@/components/leads/LeadBadges';
 import LeadDetailPanel from '@/components/leads/LeadDetailPanel';
 import { fetchLeads } from '@/lib/leads/leadsClient';
 import { LEAD_HELP } from '@/lib/leads/leadHelpText';
 import { resolveBackHref, resolveBackLabel } from '@/lib/listingsReturn';
 import {
-  QUICK_FILTERS, NO_CHANNEL, activeQuickFilter, applyLeadFilters, attributionRequest, itemAttributionRequest, leadsUrl,
-  parseLeadFilters, patchLeadFilters, quickFilterPatch, sortLeadsRecentFirst, type LeadFilters,
+  QUICK_FILTERS, NO_CHANNEL, activeQuickFilter, applyLeadFilters, attributionRequest, itemAttributionRequest, leadsUrl, nextSort,
+  parseLeadFilters, patchLeadFilters, quickFilterPatch, sortLeads, type LeadFilters, type LeadSortKey,
 } from '@/lib/leads/leadFilters';
 import {
-  OFFER_TYPE_LABEL, QUALITY_LABEL, STATUS_LABEL, fmtLeadDate, fmtLeadDateFull, fmtMessages,
+  OFFER_TYPE_LABEL, STAGE_LABEL, STATUS_LABEL, fmtLeadDate, fmtLeadDateFull, fmtMessages,
   formatOfferSummary, leadChannelLabel,
 } from '@/lib/leads/leadFormat';
-import { LEAD_QUALITIES, LEAD_STATUSES, OFFER_TYPES, type LeadRow, type LeadsPayload } from '@/lib/leads/leadTypes';
+import { LEAD_STATUSES, OFFER_TYPES, type LeadRow, type LeadsPayload } from '@/lib/leads/leadTypes';
+import { LEAD_STAGES } from '@/lib/leads/semantics';
 
 const PAGE_SIZE = 50;
 
 const CONTROL =
   'w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white';
 const LABEL = 'mb-1 block text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400';
+const CHIP = 'inline-flex max-w-full items-center gap-1 rounded-full bg-slate-100 py-0.5 pl-2.5 pr-1 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600';
+const CHIP_X = 'rounded-full px-1.5 hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:hover:bg-slate-600';
+const CELL_LINK = 'break-words text-left underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500';
+
+const COLUMNS: { key: LeadSortKey; label: string; align?: 'right' }[] = [
+  { key: 'date', label: 'Date' },
+  { key: 'name', label: 'Name' },
+  { key: 'item', label: 'Item' },
+  { key: 'channel', label: 'Channel' },
+  { key: 'stage', label: 'Stage' },
+  { key: 'offer', label: 'Offer' },
+  { key: 'status', label: 'Status' },
+  { key: 'messages', label: 'Messages', align: 'right' },
+  { key: 'last_contact', label: 'Last Contact' },
+];
 
 export default function LeadsPage() {
   const router = useRouter();
@@ -84,7 +105,7 @@ export default function LeadsPage() {
 
   const attributedSet = payload?.attributed_lead_ids ? new Set(payload.attributed_lead_ids) : null;
   const itemAttributedSet = payload?.item_attributed_lead_ids ? new Set(payload.item_attributed_lead_ids) : null;
-  const filtered = payload ? sortLeadsRecentFirst(applyLeadFilters(payload.leads, filters, attributedSet, itemAttributedSet)) : [];
+  const filtered = payload ? sortLeads(applyLeadFilters(payload.leads, filters, attributedSet, itemAttributedSet), filters.sort, filters.dir) : [];
 
   // Drill-down reconciliation diagnostic (development aid; UI stays calm).
   const expected = filters.expected;
@@ -124,7 +145,9 @@ export default function LeadsPage() {
   const selectedLead = selectedId !== null && payload ? payload.leads.find((l) => l.id === selectedId) ?? null : null;
 
   const quick = activeQuickFilter(filters);
-  const hasAnyFilter = leadsUrl({ ...filters, expected: null, returnTo: null }) !== '/leads';
+  const hasAnyFilter = leadsUrl({ ...filters, expected: null, returnTo: null, sort: null }) !== '/leads';
+  const filterByName = (name: string) => update({ name });
+  const filterByItem = (itemId: number) => update({ itemId });
   const channelOptions = payload?.channels ?? [];
   const attributedChannelName = typeof filters.channel === 'number' ? channelOptions.find((c) => c.id === filters.channel)?.name ?? `Channel ${filters.channel}` : null;
   const itemChipName = filters.itemId != null ? payload?.leads.find((l) => l.inventory_item_id === filters.itemId)?.item_name ?? `Item #${filters.itemId}` : null;
@@ -174,10 +197,10 @@ export default function LeadsPage() {
             </select>
           </div>
           <div className="min-w-0">
-            <label htmlFor="lead-quality" className={LABEL}>Quality</label>
-            <select id="lead-quality" value={filters.quality ?? ''} onChange={(e) => update({ quality: e.target.value ? (e.target.value as LeadFilters['quality']) : null })} className={CONTROL}>
-              <option value="">All qualities</option>
-              {LEAD_QUALITIES.map((q) => <option key={q} value={q}>{QUALITY_LABEL[q]}</option>)}
+            <label htmlFor="lead-stage" className={LABEL}>Stage</label>
+            <select id="lead-stage" value={filters.stage ?? ''} onChange={(e) => update({ stage: e.target.value ? (e.target.value as LeadFilters['stage']) : null })} className={CONTROL}>
+              <option value="">All stages</option>
+              {LEAD_STAGES.map((q) => <option key={q} value={q}>{STAGE_LABEL[q]}</option>)}
             </select>
           </div>
           <div className="min-w-0">
@@ -219,15 +242,15 @@ export default function LeadsPage() {
                 }`}
               >
                 {q.label}
-                {q.key === 'serious' && <span className="sr-only"> (Serious or High Intent)</span>}
+                {q.key === 'negotiating' && <span className="sr-only"> (Negotiating, High intent or Converted)</span>}
               </button>
             ))}
           </div>
-          <InfoTip label={LEAD_HELP.seriousPlus.label} text={LEAD_HELP.seriousPlus.text} />
+          <InfoTip label={LEAD_HELP.negotiatingPlus.label} text={LEAD_HELP.negotiatingPlus.text} />
           {hasAnyFilter && (
             <button
               type="button"
-              onClick={() => router.push(leadsUrl({ returnTo: filters.returnTo }), { scroll: false })}
+              onClick={() => router.push(leadsUrl({ returnTo: filters.returnTo, sort: filters.sort, dir: filters.dir }), { scroll: false })}
               className="ml-auto rounded-full px-2 py-1 text-xs font-medium text-slate-500 underline-offset-2 hover:text-slate-900 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-400 dark:hover:text-white"
             >
               Clear filters
@@ -235,7 +258,7 @@ export default function LeadsPage() {
           )}
         </div>
 
-        {(filters.attributed || filters.itemAttributed || filters.itemId != null) && (
+        {(filters.attributed || filters.itemAttributed || filters.itemId != null || filters.name != null) && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {filters.attributed && (
               <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-cyan-50 py-0.5 pl-2.5 pr-1 text-xs font-medium text-cyan-800 ring-1 ring-inset ring-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-200 dark:ring-cyan-800/60" data-chip="attributed">
@@ -252,9 +275,15 @@ export default function LeadsPage() {
               </span>
             )}
             {filters.itemId != null && (
-              <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-slate-100 py-0.5 pl-2.5 pr-1 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600" data-chip="item">
+              <span className={CHIP} data-chip="item">
                 <span className="min-w-0 break-words">Item: {itemChipName}</span>
-                <button type="button" aria-label="Remove item filter" onClick={() => update({ itemId: null })} className="rounded-full px-1.5 hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:hover:bg-slate-600">×</button>
+                <button type="button" aria-label="Remove item filter" onClick={() => update({ itemId: null })} className={CHIP_X}>×</button>
+              </span>
+            )}
+            {filters.name != null && (
+              <span className={CHIP} data-chip="name" title="Exact contact name. The same displayed name can belong to different people.">
+                <span className="min-w-0 break-words">Name: {filters.name}</span>
+                <button type="button" aria-label="Remove name filter" onClick={() => update({ name: null })} className={CHIP_X}>×</button>
               </span>
             )}
           </div>
@@ -291,33 +320,54 @@ export default function LeadsPage() {
                 <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700">
                   <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 dark:bg-slate-700/60 dark:text-slate-400">
                     <tr>
-                      <th scope="col" className="px-3 py-2 text-left font-semibold">Date</th>
-                      <th scope="col" className="px-3 py-2 text-left font-semibold">Name</th>
-                      <th scope="col" className="px-3 py-2 text-left font-semibold">Item</th>
-                      <th scope="col" className="px-3 py-2 text-left font-semibold">Channel</th>
-                      <th scope="col" className="px-3 py-2 text-left font-semibold">Quality</th>
-                      <th scope="col" className="px-3 py-2 text-left font-semibold">Offer</th>
-                      <th scope="col" className="px-3 py-2 text-left font-semibold">Status</th>
-                      <th scope="col" className="px-3 py-2 text-right font-semibold">
-                        <span className="inline-flex items-center gap-1">Messages<InfoTip label={LEAD_HELP.messages.label} text={LEAD_HELP.messages.text} /></span>
-                      </th>
-                      <th scope="col" className="px-3 py-2 text-left font-semibold">Last Contact</th>
+                      {COLUMNS.map((c) => {
+                        const active = filters.sort === c.key;
+                        return (
+                          <th key={c.key} scope="col" aria-sort={active ? (filters.dir === 'desc' ? 'descending' : 'ascending') : 'none'} className={`px-3 py-2 font-semibold ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
+                            <span className={`inline-flex items-center gap-1 ${c.align === 'right' ? 'justify-end' : ''}`}>
+                              <button
+                                type="button"
+                                data-sort-key={c.key}
+                                onClick={() => update(nextSort(filters, c.key), 'replace')}
+                                className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:hover:text-white ${active ? 'text-slate-900 dark:text-white' : ''}`}
+                              >
+                                {c.label}
+                                <span aria-hidden="true" className={`text-[10px] ${active ? '' : 'opacity-0'}`}>{active && filters.dir === 'desc' ? '▼' : '▲'}</span>
+                              </button>
+                              {c.key === 'messages' && <InfoTip label={LEAD_HELP.messages.label} text={LEAD_HELP.messages.text} />}
+                              {c.key === 'stage' && <InfoTip label={LEAD_HELP.stage.label} text={LEAD_HELP.stage.text} />}
+                            </span>
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                     {visible.map((lead) => (
-                      <tr key={lead.id} data-lead-row onClick={() => setSelectedId(lead.id)} className="cursor-pointer align-top transition hover:bg-slate-50 dark:hover:bg-slate-700/40">
+                      <tr
+                        key={lead.id}
+                        data-lead-row
+                        tabIndex={0}
+                        aria-label={`Open lead: ${lead.item_name}${lead.contact_name ? ` — ${lead.contact_name}` : ''}`}
+                        onClick={() => setSelectedId(lead.id)}
+                        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelectedId(lead.id); } }}
+                        className="cursor-pointer align-top transition hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 dark:hover:bg-slate-700/40 dark:focus-visible:bg-slate-700/40"
+                      >
                         <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-600 dark:text-slate-300">{fmtLeadDate(lead.first_contact_at)}</td>
                         <td className="max-w-[10rem] break-words px-3 py-2 text-slate-900 dark:text-white" data-lead-name>
-                          {lead.contact_name ?? <span className="text-slate-400 dark:text-slate-500" aria-label="No name">—</span>}
+                          {lead.contact_name ? (
+                            <button type="button" data-filter-name title={`Show leads named "${lead.contact_name}"`} onClick={(e) => { e.stopPropagation(); filterByName(lead.contact_name!); }} className={CELL_LINK}>
+                              {lead.contact_name}
+                            </button>
+                          ) : <span className="text-slate-400 dark:text-slate-500" aria-label="No name">—</span>}
                         </td>
                         <td className="max-w-[16rem] px-3 py-2 font-medium text-slate-900 dark:text-white">
-                          <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedId(lead.id); }} className="break-words text-left hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500">
+                          <button type="button" data-filter-item title="Show leads on this item" onClick={(e) => { e.stopPropagation(); filterByItem(lead.inventory_item_id); }} className={CELL_LINK}>
                             {lead.item_name}
                           </button>
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-slate-700 dark:text-slate-200">{leadChannelLabel(lead)}</td>
-                        <td className="px-3 py-2"><QualityBadge quality={lead.lead_quality} stage={lead.peak_stage} /></td>
+                        <td className="px-3 py-2"><StageBadge stage={lead.peak_stage} /></td>
                         <td className="max-w-[16rem] break-words px-3 py-2 text-slate-700 dark:text-slate-200">{formatOfferSummary(lead)}</td>
                         <td className="px-3 py-2"><StatusBadge status={lead.status} /></td>
                         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-700 dark:text-slate-200">{fmtMessages(lead)}</td>
@@ -332,26 +382,37 @@ export default function LeadsPage() {
               <ul className="mt-3 space-y-2 md:hidden">
                 {visible.map((lead) => (
                   <li key={lead.id}>
-                    <button
-                      type="button"
+                    {/* Tapping the card opens the drawer; the item and name are filter links; "Details" is the keyboard path. */}
+                    <div
                       data-lead-card
                       onClick={() => setSelectedId(lead.id)}
-                      className="block w-full min-w-0 rounded-xl border border-slate-200 p-3 text-left transition hover:border-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-700 dark:hover:border-slate-600"
+                      className="block w-full min-w-0 cursor-pointer rounded-xl border border-slate-200 p-3 text-left transition hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600"
                     >
                       <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
                         {fmtLeadDate(lead.first_contact_at)} · {leadChannelLabel(lead)}
                       </p>
-                      <p className="mt-0.5 break-words text-base font-semibold leading-snug text-slate-900 dark:text-white">{lead.item_name}</p>
-                      <p className="mt-0.5 break-words text-sm text-slate-700 dark:text-slate-200" data-lead-name>{lead.contact_name ?? <span className="text-slate-400 dark:text-slate-500">No name</span>}</p>
+                      <button type="button" data-filter-item onClick={(e) => { e.stopPropagation(); filterByItem(lead.inventory_item_id); }} className={`mt-0.5 block text-base font-semibold leading-snug text-slate-900 dark:text-white ${CELL_LINK}`}>
+                        {lead.item_name}
+                      </button>
+                      <p className="mt-0.5 break-words text-sm text-slate-700 dark:text-slate-200" data-lead-name>
+                        {lead.contact_name ? (
+                          <button type="button" data-filter-name onClick={(e) => { e.stopPropagation(); filterByName(lead.contact_name!); }} className={CELL_LINK}>{lead.contact_name}</button>
+                        ) : <span className="text-slate-400 dark:text-slate-500">No name</span>}
+                      </p>
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                        <QualityBadge quality={lead.lead_quality} stage={lead.peak_stage} />
+                        <StageBadge stage={lead.peak_stage} />
                         <StatusBadge status={lead.status} />
                       </div>
                       <p className="mt-2 break-words text-sm text-slate-700 dark:text-slate-200">{formatOfferSummary(lead)}</p>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        Messages: <span className="tabular-nums">{fmtMessages(lead)}</span> · Last contact: {fmtLeadDate(lead.last_contact_at)}
-                      </p>
-                    </button>
+                      <div className="mt-1 flex items-end justify-between gap-2">
+                        <p className="min-w-0 text-xs text-slate-500 dark:text-slate-400">
+                          Messages: <span className="tabular-nums">{fmtMessages(lead)}</span> · Last contact: {fmtLeadDate(lead.last_contact_at)}
+                        </p>
+                        <button type="button" data-open-lead onClick={(e) => { e.stopPropagation(); setSelectedId(lead.id); }} className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700">
+                          Details
+                        </button>
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ul>
