@@ -233,6 +233,17 @@ export function isPlaceholderName(name: string | null | undefined): boolean {
   return k === '' || PLACEHOLDER_NAMES.has(k);
 }
 
+// Platform-default display names the channel shows for many unrelated people
+// (contact_key, per channel). They are valid contact names, but a name match
+// alone never selects an existing lead: the caller must resolve USE_LEAD /
+// CREATE_NEW from the conversation.
+const NON_UNIQUE_DISPLAY_NAMES: Record<string, ReadonlySet<string>> = {
+  kijiji: new Set(['kijijiuser']),
+};
+export function isNonUniqueDisplayName(sourceChannel: string | null | undefined, key: string | null | undefined): boolean {
+  return key != null && (NON_UNIQUE_DISPLAY_NAMES[(sourceChannel ?? '').trim().toLowerCase()]?.has(key) ?? false);
+}
+
 function torontoOffsetMinutes(utcMs: number): number {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Toronto', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -643,6 +654,11 @@ async function resolveLead(client: SupabaseClient, input: RecordLeadInteractionI
   if (exact.length === 1) {
     const l = exact[0];
     const confirmed = res?.action === 'CONFIRM';
+    if (isNonUniqueDisplayName(ch.sourceChannel, key)) {
+      return review('POSSIBLE_DIFFERENT_PERSON', `"${name}" is a non-unique ${ch.sourceChannel} display name and may be a different person than lead ${l.id} (${l.status}). Check the conversation, then resolve USE_LEAD (same thread) or CREATE_NEW (another person).`, {
+        candidates: [candidate(l, 'exact', 'same item, channel and non-unique display name')], allowed_resolutions: ['USE_LEAD', 'CREATE_NEW'],
+      });
+    }
     if (!confirmed && isFinal(l.status, l.outcome_reason)) {
       return review('EVENT_ON_FINAL_LEAD', `The matching lead ${l.id} is ${l.status}${l.outcome_reason ? '/' + l.outcome_reason : ''}. Is this the same relationship (append) or a new episode?`, {
         candidates: [candidate(l, 'exact', 'same item, channel and contact')], allowed_resolutions: ['USE_LEAD', 'CREATE_NEW'],

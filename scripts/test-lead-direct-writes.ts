@@ -24,7 +24,7 @@ import {
   baseKey, contactKey, deriveNegotiationRounds, deriveResponsiveness, deriveSnapshot, deriveStageFromEvents, deriveWaitingOn,
   emptyBaseline, ghostPreconditionsMet, legacyStructuredStage, offerShape, type ClassifiableEvent,
 } from '../src/lib/leads/classification';
-import { recordLeadInteraction, voidLeadEvent, parseOccurredAt, isPlaceholderName, type AgentEventInput, type WriteResult } from '../src/lib/leads/leadWriteService';
+import { recordLeadInteraction, voidLeadEvent, parseOccurredAt, isPlaceholderName, isNonUniqueDisplayName, type AgentEventInput, type WriteResult } from '../src/lib/leads/leadWriteService';
 import { renderLeadSemanticsForPrompt, SEMANTICS_VERSION } from '../src/lib/leads/semantics';
 import { getItemContextForMcp } from '../src/lib/analytics/itemContextMcp';
 import { findContactHistoryForUser } from '../src/lib/analytics/contactHistoryService';
@@ -58,6 +58,10 @@ function pureChecks() {
   check('qualifier spacing normalized', contactKey('Nick ( collector )') === contactKey('Nick (Collector)'));
   check('baseKey strips one trailing qualifier', baseKey('Nick (collector)') === 'nick' && baseKey('Nick') === 'nick');
   check('placeholders recognised', isPlaceholderName('Unknown') && isPlaceholderName(' marketplace buyer ') && !isPlaceholderName('Jane Doe'));
+  check('"KijijiUser" is a valid name; "Kijiji User" stays a placeholder', !isPlaceholderName('KijijiUser') && isPlaceholderName('Kijiji User'));
+  check('non-unique display name: KijijiUser on Kijiji only; short names are not generic',
+    isNonUniqueDisplayName('Kijiji', contactKey('KijijiUser')) && isNonUniqueDisplayName('kijiji', contactKey(' kijijiuser ')) && !isNonUniqueDisplayName('Marketplace', contactKey('KijijiUser'))
+      && ['JJ', 'CT', 'UJ', 'Jem'].every((n) => !isNonUniqueDisplayName('Kijiji', contactKey(n))));
 
   console.log('\n[P2 — offer shapes]');
   check('cash-only = CASH concrete', offerShape(cash(2800).offer as never).offer_type === 'CASH' && offerShape(cash(2800).offer as never).concrete);
@@ -274,6 +278,39 @@ async function main() {
     check('first name only vs full name -> REVIEW POSSIBLE_DUPLICATE', js.result === 'APPLIED_CREATE' && j2.result === 'REVIEW_REQUIRED' && j2.reason === 'POSSIBLE_DUPLICATE', j2);
     const j3 = await rec(cA, { lead: { item_id: Y, channel: 'Kijiji', contact_name: 'John' }, events: [msg('INBOUND', '2026-10-06', 'q2')], resolution: { action: 'CREATE_NEW' } });
     check('resolution CREATE_NEW creates a separate lead', j3.result === 'APPLIED_CREATE' && j3.lead_id !== js.lead_id, j3);
+
+    console.log('\n[W4b — non-unique display name (KijijiUser) never auto-matches]');
+    const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
+    const K = await item(userA, 'Bluesbreaker (DW)');
+    const k1 = await rec(cA, { lead: { item_id: K, channel: 'Kijiji', contact_name: 'KijijiUser' }, events: [msg('INBOUND', daysAgo(2), 'What is the approximate value?', { substance: 'BASIC' })] });
+    const k1Row = k1.lead_id ? await leadRow(k1.lead_id) : {};
+    check('first KijijiUser on item/Kijiji -> APPLIED_CREATE, name stored as-is', k1.result === 'APPLIED_CREATE' && k1Row.contact_name === 'KijijiUser' && k1Row.contact_key === 'kijijiuser' && k1Row.status === 'OPEN', [k1, k1Row]);
+    const k1Events = (await eventsOf(k1.lead_id!)).length;
+    const mK = uuid();
+    const kReq = { mutation_id: mK, lead: { item_id: K, channel: 'Kijiji' as const, contact_name: 'kijijiuser' }, events: [offer('INBOUND', daysAgo(1), 'Offered C$4,000 cash', cash(4000))] };
+    const k2 = await rec(cA, kReq);
+    check('recent OPEN KijijiUser lead is NOT auto-matched -> REVIEW POSSIBLE_DIFFERENT_PERSON', k2.result === 'REVIEW_REQUIRED' && k2.reason === 'POSSIBLE_DIFFERENT_PERSON' && /non-unique/.test(k2.message ?? ''), k2);
+    check('review carries the candidate and USE_LEAD / CREATE_NEW', (k2.candidates ?? []).length === 1 && k2.candidates![0].lead_id === k1.lead_id && ['USE_LEAD', 'CREATE_NEW'].every((a) => (k2.allowed_resolutions ?? []).includes(a as never)), k2);
+    check('review wrote nothing', (await admin.from('lead_events').select('id').eq('mutation_id', mK)).data?.length === 0 && (await eventsOf(k1.lead_id!)).length === k1Events);
+    const kConfirm = await rec(cA, { ...kReq, mutation_id: uuid(), resolution: { action: 'CONFIRM' } });
+    check('CONFIRM does not bypass the non-unique rule', kConfirm.result === 'REVIEW_REQUIRED' && kConfirm.reason === 'POSSIBLE_DIFFERENT_PERSON', kConfirm);
+    const k3 = await rec(cA, { ...kReq, resolution: { action: 'USE_LEAD', lead_id: k1.lead_id } });
+    check('USE_LEAD appends to the chosen KijijiUser lead', k3.result === 'APPLIED_UPDATE' && k3.lead_id === k1.lead_id && k3.matched_by === 'resolution' && (await eventsOf(k1.lead_id!)).length === k1Events + 1, k3);
+    const k1After = (await eventsOf(k1.lead_id!)).length;
+    const kOther = { lead: { item_id: K, channel: 'Kijiji' as const, contact_name: 'KijijiUser' }, events: [offer('INBOUND', daysAgo(0), 'Different person: offered a Tele straight trade', trade(['Telecaster'], 'STRAIGHT'))] };
+    const k4 = await rec(cA, kOther);
+    const k5 = await rec(cA, { ...kOther, resolution: { action: 'CREATE_NEW' } });
+    const k5Row = k5.lead_id ? await leadRow(k5.lead_id) : {};
+    check('another KijijiUser -> REVIEW, then CREATE_NEW makes a second independent lead', k4.result === 'REVIEW_REQUIRED' && k5.result === 'APPLIED_CREATE' && k5.lead_id !== k1.lead_id && k5Row.contact_name === 'KijijiUser' && k5Row.inventory_item_id === K, [k4, k5]);
+    check('the two KijijiUser leads stay independent', (await eventsOf(k1.lead_id!)).length === k1After && (await eventsOf(k5.lead_id!)).every((e) => e.summary !== 'Offered C$4,000 cash') && Number((await leadRow(k1.lead_id!)).latest_cash_offer) === 4000 && (await leadRow(k5.lead_id!)).offer_type === 'TRADE');
+    const k6 = await rec(cA, { lead: { item_id: K, channel: 'Kijiji', contact_name: 'KijijiUser' }, events: [msg('INBOUND', daysAgo(0), 'still available?', { substance: 'BASIC' })] });
+    check('two KijijiUser leads -> REVIEW MULTIPLE_CONTACT_MATCHES', k6.result === 'REVIEW_REQUIRED' && k6.reason === 'MULTIPLE_CONTACT_MATCHES', k6);
+    for (const [name, channel] of [['Johnny Caleb', 'Kijiji'], ['JJ', 'Kijiji'], ['CT', 'Marketplace'], ['KijijiUser', 'Marketplace']] as const) {
+      const KI = await item(userA, `${name} scope (DW)`); // fresh item: no cross-channel siblings
+      const a1 = await rec(cA, { lead: { item_id: KI, channel, contact_name: name }, events: [msg('INBOUND', daysAgo(2), `${name} first message`, { substance: 'BASIC' })] });
+      const a2 = await rec(cA, { lead: { item_id: KI, channel, contact_name: name }, events: [msg('INBOUND', daysAgo(1), `${name} follow-up`, { substance: 'BASIC' })] });
+      check(`"${name}" on ${channel}: normal auto-match unchanged (APPLIED_UPDATE item_channel_contact)`, a1.result === 'APPLIED_CREATE' && a2.result === 'APPLIED_UPDATE' && a2.lead_id === a1.lead_id && a2.matched_by === 'item_channel_contact', [a1, a2]);
+    }
 
     console.log('\n[W5 — channels, cross-channel, cross-item]');
     const cc = await rec(cA, { lead: { item_id: X, channel: 'Kijiji', contact_name: 'Jane Doe' }, events: [msg('INBOUND', '2026-10-12', 'hi')] });
