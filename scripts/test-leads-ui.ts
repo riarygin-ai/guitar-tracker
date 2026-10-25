@@ -137,7 +137,7 @@ console.log('\n[D — main list, mobile cards, detail]');
   const table = strip(src.slice(src.indexOf('{/* Desktop table */}'), src.indexOf('{/* Mobile cards */}')));
   const cards = strip(src.slice(src.indexOf('{/* Mobile cards */}')));
   const headers = (table.match(/<th [^>]*>([\s\S]*?)<\/th>/g) ?? []).map((h) => h.replace(/<[^>]+>/g, '').replace(/\{[^}]*\}/g, '').trim());
-  check('desktop columns are exactly the important eight', JSON.stringify(headers) === JSON.stringify(['Date', 'Item', 'Channel', 'Quality', 'Offer', 'Status', 'Messages', 'Last Contact']), headers);
+  check('desktop columns are exactly the important nine (Name added before Item)', JSON.stringify(headers) === JSON.stringify(['Date', 'Name', 'Item', 'Channel', 'Quality', 'Offer', 'Status', 'Messages', 'Last Contact']), headers);
   check('main list never renders lead_id / UUIDs', !/lead_id|\.lead\.id/.test(table) && !/lead_id/.test(cards));
   check('main list omits detail-only fields', !/initial_cash_offer|best_cash_offer|trade_est_value|cash_component|outcome_reason|source_updated_at|last_imported_at|\.notes/.test(table + cards));
   check('offer via formatOfferSummary; messages via fmtMessages; channel via leadChannelLabel', /formatOfferSummary\(lead\)/.test(table) && /fmtMessages\(lead\)/.test(table) && /leadChannelLabel\(lead\)/.test(table));
@@ -165,7 +165,7 @@ console.log('\n[D — main list, mobile cards, detail]');
   check('source/QA section is collapsible', /<details/.test(detail) && /<summary/.test(detail));
   check('dialog is accessible (role, aria-modal, Escape, focus return)', /role="dialog"/.test(detail) && /aria-modal="true"/.test(detail) && /Escape/.test(detail) && /previouslyFocused/.test(detail));
   check('mobile sheet + desktop drawer classes', /rounded-t-3xl/.test(detail) && /md:w-\[30rem\]/.test(detail));
-  check('no edit controls (no inputs/forms/mutations) in detail or page', !/<form|<textarea|\.update\(|\.insert\(|\.upsert\(|method: 'P/.test(detail + page));
+  check('only edit control is the contact-name form; no textareas or direct table writes', (detail.match(/<form/g) ?? []).length === 1 && detail.includes('data-contact-name-form') && !/<form/.test(page) && !/<textarea|\.update\(|\.insert\(|\.upsert\(|method: 'P/.test(detail + page));
   check('help definitions exist (Serious+, Messages, Trade Estimated Value, Cash Component)',
     LEAD_HELP.seriousPlus.text === 'Leads that reached Serious or High Intent. Quality reflects the highest level the lead has reached.'
     && LEAD_HELP.messages.text === 'Buyer messages / our messages. Counts are the current lifetime totals stored for this lead.'

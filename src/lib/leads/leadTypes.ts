@@ -59,6 +59,8 @@ export interface LeadRow {
   deal_id: number | null;
   /** Buyer/trader name as recorded in the Lead Log (optional Sheet column T), or null. */
   contact_name: string | null;
+  /** Provenance of contact_name: LEAD_LOG, NOTES_PREFIX_V1, DIRECT or USER_EDIT (corrected in the app); null when there is no name. */
+  contact_name_source: 'LEAD_LOG' | 'NOTES_PREFIX_V1' | 'DIRECT' | 'USER_EDIT' | null;
   source_updated_at: string;
   last_imported_at: string | null;
 }
@@ -81,8 +83,8 @@ export interface LeadsPayload {
 export const LEAD_SNAPSHOT_DEFAULTS: Pick<LeadRow,
   'peak_stage' | 'peak_stage_source' | 'peak_stage_at' | 'negotiation_rounds' | 'latest_cash_offer' | 'offer_is_concrete' |
   'offer_assessment' | 'offer_assessment_source' | 'last_inbound_at' | 'last_outbound_at' | 'waiting_on' | 'unanswered_followups' |
-  'reopen_count' | 'channel_detail' | 'origin' | 'version'> = {
+  'reopen_count' | 'channel_detail' | 'origin' | 'version' | 'contact_name_source'> = {
   peak_stage: null, peak_stage_source: null, peak_stage_at: null, negotiation_rounds: 0, latest_cash_offer: null, offer_is_concrete: null,
   offer_assessment: null, offer_assessment_source: null, last_inbound_at: null, last_outbound_at: null, waiting_on: null,
-  unanswered_followups: 0, reopen_count: 0, channel_detail: null, origin: 'SHEET', version: 1,
+  unanswered_followups: 0, reopen_count: 0, channel_detail: null, origin: 'SHEET', version: 1, contact_name_source: null,
 };

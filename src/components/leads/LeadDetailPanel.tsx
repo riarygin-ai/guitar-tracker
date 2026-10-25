@@ -1,10 +1,13 @@
 'use client';
 
-// Read-only lead detail: right-hand drawer on md+, bottom sheet on mobile.
+// Lead detail: right-hand drawer on md+, bottom sheet on mobile.
 // Shows the stored structured values exactly as recorded so they can be
-// compared against the real conversation (Data QA). No edit controls.
+// compared against the real conversation (Data QA). The one edit control is
+// the contact name (add / correct / clear) — saved through
+// /api/leads/:id/contact-name, which also updates contact_key and records
+// an audit note; nothing else about the lead changes.
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import InfoTip from '@/components/InfoTip';
 import { QualityBadge, StatusBadge } from '@/components/leads/LeadBadges';
@@ -13,7 +16,87 @@ import {
   describeCashComponent, fmtCad, fmtLeadDateFull, fmtTimestamp, formatOfferSummary,
   leadChannelLabel, OFFER_TYPE_LABEL, outcomeReasonLabel,
 } from '@/lib/leads/leadFormat';
+import { saveLeadContactName } from '@/lib/leads/leadsClient';
 import type { LeadRow } from '@/lib/leads/leadTypes';
+
+const NAME_SOURCE_LABEL: Record<NonNullable<LeadRow['contact_name_source']>, string> = {
+  LEAD_LOG: 'from the Lead Log', NOTES_PREFIX_V1: 'from the notes', DIRECT: 'logged directly', USER_EDIT: 'edited by you',
+};
+
+function ContactNameField({ lead, onSaved }: { lead: LeadRow; onSaved: (patch: Partial<LeadRow>) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(lead.contact_name ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const attempt = useRef<{ value: string; id: string } | null>(null);
+
+  const start = () => { setDraft(lead.contact_name ?? ''); setError(null); setConfirm(null); setEditing(true); };
+  const cancel = () => { setEditing(false); setError(null); setConfirm(null); };
+
+  const save = async (confirmed: boolean) => {
+    const value = draft.replace(/\s+/g, ' ').trim();
+    // Same typed value = same attempt (retry / confirm replays instead of writing twice).
+    if (!attempt.current || attempt.current.value !== value) attempt.current = { value, id: crypto.randomUUID() };
+    setSaving(true);
+    setError(null);
+    const r = await saveLeadContactName(lead.id, value === '' ? null : value, lead.version, attempt.current.id, confirmed);
+    setSaving(false);
+    if (r.status === 'confirm') { setConfirm(r.message); return; }
+    if (r.status === 'error') { setError(r.message); return; }
+    if (r.status === 'renamed') onSaved({ contact_name: r.lead.contact_name, contact_name_source: r.lead.contact_name_source, version: r.lead.version });
+    attempt.current = null;
+    setConfirm(null);
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <div className="col-span-2 flex items-start justify-between gap-3" data-contact-name>
+        <Field label="Contact">
+          {lead.contact_name ? (
+            <>
+              <span className="font-semibold">{lead.contact_name}</span>
+              {lead.contact_name_source && <span className="ml-1 text-[11px] text-slate-500 dark:text-slate-400">{NAME_SOURCE_LABEL[lead.contact_name_source]}</span>}
+            </>
+          ) : <span className="text-slate-400 dark:text-slate-500">No name recorded</span>}
+        </Field>
+        <button type="button" onClick={start} data-contact-name-edit className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700">
+          {lead.contact_name ? 'Edit' : 'Add name'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form className="col-span-2 space-y-2" data-contact-name-form onSubmit={(e) => { e.preventDefault(); void save(false); }}>
+      <label htmlFor={`contact-name-${lead.id}`} className="block text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Contact name</label>
+      <input
+        id={`contact-name-${lead.id}`}
+        autoFocus
+        value={draft}
+        maxLength={120}
+        disabled={saving}
+        onChange={(e) => { setDraft(e.target.value); setConfirm(null); }}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); cancel(); } }}
+        placeholder='e.g. Nick (collector) — leave empty for no name'
+        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+      />
+      <p className="text-[11px] text-slate-500 dark:text-slate-400">Keep qualifiers in parentheses to tell people apart. Only the name changes — stage, status and offers stay as they are.</p>
+      {confirm && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300" role="alert" data-contact-name-confirm>
+          {confirm}
+          <button type="button" disabled={saving} onClick={() => void save(true)} className="ml-2 font-semibold underline">Save anyway</button>
+        </div>
+      )}
+      {error && <p className="text-xs text-rose-700 dark:text-rose-400" role="alert" data-contact-name-error>{error}</p>}
+      <div className="flex gap-2">
+        <button type="submit" disabled={saving} className="rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60 dark:bg-white dark:text-slate-900">{saving ? 'Saving…' : 'Save'}</button>
+        <button type="button" disabled={saving} onClick={cancel} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200">Cancel</button>
+      </div>
+    </form>
+  );
+}
 
 function Field({ label, help, children }: { label: string; help?: LeadHelpKey; children: React.ReactNode }) {
   return (
@@ -38,7 +121,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 const FOCUSABLE = 'a[href], button:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
-export default function LeadDetailPanel({ lead, onClose }: { lead: LeadRow; onClose: () => void }) {
+export default function LeadDetailPanel({ lead, onClose, onLeadUpdated }: { lead: LeadRow; onClose: () => void; onLeadUpdated?: (id: number, patch: Partial<LeadRow>) => void }) {
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -81,6 +164,7 @@ export default function LeadDetailPanel({ lead, onClose }: { lead: LeadRow; onCl
           <div className="min-w-0">
             <h2 id="lead-detail-title" className="break-words text-base font-semibold text-slate-900 dark:text-white">{lead.item_name}</h2>
             <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              {lead.contact_name ? <span className="font-semibold text-slate-700 dark:text-slate-200">{lead.contact_name} · </span> : null}
               {leadChannelLabel(lead)} · first contact {fmtLeadDateFull(lead.first_contact_at)}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -109,6 +193,7 @@ export default function LeadDetailPanel({ lead, onClose }: { lead: LeadRow; onCl
           </Link>
 
           <Section title="Lead">
+            <ContactNameField key={`${lead.id}:${lead.version}`} lead={lead} onSaved={(patch) => onLeadUpdated?.(lead.id, patch)} />
             <Field label="First contact">{fmtLeadDateFull(lead.first_contact_at)}</Field>
             <Field label="Last contact">{fmtLeadDateFull(lead.last_contact_at)}</Field>
             <Field label="Channel">{leadChannelLabel(lead)}</Field>

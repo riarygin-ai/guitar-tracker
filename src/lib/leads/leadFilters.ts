@@ -4,7 +4,7 @@
 // router.replace/push — no mirrored local filter state exists to drift.
 //
 // Query params (all optional, invalid values are silently ignored):
-//   search       free text: item name, trade item, notes
+//   search       free text: contact name, item name, trade item, notes
 //   channel_id   deal_channels.id, or "none" (no normalized channel)
 //   quality      LOW | ENGAGED | SERIOUS | HIGH_INTENT
 //   serious_plus 1  -> quality IN (SERIOUS, HIGH_INTENT)
@@ -27,6 +27,7 @@
 //                compared (console-only) against the actual result.
 
 import { safeReturnTo } from '../listingsReturn';
+import { normalizeContactName } from './contactName';
 import {
   LEAD_QUALITIES, OFFER_TYPES, LEAD_STATUSES, SERIOUS_PLUS_QUALITIES,
   type LeadRow, type LeadQuality, type OfferType, type LeadStatus,
@@ -154,8 +155,10 @@ export function itemAttributionRequest(f: LeadFilters): { itemId: number; from: 
 
 function matchesSearch(lead: LeadRow, tokens: string[]): boolean {
   if (tokens.length === 0) return true;
-  const haystack = `${lead.item_name}\n${lead.trade_item ?? ''}\n${lead.notes ?? ''}`.toLowerCase();
-  return tokens.every((t) => haystack.includes(t));
+  // contact_name also in its contact-matching normalization (accents, apostrophe variants, periods) so "zoe" finds "Zoë".
+  const name = lead.contact_name ?? '';
+  const haystack = `${name}\n${normalizeContactName(name)}\n${lead.item_name}\n${lead.trade_item ?? ''}\n${lead.notes ?? ''}`.toLowerCase();
+  return tokens.every((t) => haystack.includes(t) || haystack.includes(normalizeContactName(t)));
 }
 
 /**

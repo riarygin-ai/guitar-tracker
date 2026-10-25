@@ -10,8 +10,9 @@
 // what is on screen. (The search box is an uncontrolled input whose DOM
 // value is reconciled to the URL, not a second copy of the filter.)
 //
-// No lead editing, no import logic and no evidence recomputation here:
-// rows are displayed as stored; the exact channel-attributed cohort behind
+// The only edit is the contact name, from the detail panel (POST
+// /api/leads/:id/contact-name); the edited row is patched in place. No
+// import logic and no evidence recomputation here: rows are displayed as stored; the exact channel-attributed cohort behind
 // a /listings drill-down is resolved server-side (see /api/leads).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -32,7 +33,7 @@ import {
   OFFER_TYPE_LABEL, QUALITY_LABEL, STATUS_LABEL, fmtLeadDate, fmtLeadDateFull, fmtMessages,
   formatOfferSummary, leadChannelLabel,
 } from '@/lib/leads/leadFormat';
-import { LEAD_QUALITIES, LEAD_STATUSES, OFFER_TYPES, type LeadsPayload } from '@/lib/leads/leadTypes';
+import { LEAD_QUALITIES, LEAD_STATUSES, OFFER_TYPES, type LeadRow, type LeadsPayload } from '@/lib/leads/leadTypes';
 
 const PAGE_SIZE = 50;
 
@@ -116,6 +117,10 @@ export default function LeadsPage() {
   useEffect(() => () => { if (searchTimer.current) clearTimeout(searchTimer.current); }, []);
 
   const closeDetail = useCallback(() => setSelectedId(null), []);
+  // A saved edit (contact name) updates the loaded row immediately — no refetch.
+  const patchLead = useCallback((id: number, patch: Partial<LeadRow>) => {
+    setLoaded((prev) => prev && { ...prev, payload: { ...prev.payload, leads: prev.payload.leads.map((l) => (l.id === id ? { ...l, ...patch } : l)) } });
+  }, []);
   const selectedLead = selectedId !== null && payload ? payload.leads.find((l) => l.id === selectedId) ?? null : null;
 
   const quick = activeQuickFilter(filters);
@@ -141,7 +146,7 @@ export default function LeadsPage() {
             ref={searchRef}
             type="search"
             defaultValue={filters.search}
-            placeholder="Item, trade item, or notes"
+            placeholder="Name, item, trade item, or notes"
             onChange={(e) => {
               const v = e.target.value.trim();
               if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -287,6 +292,7 @@ export default function LeadsPage() {
                   <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 dark:bg-slate-700/60 dark:text-slate-400">
                     <tr>
                       <th scope="col" className="px-3 py-2 text-left font-semibold">Date</th>
+                      <th scope="col" className="px-3 py-2 text-left font-semibold">Name</th>
                       <th scope="col" className="px-3 py-2 text-left font-semibold">Item</th>
                       <th scope="col" className="px-3 py-2 text-left font-semibold">Channel</th>
                       <th scope="col" className="px-3 py-2 text-left font-semibold">Quality</th>
@@ -302,6 +308,9 @@ export default function LeadsPage() {
                     {visible.map((lead) => (
                       <tr key={lead.id} data-lead-row onClick={() => setSelectedId(lead.id)} className="cursor-pointer align-top transition hover:bg-slate-50 dark:hover:bg-slate-700/40">
                         <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-600 dark:text-slate-300">{fmtLeadDate(lead.first_contact_at)}</td>
+                        <td className="max-w-[10rem] break-words px-3 py-2 text-slate-900 dark:text-white" data-lead-name>
+                          {lead.contact_name ?? <span className="text-slate-400 dark:text-slate-500" aria-label="No name">—</span>}
+                        </td>
                         <td className="max-w-[16rem] px-3 py-2 font-medium text-slate-900 dark:text-white">
                           <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedId(lead.id); }} className="break-words text-left hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500">
                             {lead.item_name}
@@ -333,6 +342,7 @@ export default function LeadsPage() {
                         {fmtLeadDate(lead.first_contact_at)} · {leadChannelLabel(lead)}
                       </p>
                       <p className="mt-0.5 break-words text-base font-semibold leading-snug text-slate-900 dark:text-white">{lead.item_name}</p>
+                      <p className="mt-0.5 break-words text-sm text-slate-700 dark:text-slate-200" data-lead-name>{lead.contact_name ?? <span className="text-slate-400 dark:text-slate-500">No name</span>}</p>
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                         <QualityBadge quality={lead.lead_quality} stage={lead.peak_stage} />
                         <StatusBadge status={lead.status} />
@@ -362,7 +372,7 @@ export default function LeadsPage() {
         </div>
       )}
 
-      {selectedLead && <LeadDetailPanel lead={selectedLead} onClose={closeDetail} />}
+      {selectedLead && <LeadDetailPanel lead={selectedLead} onClose={closeDetail} onLeadUpdated={patchLead} />}
     </div>
   );
 }

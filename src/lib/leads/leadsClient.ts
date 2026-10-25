@@ -55,3 +55,31 @@ export async function fetchLeads(
   }
   return { status: 'success', data: { leads: p.leads, channels: p.channels, attributed_lead_ids: Array.isArray(p.attributed_lead_ids) ? p.attributed_lead_ids : null, item_attributed_lead_ids: Array.isArray(p.item_attributed_lead_ids) ? p.item_attributed_lead_ids : null } };
 }
+
+export type RenameContactResponse =
+  | { status: 'renamed'; lead: { id: number; contact_name: string | null; contact_name_source: LeadsPayload['leads'][number]['contact_name_source']; version: number } }
+  | { status: 'unchanged' }
+  | { status: 'confirm'; message: string }
+  | { status: 'error'; message: string };
+
+/** POST /api/leads/:id/contact-name — the caller's own lead only. `confirm` saves past a similar-name warning. */
+export async function saveLeadContactName(leadId: number, contactName: string | null, expectedVersion: number, mutationId: string, confirm = false): Promise<RenameContactResponse> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) return { status: 'error', message: 'Not signed in — please sign in again.' };
+  let res: Response;
+  try {
+    res = await fetch(`/api/leads/${leadId}/contact-name`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contact_name: contactName, expected_version: expectedVersion, mutation_id: mutationId, confirm }),
+    });
+  } catch {
+    return { status: 'error', message: 'Could not reach the server. Please try again.' };
+  }
+  const body = (await res.json().catch(() => null)) as { result?: string; message?: string; error?: string; lead?: { id: number; contact_name: string | null; contact_name_source: string | null; version: number } } | null;
+  if (body?.result === 'RENAMED' && body.lead) return { status: 'renamed', lead: body.lead as never };
+  if (body?.result === 'NO_CHANGE') return { status: 'unchanged' };
+  if (body?.result === 'CONFIRM_REQUIRED') return { status: 'confirm', message: body.message ?? 'A similar contact exists on this item.' };
+  if (body?.result === 'NOT_FOUND') return { status: 'error', message: 'Lead not found.' };
+  return { status: 'error', message: body?.message || body?.error || `Could not save the name (server returned ${res.status}).` };
+}
