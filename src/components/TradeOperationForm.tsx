@@ -281,8 +281,8 @@ export default function TradeOperationForm({
             return
         }
 
-        if (lead.missingChoice) {
-            setError('Choose the winning lead, or "No matching lead" if the trader wasn\'t logged.')
+        if (lead.saveBlocker) {
+            setError(lead.saveBlocker)
             return
         }
 
@@ -313,6 +313,25 @@ export default function TradeOperationForm({
             total_value: Number(ti.value || 0),
         }))
         const cfDescriptionValue = parsedCashOut > 0 || parsedCashIn > 0 ? cfDescription : null
+
+        // New trade with a chosen winning lead: trade + lead link in one transaction.
+        if (!isEdit && lead.choice.kind === 'lead') {
+            const saved = await lead.saveNewWithLead('trade', {
+                p_deal_date: dealDateValue,
+                p_channel_id: channelId,
+                p_notes: notes.trim() || null,
+                p_cash_paid: parsedCashOut,
+                p_cash_received: parsedCashIn,
+                p_outgoing_items: outgoingItemsPayload,
+                p_incoming_items: incomingItemsPayload,
+                p_cf_transaction_date: null,
+                p_cf_description: cfDescriptionValue,
+            })
+            setSaving(false)
+            if (!saved.ok) { setError(saved.message); return }
+            router.push('/operations')
+            return
+        }
 
         const result = isEdit
             ? await editTradeOperation({

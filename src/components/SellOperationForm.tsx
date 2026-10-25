@@ -220,8 +220,8 @@ export default function SellOperationForm({
       return;
     }
 
-    if (lead.missingChoice) {
-      setError('Choose the winning lead, or "No matching lead" if the buyer wasn\'t logged.');
+    if (lead.saveBlocker) {
+      setError(lead.saveBlocker);
       return;
     }
 
@@ -231,6 +231,21 @@ export default function SellOperationForm({
     const descParts = items.map((li) => [brandMap[li.item.brand_id], li.item.model].filter(Boolean).join(' '));
     const cfDescription = truncateDescription(`Sale: ${descParts.join(', ')}`);
     const itemsPayload = items.map((li) => ({ item_id: li.item.id, total_value: Number(li.value) }));
+
+    // New sale with a chosen winning lead: sale + lead link in one transaction.
+    if (!isEdit && lead.choice.kind === 'lead') {
+      const saved = await lead.saveNewWithLead('sale', {
+        p_deal_date: dealDateValue,
+        p_channel_id: channelId!,
+        p_items: itemsPayload,
+        p_notes: notes.trim() || null,
+        p_cf_description: cfDescription,
+      });
+      setSaving(false);
+      if (!saved.ok) { setError(saved.message); return; }
+      router.push('/operations');
+      return;
+    }
 
     const result = isEdit
       ? await editSellOperation({

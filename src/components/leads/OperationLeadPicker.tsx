@@ -14,20 +14,18 @@ import { QualityBadge, StatusBadge } from '@/components/leads/LeadBadges';
 import { fmtLeadDate } from '@/lib/leads/leadFormat';
 import { calendarDateIn } from '@/lib/dateUtils';
 import {
+  createOperationWithLead,
   fetchOperationLeadCandidates,
   linkOperationLead,
   type LeadChoice,
   type OperationLeadCandidate,
   type OperationLeadCandidates,
 } from '@/lib/leads/operationLeadsClient';
+import { invalidateListingsCache } from '@/lib/listingsCacheStore';
+import { leadSaveBlocker, type LeadPickerAvailability } from '@/lib/leads/operationLeadSave';
 import type { LeadStatus } from '@/lib/leads/leadTypes';
 
-export interface LeadPickerAvailability {
-  /** The field is shown and a choice is required before Save. */
-  required: boolean;
-  /** Edit flow: the lead already linked to this operation (read-only). */
-  linked: OperationLeadCandidate | null;
-}
+export type { LeadPickerAvailability };
 
 interface Props {
   itemIds: number[];
@@ -42,18 +40,31 @@ interface Props {
 const NONE_ID = 'none';
 
 /**
- * Form-side state for the winning lead. The operation RPC commits first; the
- * link is a second, idempotent step. If it fails, `pendingLink` keeps the
- * saved operation id so Save retries ONLY the link (never a second operation).
+ * Form-side state for the winning lead.
+ *  - NEW operation with a chosen lead: `saveNewWithLead` saves operation +
+ *    link in one server transaction (nothing is saved unless all of it is);
+ *    the operation key survives retries so a lost response never duplicates.
+ *  - EXISTING operation (edit): the edit RPC commits first, then
+ *    `linkAfterSave` links; on failure `pendingLink` keeps the operation id
+ *    so Save retries ONLY the link.
  */
 export function useOperationLeadLink() {
   const [choice, setChoice] = useState<LeadChoice>({ kind: 'unset' });
-  const [availability, setAvailability] = useState<LeadPickerAvailability>({ required: false, linked: null });
+  const [availability, setAvailability] = useState<LeadPickerAvailability>({ lookup: 'idle', required: false, linked: null });
   const [pendingLink, setPendingLink] = useState<{ dealId: number; message: string } | null>(null);
+  const operationKey = useRef<string | null>(null);
 
-  const missingChoice = availability.required && choice.kind === 'unset';
+  const saveBlocker = leadSaveBlocker(availability, choice);
 
-  /** Links the chosen lead (if any) to the saved operation. true = done / nothing to link. */
+  async function saveNewWithLead(kind: 'sale' | 'trade', operation: Record<string, unknown>): Promise<{ ok: true; dealId: number } | { ok: false; message: string }> {
+    if (choice.kind !== 'lead') return { ok: false, message: 'No lead selected.' };
+    operationKey.current ??= crypto.randomUUID();
+    const r = await createOperationWithLead({ kind, operation, leadId: choice.lead.lead_id, operationKey: operationKey.current });
+    if (r.ok) { operationKey.current = null; invalidateListingsCache(); }
+    return r;
+  }
+
+  /** Edit flow: links the chosen lead (if any) to the saved operation. true = done / nothing to link. */
   async function linkAfterSave(dealId: number): Promise<boolean> {
     if (choice.kind !== 'lead') { setPendingLink(null); return true; }
     const r = await linkOperationLead(dealId, choice.lead.lead_id);
@@ -62,12 +73,12 @@ export function useOperationLeadLink() {
     return false;
   }
 
-  function reset() { setChoice({ kind: 'unset' }); setPendingLink(null); }
+  function reset() { setChoice({ kind: 'unset' }); setPendingLink(null); operationKey.current = null; }
 
-  return { choice, setChoice, availability, setAvailability, missingChoice, pendingLink, linkAfterSave, reset };
+  return { choice, setChoice, availability, setAvailability, saveBlocker, pendingLink, saveNewWithLead, linkAfterSave, reset };
 }
 
-/** Shown when the operation saved but the lead link did not. */
+/** Edit flow: shown when the operation update saved but the lead link did not. */
 export function LeadLinkFailure({ message, leadName, retrying, onRetry, onSkip }: { message: string; leadName: string; retrying: boolean; onRetry: () => void; onSkip: () => void }) {
   return (
     <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300" role="alert" data-testid="lead-link-failure">
@@ -133,25 +144,26 @@ export default function OperationLeadPicker({ itemIds, value, onChange, onAvaila
     if (ids.length === 0 && !isEdit) {
       setInitial(null);
       setLoadError(null);
-      cb.current.onAvailabilityChange({ required: false, linked: null });
+      cb.current.onAvailabilityChange({ lookup: 'idle', required: false, linked: null });
       if (cb.current.value.kind !== 'unset') cb.current.onChange({ kind: 'unset' });
       return;
     }
     const ctrl = new AbortController();
     setLoadError(null);
+    // Until the lookup answers, the form does not know whether a choice is required.
+    cb.current.onAvailabilityChange({ lookup: 'loading', required: false, linked: null });
+    const fail = (message: string) => {
+      setInitial(null);
+      setLoadError(message);
+      cb.current.onAvailabilityChange({ lookup: 'error', required: false, linked: null });
+    };
     fetchOperationLeadCandidates({ itemIds: ids, dealId: dealId ?? null, signal: ctrl.signal })
       .then((r) => {
-        if (r.status === 'error') {
-          // Unknown lead state must not block saving an operation.
-          setInitial(null);
-          setLoadError(r.message);
-          cb.current.onAvailabilityChange({ required: false, linked: null });
-          return;
-        }
+        if (r.status === 'error') { fail(r.message); return; }
         const d = r.data;
         setInitial(d);
         const required = d.linked == null && d.eligible_total > 0;
-        cb.current.onAvailabilityChange({ required, linked: d.linked });
+        cb.current.onAvailabilityChange({ lookup: 'ready', required, linked: d.linked });
         const v = cb.current.value;
         if (!required) {
           if (v.kind !== 'unset') cb.current.onChange({ kind: 'unset' });
@@ -167,7 +179,7 @@ export default function OperationLeadPicker({ itemIds, value, onChange, onAvaila
           else if (d.eligible_total === 1 && d.candidates.length === 1) cb.current.onChange({ kind: 'lead', lead: d.candidates[0] });
         }
       })
-      .catch((e) => { if ((e as { name?: string }).name !== 'AbortError') setLoadError('Could not load leads.'); });
+      .catch((e) => { if ((e as { name?: string }).name !== 'AbortError') fail('Could not load leads.'); });
     return () => ctrl.abort();
   }, [itemKey, dealId, isEdit, reloadTick]);
 
@@ -198,12 +210,12 @@ export default function OperationLeadPicker({ itemIds, value, onChange, onAvaila
 
   if (loadError) {
     return (
-      <div className="space-y-2" data-testid="lead-picker-error">
+      <div className="space-y-2" data-testid="lead-picker-error" role="alert">
         <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Lead</p>
-        <p className="text-xs text-amber-700 dark:text-amber-400">
-          {loadError} You can still save; the lead can be linked later.{' '}
-          <button type="button" className="underline" onClick={() => setReloadTick((n) => n + 1)}>Retry</button>
-        </p>
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+          <span className="min-w-0 flex-1">{loadError} Save is paused until we know whether these items have logged leads.</span>
+          <button type="button" className="rounded-xl bg-amber-700 px-3 py-1.5 font-semibold text-white" onClick={() => setReloadTick((n) => n + 1)}>Retry</button>
+        </div>
       </div>
     );
   }

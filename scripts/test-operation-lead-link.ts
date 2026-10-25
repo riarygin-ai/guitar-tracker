@@ -30,10 +30,12 @@ import {
 } from './setup-analytics-test-fixtures';
 import { calendarDateIn, formatCalendarDate, todayLocalDate, BUSINESS_TIME_ZONE } from '../src/lib/dateUtils';
 import {
-  dealLinkMutationId, isEligibleRow, lastActivityAt, linkWinningLeadToDeal, loadOperationLeadCandidates, matchesLeadQuery, rankLeadRows,
+  createOperationWithWinningLead, dealLinkMutationId, isEligibleRow, lastActivityAt, linkWinningLeadToDeal, loadOperationLeadCandidates, matchesLeadQuery, rankLeadRows,
   OPERATION_LEAD_INITIAL_LIMIT, OPERATION_LEAD_SEARCH_LIMIT, type LeadCandidateRow,
 } from '../src/lib/leads/operationLeads';
-import { recordLeadInteraction, type AgentEventInput } from '../src/lib/leads/leadWriteService';
+import { prepareLeadUpdate, recordLeadInteraction, type AgentEventInput } from '../src/lib/leads/leadWriteService';
+import { leadSaveBlocker } from '../src/lib/leads/operationLeadSave';
+import type { LeadChoice } from '../src/lib/leads/operationLeadsClient';
 
 let passed = 0;
 let failed = 0;
@@ -122,7 +124,10 @@ function structureChecks() {
   check('searchable combobox (role=combobox + listbox), not a <select>', picker.includes('role="combobox"') && picker.includes('role="listbox"') && !picker.includes('<select'));
   check('search is server-side (fetch with q, debounced)', /fetchOperationLeadCandidates\(\{ itemIds: ids, q: query/.test(picker) && picker.includes('setTimeout('));
   check('a lead whose item left the operation is cleared', picker.includes('!ids.includes(v.lead.item_id)'));
-  check('load failure never blocks Save', /Unknown lead state must not block saving[\s\S]{0,200}required: false/.test(picker));
+  check('lookup reports loading before each fetch', /onAvailabilityChange\(\{ lookup: 'loading'[\s\S]{0,600}fetchOperationLeadCandidates\(\{ itemIds: ids, dealId/.test(picker));
+  check('lookup failure (error result or thrown) reports lookup: error', /const fail = [\s\S]{0,200}lookup: 'error'/.test(picker) && picker.includes("if (r.status === 'error') { fail(r.message); return; }") && picker.includes("fail('Could not load leads.')"));
+  check('error state shows Retry and says Save is paused', picker.includes('setReloadTick((n) => n + 1)') && picker.includes('Save is paused'));
+  check('only a successful lookup reports ready', (picker.match(/lookup: 'ready'/g) ?? []).length === 1);
   check('item shown per candidate when several outgoing items', picker.includes('For: {c.item_label}') && picker.includes('new Set(itemIds).size > 1'));
   check('edit flow: an existing link is shown read-only', picker.includes('data-testid="lead-picker-linked"'));
 
@@ -131,9 +136,10 @@ function structureChecks() {
     const s = src(f);
     const name = path.basename(f);
     check(`${name}: renders the picker on outgoing items`, s.includes('<OperationLeadPicker') && s.includes('itemIds={outgoingItemIds}'));
-    check(`${name}: Save blocked while a required choice is unset`, s.includes('if (lead.missingChoice)'));
-    check(`${name}: link runs after the operation RPC succeeds`, /const savedDealId = isEdit \? dealId! : Number\(\(result\.data[\s\S]{0,120}await lead\.linkAfterSave\(savedDealId\)/.test(s));
-    check(`${name}: a failed link never re-creates the operation (retry link only)`, /if \(lead\.pendingLink\) \{\s*await retryLeadLink\(\)/.test(s) && s.includes('<LeadLinkFailure'));
+    check(`${name}: Save gated by leadSaveBlocker (loading / error / unset)`, /if \(lead\.saveBlocker\) \{\s*setError\(lead\.saveBlocker\)/.test(s) && !s.includes('missingChoice'));
+    check(`${name}: NEW operation with a chosen lead saves atomically (no direct RPC + later link)`, /if \(!isEdit && lead\.choice\.kind === 'lead'\) \{\s*const saved = await lead\.saveNewWithLead\('(sale|trade)'/.test(s));
+    check(`${name}: edit flow links after the edit RPC`, /const savedDealId = isEdit \? dealId! : Number\(\(result\.data[\s\S]{0,120}await lead\.linkAfterSave\(savedDealId\)/.test(s));
+    check(`${name}: a failed edit-flow link retries the link only`, /if \(lead\.pendingLink\) \{\s*await retryLeadLink\(\)/.test(s) && s.includes('<LeadLinkFailure'));
   }
   for (const f of ['src/components/BuyOperationForm.tsx', 'src/components/ExpenseOperationForm.tsx']) {
     check(`${path.basename(f)}: no lead picker`, !src(f).includes('OperationLeadPicker'));
@@ -145,8 +151,26 @@ function structureChecks() {
   check('candidates route is bounded (item_ids cap, limit cap)', cand.includes('OPERATION_LEAD_MAX_ITEMS') && cand.includes('OPERATION_LEAD_SEARCH_LIMIT'));
   check('initial limit 6, search limit 12', OPERATION_LEAD_INITIAL_LIMIT === 6 && OPERATION_LEAD_SEARCH_LIMIT === 12);
   check('candidates query bounded to the outgoing items + own user', svc.includes(".eq('user_id', appUserId).in('inventory_item_id', itemIds)") && svc.includes('.limit(MAX_ROWS)'));
-  check('linking goes through recordLeadInteraction (no direct item_leads update)', svc.includes('return recordLeadInteraction(db,') && !/from\('item_leads'\)\.update/.test(svc));
-  check('no service_role in the new routes/helper', !/SERVICE_ROLE/.test(src('src/lib/apiUserClient.ts') + cand + src('src/app/api/operations/link-lead/route.ts')));
+  check('linking goes through the lead write layer (no direct item_leads update)', svc.includes('return recordLeadInteraction(db,') && svc.includes('await prepareLeadUpdate(db,') && !/from\('item_leads'\)\.update/.test(svc));
+  check('no service_role in the new routes/helper', !/SERVICE_ROLE/.test(src('src/lib/apiUserClient.ts') + cand + src('src/app/api/operations/link-lead/route.ts') + src('src/app/api/operations/create-with-lead/route.ts')));
+  const mcp = src('src/app/api/mcp/[[...path]]/route.ts');
+  check('MCP tools never pass a write source (stay MCP)', !/source:\s*'UI'/.test(mcp) && !mcp.includes('write_source') && !mcp.includes('pendingDealId'));
+  const mig = src('supabase/migrations/20261024000000_operation_winning_lead_atomic.sql');
+  check('migration: write_source limited to UI or MCP', mig.includes("CASE WHEN p_request->>'write_source' = 'UI' THEN 'UI' ELSE 'MCP' END"));
+  check('migration: auto-close exempts only the transaction-local winning lead', mig.includes("AND il.id IS DISTINCT FROM v_winner") && mig.includes("current_setting('app.operation_winning_lead_id', true)"));
+  check('migration: wrapper is SECURITY INVOKER (operation RPC keeps RLS)', /FUNCTION public\.create_operation_with_winning_lead[\s\S]{0,300}LANGUAGE plpgsql\nSET search_path/.test(mig) && !/create_operation_with_winning_lead\([\s\S]{0,300}SECURITY DEFINER/.test(mig));
+
+  console.log('\n[S4 — Save gate (pure)]');
+  const none: LeadChoice = { kind: 'none' };
+  const unset: LeadChoice = { kind: 'unset' };
+  check('lookup loading blocks Save', leadSaveBlocker({ lookup: 'loading', required: false, linked: null }, unset) !== null);
+  check('lookup error blocks Save (even with no choice required)', leadSaveBlocker({ lookup: 'error', required: false, linked: null }, unset)?.includes('Retry') === true);
+  check('lookup error is NOT an implicit "No matching lead" (blocks even when none is chosen)', leadSaveBlocker({ lookup: 'error', required: false, linked: null }, none) !== null);
+  check('after retry: ready + zero leads -> Save allowed with no field', leadSaveBlocker({ lookup: 'ready', required: false, linked: null }, unset) === null);
+  check('after retry: ready + leads -> unset blocks', leadSaveBlocker({ lookup: 'ready', required: true, linked: null }, unset) !== null);
+  check('ready + leads -> explicit "No matching lead" allows Save', leadSaveBlocker({ lookup: 'ready', required: true, linked: null }, none) === null);
+  check('ready + leads -> a chosen lead allows Save', leadSaveBlocker({ lookup: 'ready', required: true, linked: null }, { kind: 'lead', lead: { lead_id: 1 } as never }) === null);
+  check('idle (no outgoing items yet) defers to the form\'s own item validation', leadSaveBlocker({ lookup: 'idle', required: false, linked: null }, unset) === null);
   const detail = src('src/app/operations/[id]/page.tsx');
   check('operation detail no longer renders date-only values via new Date(...)', !/new Date\((deal\.deal_date|cf\.transaction_date|exp\.expense_date)\)/.test(detail) && detail.includes('formatCalendarDate(deal.deal_date)'));
   check('CashFlowForm default date = Toronto today (not UTC)', src('src/components/CashFlowForm.tsx').includes('useState(() => todayLocalDate())'));
@@ -231,6 +255,11 @@ async function main() {
       if (id) dealIds.push(id);
       return data as { deal_id: number; cf_id: number } | null;
     };
+    const atomic = async (client: SupabaseClient, uid: number, kind: 'sale' | 'trade', op: Record<string, unknown> & { p_deal_date: string }, leadId: number, key: string = uuid()) => {
+      const r = await createOperationWithWinningLead(client, uid, { kind, operation: op, leadId, operationKey: key });
+      if (r.ok && !dealIds.includes(r.deal_id)) dealIds.push(r.deal_id);
+      return r;
+    };
     const dealRow = async (id: number) => (await admin.from('deals').select('*').eq('id', id).single()).data as Record<string, unknown>;
     const cfOf = async (id: number) => ((await admin.from('cash_flow').select('*').eq('deal_id', id)).data ?? []) as Record<string, unknown>[];
 
@@ -312,35 +341,39 @@ async function main() {
     check('explicit user filter: A\'s client asking as B id returns nothing', (await loadOperationLeadCandidates(cA, userB, { itemIds: [X] })).eligible_total === 0);
 
     // ── W3: link the winning lead on a Sell ─────────────────────────────
-    console.log('\n[W3 — Sell with a winning OPEN lead: auto-close then DEAL_LINKED -> COMPLETED]');
+    console.log('\n[W3 — new Sell with a winning OPEN lead: one transaction, OPEN -> COMPLETED, no false ITEM_UNAVAILABLE]');
     const gary = leadsX[leadsX.length - 1];
     const bob = leadsX[1];
     const alice = leadsX[0];
     const garyBefore = await eventsOf(gary);
-    const xSale = await rpc(cA, 'create_sell_operation', { p_deal_date: '2026-10-24', p_channel_id: MP, p_items: [{ item_id: X, total_value: 950 }], p_notes: null, p_cf_description: 'Sale: Jazzmaster' });
-    const garyAfterSale = await leadRow(gary);
-    check('item-unavailable trigger first closed the OPEN winner (CLOSED / ITEM_UNAVAILABLE)', garyAfterSale.status === 'CLOSED' && garyAfterSale.outcome_reason === 'ITEM_UNAVAILABLE', garyAfterSale.status);
-    check('AGREED lead untouched by the auto-close', (await leadRow(alice)).status === 'AGREED');
-    const link = await linkWinningLeadToDeal(cA, userA, { dealId: xSale!.deal_id, leadId: gary });
+    const xKey = uuid();
+    const xOp = { p_deal_date: '2026-10-24', p_channel_id: MP, p_items: [{ item_id: X, total_value: 950 }], p_notes: null, p_cf_description: 'Sale: Jazzmaster' };
+    const created = await atomic(cA, userA, 'sale', xOp, gary, xKey);
+    check('atomic create -> ok', created.ok === true, created);
+    const xSale = { deal_id: created.ok ? created.deal_id : -1 };
     const g = await leadRow(gary);
-    check('link -> APPLIED_UPDATE', link.result === 'APPLIED_UPDATE', link);
-    check('winner ends COMPLETED, outcome cleared, deal_id set, peak CONVERTED', g.status === 'COMPLETED' && g.outcome_reason === null && Number(g.deal_id) === xSale!.deal_id && g.peak_stage === 'CONVERTED', g);
+    check('winner ends COMPLETED, outcome cleared, deal_id set, peak CONVERTED', g.status === 'COMPLETED' && g.outcome_reason === null && Number(g.deal_id) === xSale.deal_id && g.peak_stage === 'CONVERTED', g);
     const gEvents = await eventsOf(gary);
     const newEvents = gEvents.slice(garyBefore.length);
     const types = newEvents.map((e) => `${e.event_type}:${e.source}`);
-    check('history appended: auto-close, DEAL_LINKED (UI, USER), STATUS_CHANGE -> COMPLETED', JSON.stringify(types) === JSON.stringify(['STATUS_CHANGE:SYSTEM', 'DEAL_LINKED:UI', 'STATUS_CHANGE:SYSTEM']), types);
+    check('winner history = DEAL_LINKED (UI) + STATUS_CHANGE OPEN -> COMPLETED only', JSON.stringify(types) === JSON.stringify(['DEAL_LINKED:UI', 'STATUS_CHANGE:SYSTEM']), types);
+    check('winner has NO ITEM_UNAVAILABLE event (active or otherwise)', !gEvents.some((e) => e.event_type === 'STATUS_CHANGE' && (e.payload as { outcome_reason?: string; trigger?: string }).outcome_reason === 'ITEM_UNAVAILABLE'));
     const dl = newEvents.find((e) => e.event_type === 'DEAL_LINKED')!;
-    check('DEAL_LINKED payload = deal id, actor USER, DATE precision on the deal date', Number((dl.payload as { deal_id: number }).deal_id) === xSale!.deal_id && dl.actor === 'USER' && dl.occurred_at_precision === 'DATE' && String(dl.occurred_at).startsWith('2026-10-24') && dl.client_label === 'operation-form', dl);
-    const done = newEvents[2];
-    check('completion transition CLOSED -> COMPLETED caused by DEAL_LINKED', (done.payload as { from?: string; to?: string; cause?: string }).from === 'CLOSED' && (done.payload as { to?: string }).to === 'COMPLETED' && (done.payload as { cause?: string }).cause === 'DEAL_LINKED', done.payload);
+    check('DEAL_LINKED payload = deal id, actor USER, DATE precision on the deal date', Number((dl.payload as { deal_id: number }).deal_id) === xSale.deal_id && dl.actor === 'USER' && dl.occurred_at_precision === 'DATE' && String(dl.occurred_at).startsWith('2026-10-24') && dl.client_label === 'operation-form', dl);
+    const done = newEvents[1];
+    check('completion transition OPEN -> COMPLETED caused by DEAL_LINKED', (done.payload as { from?: string }).from === 'OPEN' && (done.payload as { to?: string }).to === 'COMPLETED' && (done.payload as { cause?: string }).cause === 'DEAL_LINKED', done.payload);
     check('earlier events preserved (none voided, prefix unchanged)', gEvents.slice(0, garyBefore.length).every((e, i) => e.id === garyBefore[i].id && e.voided_at == null));
     check('legacy notes untouched', g.notes === null);
+    check('UI-originated link: item_leads.last_write_source = UI', g.last_write_source === 'UI', g.last_write_source);
     const bobRow = await leadRow(bob);
-    check('unrelated OPEN lead stays CLOSED / ITEM_UNAVAILABLE, no deal', bobRow.status === 'CLOSED' && bobRow.outcome_reason === 'ITEM_UNAVAILABLE' && bobRow.deal_id === null, bobRow.status);
+    check('unrelated OPEN lead closes CLOSED / ITEM_UNAVAILABLE in the same operation', bobRow.status === 'CLOSED' && bobRow.outcome_reason === 'ITEM_UNAVAILABLE' && bobRow.deal_id === null, bobRow.status);
+    check('unrelated lead got the SYSTEM auto-close event', (await eventsOf(bob)).some((e) => e.event_type === 'STATUS_CHANGE' && e.source === 'SYSTEM' && (e.payload as { trigger?: string }).trigger === 'AUTO_ITEM_UNAVAILABLE'));
+    check('AGREED lead untouched by the auto-close', (await leadRow(alice)).status === 'AGREED');
     check('no DEAL_LINKED on any other lead of the item', (await admin.from('lead_events').select('id').in('item_lead_id', leadsX.filter((id) => id !== gary)).eq('event_type', 'DEAL_LINKED')).data?.length === 0);
-    const retry = await linkWinningLeadToDeal(cA, userA, { dealId: xSale!.deal_id, leadId: gary });
-    check('retried link replays (idempotent), no new events', retry.replayed === true && (await eventsOf(gary)).length === gEvents.length, retry);
-    const xDeal = await dealRow(xSale!.deal_id);
+    const dealCountBefore = ((await admin.from('deals').select('id').eq('user_id', userA)).data ?? []).length;
+    const retry = await atomic(cA, userA, 'sale', xOp, gary, xKey);
+    check('retry with the same operation key replays: same deal, no second operation, no new events', retry.ok && retry.replayed && retry.deal_id === xSale.deal_id && ((await admin.from('deals').select('id').eq('user_id', userA)).data ?? []).length === dealCountBefore && (await eventsOf(gary)).length === gEvents.length, retry);
+    const xDeal = await dealRow(xSale.deal_id);
     check('operation totals untouched by linking', Number(xDeal.cash_received) === 950 && xDeal.deal_type === 'sale');
     check('item status sold, one outgoing deal_item', (await admin.from('inventory_items').select('status').eq('id', X).single()).data?.status === 'sold' && (await admin.from('deal_items').select('id').eq('deal_id', xSale!.deal_id)).data?.length === 1);
     const linkedView = await loadOperationLeadCandidates(cA, userA, { itemIds: [X], dealId: xSale!.deal_id });
@@ -372,13 +405,15 @@ async function main() {
     check('candidates from every outgoing item, none from unrelated items', mc.eligible_total === 2 && mc.candidates.every((c) => [M1, M2].includes(c.item_id)) && !mc.candidates.some((c) => c.lead_id === uLead), mc.candidates);
     check('each candidate names its item', mc.candidates.some((c) => c.item_label.includes('Multi Guitar')) && mc.candidates.some((c) => c.item_label.includes('Multi Case')));
     check('higher stage OPEN first across items', mc.candidates[0].lead_id === m1Lead, mc.candidates.map((c) => c.contact_name));
-    const mSale = await rpc(cA, 'create_sell_operation', { p_deal_date: '2026-10-24', p_channel_id: MP, p_items: [{ item_id: M1, total_value: 1000 }, { item_id: M2, total_value: 100 }], p_notes: null, p_cf_description: null });
-    const unrelated = await linkWinningLeadToDeal(cA, userA, { dealId: mSale!.deal_id, leadId: uLead });
-    check('a lead of an item outside the operation is refused', unrelated.result === 'REJECTED' && unrelated.reason === 'DEAL_NOT_VALID', unrelated);
-    check('unrelated lead untouched', (await leadRow(uLead)).status === 'OPEN' && (await leadRow(uLead)).deal_id === null);
-    const mLink = await linkWinningLeadToDeal(cA, userA, { dealId: mSale!.deal_id, leadId: m2Lead });
-    check('lead on the second item links to the multi-item operation', mLink.result === 'APPLIED_UPDATE' && (await leadRow(m2Lead)).status === 'COMPLETED' && Number((await leadRow(m2Lead)).deal_id) === mSale!.deal_id, mLink);
-    check('other item\'s lead closed neutrally, not completed', (await leadRow(m1Lead)).status === 'CLOSED');
+    const mOp = { p_deal_date: '2026-10-24', p_channel_id: MP, p_items: [{ item_id: M1, total_value: 1000 }, { item_id: M2, total_value: 100 }], p_notes: null, p_cf_description: null };
+    const unrelated = await atomic(cA, userA, 'sale', mOp, uLead);
+    check('a lead of an item outside the operation is refused before anything is written', !unrelated.ok && unrelated.status === 409, unrelated);
+    check('unrelated lead + operation items untouched after the refusal', (await leadRow(uLead)).status === 'OPEN' && (await admin.from('inventory_items').select('status').eq('id', M1).single()).data?.status === 'listed');
+    const mCreated = await atomic(cA, userA, 'sale', mOp, m2Lead);
+    const mSale = { deal_id: mCreated.ok ? mCreated.deal_id : -1 };
+    check('lead on the second item links to the multi-item operation', mCreated.ok && (await leadRow(m2Lead)).status === 'COMPLETED' && Number((await leadRow(m2Lead)).deal_id) === mSale.deal_id, mCreated);
+    check('other item\'s OPEN lead closed neutrally (ITEM_UNAVAILABLE), not completed', (await leadRow(m1Lead)).status === 'CLOSED' && (await leadRow(m1Lead)).outcome_reason === 'ITEM_UNAVAILABLE');
+    check('multi-item winner has no ITEM_UNAVAILABLE event', !(await eventsOf(m2Lead)).some((e) => (e.payload as { outcome_reason?: string }).outcome_reason === 'ITEM_UNAVAILABLE'));
     check('multi-item totals: cash_received 1100, two deal_items', Number((await dealRow(mSale!.deal_id)).cash_received) === 1100 && (await admin.from('deal_items').select('id').eq('deal_id', mSale!.deal_id)).data?.length === 2);
 
     // ── W6: Trade with an AGREED winner ────────────────────────────────
@@ -386,12 +421,15 @@ async function main() {
     const TO = await item(userA, 'Trade Away (OL)');
     const TI = await item(userA, 'Trade Got (OL)', 'owned');
     const tLead = await newLead(cA, TO, 'Leo Trader', [{ type: 'OFFER', direction: 'INBOUND', occurred_at: '2026-10-18T12:00:00-04:00', summary: 'Straight trade for a Tele', payload: { offer: { cash_terms: 'STRAIGHT', cash_amount: null, items: [{ description: 'Tele' }] } } }, { type: 'AGREEMENT', direction: 'OUTBOUND', occurred_at: '2026-10-18T13:00:00-04:00', summary: 'Agreed', payload: {} }]);
-    const tSale = await rpc(cA, 'create_trade_operation', { p_deal_date: '2026-10-24', p_channel_id: MP, p_notes: null, p_cash_paid: 0, p_cash_received: 0, p_outgoing_items: [{ item_id: TO, total_value: 800 }], p_incoming_items: [{ item_id: TI, total_value: 800 }], p_cf_transaction_date: null, p_cf_description: null });
-    check('AGREED winner survives the trade auto-close', (await leadRow(tLead)).status === 'AGREED');
-    const tl = await linkWinningLeadToDeal(cA, userA, { dealId: tSale!.deal_id, leadId: tLead });
+    const tOther = await newLead(cA, TO, 'Olga Other', [msg('2026-10-19T12:00:00-04:00', 'Any trades?')]);
+    const tl = await atomic(cA, userA, 'trade', { p_deal_date: '2026-10-24', p_channel_id: MP, p_notes: null, p_cash_paid: 0, p_cash_received: 0, p_outgoing_items: [{ item_id: TO, total_value: 800 }], p_incoming_items: [{ item_id: TI, total_value: 800 }], p_cf_transaction_date: null, p_cf_description: null }, tLead);
+    const tSale = { deal_id: tl.ok ? tl.deal_id : -1 };
     const leo = await leadRow(tLead);
-    check('Trade link: AGREED -> COMPLETED, CONVERTED, deal linked', tl.result === 'APPLIED_UPDATE' && leo.status === 'COMPLETED' && leo.peak_stage === 'CONVERTED' && Number(leo.deal_id) === tSale!.deal_id, { tl, leo });
-    check('Trade link history: DEAL_LINKED then STATUS_CHANGE AGREED -> COMPLETED', (await eventsOf(tLead)).slice(-2).map((e) => `${e.event_type}:${(e.payload as { from?: string }).from ?? ''}`).join(',') === 'DEAL_LINKED:,STATUS_CHANGE:AGREED');
+    check('Trade: AGREED winner -> COMPLETED, CONVERTED, deal linked', tl.ok && leo.status === 'COMPLETED' && leo.peak_stage === 'CONVERTED' && Number(leo.deal_id) === tSale.deal_id, { tl, leo });
+    const leoHistory = (await eventsOf(tLead)).map((e) => `${e.event_type}:${(e.payload as { from?: string }).from ?? ''}>${(e.payload as { to?: string }).to ?? ''}`);
+    check('Trade winner lifecycle: OFFER, AGREEMENT, OPEN>AGREED, DEAL_LINKED, AGREED>COMPLETED — nothing else', JSON.stringify(leoHistory) === JSON.stringify(['OFFER:>', 'AGREEMENT:>', 'STATUS_CHANGE:OPEN>AGREED', 'DEAL_LINKED:>', 'STATUS_CHANGE:AGREED>COMPLETED']), leoHistory);
+    check('Trade: the other OPEN lead closes ITEM_UNAVAILABLE', (await leadRow(tOther)).status === 'CLOSED' && (await leadRow(tOther)).outcome_reason === 'ITEM_UNAVAILABLE');
+    check('Trade: deal_items out + in, incoming item owned', (await admin.from('deal_items').select('direction').eq('deal_id', tSale.deal_id)).data?.map((d) => d.direction).sort().join(',') === 'in,out' && (await admin.from('inventory_items').select('status').eq('id', TI).single()).data?.status === 'owned');
     check('incoming item status traded-in owned / outgoing traded', (await admin.from('inventory_items').select('status').eq('id', TO).single()).data?.status === 'traded');
 
     // ── W7: edit flow — add a link to an existing operation ─────────────
@@ -409,6 +447,63 @@ async function main() {
     console.log('\n[W8 — ownership]');
     const bLink = await linkWinningLeadToDeal(cB, userB, { dealId: mSale!.deal_id, leadId: m1Lead });
     check('user B cannot link A\'s lead to A\'s operation', bLink.result === 'REJECTED' && (await leadRow(m1Lead)).status === 'CLOSED', bLink);
+
+    // ── W10: atomicity ─────────────────────────────────────────────────
+    console.log('\n[W10 — one transaction: any failure saves nothing]');
+    const AT = await item(userA, 'Atomic (OL)');
+    const atLead = await newLead(cA, AT, 'Pat Atomic', [cashOffer('2026-10-22T12:00:00-04:00', 600)]);
+    const atOther = await newLead(cA, AT, 'Quinn Other', [msg('2026-10-21T12:00:00-04:00', 'Still there?')]);
+    const atBefore = await leadRow(atLead);
+    const dealsBefore = ((await admin.from('deals').select('id').eq('user_id', userA)).data ?? []).length;
+    const badOp = await atomic(cA, userA, 'sale', { p_deal_date: '2026-10-24', p_channel_id: MP, p_items: [{ item_id: AT, total_value: 0 }], p_notes: null, p_cf_description: null }, atLead);
+    check('operation validation failure -> error, nothing saved', !badOp.ok && badOp.status === 400 && /greater than 0/.test(badOp.message), badOp);
+    check('…no deal, item still listed, winner untouched (version + status), other lead still OPEN, no events',
+      ((await admin.from('deals').select('id').eq('user_id', userA)).data ?? []).length === dealsBefore
+      && (await admin.from('inventory_items').select('status').eq('id', AT).single()).data?.status === 'listed'
+      && (await leadRow(atLead)).version === atBefore.version && (await leadRow(atLead)).status === 'OPEN'
+      && (await leadRow(atOther)).status === 'OPEN'
+      && (await eventsOf(atLead)).length === (await eventsOf(atLead)).filter((e) => e.event_type !== 'DEAL_LINKED').length);
+
+    // Stale plan: the lead changes after planning -> the whole transaction (operation included) rolls back.
+    const { data: resId } = await cA.rpc('reserve_deal_id');
+    const staleDeal = Number(resId);
+    const stale = await prepareLeadUpdate(cA, { mutation_id: uuid(), lead: { lead_id: atLead }, events: [{ type: 'DEAL_LINKED', direction: 'INTERNAL', occurred_at: '2026-10-24', provenance: 'STATED', summary: 'stale', payload: { deal_id: staleDeal } }] }, { source: 'UI', pendingDealId: staleDeal });
+    check('plan against a reserved (not yet existing) deal succeeds', !('result' in stale), stale);
+    await recordLeadInteraction(cA, { mutation_id: uuid(), lead: { lead_id: atLead }, events: [msg('2026-10-23T12:00:00-04:00', 'Can you hold it?')] });
+    const { error: staleErr } = await cA.rpc('create_operation_with_winning_lead', { p_kind: 'sale', p_deal_id: staleDeal, p_operation: { p_deal_date: '2026-10-24', p_channel_id: MP, p_items: [{ item_id: AT, total_value: 600 }], p_notes: null, p_cf_description: null }, p_lead_request: (stale as { request: unknown }).request });
+    check('lead changed after planning -> LEAD_LINK_CONFLICT', /LEAD_LINK_CONFLICT/.test(staleErr?.message ?? ''), staleErr);
+    check('…and the operation rolled back with it (no deal row, item listed, other lead OPEN)',
+      ((await admin.from('deals').select('id').eq('id', staleDeal)).data ?? []).length === 0
+      && (await admin.from('inventory_items').select('status').eq('id', AT).single()).data?.status === 'listed'
+      && (await leadRow(atOther)).status === 'OPEN');
+    const atOk = await atomic(cA, userA, 'sale', { p_deal_date: '2026-10-24', p_channel_id: MP, p_items: [{ item_id: AT, total_value: 600 }], p_notes: null, p_cf_description: null }, atLead);
+    check('a fresh attempt (re-planned) succeeds', atOk.ok && (await leadRow(atLead)).status === 'COMPLETED' && (await leadRow(atOther)).outcome_reason === 'ITEM_UNAVAILABLE', atOk);
+
+    const { data: aRes } = await cA.rpc('reserve_deal_id');
+    const BI2 = await item(userB, 'B sell (OL)');
+    const bLead = await newLead(cB, BI2, 'Rae B', [cashOffer('2026-10-22T12:00:00-04:00', 100)]);
+    const bPlan = await prepareLeadUpdate(cB, { mutation_id: uuid(), lead: { lead_id: bLead }, events: [{ type: 'DEAL_LINKED', direction: 'INTERNAL', occurred_at: '2026-10-24', provenance: 'STATED', summary: 'b', payload: { deal_id: Number(aRes) } }] }, { source: 'UI', pendingDealId: Number(aRes) });
+    const { error: stolen } = await cB.rpc('create_operation_with_winning_lead', { p_kind: 'sale', p_deal_id: Number(aRes), p_operation: { p_deal_date: '2026-10-24', p_channel_id: MP, p_items: [{ item_id: BI2, total_value: 100 }] }, p_lead_request: (bPlan as { request: unknown }).request });
+    check('another user cannot consume my deal-id reservation', /DEAL_RESERVATION_INVALID/.test(stolen?.message ?? ''), stolen);
+    check('…nothing saved for that user', (await admin.from('inventory_items').select('status').eq('id', BI2).single()).data?.status === 'listed' && (await leadRow(bLead)).status === 'OPEN');
+    const { error: anonErr } = await createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } }).rpc('reserve_deal_id');
+    check('anon cannot reserve deal ids', !!anonErr);
+
+    // ── W11: provenance ────────────────────────────────────────────────
+    console.log('\n[W11 — write provenance]');
+    const PV = await item(userA, 'Provenance (OL)');
+    const pvLead = await recordLeadInteraction(cA, { mutation_id: uuid(), lead: { item_id: PV, channel: 'Marketplace', contact_name: 'Sam Mcp' }, events: [msg('2026-10-22T12:00:00-04:00', 'Interested')] }, { clientLabel: 'claude' });
+    const pv = await leadRow(pvLead.lead_id!);
+    const pvEv = (await eventsOf(pvLead.lead_id!))[0];
+    check('MCP-originated lead write: last_write_source MCP, event source MCP', pv.last_write_source === 'MCP' && pvEv.source === 'MCP', { lws: pv.last_write_source, src: pvEv.source });
+    await recordLeadInteraction(cA, { mutation_id: uuid(), lead: { lead_id: pvLead.lead_id! }, events: [msg('2026-10-23T12:00:00-04:00', 'Follow-up')] }, { clientLabel: 'claude' });
+    check('MCP update keeps MCP', (await leadRow(pvLead.lead_id!)).last_write_source === 'MCP');
+    const spoof = await prepareLeadUpdate(cA, { mutation_id: uuid(), lead: { lead_id: pvLead.lead_id! }, events: [msg('2026-10-24T09:00:00-04:00', 'Spoof attempt')] });
+    const spoofReq = { ...(spoof as { request: Record<string, unknown> }).request, write_source: 'SYSTEM' };
+    const { error: spoofErr } = await cA.rpc('apply_lead_interaction', { p_request: spoofReq });
+    check('a request cannot claim SYSTEM/SHEET/BACKFILL: stored as MCP', !spoofErr && (await leadRow(pvLead.lead_id!)).last_write_source === 'MCP', spoofErr);
+    check('edit-flow (UI) link: last_write_source UI', (await leadRow(edLead)).last_write_source === 'UI');
+    check('auto-close events stay SYSTEM', (await eventsOf(atOther)).some((e) => e.event_type === 'STATUS_CHANGE' && e.source === 'SYSTEM' && e.actor === 'SYSTEM'));
 
     // ── W9: route handlers with a real bearer token ─────────────────────
     console.log('\n[W9 — API route handlers]');
@@ -439,6 +534,20 @@ async function main() {
     check('POST link -> 200 and lead COMPLETED', posted.status === 200 && (await leadRow(rtLead)).status === 'COMPLETED');
     const conflict = await POST(req('http://local/api/operations/link-lead', { method: 'POST', body: { deal_id: xSale!.deal_id, lead_id: alice } }));
     check('POST conflicting link -> 409 with the lead layer\'s reason', conflict.status === 409 && (await conflict.json()).reason === 'DEAL_LINK_CONFLICT');
+
+    const { POST: CREATE } = await import('../src/app/api/operations/create-with-lead/route');
+    const CW = await item(userA, 'Route Create (OL)');
+    const cwLead = await newLead(cA, CW, 'Uma Route', [cashOffer('2026-10-22T12:00:00-04:00', 700)]);
+    const cwBody = { kind: 'sale', operation: { p_deal_date: '2026-10-24', p_channel_id: MP, p_items: [{ item_id: CW, total_value: 700 }], p_notes: null, p_cf_description: null }, lead_id: cwLead, operation_key: uuid() };
+    check('create-with-lead without token -> 401', (await CREATE(req('http://local/api/operations/create-with-lead', { method: 'POST', body: cwBody, token: null }))).status === 401);
+    check('create-with-lead with bad kind -> 400', (await CREATE(req('http://local/api/operations/create-with-lead', { method: 'POST', body: { ...cwBody, kind: 'buy' } }))).status === 400);
+    const cw = await CREATE(req('http://local/api/operations/create-with-lead', { method: 'POST', body: cwBody }));
+    const cwJson = await cw.json();
+    if (cwJson.deal_id) dealIds.push(cwJson.deal_id);
+    check('create-with-lead -> 200 with deal id; lead COMPLETED, last_write_source UI', cw.status === 200 && Number((await leadRow(cwLead)).deal_id) === cwJson.deal_id && (await leadRow(cwLead)).last_write_source === 'UI', cwJson);
+    const cwAgain = await CREATE(req('http://local/api/operations/create-with-lead', { method: 'POST', body: cwBody }));
+    const cwAgainJson = await cwAgain.json();
+    check('create-with-lead retry (same key) -> same deal, replayed', cwAgain.status === 200 && cwAgainJson.deal_id === cwJson.deal_id && cwAgainJson.replayed === true, cwAgainJson);
   } finally {
     console.log('\n=== Cleanup ===');
     const leadIds = ((await admin.from('item_leads').select('id').in('inventory_item_id', itemIds)).data ?? []).map((l) => l.id as number);
@@ -455,6 +564,7 @@ async function main() {
       await admin.from('inventory_items').delete().in('id', itemIds);
     }
     if (createdBrand) await admin.from('brands').delete().eq('id', createdBrand);
+    await admin.from('deal_id_reservations').delete().in('user_id', [userA, userB]);
     const left = ((await admin.from('inventory_items').select('id').in('id', itemIds.length ? itemIds : [-1])).data ?? []).length;
     check('cleanup: fixture items removed', left === 0, left);
     check('cleanup: fixture deals removed', ((await admin.from('deals').select('id').in('id', dealIds.length ? dealIds : [-1])).data ?? []).length === 0);

@@ -114,6 +114,12 @@ export interface WriteContext {
   /** Where the write originates: the MCP tools (default) or the app UI (operation forms). Recorded on each submitted event. */
   source?: 'MCP' | 'UI';
   now?: Date;
+  /**
+   * Internal (operation UI only): a reserved deal id that does not exist yet.
+   * A DEAL_LINKED on it skips the pre-write deal check; apply_lead_interaction
+   * re-validates it inside create_operation_with_winning_lead's transaction.
+   */
+  pendingDealId?: number;
 }
 
 export type Changes = Record<string, [unknown, unknown]>;
@@ -773,7 +779,7 @@ async function plan(
     if (e.event_type === 'DEAL_LINKED') {
       const d = (e.payload as { deal_id: number }).deal_id;
       if (dealId != null && dealId !== d) return review('DEAL_LINK_CONFLICT', `Lead ${state?.row.id} is already linked to deal ${dealId}.`, { lead_id: state?.row.id, allowed_resolutions: ['CONFIRM'] });
-      if (!(await validateDeal(client, d, itemId))) return rejected('DEAL_NOT_VALID', `Deal ${d} is not a completed sale/trade with this item on its outgoing side.`);
+      if (d !== ctx.pendingDealId && !(await validateDeal(client, d, itemId))) return rejected('DEAL_NOT_VALID', `Deal ${d} is not a completed sale/trade with this item on its outgoing side.`);
       const { data: others, error: othersError } = await client.from('item_leads').select('id, deal_id').eq('inventory_item_id', itemId).not('deal_id', 'is', null);
       if (othersError) throw new Error(`item_leads (deal links): ${othersError.message}`);
       const holder = (others ?? []).find((o) => o.id !== state?.row.id);
@@ -857,6 +863,57 @@ async function replayCheck(client: SupabaseClient, mutationId: string, requestHa
   return { ...(rows[0].applied_changes ?? { result: 'APPLIED_UPDATE' }), lead_id: rows[0].item_lead_id, event_ids: rows.map((r) => r.id), replayed: true };
 }
 
+interface PlannedMutation {
+  request: Record<string, unknown>;
+  storedResult: WriteResult;
+  resultCode: WriteResultCode;
+  leadId: number | null;
+}
+
+/** Resolve + plan one attempt: the exact apply_lead_interaction request, or a review/rejection. */
+async function planMutation(client: SupabaseClient, input: RecordLeadInteractionInput, normalized: NormalizedInput, ctx: WriteContext): Promise<PlannedMutation | WriteResult> {
+  const resolved = await resolveLead(client, input);
+  if ('result' in resolved) return resolved;
+  const { resolution, rc } = resolved;
+
+  let state: LeadState | null = null;
+  if (resolution.kind === 'existing') {
+    const row = await loadLead(client, resolution.leadId);
+    if (!row) return rejected('LEAD_NOT_FOUND', `Lead ${resolution.leadId} not found.`);
+    state = computeState(row, await loadLeadEvents(client, [row.id]));
+    rc.itemId = row.inventory_item_id;
+  }
+
+  const p = await plan(client, state, rc.itemId!, normalized, resolution, ctx);
+  if ('result' in p) return p;
+
+  const isCreate = resolution.kind === 'create';
+  const matchedBy = isCreate ? 'new' : resolution.matchedBy;
+  const resultCode: WriteResultCode = isCreate ? 'APPLIED_CREATE' : 'APPLIED_UPDATE';
+  const storedResult: WriteResult = {
+    result: resultCode, matched_by: matchedBy, changes: p.changes, snapshot: snapshotSummary(p.snapshot),
+    ...(p.warnings.length ? { warnings: p.warnings } : {}), ...(rc.related && rc.related.length ? { related_contacts: rc.related } : {}),
+  };
+
+  const request: Record<string, unknown> = {
+    mode: isCreate ? 'create' : 'update',
+    mutation_id: input.mutation_id,
+    request_hash: normalized.requestHash,
+    write_source: ctx.source ?? 'MCP',
+    lead_id: state?.row.id ?? null,
+    expected_version: state?.row.version ?? null,
+    force_new: isCreate ? resolution.forceNew : false,
+    lead: {
+      inventory_item_id: rc.itemId, source_channel: rc.sourceChannel, deal_channel_id: rc.dealChannelId, channel_detail: rc.channelDetail,
+      contact_name: isCreate && resolution.unnamed ? null : rc.contactName, contact_key: isCreate && resolution.unnamed ? null : rc.key,
+    },
+    snapshot: snapshotForRpc(p.snapshot),
+    events: p.pending.map(pendingForRpc),
+    result: storedResult,
+  };
+  return { request, storedResult, resultCode, leadId: state?.row.id ?? null };
+}
+
 export async function recordLeadInteraction(client: SupabaseClient, input: RecordLeadInteractionInput, ctx: WriteContext = {}): Promise<WriteResult> {
   const normalized = normalizeInput(input, ctx);
   if ('result' in normalized) return normalized;
@@ -865,46 +922,11 @@ export async function recordLeadInteraction(client: SupabaseClient, input: Recor
   if (replay) return replay;
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const resolved = await resolveLead(client, input);
-    if ('result' in resolved) return resolved;
-    const { resolution, rc } = resolved;
+    const planned = await planMutation(client, input, normalized, ctx);
+    if ('result' in planned) return planned;
+    const { request, storedResult, resultCode } = planned;
 
-    let state: LeadState | null = null;
-    if (resolution.kind === 'existing') {
-      const row = await loadLead(client, resolution.leadId);
-      if (!row) return rejected('LEAD_NOT_FOUND', `Lead ${resolution.leadId} not found.`);
-      state = computeState(row, await loadLeadEvents(client, [row.id]));
-      rc.itemId = row.inventory_item_id;
-    }
-
-    const p = await plan(client, state, rc.itemId!, normalized, resolution, ctx);
-    if ('result' in p) return p;
-
-    const isCreate = resolution.kind === 'create';
-    const matchedBy = isCreate ? 'new' : resolution.matchedBy;
-    const resultCode: WriteResultCode = isCreate ? 'APPLIED_CREATE' : 'APPLIED_UPDATE';
-    const storedResult: WriteResult = {
-      result: resultCode, matched_by: matchedBy, changes: p.changes, snapshot: snapshotSummary(p.snapshot),
-      ...(p.warnings.length ? { warnings: p.warnings } : {}), ...(rc.related && rc.related.length ? { related_contacts: rc.related } : {}),
-    };
-
-    if (input.dry_run) return { ...storedResult, lead_id: state?.row.id, dry_run: true };
-
-    const request: Record<string, unknown> = {
-      mode: isCreate ? 'create' : 'update',
-      mutation_id: input.mutation_id,
-      request_hash: normalized.requestHash,
-      lead_id: state?.row.id ?? null,
-      expected_version: state?.row.version ?? null,
-      force_new: isCreate ? resolution.forceNew : false,
-      lead: {
-        inventory_item_id: rc.itemId, source_channel: rc.sourceChannel, deal_channel_id: rc.dealChannelId, channel_detail: rc.channelDetail,
-        contact_name: isCreate && resolution.unnamed ? null : rc.contactName, contact_key: isCreate && resolution.unnamed ? null : rc.key,
-      },
-      snapshot: snapshotForRpc(p.snapshot),
-      events: p.pending.map(pendingForRpc),
-      result: storedResult,
-    };
+    if (input.dry_run) return { ...storedResult, lead_id: planned.leadId ?? undefined, dry_run: true };
 
     let rpc: RpcResult;
     try {
@@ -927,6 +949,22 @@ export async function recordLeadInteraction(client: SupabaseClient, input: Recor
     // CONFLICT: re-read and rebase once.
   }
   return rejected('CONCURRENT_UPDATE', 'The lead changed concurrently twice; retry the same request (same mutation_id).');
+}
+
+/**
+ * Plans an existing-lead mutation WITHOUT writing it: the exact
+ * apply_lead_interaction request (same rules as recordLeadInteraction), for a
+ * caller that applies it inside its own transaction
+ * (create_operation_with_winning_lead). Only updates of an existing lead.
+ */
+export async function prepareLeadUpdate(client: SupabaseClient, input: RecordLeadInteractionInput, ctx: WriteContext = {}): Promise<{ request: Record<string, unknown>; storedResult: WriteResult } | WriteResult> {
+  if (input.lead.lead_id == null) return rejected('VALIDATION_ERROR', 'prepareLeadUpdate requires lead.lead_id');
+  const normalized = normalizeInput(input, ctx);
+  if ('result' in normalized) return normalized;
+  const planned = await planMutation(client, input, normalized, ctx);
+  if ('result' in planned) return planned;
+  if (planned.request.mode !== 'update') return rejected('VALIDATION_ERROR', 'prepareLeadUpdate resolved to a new lead');
+  return { request: planned.request, storedResult: planned.storedResult };
 }
 
 // ── void_lead_event ─────────────────────────────────────────────────────────

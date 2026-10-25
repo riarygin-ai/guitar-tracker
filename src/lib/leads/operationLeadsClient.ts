@@ -40,6 +40,33 @@ export async function fetchOperationLeadCandidates(params: { itemIds: number[]; 
   return { status: 'success', data: { eligible_total: p.eligible_total, candidates: p.candidates, linked: p.linked ?? null, blocked_item_ids: p.blocked_item_ids ?? [] } };
 }
 
+/**
+ * New Sell / Trade with its winning lead, saved atomically server-side.
+ * `operation` is exactly the create_*_operation named-argument object.
+ */
+export async function createOperationWithLead(params: {
+  kind: 'sale' | 'trade';
+  operation: Record<string, unknown>;
+  leadId: number;
+  operationKey: string;
+}): Promise<{ ok: true; dealId: number } | { ok: false; message: string }> {
+  const token = await bearer();
+  if (!token) return { ok: false, message: 'Not signed in — please sign in again.' };
+  let res: Response;
+  try {
+    res = await fetch('/api/operations/create-with-lead', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: params.kind, operation: params.operation, lead_id: params.leadId, operation_key: params.operationKey }),
+    });
+  } catch {
+    return { ok: false, message: 'Could not reach the server. Nothing was saved — try again.' };
+  }
+  const body = (await res.json().catch(() => null)) as { deal_id?: number; error?: string } | null;
+  if (res.ok && body?.deal_id) return { ok: true, dealId: body.deal_id };
+  return { ok: false, message: body?.error || `Saving failed (server returned ${res.status}). Nothing was saved.` };
+}
+
 /** Links the winning lead to a saved operation. ok=false carries a user-facing message; the operation itself is already saved. */
 export async function linkOperationLead(dealId: number, leadId: number): Promise<{ ok: true; result: WriteResult } | { ok: false; message: string }> {
   const token = await bearer();

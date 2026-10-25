@@ -6,18 +6,25 @@
 // already holds a deal link is skipped entirely (the lead write layer rejects
 // a second link on the same item — DEAL_LINK_CONFLICT).
 //
-// Linking reuses recordLeadInteraction (the single lead write path): one
-// DEAL_LINKED event → the lead layer derives the STATUS_CHANGE to COMPLETED
-// and peak_stage CONVERTED, appended to the lead's existing history. The
-// operation RPC runs first (its own transaction); its item-unavailable
-// trigger may close the winning OPEN lead as CLOSED / ITEM_UNAVAILABLE, and
-// the DEAL_LINKED then completes it (CLOSED → COMPLETED) — the documented
-// flow of 20261021000000. The mutation_id is derived from (deal, lead), so a
-// retry after a failed link is idempotent.
+// Linking reuses the lead write layer (leadWriteService — the single source
+// of lead rules): one DEAL_LINKED event → the layer derives the STATUS_CHANGE
+// to COMPLETED and peak_stage CONVERTED, appended to the lead's history,
+// recorded with write source UI.
+//
+// New operation with a winning lead (createOperationWithWinningLead): the
+// deal id is reserved first, the lead mutation is planned against it, and
+// create_operation_with_winning_lead (20261024000000) then runs the
+// operation RPC + that mutation in ONE transaction, with the winner exempt
+// from the item-unavailable auto-close — history OPEN/AGREED → COMPLETED,
+// never a false CLOSED / ITEM_UNAVAILABLE. Idempotent per operation_key.
+//
+// Existing operation (edit flow, linkWinningLeadToDeal): the deal already
+// exists, so the link is a plain lead update; the mutation_id is derived from
+// (deal, lead), so a retry is idempotent.
 
 import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { recordLeadInteraction, type WriteResult } from './leadWriteService';
+import { prepareLeadUpdate, recordLeadInteraction, type AgentEventInput, type WriteResult } from './leadWriteService';
 import { formatOfferSummary, leadItemName } from './leadFormat';
 import { STAGE_RANK, type LeadStage } from './semantics';
 import type { OfferType } from './leadTypes';
@@ -191,9 +198,20 @@ export function dealLinkMutationId(dealId: number, leadId: number): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h.slice(16, 18), 16) & 0x3f) | 0x80).toString(16)}${h.slice(18, 20)}-${h.slice(20, 32)}`;
 }
 
+function dealLinkedEvent(kind: 'sale' | 'trade', dealId: number, dealDate: string, contactName: string | null): AgentEventInput {
+  const who = contactName?.trim();
+  return {
+    type: 'DEAL_LINKED', direction: 'INTERNAL', occurred_at: dealDate, provenance: 'STATED',
+    summary: `${kind === 'sale' ? 'Sale' : 'Trade'} recorded in Guitar Tracker${who ? ` — winning lead ${who}` : ''} (operation ${dealId})`,
+    payload: { deal_id: dealId },
+  };
+}
+
+const UI_CONTEXT = { source: 'UI' as const, clientLabel: 'operation-form' };
+
 /**
- * Links the operation's winning lead to its (already created) deal through the
- * lead write layer. The lead must belong to one of the deal's outgoing items.
+ * Links the winning lead to an EXISTING Sell / Trade operation (edit flow).
+ * The lead must belong to one of the deal's outgoing items.
  */
 export async function linkWinningLeadToDeal(db: SupabaseClient, appUserId: number, params: { dealId: number; leadId: number }, now?: Date): Promise<WriteResult> {
   const { data: deal, error: dealError } = await db.from('deals').select('id, deal_type, deal_date').eq('id', params.dealId).eq('user_id', appUserId).maybeSingle();
@@ -210,15 +228,86 @@ export async function linkWinningLeadToDeal(db: SupabaseClient, appUserId: numbe
     return { result: 'REJECTED', reason: 'DEAL_NOT_VALID', message: `Lead ${params.leadId} belongs to an item that is not part of this operation.` };
   }
 
-  const who = (lead.contact_name as string | null)?.trim();
-  const kind = deal.deal_type === 'sale' ? 'Sale' : 'Trade';
   return recordLeadInteraction(db, {
     mutation_id: dealLinkMutationId(params.dealId, params.leadId),
     lead: { lead_id: params.leadId },
-    events: [{
-      type: 'DEAL_LINKED', direction: 'INTERNAL', occurred_at: deal.deal_date as string, provenance: 'STATED',
-      summary: `${kind} recorded in Guitar Tracker${who ? ` — winning lead ${who}` : ''} (operation ${params.dealId})`,
-      payload: { deal_id: params.dealId },
-    }],
-  }, { source: 'UI', clientLabel: 'operation-form', now });
+    events: [dealLinkedEvent(deal.deal_type as OperationKind, params.dealId, deal.deal_date as string, lead.contact_name as string | null)],
+  }, { ...UI_CONTEXT, now });
+}
+
+export type OperationKind = 'sale' | 'trade';
+
+/** Named arguments of create_sell_operation / create_trade_operation, as the forms send them. */
+export type OperationParams = Record<string, unknown> & { p_deal_date: string };
+
+export type CreateWithLeadResult =
+  | { ok: true; deal_id: number; replayed: boolean }
+  | { ok: false; status: 400 | 409; message: string; result?: WriteResult };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function operationOutgoingItemIds(kind: OperationKind, op: OperationParams): number[] {
+  const list = (kind === 'sale' ? op.p_items : op.p_outgoing_items) as { item_id?: unknown }[] | undefined;
+  return Array.isArray(list) ? list.map((x) => Number(x?.item_id)).filter((n) => Number.isInteger(n) && n > 0) : [];
+}
+
+/**
+ * Creates a NEW Sell / Trade together with its winning lead, atomically
+ * (operation + DEAL_LINKED → COMPLETED + neutral close of the other OPEN
+ * leads). `operationKey` — a UUID the form keeps until success — is the lead
+ * mutation id: a retry after a lost response returns the saved operation
+ * instead of creating a second one.
+ */
+export async function createOperationWithWinningLead(db: SupabaseClient, appUserId: number, params: {
+  kind: OperationKind;
+  operation: OperationParams;
+  leadId: number;
+  operationKey: string;
+}, now?: Date): Promise<CreateWithLeadResult> {
+  const { kind, operation, leadId, operationKey } = params;
+  if (!UUID_RE.test(operationKey)) return { ok: false, status: 400, message: 'operation_key must be a UUID' };
+  if (typeof operation.p_deal_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(operation.p_deal_date)) {
+    return { ok: false, status: 400, message: 'p_deal_date must be YYYY-MM-DD' };
+  }
+
+  // Already saved under this key (response lost): return it.
+  const { data: prior, error: priorError } = await db.from('lead_events').select('item_lead_id').eq('user_id', appUserId).eq('mutation_id', operationKey).limit(1);
+  if (priorError) throw new OperationLeadsError(`lead_events: ${priorError.message}`);
+  if ((prior ?? []).length > 0) {
+    const { data: linked } = await db.from('item_leads').select('deal_id').eq('id', prior![0].item_lead_id).maybeSingle();
+    if (linked?.deal_id != null) return { ok: true, deal_id: Number(linked.deal_id), replayed: true };
+  }
+
+  const { data: lead, error: leadError } = await db.from('item_leads').select('id, inventory_item_id, contact_name').eq('id', leadId).eq('user_id', appUserId).maybeSingle();
+  if (leadError) throw new OperationLeadsError(`item_leads: ${leadError.message}`);
+  if (!lead) return { ok: false, status: 409, message: `Lead ${leadId} not found.` };
+  if (!operationOutgoingItemIds(kind, operation).includes(Number(lead.inventory_item_id))) {
+    return { ok: false, status: 409, message: 'The selected lead belongs to an item that is not part of this operation.' };
+  }
+
+  const { data: reserved, error: reserveError } = await db.rpc('reserve_deal_id');
+  if (reserveError || reserved == null) throw new OperationLeadsError(`reserve_deal_id: ${reserveError?.message ?? 'no id'}`);
+  const dealId = Number(reserved);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const prepared = await prepareLeadUpdate(db, {
+      mutation_id: operationKey,
+      lead: { lead_id: leadId },
+      events: [dealLinkedEvent(kind, dealId, operation.p_deal_date, lead.contact_name as string | null)],
+    }, { ...UI_CONTEXT, now, pendingDealId: dealId });
+    if ('result' in prepared) return { ok: false, status: 409, message: prepared.message ?? 'The lead cannot be linked.', result: prepared };
+
+    const { data, error } = await db.rpc('create_operation_with_winning_lead', {
+      p_kind: kind, p_deal_id: dealId, p_operation: operation, p_lead_request: prepared.request,
+    });
+    if (!error) {
+      const d = data as { status: string; deal_id: number | null };
+      return { ok: true, deal_id: Number(d.deal_id ?? dealId), replayed: d.status === 'REPLAY' };
+    }
+    // The lead changed between planning and the transaction (all rolled back, reservation intact): re-plan once.
+    if (/LEAD_LINK_CONFLICT/.test(error.message) && attempt === 0) continue;
+    // Operation validation (e.g. "Sale value must be greater than 0") or a lead invariant: nothing was saved.
+    return { ok: false, status: 400, message: error.message };
+  }
+  return { ok: false, status: 409, message: 'The lead changed while saving; nothing was saved. Please try again.' };
 }
