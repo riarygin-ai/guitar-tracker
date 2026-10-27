@@ -1,10 +1,13 @@
-// Remote MCP server for Guitar Tracker — exactly eleven tools: nine read-only
+// Remote MCP server for Guitar Tracker — exactly twelve tools: nine read-only
 // (search_inventory, get_item_context, get_inventory_analysis,
 // get_lead_activity, find_contact_history, get_leads, get_operations_analysis,
-// get_operation_context, get_deal_chain) and two lead WRITE tools
+// get_operation_context, get_deal_chain), two lead WRITE tools
 // (record_lead_interaction, void_lead_event — src/lib/leads/leadWriteService.ts,
 // writing only through the SECURITY DEFINER apply_lead_interaction RPC with the
-// caller's own identity; no service_role anywhere in this route). Built on Supabase's official
+// caller's own identity) and one listing WRITE tool (manage_listing —
+// src/lib/listings/listingWriteService.ts, writing only through the SECURITY
+// INVOKER apply_listing_changes RPC, the same path the item page's listing
+// card uses); no service_role anywhere in this route. Built on Supabase's official
 // OAuth 2.1 / MCP authentication middleware (NOT a custom /authorize,
 // /token, client registry, or JWT implementation — Supabase Auth's own
 // OAuth 2.1 server issues and verifies every token; see
@@ -64,6 +67,7 @@ import { getOperationsAnalysisForUser, getOperationContextForUser, OperationsSer
 import { getDealChainForUser } from '@/lib/analytics/dealChainService';
 import { recordLeadInteraction, voidLeadEvent, RESOLUTION_ACTIONS, type RecordLeadInteractionInput, type VoidLeadEventInput } from '@/lib/leads/leadWriteService';
 import { AGENT_EVENT_TYPES, LEAD_CHANNELS, LEAD_STAGES, LEAD_STATUSES, renderLeadSemanticsForPrompt } from '@/lib/leads/semantics';
+import { manageListing, LISTING_ACTIONS, type ManageListingInput } from '@/lib/listings/listingWriteService';
 import { getLeadsForUser, GetLeadsError, GET_LEADS_DEFAULT_LIMIT, GET_LEADS_MAX_ITEM_IDS, GET_LEADS_MAX_LIMIT } from '@/lib/analytics/leadsMcp';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -449,6 +453,48 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
     },
     async (input) => {
       const result = await voidLeadEvent(supabase, input as VoidLeadEventInput, { clientLabel: clientLabel() });
+      return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(result.result === 'REJECTED' ? { isError: true } : {}) };
+    },
+  );
+
+  // ── Listing writes ─────────────────────────────────────────────────────
+  server.registerTool(
+    'manage_listing',
+    {
+      description:
+        'WRITE TOOL. Creates, updates or unlists the signed-in user\'s platform listings for ONE inventory item ' +
+        '(item_id from search_inventory/get_item_context — never guess an item). Batch several platforms in one call ' +
+        '("Listed the Studio on Marketplace for 1800 and Kijiji for 1750, trade on both" = two LIST actions); the batch ' +
+        'is all-or-nothing. Actions: LIST (new active listing on a platform; asking_price, trade_enabled, occurred_at = ' +
+        'listed date, default today), UPDATE (the platform\'s ACTIVE listing: send only what changed — asking_price ' +
+        'and/or trade_enabled; anything omitted stays as is), UNLIST (the user took the ad down but still owns the item; ' +
+        'occurred_at = unlisted date, default today; the item stays listed while another platform is active). There is no ' +
+        'END: listings end automatically when the item is sold/traded through a Sell/Trade operation. Terms: Marketplace ' +
+        'and Reverb need an asking price; Kijiji needs a price OR trade_enabled (asking_price: null + trade_enabled: true ' +
+        '= "trade only"); trade_enabled only exists on Marketplace and Kijiji — never set it for Reverb. Safe, ' +
+        'unambiguous changes apply immediately. Returns `result`: APPLIED, NO_CHANGE (already that way), REVIEW_REQUIRED ' +
+        '(nothing written — e.g. LIST when that platform already has an active listing, or UPDATE when it has none; ask ' +
+        'the user, then send the corrected actions), REJECTED (invalid; nothing written). Show `headline` then `lines` ' +
+        'to the user, e.g. "🟢 Listings: UPDATED / Marketplace: C$1,800 → C$1,700 · Trade". mutation_id: ONE new UUID ' +
+        'per logical change; reuse it on retries (a retry never creates a second listing or price change).',
+      inputSchema: z.object({
+        mutation_id: z.string().uuid().describe('One new UUID per logical listing change; reuse it for retries.'),
+        item_id: z.number().int().positive().describe('The inventory item id (from search_inventory / get_item_context).'),
+        actions: z.array(z.object({
+          action: z.enum(LISTING_ACTIONS),
+          platform: z.string().trim().min(1).max(40).describe('Marketplace, Kijiji or Reverb (case-insensitive; "Facebook Marketplace" = Marketplace). Each platform at most once per call.'),
+          asking_price: z.number().positive().max(10_000_000).nullable().optional()
+            .describe('CAD asking price. null = no price (Kijiji trade only). Omit on UPDATE to keep the current price.'),
+          trade_enabled: z.boolean().optional()
+            .describe('The ad is explicitly offered for trade (Marketplace/Kijiji only). Omit on UPDATE to keep the current setting; LIST defaults to false.'),
+          occurred_at: z.string().min(10).max(40).optional()
+            .describe('LIST: date listed; UNLIST: date taken down. YYYY-MM-DD or ISO date-time (Toronto date is used). Default today. Not used by UPDATE.'),
+        })).min(1).max(10),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      const result = await manageListing(supabase, input as ManageListingInput);
       return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(result.result === 'REJECTED' ? { isError: true } : {}) };
     },
   );

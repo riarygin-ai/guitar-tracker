@@ -13,7 +13,8 @@
  * `npm run build` are the real compile-correctness check for this file —
  * this script instead locks down the SECURITY-CRITICAL invariants that
  * are visible from the source text alone and must never regress:
- *   - exactly eleven tools: the nine read-only names + the two lead write tools
+ *   - exactly twelve tools: the nine read-only names + the two lead write tools
+ *     + the one listing write tool (manage_listing)
  *   - no tool input schema ever mentions a user/account/owner identifier
  *   - auth is 'user' (RLS-scoped), never service_role / admin
  *   - no mutation call (insert/update/delete/upsert/rpc) anywhere in the
@@ -54,24 +55,29 @@ function main() {
     contactName: strip(read('src', 'lib', 'leads', 'contactName.ts')),
   };
 
-  console.log('\n[A — exactly the eleven intended tools: nine read-only + two lead write tools]');
+  console.log('\n[A — exactly the twelve intended tools: nine read-only + two lead write tools + manage_listing]');
   {
     const toolNames = Array.from(route.matchAll(/registerTool\(\s*'([a-zA-Z0-9_]+)'/g)).map((m) => m[1]);
-    check('exactly eleven tools registered', toolNames.length === 11, toolNames);
+    check('exactly twelve tools registered', toolNames.length === 12, toolNames);
     check(
-      'the eleven tools are the nine read-only tools plus record_lead_interaction and void_lead_event (no extra, no renamed)',
+      'the twelve tools are the nine read-only tools plus record_lead_interaction, void_lead_event and manage_listing (no extra, no renamed)',
       JSON.stringify([...toolNames].sort()) === JSON.stringify([
         'find_contact_history', 'get_deal_chain', 'get_inventory_analysis', 'get_item_context',
-        'get_lead_activity', 'get_leads', 'get_operation_context', 'get_operations_analysis', 'record_lead_interaction', 'search_inventory', 'void_lead_event',
+        'get_lead_activity', 'get_leads', 'get_operation_context', 'get_operations_analysis', 'manage_listing', 'record_lead_interaction', 'search_inventory', 'void_lead_event',
       ]),
       toolNames,
     );
     const block = (name: string) => { const i = route.indexOf(`registerTool(\n    '${name}'`); const j = route.indexOf('registerTool(', i + 10); return route.slice(i, j < 0 ? undefined : j); };
-    const readOnly = toolNames.filter((n) => !['record_lead_interaction', 'void_lead_event'].includes(n));
+    const readOnly = toolNames.filter((n) => !['record_lead_interaction', 'void_lead_event', 'manage_listing'].includes(n));
     check('the nine read tools are annotated readOnlyHint: true + destructiveHint: false', readOnly.every((n) => /readOnlyHint:\s*true/.test(block(n)) && /destructiveHint:\s*false/.test(block(n))), readOnly.filter((n) => !/readOnlyHint:\s*true/.test(block(n))));
     check('record_lead_interaction: readOnlyHint false, destructiveHint false (append-only), idempotentHint true', /readOnlyHint:\s*false,\s*destructiveHint:\s*false,\s*idempotentHint:\s*true/.test(block('record_lead_interaction')));
     check('void_lead_event: readOnlyHint false, destructiveHint true, idempotentHint true', /readOnlyHint:\s*false,\s*destructiveHint:\s*true,\s*idempotentHint:\s*true/.test(block('void_lead_event')));
-    check('exactly two tools are not read-only', (route.match(/readOnlyHint:\s*false/g) ?? []).length === 2);
+    check('exactly three tools are not read-only', (route.match(/readOnlyHint:\s*false/g) ?? []).length === 3);
+    const ml = block('manage_listing');
+    check('manage_listing: readOnlyHint false, destructiveHint false, idempotentHint true', /readOnlyHint:\s*false,\s*destructiveHint:\s*false,\s*idempotentHint:\s*true/.test(ml));
+    check('manage_listing: actions are LIST/UPDATE/UNLIST only — no manual END action', /action:\s*z\.enum\(LISTING_ACTIONS\)/.test(ml) && !/'END'/.test(ml) && /There is no ' \+\s*'END/.test(ml));
+    check('manage_listing: requires mutation_id (uuid) + item_id; no user/owner identifier in its schema', /mutation_id:\s*z\.string\(\)\.uuid\(\)/.test(ml) && /item_id:\s*z\.number\(\)/.test(ml) && !/user_id|owner_id|account/.test(ml.slice(ml.indexOf('inputSchema'))));
+    check('manage_listing handler goes through the shared listing service with the request-scoped client', /manageListing\(supabase, input as ManageListingInput\)/.test(ml));
     check('void_lead_event is described as a correction/repair, not normal logging', /CORRECTION \/ REPAIR/.test(block('void_lead_event')) && /not normal lead logging/.test(block('void_lead_event')));
     check('record_lead_interaction never accepts LEGACY_SNAPSHOT (agent event enum)', /type:\s*z\.enum\(AGENT_EVENT_TYPES\)/.test(block('record_lead_interaction')));
     check('record_lead_interaction has no notes-replacement input', !/notes:\s*z\./.test(block('record_lead_interaction')));

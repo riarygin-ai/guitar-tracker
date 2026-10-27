@@ -135,7 +135,8 @@ async function main() {
       listingIds.push(data.id as number);
       return data.id as number;
     };
-    // Reverb cycle 1 (ended) — created with a price, then ended
+    // Reverb cycle 1 (ended) — created with a price, then ended while the
+    // item is still owned, i.e. unlisted (end_reason defaults to UNLISTED)
     const rev1 = await listing(userA, item.id, reverbId, { status: 'active', listed_at: '2026-05-10', asking_price: 3400 });
     await admin.from('item_listings').update({ status: 'ended', ended_at: '2026-06-15' }).eq('id', rev1);
     // Reverb cycle 2 (active) — three price events via real UPDATEs (trigger writes history)
@@ -225,7 +226,7 @@ async function main() {
     console.log('\n[C — listing history: platform, cycle, chronology]');
     const block = (name: string) => text.slice(text.indexOf(`\n${name}\nCycle 1:`));
     check('Reverb shows two separate cycles', text.includes('Reverb\nCycle 1:') && text.includes('Cycle 2:\nListed: 2026-07-11'));
-    check('Reverb cycle 1 = ended 2026-05-10 → 2026-06-15 with its single price entry', text.includes('Listed: 2026-05-10\nEnded: 2026-06-15\nStatus: Ended\nDays Listed: 36\nLast Asking Price: $3,400\nPrice History:\n- 2026-05-10: Listed at $3,400'), text);
+    check('Reverb cycle 1 = ended 2026-05-10 → 2026-06-15 with its single price entry', text.includes('Listed: 2026-05-10\nEnded: 2026-06-15\nStatus: Unlisted (ad removed, item still owned)\nDays Listed: 36\nLast Asking Price: $3,400\nPrice History:\n- 2026-05-10: Listed at $3,400'), text);
     check('Reverb cycle 2 = active with the FULL price trail in order', text.includes('Listed: 2026-07-11\nStatus: Active\nDays Listed: 40\nAsking Price: $2,950\nPrice History:\n- 2026-07-11: Listed at $3,200\n- 2026-07-28: $3,200 → $3,100\n- 2026-08-15: $3,100 → $2,950'), text);
     check('Marketplace shows trade value and its own price entry only', block('Marketplace').startsWith('\nMarketplace\nCycle 1:\nListed: 2026-07-15\nStatus: Active') && block('Marketplace').includes('Trade Value: $2,800') && block('Marketplace').includes('- 2026-07-15: Listed at $3,000'));
     check('cancelled Kijiji cycle is included with its cancelled date', text.includes('Kijiji\nCycle 1:\nListed: 2026-06-20\nCancelled: 2026-06-22\nStatus: Cancelled'));

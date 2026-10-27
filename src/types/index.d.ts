@@ -270,6 +270,7 @@ export interface InventoryItemPhoto {
 }
 
 export type ListingStatus = 'draft' | 'active' | 'ended' | 'cancelled';
+export type ListingEndReason = 'UNLISTED' | 'ITEM_EXITED';
 
 export interface ItemListing {
   id: number;
@@ -280,9 +281,13 @@ export interface ItemListing {
   description: string | null;
   asking_price: number | null;
   trade_value: number | null;
+  /** This published listing is explicitly offered for trade (Marketplace/Kijiji only; never Reverb). Not trade_value. */
+  trade_enabled: boolean;
   is_ai_generated: boolean;
   ai_prompt_id: number | null;
   status: ListingStatus;
+  /** Ended cycles only: UNLISTED (ad removed, item still owned) or ITEM_EXITED (Sell/Trade). null = before 2026-10-26 / not ended. */
+  end_reason: ListingEndReason | null;
   listed_at: string | null;
   ended_at: string | null;
   cancelled_at: string | null;

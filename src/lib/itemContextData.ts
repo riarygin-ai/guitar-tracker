@@ -77,7 +77,7 @@ async function loadItemExitDealId(client: SupabaseClient, itemId: number): Promi
   return realized[0].deal_id;
 }
 
-const LISTING_COLUMNS = 'id, deal_channel_id, status, listed_at, ended_at, cancelled_at, asking_price, trade_value';
+const LISTING_COLUMNS = 'id, deal_channel_id, status, listed_at, ended_at, cancelled_at, asking_price, trade_value, trade_enabled, end_reason';
 const LEAD_COLUMNS =
   'id, first_contact_at, last_contact_at, source_channel, deal_channel_id, lead_quality, status, offer_type, ' +
   'initial_cash_offer, best_cash_offer, trade_item, cash_component, trade_est_value, outcome_reason, notes, ' +
@@ -133,6 +133,8 @@ export async function loadItemContextHistory(client: SupabaseClient, itemId: num
     cancelledAt: (l.cancelled_at as string | null) ?? null,
     askingPrice: l.asking_price == null ? null : Number(l.asking_price),
     tradeValue: l.trade_value == null ? null : Number(l.trade_value),
+    tradeEnabled: l.trade_enabled === true,
+    endReason: (l.end_reason as ItemContextListingCycle['endReason']) ?? null,
     priceHistory: historyByListing.get(l.id as number) ?? [],
   }));
 

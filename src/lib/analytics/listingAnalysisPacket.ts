@@ -19,8 +19,10 @@ import type {
   PopulationSummary,
   PurposePolicyEntry,
   ListingAgeSemantics,
+  ActiveListingEntry,
 } from './listingEvidence';
 import type { ItemListing, ItemListingPriceHistory } from '@/types';
+import { formatListingTerms } from '@/lib/listings/listingTerms';
 
 export const LISTING_ANALYSIS_PACKET_SCHEMA_VERSION = '1.0';
 
@@ -261,6 +263,13 @@ export interface ListingHistoryEntry {
   cancelled_at: string | null;
   asking_price: number | null;
   trade_value: number | null;
+  // This listing is explicitly offered for trade. Offer mode is derived:
+  // price + no Trade = sale only, price + Trade = sale + trade, no price +
+  // Trade = trade only (Kijiji). Not trade_value.
+  trade_enabled: boolean;
+  // Ended cycles: UNLISTED (ad removed, item still owned) | ITEM_EXITED
+  // (Sell/Trade) | null (ended before this was recorded, or not ended).
+  end_reason: ItemListing['end_reason'];
   is_ai_generated: boolean;
   created_at: string;
   updated_at: string;
@@ -281,7 +290,15 @@ export interface ListingPriceHistoryEntry {
   changed_at: string;
 }
 
-export type ExportListedItemEvidence = ListedItemEvidence & { listing_history: ListingHistoryEntry[] };
+// Listing Evidence's active_listings come from SQL (build_listing_evidence)
+// and predate the Trade flag; the export adds it from the item_listings
+// rows it already holds (one active row per item + platform), plus the
+// derived terms label ("C$1,800 · Trade", "Trade only", "C$1,899").
+export type ExportActiveListingEntry = ActiveListingEntry & { trade_enabled: boolean; listing_terms: string };
+export type ExportListedItemEvidence = Omit<ListedItemEvidence, 'active_listings'> & {
+  active_listings: ExportActiveListingEntry[];
+  listing_history: ListingHistoryEntry[];
+};
 export type ExportUnlistedItemEvidence = UnlistedItemEvidence & { listing_history: ListingHistoryEntry[] };
 
 // Same shape as ListingAnalysisPacket, with every item array enriched by
@@ -366,6 +383,8 @@ export function buildAnalysisExportData({
       cancelled_at: l.cancelled_at,
       asking_price: l.asking_price,
       trade_value: l.trade_value,
+      trade_enabled: l.trade_enabled === true,
+      end_reason: l.end_reason ?? null,
       is_ai_generated: l.is_ai_generated,
       created_at: l.created_at,
       updated_at: l.updated_at,
@@ -380,9 +399,21 @@ export function buildAnalysisExportData({
     return items.map((item) => ({ ...item, listing_history: listingsByItemId.get(item.item_id) ?? [] }));
   }
 
+  const activeTradeByItemChannel = new Map<string, boolean>();
+  for (const l of itemListings) {
+    if (l.status === 'active') activeTradeByItemChannel.set(`${l.inventory_item_id}:${l.deal_channel_id}`, l.trade_enabled === true);
+  }
+  const listedWithTerms = evidence.listed_items.map((item) => ({
+    ...item,
+    active_listings: item.active_listings.map((a) => {
+      const trade_enabled = activeTradeByItemChannel.get(`${item.item_id}:${a.channel_id}`) ?? false;
+      return { ...a, trade_enabled, listing_terms: formatListingTerms(a.asking_price, trade_enabled) };
+    }),
+  }));
+
   return {
     ...basePacket,
-    listed_items: withHistory(evidence.listed_items),
+    listed_items: withHistory(listedWithTerms),
     unlisted_business_items: withHistory(evidence.unlisted_open_inventory.business),
     unlisted_hybrid_items: withHistory(evidence.unlisted_open_inventory.hybrid),
     unlisted_unclassified_items: withHistory(evidence.unlisted_open_inventory.unclassified),

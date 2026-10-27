@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { invalidateListingsCache, listingsUserGuard } from './listingsCacheStore'
 import { splitSearchTerms } from '@/lib/search';
 import { loadItemLineage } from '@/lib/itemLineageData';
+import { applyListingChanges, type ListingChangeAction } from '@/lib/listings/listingWriteService';
 import type { AnalyticsRunAdviceMeta, AnalyticsRunAdviceRow } from '@/lib/analytics/advice/types';
 import type { LeadImportSource, NewLeadImportSource } from '@/lib/leadImport/types';
 import type {
@@ -732,12 +733,18 @@ export async function updateAiPromptById(id: number, updates: UpdateAiPrompt) {
 // deal_channel_id) — history (ended/cancelled rows) is never deleted; at
 // most one non-terminal row (status 'draft' or 'active') may exist per
 // item+channel at a time, enforced by a partial unique index (see
-// 20260828000000_item_listings_lifecycle.sql). These functions are the
-// only write path for item_listings — always go through the specific
-// action (saveListingDraftText / startListing / endListing /
-// cancelListing) that matches what the user actually did, never a
+// 20260828000000_item_listings_lifecycle.sql). Always go through the
+// specific action that matches what the user actually did, never a
 // generic upsert, so each write only ever touches the fields that action
 // legitimately owns.
+//
+// List / Update Listing / Unlist on the item page go through
+// applyItemListingChanges — the same apply_listing_changes RPC that MCP
+// manage_listing uses (20261026000000), so both control surfaces share one
+// business path. Text drafts (saveListingDraftText) and voiding a record
+// created by mistake (cancelListing) stay direct writes. startListing /
+// updateListingPrice / endListing remain for scripts and tests; the
+// database's terms guard and end_reason triggers apply to them too.
 
 // Full listing history for one item, newest first — used to render every
 // platform's current status AND its past cycles.
@@ -816,10 +823,14 @@ export async function startListing(params: {
   listed_at: string;
   existingDraftId?: number | null;
   asking_price?: number | null;
+  trade_enabled?: boolean;
 }) {
   const { inventory_item_id, deal_channel_id, listed_at, existingDraftId } = params;
   const updated_at = new Date().toISOString();
-  const priceField = 'asking_price' in params ? { asking_price: params.asking_price } : {};
+  const priceField = {
+    ...('asking_price' in params ? { asking_price: params.asking_price } : {}),
+    ...(params.trade_enabled !== undefined ? { trade_enabled: params.trade_enabled } : {}),
+  };
 
   if (existingDraftId != null) {
     return supabase
@@ -895,6 +906,18 @@ export async function cancelListing(id: number) {
     .select()
     .single<ItemListing>()
     .then(invalidateListingsOnSuccess);
+}
+
+// LIST / UPDATE / UNLIST from the item page. A fresh mutation id per click:
+// the RPC is idempotent per id, and a batch is all-or-nothing.
+export async function applyItemListingChanges(itemId: number, actions: ListingChangeAction[]) {
+  const result = await applyListingChanges(supabase, { mutationId: crypto.randomUUID(), itemId, source: 'UI', actions });
+  if (result.status === 'APPLIED') invalidateListingsCache();
+  return result;
+}
+
+export async function getItemListingById(id: number) {
+  return supabase.from('item_listings').select('*').eq('id', id).single<ItemListing>();
 }
 
 // ─── Photo functions ──────────────────────────────────────────────────────────

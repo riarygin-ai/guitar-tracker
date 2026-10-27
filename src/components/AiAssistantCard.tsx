@@ -2,16 +2,17 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import {
+  applyItemListingChanges,
   getDealChannels,
+  getItemListingById,
   getItemListings,
   getOrCreateAppUser,
   saveListingDraftText,
-  startListing,
-  endListing,
   cancelListing,
-  updateListingPrice,
 } from '@/lib/supabase';
 import { supabase } from '@/lib/supabase';
+import { listingTermsMessage, platformSupportsTrade } from '@/lib/listings/listingTerms';
+import { listingResultError } from '@/lib/listings/listingWriteService';
 import type { DealChannel, ItemListing } from '@/types';
 
 // ── State ──────────────────────────────────────────────────────────────────────
@@ -43,23 +44,25 @@ interface ChannelState {
   lastSavedVia:  'ai' | 'manual' | null;
   errorMsg:      string;
 
-  // Platform status row — Start/End date pickers, action busy/error state,
-  // confirmation dialogs. Entirely independent of the text-editing fields
-  // above so switching text tabs never affects it and vice versa.
+  // Platform status row — Start/Unlist date pickers, action busy/error
+  // state, confirmation dialogs. Entirely independent of the text-editing
+  // fields above so switching text tabs never affects it and vice versa.
   startDateInput:    string;
   endDateInput:      string;
   listingActionBusy: boolean;
   listingActionError: string;
-  confirmEnd:        boolean;
+  confirmUnlist:     boolean;
   confirmCancel:     boolean;
 
-  // Listed/asking price — a raw string input (not a number) so the field
-  // can be legitimately empty; bound to currentRow.asking_price the same
-  // way the text/draft fields above are bound to currentRow.description.
+  // Listing terms — the price as a raw string input (not a number) so the
+  // field can be legitimately empty (Kijiji trade only), and the Trade
+  // checkbox (Marketplace/Kijiji only); bound to currentRow the same way
+  // the text/draft fields above are bound to currentRow.description.
   // Independent busy/error/success state from listingActionBusy/Error so
-  // "Update Price" and "Start Listing"/"End Listing"/"Cancel" never fight
-  // over the same spinner or error banner.
+  // "Update Listing" and "Start Listing"/"Unlist" never fight over the
+  // same spinner or error banner.
   priceInput:          string;
+  tradeInput:          boolean;
   priceActionBusy:     boolean;
   priceActionError:    string;
   priceActionSuccess:  boolean;
@@ -81,9 +84,10 @@ function emptyChannelState(): ChannelState {
     endDateInput:       todayDateString(),
     listingActionBusy:  false,
     listingActionError: '',
-    confirmEnd:         false,
+    confirmUnlist:      false,
     confirmCancel:      false,
     priceInput:         '',
+    tradeInput:         false,
     priceActionBusy:    false,
     priceActionError:   '',
     priceActionSuccess: false,
@@ -111,18 +115,17 @@ export function validateStartDate(dateStr: string, acquiredDate: string | null):
 }
 
 export function validateEndDate(dateStr: string, listedAt: string | null): string | null {
-  if (!dateStr) return 'Pick an end date.';
+  if (!dateStr) return 'Pick an unlist date.';
   const today = todayDateString();
-  if (dateStr > today) return 'End date cannot be in the future.';
-  if (listedAt && dateStr < listedAt) return 'End date cannot be before the listing date.';
+  if (dateStr > today) return 'Unlist date cannot be in the future.';
+  if (listedAt && dateStr < listedAt) return 'Unlist date cannot be before the listing date.';
   return null;
 }
 
-// Blank is always valid (asking price is optional — see the price-history
-// migration's own header for why a listing may legitimately have no
-// price on record). A non-blank value must parse as a number > 0;
-// item_listings_asking_price_positive_check enforces the same rule at
-// the DB level as defense in depth.
+// Format only: blank passes here, and whether blank is allowed is a
+// platform rule (validateListingTermsInput below). A non-blank value must
+// parse as a number > 0; item_listings_asking_price_positive_check
+// enforces the same rule at the DB level as defense in depth.
 export function validateAskingPrice(priceStr: string): string | null {
   const trimmed = priceStr.trim();
   if (trimmed === '') return null;
@@ -136,6 +139,15 @@ export function validateAskingPrice(priceStr: string): string | null {
 export function parseAskingPriceInput(priceStr: string): number | null {
   const trimmed = priceStr.trim();
   return trimmed === '' ? null : Number(trimmed);
+}
+
+// Price format + the platform terms rule (src/lib/listings/listingTerms.ts,
+// mirroring the database's listing_terms_error): Kijiji needs a price or
+// Trade; Marketplace and Reverb need a price. Trade is ignored for a
+// platform that doesn't offer it (the checkbox isn't shown there).
+export function validateListingTermsInput(platformName: string, priceStr: string, tradeEnabled: boolean): string | null {
+  return validateAskingPrice(priceStr)
+    ?? listingTermsMessage(platformName, parseAskingPriceInput(priceStr), platformSupportsTrade(platformName) && tradeEnabled);
 }
 
 // ── Debug payload type ─────────────────────────────────────────────────────────
@@ -171,7 +183,7 @@ export interface AiAssistantCardProps {
    *  listing's date can never predate when the item was actually
    *  acquired. */
   acquiredDate: string | null;
-  /** Called after Start/End/Cancel Listing succeeds — these write
+  /** Called after Start Listing / Unlist / Void succeeds — these write
    *  immediately (unlike text edits, which wait for the form's Save), and
    *  each one can flip inventory_items.status via the DB sync trigger
    *  (owned<->listed). The parent's own copy of the item (e.g. the status
@@ -185,7 +197,7 @@ export interface AiAssistantCardHandle {
   // Saves every platform tab with unsaved TEXT changes. Resolves to an
   // error message (platforms joined) if any of them failed — tabs that
   // did save are still marked clean, only the failed ones stay dirty.
-  // Never touches listing status/dates — Start/End/Cancel are their own
+  // Never touches listing status/dates — Start/Unlist/Void are their own
   // explicit actions, not part of the generic "save pending" sweep.
   savePending: () => Promise<{ error: string | null }>;
 }
@@ -276,12 +288,16 @@ function getStatusDisplay(tab: ChannelState): { label: string; color: string } {
 // though it has no listed_at yet. Previously a draft row fell through to
 // 'not_listed' below, which is exactly why Cancel could appear next to a
 // "Not listed" badge (the row genuinely existed — it was only mislabeled).
-type PlatformStatus = 'draft' | 'active' | 'ended' | 'cancelled' | 'not_listed';
+//
+// 'unlisted' vs 'ended' is the row's end_reason: UNLISTED = the ad was
+// removed while the item is still owned; ITEM_EXITED (Sell/Trade) and
+// cycles ended before end_reason existed show as Ended.
+type PlatformStatus = 'draft' | 'active' | 'unlisted' | 'ended' | 'cancelled' | 'not_listed';
 
 function derivePlatformStatus(state: ChannelState): PlatformStatus {
   if (state.currentRow?.status === 'active') return 'active';
   if (state.currentRow?.status === 'draft') return 'draft';
-  if (!state.currentRow && state.lastTerminalRow?.status === 'ended') return 'ended';
+  if (!state.currentRow && state.lastTerminalRow?.status === 'ended') return state.lastTerminalRow.end_reason === 'UNLISTED' ? 'unlisted' : 'ended';
   if (!state.currentRow && state.lastTerminalRow?.status === 'cancelled') return 'cancelled';
   return 'not_listed';
 }
@@ -289,14 +305,16 @@ function derivePlatformStatus(state: ChannelState): PlatformStatus {
 const PLATFORM_STATUS_LABELS: Record<PlatformStatus, string> = {
   draft:       'Draft',
   active:      'Active',
+  unlisted:    'Unlisted',
   ended:       'Ended',
-  cancelled:   'Cancelled',
+  cancelled:   'Voided',
   not_listed:  'Not listed',
 };
 
 const PLATFORM_STATUS_CLASSES: Record<PlatformStatus, string> = {
   draft:      'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
   active:     'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  unlisted:   'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
   ended:      'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
   cancelled:  'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
   not_listed: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
@@ -390,6 +408,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
           // — never from lastTerminalRow, so a cancelled/ended cycle's old
           // price is never shown as if it were current (Part 6's rule).
           priceInput:    currentRow?.asking_price != null ? String(currentRow.asking_price) : '',
+          tradeInput:    currentRow?.trade_enabled ?? false,
         };
       }
 
@@ -612,39 +631,50 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
     });
   }
 
-  // ── Actions: listing lifecycle (Start / End / Cancel) ──────────────────────
+  // ── Actions: listing lifecycle (Start / Update / Unlist) ──────────────────
+  // All three go through applyItemListingChanges — the apply_listing_changes
+  // RPC that MCP manage_listing also uses — so the platform terms rule, the
+  // one-open-listing-per-platform rule and the dates are decided in one
+  // place. A listing only ENDS on its own when the item is sold/traded
+  // (Sell/Trade operations); there is no manual End here.
+
+  function channelName(channelId: number): string {
+    return channels.find((c) => c.id === channelId)?.name ?? '';
+  }
 
   async function handleStartListing(channelId: number) {
     const tab = tabs[channelId];
     if (!tab) return;
+    const platform = channelName(channelId);
 
     const dateError = validateStartDate(tab.startDateInput, acquiredDate);
     if (dateError) {
       updateTab(channelId, { listingActionError: dateError });
       return;
     }
-    const priceError = validateAskingPrice(tab.priceInput);
-    if (priceError) {
-      updateTab(channelId, { listingActionError: priceError });
+    const termsError = validateListingTermsInput(platform, tab.priceInput, tab.tradeInput);
+    if (termsError) {
+      updateTab(channelId, { listingActionError: termsError });
       return;
     }
 
     updateTab(channelId, { listingActionBusy: true, listingActionError: '' });
 
-    const { data, error } = await startListing({
-      inventory_item_id: itemId,
-      deal_channel_id:   channelId,
-      listed_at:         tab.startDateInput,
-      existingDraftId:   tab.currentRow?.status === 'draft' ? tab.currentRow.id : null,
-      asking_price:      parseAskingPriceInput(tab.priceInput),
-    });
+    const result = await applyItemListingChanges(itemId, [{
+      action:       'LIST',
+      dealChannelId: channelId,
+      askingPrice:  parseAskingPriceInput(tab.priceInput),
+      ...(platformSupportsTrade(platform) ? { tradeEnabled: tab.tradeInput } : {}),
+      date:         tab.startDateInput,
+    }]);
+    const listingId = result.actions[0]?.listing_id;
+    const { data: row } = result.status === 'APPLIED' && listingId != null ? await getItemListingById(listingId) : { data: null };
 
-    if (error || !data) {
-      updateTab(channelId, { listingActionBusy: false, listingActionError: error?.message ?? 'Could not start the listing.' });
+    if (!row) {
+      updateTab(channelId, { listingActionBusy: false, listingActionError: listingResultError(result) ?? 'Could not start the listing.' });
       return;
     }
 
-    const row = data as ItemListing;
     updateTab(channelId, {
       currentRow:         row,
       lastTerminalRow:    null,
@@ -652,47 +682,56 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       isAiGenerated:       row.is_ai_generated,
       aiPromptId:          row.ai_prompt_id,
       priceInput:          row.asking_price != null ? String(row.asking_price) : '',
+      tradeInput:          row.trade_enabled,
       listingActionBusy:  false,
       listingActionError: '',
     });
     onListingStatusChange?.();
   }
 
-  // ── Action: Update Price — the ONLY field this ever touches is
-  // asking_price. Never listed_at/ended_at/status/description/AI fields
-  // (see updateListingPrice's own comment in src/lib/supabase.ts). Valid
-  // for a draft OR active currentRow; a no-op (no network call at all) if
-  // the price hasn't actually changed, matching "if price is unchanged:
-  // do nothing / no history row." ────────────────────────────────────────
-  async function handleUpdatePrice(channelId: number) {
+  // ── Action: Update Listing — price and/or Trade of the ACTIVE listing,
+  // saved together. Never listed_at/status/description/AI fields. A no-op
+  // (no network call at all) when neither changed; a Trade-only change
+  // never writes a price-history row (the RPC only sets asking_price when
+  // it actually changes). ───────────────────────────────────────────────
+  async function handleUpdateListing(channelId: number) {
     const tab = tabs[channelId];
-    if (!tab?.currentRow) return;
+    if (!tab?.currentRow || tab.currentRow.status !== 'active') return;
+    const platform = channelName(channelId);
+    const supportsTrade = platformSupportsTrade(platform);
 
-    const priceError = validateAskingPrice(tab.priceInput);
-    if (priceError) {
-      updateTab(channelId, { priceActionError: priceError, priceActionSuccess: false });
+    const termsError = validateListingTermsInput(platform, tab.priceInput, tab.tradeInput);
+    if (termsError) {
+      updateTab(channelId, { priceActionError: termsError, priceActionSuccess: false });
       return;
     }
 
     const nextPrice = parseAskingPriceInput(tab.priceInput);
-    if (nextPrice === tab.currentRow.asking_price) {
+    const nextTrade = supportsTrade ? tab.tradeInput : tab.currentRow.trade_enabled;
+    if (nextPrice === tab.currentRow.asking_price && nextTrade === tab.currentRow.trade_enabled) {
       updateTab(channelId, { priceActionError: '', priceActionSuccess: false });
       return;
     }
 
     updateTab(channelId, { priceActionBusy: true, priceActionError: '', priceActionSuccess: false });
 
-    const { data, error } = await updateListingPrice(tab.currentRow.id, nextPrice);
+    const result = await applyItemListingChanges(itemId, [{
+      action:       'UPDATE',
+      dealChannelId: channelId,
+      askingPrice:  nextPrice,
+      ...(supportsTrade ? { tradeEnabled: nextTrade } : {}),
+    }]);
+    const after = result.actions[0]?.after;
 
-    if (error || !data) {
-      updateTab(channelId, { priceActionBusy: false, priceActionError: error?.message ?? 'Could not update the listed price.' });
+    if ((result.status !== 'APPLIED' && result.status !== 'NO_CHANGE') || !after) {
+      updateTab(channelId, { priceActionBusy: false, priceActionError: listingResultError(result) ?? 'Could not update the listing.' });
       return;
     }
 
-    const row = data as ItemListing;
     updateTab(channelId, {
-      currentRow:         row,
-      priceInput:         row.asking_price != null ? String(row.asking_price) : '',
+      currentRow:         { ...tab.currentRow, asking_price: after.asking_price, trade_enabled: after.trade_enabled },
+      priceInput:         after.asking_price != null ? String(after.asking_price) : '',
+      tradeInput:         after.trade_enabled,
       priceActionBusy:    false,
       priceActionError:   '',
       priceActionSuccess: true,
@@ -702,37 +741,48 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
     setTimeout(() => updateTab(channelId, { priceActionSuccess: false }), 2000);
   }
 
-  async function handleEndListing(channelId: number) {
+  // ── Action: Unlist — the ad was removed while the item is still owned.
+  // The cycle stays a real listing cycle in history and analytics
+  // (status 'ended', end_reason 'UNLISTED'); the item stays 'listed' while
+  // any other platform is still active (inventory status sync trigger). ──
+  async function handleUnlist(channelId: number) {
     const tab = tabs[channelId];
     if (!tab?.currentRow || tab.currentRow.status !== 'active') return;
 
     const validationError = validateEndDate(tab.endDateInput, tab.currentRow.listed_at);
     if (validationError) {
-      updateTab(channelId, { listingActionError: validationError, confirmEnd: false });
+      updateTab(channelId, { listingActionError: validationError, confirmUnlist: false });
       return;
     }
 
     updateTab(channelId, { listingActionBusy: true, listingActionError: '' });
 
-    const { data, error } = await endListing(tab.currentRow.id, tab.endDateInput);
+    const result = await applyItemListingChanges(itemId, [{ action: 'UNLIST', dealChannelId: channelId, date: tab.endDateInput }]);
+    const { data: row } = result.status === 'APPLIED' ? await getItemListingById(tab.currentRow.id) : { data: null };
 
-    if (error || !data) {
-      updateTab(channelId, { listingActionBusy: false, listingActionError: error?.message ?? 'Could not end the listing.', confirmEnd: false });
+    if (!row) {
+      updateTab(channelId, { listingActionBusy: false, listingActionError: listingResultError(result) ?? 'Could not unlist.', confirmUnlist: false });
       return;
     }
 
-    const row = data as ItemListing;
     updateTab(channelId, {
       currentRow:         null,
       lastTerminalRow:    row,
       lastEndedAt:        row.ended_at ?? tab.lastEndedAt,
+      priceInput:         '',
+      tradeInput:         false,
+      priceActionError:   '',
+      priceActionSuccess: false,
       listingActionBusy:  false,
       listingActionError: '',
-      confirmEnd:         false,
+      confirmUnlist:      false,
     });
     onListingStatusChange?.();
   }
 
+  // Void — for a record created by mistake (or discarding a draft): the
+  // row is kept but marked 'cancelled', which every analytics function
+  // ignores. Not the normal way to take an ad down — that is Unlist.
   async function handleCancelListing(channelId: number) {
     const tab = tabs[channelId];
     if (!tab?.currentRow) return;
@@ -742,7 +792,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
     const { data, error } = await cancelListing(tab.currentRow.id);
 
     if (error || !data) {
-      updateTab(channelId, { listingActionBusy: false, listingActionError: error?.message ?? 'Could not cancel this listing record.', confirmCancel: false });
+      updateTab(channelId, { listingActionBusy: false, listingActionError: error?.message ?? 'Could not void this listing record.', confirmCancel: false });
       return;
     }
 
@@ -760,11 +810,13 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
       // cancelled row's price remains in its own history for audit (Part
       // 6), but must never resurface as if it were a current price.
       priceInput:         '',
+      tradeInput:         false,
       priceActionError:   '',
       priceActionSuccess: false,
       listingActionBusy:  false,
       listingActionError: '',
       confirmCancel:      false,
+      confirmUnlist:      false,
     });
     onListingStatusChange?.();
   }
@@ -859,11 +911,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
             const platformStatus = derivePlatformStatus(tab);
             const isActive  = platformStatus === 'active';
             const isDraft   = platformStatus === 'draft';
-            // Cancel/Update Price are only ever shown when a real draft or
-            // active item_listings row exists — never for ended/cancelled/
-            // not_listed, which have no current record to act on.
-            const canCancel      = isActive || isDraft;
-            const canUpdatePrice = isActive || isDraft;
+            const supportsTrade = platformSupportsTrade(ch.name);
 
             return (
               <div key={ch.id} className="min-w-0 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
@@ -877,8 +925,9 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
                     <PlatformStatusBadge status={platformStatus} />
                   </div>
                   {isActive && tab.currentRow?.listed_at && (
-                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                    <span className="text-xs text-slate-500 dark:text-slate-400" data-listing-terms>
                       Listed {formatListedDate(tab.currentRow.listed_at)}
+                      {tab.currentRow.trade_enabled && ` · ${tab.currentRow.asking_price == null ? 'Trade only' : 'Trade'}`}
                     </span>
                   )}
                   {tab.lastEndedAt && (
@@ -891,8 +940,9 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
                 {/* Fields: Start Date + Listed Price side by side on sm+,
                     stacked on mobile, for any non-active status. Active
                     status shows Listed Price alone (its listed date is
-                    already shown above; its end date is chosen inside the
-                    End Listing confirmation below, not here). */}
+                    already shown above; its unlist date is chosen inside
+                    the Unlist confirmation below, not here). Trade sits
+                    right under the price on Marketplace/Kijiji only. */}
                 <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2">
                   {!isActive && (
                     <label className="block">
@@ -908,31 +958,46 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
                     </label>
                   )}
 
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Listed Price</span>
-                    <div className="relative">
-                      <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-slate-400 dark:text-slate-500">$</span>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="0.01"
-                        value={tab.priceInput}
-                        onChange={(e) => updateTab(ch.id, { priceInput: e.target.value, listingActionError: '', priceActionError: '', priceActionSuccess: false })}
-                        disabled={tab.listingActionBusy || tab.priceActionBusy || loadingDrafts}
-                        placeholder="0.00"
-                        aria-label={`${ch.name} listed price`}
-                        className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-6 pr-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600"
-                      />
-                    </div>
-                  </label>
+                  <div>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Listed Price</span>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-slate-400 dark:text-slate-500">$</span>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min="0"
+                          step="0.01"
+                          value={tab.priceInput}
+                          onChange={(e) => updateTab(ch.id, { priceInput: e.target.value, listingActionError: '', priceActionError: '', priceActionSuccess: false })}
+                          disabled={tab.listingActionBusy || tab.priceActionBusy || loadingDrafts}
+                          placeholder={supportsTrade && tab.tradeInput && ch.name.toLowerCase() === 'kijiji' ? 'Trade only' : '0.00'}
+                          aria-label={`${ch.name} listed price`}
+                          className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-6 pr-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:focus:ring-slate-600"
+                        />
+                      </div>
+                    </label>
+                    {supportsTrade && (
+                      <label className="mt-2 flex w-fit cursor-pointer items-center gap-2" data-trade-toggle>
+                        <input
+                          type="checkbox"
+                          checked={tab.tradeInput}
+                          onChange={(e) => updateTab(ch.id, { tradeInput: e.target.checked, listingActionError: '', priceActionError: '', priceActionSuccess: false })}
+                          disabled={tab.listingActionBusy || tab.priceActionBusy || loadingDrafts}
+                          aria-label={`${ch.name} trade`}
+                          className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400 disabled:cursor-not-allowed dark:border-slate-600 dark:bg-slate-700"
+                        />
+                        <span className="text-sm text-slate-700 dark:text-slate-200">Trade</span>
+                      </label>
+                    )}
+                  </div>
                 </div>
 
-                {/* Actions: consistent order everywhere — primary action
-                    first (Start Listing, or nothing extra for an already-
-                    active listing), then Update Price, then End Listing,
-                    then Cancel. flex-wrap so buttons never overflow on
-                    mobile — they wrap to their own row instead. */}
+                {/* Actions: Start Listing (+ Discard draft) when not active;
+                    Update Listing + Unlist when active. No manual End — a
+                    listing ends on its own when the item is sold/traded.
+                    flex-wrap so buttons never overflow on mobile — they
+                    wrap to their own row instead. */}
                 <div className="flex flex-wrap gap-2 px-3 pb-3">
                   {!isActive && (
                     <button
@@ -946,37 +1011,37 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
                     </button>
                   )}
 
-                  {canUpdatePrice && (
+                  {isDraft && (
                     <button
                       type="button"
-                      onClick={() => handleUpdatePrice(ch.id)}
-                      disabled={tab.priceActionBusy || tab.listingActionBusy}
-                      aria-busy={tab.priceActionBusy}
+                      onClick={() => updateTab(ch.id, { confirmCancel: true })}
+                      disabled={tab.listingActionBusy}
                       className="inline-flex min-w-[7.5rem] flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600 sm:flex-none"
                     >
-                      {tab.priceActionBusy ? 'Updating…' : tab.priceActionSuccess ? 'Price updated' : 'Update Price'}
+                      Discard Draft
                     </button>
                   )}
 
                   {isActive && (
                     <button
                       type="button"
-                      onClick={() => updateTab(ch.id, { confirmEnd: true, endDateInput: todayDateString() })}
-                      disabled={tab.listingActionBusy}
+                      onClick={() => handleUpdateListing(ch.id)}
+                      disabled={tab.priceActionBusy || tab.listingActionBusy}
+                      aria-busy={tab.priceActionBusy}
                       className="inline-flex min-w-[7.5rem] flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600 sm:flex-none"
                     >
-                      End Listing
+                      {tab.priceActionBusy ? 'Updating…' : tab.priceActionSuccess ? 'Listing updated' : 'Update Listing'}
                     </button>
                   )}
 
-                  {canCancel && (
+                  {isActive && (
                     <button
                       type="button"
-                      onClick={() => updateTab(ch.id, { confirmCancel: true })}
+                      onClick={() => updateTab(ch.id, { confirmUnlist: true, confirmCancel: false, endDateInput: todayDateString() })}
                       disabled={tab.listingActionBusy}
                       className="inline-flex min-w-[7.5rem] flex-1 items-center justify-center rounded-lg border border-rose-200 bg-white px-2.5 py-2 text-xs font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-800/50 dark:bg-slate-700 dark:text-rose-400 dark:hover:bg-rose-900/20 sm:flex-none"
                     >
-                      Cancel
+                      Unlist
                     </button>
                   )}
                 </div>
@@ -993,34 +1058,42 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
                   </div>
                 )}
 
-                {tab.confirmEnd && (
-                  <div className="flex flex-col gap-2 border-t border-amber-200 bg-amber-50 p-3 dark:border-amber-800/40 dark:bg-amber-900/10 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                {tab.confirmUnlist && (
+                  <div className="flex flex-col gap-2 border-t border-amber-200 bg-amber-50 p-3 dark:border-amber-800/40 dark:bg-amber-900/10 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between" data-unlist-confirm>
                     <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-amber-800 dark:text-amber-300">End Date</span>
+                      <span className="mb-1 block text-xs font-medium text-amber-800 dark:text-amber-300">Unlist Date</span>
                       <input
                         type="date"
                         value={tab.endDateInput}
                         onChange={(e) => updateTab(ch.id, { endDateInput: e.target.value, listingActionError: '' })}
                         disabled={tab.listingActionBusy}
-                        aria-label={`${ch.name} end date`}
+                        aria-label={`${ch.name} unlist date`}
                         className="w-full rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-700 dark:bg-slate-700 dark:text-slate-200 sm:w-auto"
                       />
                     </label>
                     <p className="text-xs text-amber-800 dark:text-amber-300">
-                      Ends the {ch.name} listing. It stays in this item&apos;s listing history.
+                      Takes the {ch.name} ad down. You still own the item; this listing stays in its history.{' '}
+                      <button
+                        type="button"
+                        onClick={() => updateTab(ch.id, { confirmUnlist: false, confirmCancel: true })}
+                        disabled={tab.listingActionBusy}
+                        className="underline underline-offset-2 hover:text-amber-950 dark:hover:text-amber-100"
+                      >
+                        Recorded by mistake?
+                      </button>
                     </p>
                     <div className="flex shrink-0 gap-1.5">
                       <button
                         type="button"
-                        onClick={() => handleEndListing(ch.id)}
+                        onClick={() => handleUnlist(ch.id)}
                         disabled={tab.listingActionBusy}
                         className="rounded-lg bg-slate-950 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-900"
                       >
-                        {tab.listingActionBusy ? 'Ending…' : 'Confirm End'}
+                        {tab.listingActionBusy ? 'Unlisting…' : 'Confirm Unlist'}
                       </button>
                       <button
                         type="button"
-                        onClick={() => updateTab(ch.id, { confirmEnd: false })}
+                        onClick={() => updateTab(ch.id, { confirmUnlist: false })}
                         disabled={tab.listingActionBusy}
                         className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
                       >
@@ -1033,7 +1106,9 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
                 {tab.confirmCancel && (
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-rose-200 bg-rose-50 px-3 py-2 dark:border-rose-800/40 dark:bg-rose-900/10">
                     <p className="text-xs text-rose-800 dark:text-rose-300">
-                      Cancel this listing record? It will be ignored in current listing status and analytics.
+                      {isDraft
+                        ? 'Discard this draft? Its text is kept in the record but it will be ignored.'
+                        : 'Void this listing record? Only for a listing recorded by mistake — it will be ignored in listing status and analytics. To take a real ad down, use Unlist.'}
                     </p>
                     <div className="flex shrink-0 gap-1.5">
                       <button
@@ -1042,7 +1117,7 @@ const AiAssistantCard = forwardRef<AiAssistantCardHandle, AiAssistantCardProps>(
                         disabled={tab.listingActionBusy}
                         className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {tab.listingActionBusy ? 'Cancelling…' : 'Confirm Cancel'}
+                        {tab.listingActionBusy ? 'Saving…' : isDraft ? 'Discard' : 'Void Record'}
                       </button>
                       <button
                         type="button"

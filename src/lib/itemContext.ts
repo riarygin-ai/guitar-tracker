@@ -35,6 +35,10 @@ export interface ItemContextListingCycle {
   cancelledAt: string | null;
   askingPrice: number | null;
   tradeValue: number | null;
+  /** The listing is explicitly offered for trade (absent on callers predating the flag = false). */
+  tradeEnabled?: boolean;
+  /** Ended cycles: UNLISTED (ad removed, item kept) | ITEM_EXITED (Sell/Trade) | null (not recorded). */
+  endReason?: 'UNLISTED' | 'ITEM_EXITED' | null;
   priceHistory: ItemContextPriceChange[];
 }
 
@@ -118,6 +122,19 @@ const STATUS_TITLE: Record<ItemContextListingCycle['status'], string> = {
   cancelled: 'Cancelled',
 };
 
+function cycleStatusTitle(c: ItemContextListingCycle): string {
+  if (c.status === 'ended' && c.endReason === 'UNLISTED') return 'Unlisted (ad removed, item still owned)';
+  if (c.status === 'ended' && c.endReason === 'ITEM_EXITED') return 'Ended (item sold/traded)';
+  return STATUS_TITLE[c.status];
+}
+
+/** "Sale + Trade" / "Trade only" when the listing is offered for trade. No line otherwise: Trade was not
+ * recorded before 2026-10-26, so an unset flag on an older cycle must not be presented as "sale only". */
+function cycleOfferMode(c: ItemContextListingCycle): string | null {
+  if (!c.tradeEnabled || (c.status !== 'active' && c.status !== 'ended')) return null;
+  return c.askingPrice != null ? 'Sale + Trade' : 'Trade only';
+}
+
 function cycleSortKey(c: ItemContextListingCycle): string {
   // Chronological by start; drafts (no listed_at) sort last.
   return c.listedAt ? toDateOnly(c.listedAt) : '9999-12-31';
@@ -159,13 +176,14 @@ function listingHistorySection(cycles: ItemContextListingCycle[], asOf: string):
       pushLine(cl, 'Listed', c.listedAt ? toDateOnly(c.listedAt) : null);
       pushLine(cl, 'Ended', c.endedAt ? toDateOnly(c.endedAt) : null);
       pushLine(cl, 'Cancelled', c.cancelledAt ? toDateOnly(c.cancelledAt) : null);
-      pushLine(cl, 'Status', STATUS_TITLE[c.status]);
+      pushLine(cl, 'Status', cycleStatusTitle(c));
       if (c.listedAt && (c.status === 'ended' || c.status === 'active')) {
         const end = c.status === 'ended' && c.endedAt ? toDateOnly(c.endedAt) : asOf;
         const days = daysBetween(toDateOnly(c.listedAt), end);
         if (days != null) pushLine(cl, 'Days Listed', days);
       }
       pushLine(cl, c.status === 'ended' || c.status === 'cancelled' ? 'Last Asking Price' : 'Asking Price', fmtCurrency(c.askingPrice));
+      pushLine(cl, 'Offer', cycleOfferMode(c));
       pushLine(cl, 'Trade Value', fmtCurrency(c.tradeValue));
       out.push(...cl);
       const ph = priceHistoryLines(c);
