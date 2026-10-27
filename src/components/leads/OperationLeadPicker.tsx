@@ -100,19 +100,58 @@ function channelText(c: OperationLeadCandidate): string {
   return [c.channel, c.channel_detail].filter(Boolean).join(' · ') || 'Unknown channel';
 }
 
+// Long names / trade descriptions wrap anywhere on mobile instead of being
+// cut off; from `sm` up the original single-line (truncated) layout returns.
+const WRAP = '[overflow-wrap:anywhere] sm:truncate';
+
+/** One dropdown option: name + badges, then channel · offer · last activity. */
 function CandidateLine({ c, showItem }: { c: OperationLeadCandidate; showItem: boolean }) {
   const last = c.last_activity_at ? fmtLeadDate(calendarDateIn(new Date(c.last_activity_at))) : null;
   return (
     <div className="min-w-0">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="truncate text-sm font-semibold text-slate-900 dark:text-white">{leadDisplayName(c)}</span>
+        <span className={`min-w-0 text-sm font-semibold text-slate-900 dark:text-white ${WRAP}`}>{leadDisplayName(c)}</span>
         <StatusBadge status={c.status as LeadStatus} />
         {c.peak_stage && <StageBadge stage={c.peak_stage} />}
       </div>
-      <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
+      <p className={`mt-0.5 text-xs text-slate-500 dark:text-slate-400 ${WRAP}`}>
         {channelText(c)} · {c.offer_summary}{last ? ` · ${last}` : ''}
       </p>
-      {showItem && <p className="mt-0.5 truncate text-xs font-medium text-slate-600 dark:text-slate-300">For: {c.item_label}</p>}
+      {showItem && <p className={`mt-0.5 text-xs font-medium text-slate-600 dark:text-slate-300 ${WRAP}`}>For: {c.item_label}</p>}
+    </div>
+  );
+}
+
+/**
+ * The chosen (or already linked) lead as a compact summary. Mobile: one
+ * column — name (strongest), channel, stage + status badges on their own
+ * wrapping row, then the offer — every line wraps. From `sm` up it is the
+ * same two-line layout as a dropdown option (name + badges, then
+ * channel · offer · last activity). Never notes, events, counts or ids.
+ * `mobileAction` (the picker's "Change" cue) shares the NAME row on mobile,
+ * so channel/badges/offer below get the card's full width.
+ */
+export function LeadSummary({ c, showItem, mobileAction }: { c: OperationLeadCandidate; showItem: boolean; mobileAction?: React.ReactNode }) {
+  const last = c.last_activity_at ? fmtLeadDate(calendarDateIn(new Date(c.last_activity_at))) : null;
+  return (
+    <div className="min-w-0 flex-1" data-testid="lead-summary">
+      <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
+        <span className="flex items-start justify-between gap-2 sm:contents">
+          <span className={`min-w-0 text-sm font-semibold text-slate-900 dark:text-white ${WRAP}`} data-lead-name>{leadDisplayName(c)}</span>
+          {mobileAction}
+        </span>
+        <span className="text-xs text-slate-500 [overflow-wrap:anywhere] dark:text-slate-400 sm:hidden" data-lead-channel>{channelText(c)}</span>
+        <span className="mt-0.5 flex flex-wrap items-center gap-1.5 sm:mt-0" data-lead-badges>
+          {c.peak_stage && <StageBadge stage={c.peak_stage} />}
+          <StatusBadge status={c.status as LeadStatus} />
+        </span>
+      </div>
+      <p className={`mt-1.5 text-xs text-slate-700 dark:text-slate-300 sm:mt-0.5 sm:text-slate-500 sm:dark:text-slate-400 ${WRAP}`} data-lead-offer>
+        <span className="hidden sm:inline">{channelText(c)} · </span>
+        {c.offer_summary}
+        {last && <span className="hidden sm:inline"> · {last}</span>}
+      </p>
+      {showItem && <p className={`mt-0.5 text-xs font-medium text-slate-600 dark:text-slate-300 ${WRAP}`}>For: {c.item_label}</p>}
     </div>
   );
 }
@@ -226,7 +265,7 @@ export default function OperationLeadPicker({ itemIds, value, onChange, onAvaila
       <div className="space-y-2" data-testid="lead-picker-linked">
         <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Lead</p>
         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-600 dark:bg-slate-700">
-          <CandidateLine c={initial.linked} showItem={showItem} />
+          <LeadSummary c={initial.linked} showItem={showItem} />
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400">Linked winning lead. Changing it is a lead-history correction, not an operation edit.</p>
       </div>
@@ -261,16 +300,22 @@ export default function OperationLeadPicker({ itemIds, value, onChange, onAvaila
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => { setOpen((o) => !o); setActive(0); }}
-        className={`flex w-full items-center justify-between gap-3 rounded-2xl border bg-white px-4 py-3 text-left text-sm outline-none transition focus:ring-2 focus:ring-slate-100 dark:bg-slate-700 dark:focus:ring-slate-600 ${value.kind === 'unset' ? 'border-amber-300 dark:border-amber-600' : 'border-slate-200 dark:border-slate-600'}`}
+        className={`flex min-h-11 w-full justify-between gap-3 rounded-2xl border bg-white px-4 py-3 text-left text-sm outline-none transition focus:ring-2 focus:ring-slate-100 dark:bg-slate-700 dark:focus:ring-slate-600 items-center ${value.kind === 'unset' ? 'border-amber-300 dark:border-amber-600' : 'border-slate-200 dark:border-slate-600'}`}
+        data-selected={value.kind}
       >
         {value.kind === 'lead' ? (
-          <CandidateLine c={value.lead} showItem={showItem} />
+          <LeadSummary
+            c={value.lead}
+            showItem={showItem}
+            mobileAction={<span aria-hidden="true" className="-mr-1 -mt-0.5 shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 dark:border-slate-500 dark:text-slate-300 sm:hidden" data-lead-change>Change</span>}
+          />
         ) : value.kind === 'none' ? (
-          <span className="text-slate-900 dark:text-slate-100">No matching lead</span>
+          <span className="text-slate-900 dark:text-slate-100" data-testid="lead-picker-none">No matching lead</span>
         ) : (
           <span className="text-slate-500 dark:text-slate-400">Choose who bought / traded…</span>
         )}
-        <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
+        {/* Selected lead: mobile shows the "Change" cue in the name row (the whole card is the tap target); desktop keeps the chevron. */}
+        <svg className={`h-4 w-4 shrink-0 text-slate-400 ${value.kind === 'lead' ? 'hidden sm:block' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
       </button>
       <p className="text-xs text-slate-500 dark:text-slate-400">
         {isEdit
