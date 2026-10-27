@@ -16,6 +16,8 @@
  *   F  isolation: another user can't touch or see this user's listings
  *   G  read models: item context text + analysis export
  *   H  UI wiring (listing card source structure)
+ *   I  price history records Trade (20261026000001): trigger rules, legacy
+ *      rows, item-context rendering, UI/MCP parity, export fields
  *
  * Local Supabase only (safety-gated). Every row created is removed.
  *
@@ -30,7 +32,7 @@ import { supabase, createSellOperation, createTradeOperation, saveListingDraftTe
 import { applyListingChanges, manageListing, formatActionLine, toTorontoDate, listingResultError, type ApplyListingChangesResult } from '../src/lib/listings/listingWriteService';
 import { listingTermsError, listingTermsMessage, formatListingTerms, platformSupportsTrade, listingOfferMode } from '../src/lib/listings/listingTerms';
 import { validateListingTermsInput } from '../src/components/AiAssistantCard';
-import { buildItemContext } from '../src/lib/itemContext';
+import { buildItemContext, type ItemContextPriceChange } from '../src/lib/itemContext';
 import { loadItemContextHistory } from '../src/lib/itemContextData';
 import { getCanonicalInventoryAnalysis } from '../src/lib/analytics/inventoryAnalysisService';
 import type { InventoryItem } from '../src/types';
@@ -124,7 +126,9 @@ async function main() {
     return data.id as number;
   }
   const rows = async (itemId: number) => ((await admin.from('item_listings').select('*').eq('inventory_item_id', itemId).order('id')).data ?? []) as Record<string, unknown>[];
-  const history = async (listingId: number) => ((await admin.from('item_listing_price_history').select('old_asking_price, new_asking_price').eq('item_listing_id', listingId).order('id')).data ?? []);
+  const history = async (listingId: number) => ((await admin.from('item_listing_price_history').select('old_asking_price, new_asking_price, old_trade_enabled, new_trade_enabled').eq('item_listing_id', listingId).order('id')).data ?? []);
+  // [old price, new price, old trade, new trade] per history row, oldest first
+  const terms = async (listingId: number) => JSON.stringify((await history(listingId)).map((h) => [h.old_asking_price, h.new_asking_price, h.old_trade_enabled, h.new_trade_enabled]));
   const itemStatus = async (itemId: number) => (await admin.from('inventory_items').select('status').eq('id', itemId).single()).data?.status as string;
   const apply = (itemId: number, actions: Parameters<typeof applyListingChanges>[1]['actions'], mutationId = uuid(), client: SupabaseClient = cA) =>
     applyListingChanges(client, { mutationId, itemId, source: 'MCP', actions });
@@ -184,37 +188,38 @@ async function main() {
     const upPrice = await apply(studio, [{ action: 'UPDATE', dealChannelId: MKT, askingPrice: 1699 }]);
     r = await rows(studio);
     check('UPDATE price only -> 1800 → 1699, Trade preserved', upPrice.status === 'APPLIED' && upPrice.actions[0].outcome === 'UPDATED' && Number(r.find((x) => x.id === mktRow.id)!.asking_price) === 1699 && r.find((x) => x.id === mktRow.id)!.trade_enabled === true, upPrice);
-    check('...price history records 1800 → 1699', JSON.stringify((await history(mktRow.id as number)).map((h) => [h.old_asking_price, h.new_asking_price])) === JSON.stringify([[null, 1800], [1800, 1699]]));
+    check('...price history records 1800 → 1699 with the (unchanged) Trade state; the initial row has old Trade null', (await terms(mktRow.id as number)) === JSON.stringify([[null, 1800, null, true], [1800, 1699, true, true]]), await terms(mktRow.id as number));
     check('...Kijiji unchanged by a Marketplace-only command', Number(r.find((x) => x.id === kijRow.id)!.asking_price) === 1750);
 
-    // UPDATE trade only (price preserved, no fake price history) — "Remove trade from Marketplace but leave the price."
+    // UPDATE trade only (price preserved) — "Remove trade from Marketplace but leave the price."
     const upTrade = await apply(studio, [{ action: 'UPDATE', dealChannelId: MKT, tradeEnabled: false }]);
     r = await rows(studio);
     check('UPDATE Trade only -> trade true → false, price kept', upTrade.status === 'APPLIED' && r.find((x) => x.id === mktRow.id)!.trade_enabled === false && Number(r.find((x) => x.id === mktRow.id)!.asking_price) === 1699, upTrade);
-    check('...no price-history row for a Trade change (still 2 rows)', (await history(mktRow.id as number)).length === 2);
+    check('...one history row for the Trade change, price unchanged on both sides (3 rows)', (await history(mktRow.id as number)).length === 3 && JSON.parse(await terms(mktRow.id as number))[2].join() === [1699, 1699, true, false].join());
     const upTradeBack = await apply(studio, [{ action: 'UPDATE', dealChannelId: MKT, tradeEnabled: true }]);
-    check('...false → true is not a price change either (still 2 rows)', upTradeBack.status === 'APPLIED' && (await history(mktRow.id as number)).length === 2);
+    check('...false → true writes one more row (4 rows)', upTradeBack.status === 'APPLIED' && JSON.parse(await terms(mktRow.id as number))[3].join() === [1699, 1699, false, true].join());
 
     // UPDATE price + trade together
     const upBoth = await apply(studio, [{ action: 'UPDATE', dealChannelId: MKT, askingPrice: 1650, tradeEnabled: false }]);
     r = await rows(studio);
-    check('UPDATE price + Trade together', upBoth.status === 'APPLIED' && Number(r.find((x) => x.id === mktRow.id)!.asking_price) === 1650 && r.find((x) => x.id === mktRow.id)!.trade_enabled === false && (await history(mktRow.id as number)).length === 3, upBoth);
+    check('UPDATE price + Trade together -> ONE history row for the whole transition', upBoth.status === 'APPLIED' && Number(r.find((x) => x.id === mktRow.id)!.asking_price) === 1650 && r.find((x) => x.id === mktRow.id)!.trade_enabled === false
+      && (await history(mktRow.id as number)).length === 5 && JSON.parse(await terms(mktRow.id as number))[4].join() === [1699, 1650, true, false].join(), upBoth);
 
     // identical update -> NO_CHANGE
     const same = await apply(studio, [{ action: 'UPDATE', dealChannelId: MKT, askingPrice: 1650, tradeEnabled: false }]);
-    check('UPDATE to the current terms -> NO_CHANGE, nothing written', same.status === 'NO_CHANGE' && same.actions[0].outcome === 'NO_CHANGE' && (await history(mktRow.id as number)).length === 3, same);
+    check('UPDATE to the current terms -> NO_CHANGE, nothing written', same.status === 'NO_CHANGE' && same.actions[0].outcome === 'NO_CHANGE' && (await history(mktRow.id as number)).length === 5, same);
 
     // Kijiji: priced -> trade only -> priced again
     const toTradeOnly = await apply(studio, [{ action: 'UPDATE', dealChannelId: KIJ, askingPrice: null, tradeEnabled: true }]);
     r = await rows(studio);
     check('Kijiji can become trade only (price null + Trade)', toTradeOnly.status === 'APPLIED' && r.find((x) => x.id === kijRow.id)!.asking_price === null && r.find((x) => x.id === kijRow.id)!.trade_enabled === true, toTradeOnly);
-    check('...clearing the price writes no price-history row', (await history(kijRow.id as number)).length === 1);
+    check('...Sale + Trade -> Trade only is recorded (1750 → null, Trade on)', JSON.parse(await terms(kijRow.id as number))[1]?.join() === [1750, null, true, true].join(), await terms(kijRow.id as number));
     const kijBad = await apply(studio, [{ action: 'UPDATE', dealChannelId: KIJ, tradeEnabled: false }]);
     check('Kijiji trade only -> removing Trade without a price -> REJECTED LISTING_PRICE_OR_TRADE_REQUIRED', kijBad.status === 'REJECTED' && kijBad.actions[0].code === 'LISTING_PRICE_OR_TRADE_REQUIRED' && listingResultError(kijBad) === 'Enter a price or enable Trade.', kijBad);
     const kijPriced = await apply(studio, [{ action: 'UPDATE', dealChannelId: KIJ, askingPrice: 1900 }]);
     r = await rows(studio);
     check('"Kijiji isn\'t trade-only anymore, 1900, leave Trade" -> 1900 + Trade', kijPriced.status === 'APPLIED' && Number(r.find((x) => x.id === kijRow.id)!.asking_price) === 1900 && r.find((x) => x.id === kijRow.id)!.trade_enabled === true);
-    check('...price history: initial 1750, then NULL → 1900 (set again)', JSON.stringify((await history(kijRow.id as number)).map((h) => [h.old_asking_price, h.new_asking_price])) === JSON.stringify([[null, 1750], [null, 1900]]));
+    check('...price history: initial 1750, removed, then NULL → 1900 (set again), Trade on throughout', (await terms(kijRow.id as number)) === JSON.stringify([[null, 1750, null, true], [1750, null, true, true], [null, 1900, true, true]]), await terms(kijRow.id as number));
 
     // Marketplace price required
     const mktNull = await apply(studio, [{ action: 'UPDATE', dealChannelId: MKT, askingPrice: null }]);
@@ -424,6 +429,103 @@ async function main() {
       && JSON.stringify(Array.from(svc.matchAll(/\.rpc\(\s*'([a-z_]+)'/g)).map((m) => m[1])) === JSON.stringify(['apply_listing_changes'])
       && !/\.eq\(\s*'user_id'/.test(svc) && !/\.(insert|update|upsert|delete)\s*\(/.test(svc));
     check('MCP manage_listing calls the shared service (no listing SQL in the route)', /manageListing\(supabase, input as ManageListingInput\)/.test(route) && !/from\('item_listings'\)/.test(route) && !/END'/.test(route.slice(route.indexOf("'manage_listing'"))) );
+
+    // ═══ I — Trade in price history (20261026000001) ═════════════════════
+    console.log('\n[I — price history records Trade]');
+    // Direct writes (any path): the trigger is the only writer.
+    const listing = async (channelId: number, price: number | null, trade: boolean): Promise<number> => {
+      const { data, error } = await admin.from('item_listings').insert({ user_id: userA, inventory_item_id: await item(), deal_channel_id: channelId, status: 'active', listed_at: today, asking_price: price, trade_enabled: trade }).select('id').single();
+      if (error || !data) throw new Error(error?.message);
+      return data.id as number;
+    };
+    const set = async (id: number, patch: Record<string, unknown>) => {
+      const { error } = await admin.from('item_listings').update(patch).eq('id', id);
+      if (error) throw new Error(error.message);
+    };
+    const t1 = await listing(MKT, 1900, false);
+    check('INSERT behaviour kept: one initial row (old price/Trade null, new = 1900 / Off)', (await terms(t1)) === JSON.stringify([[null, 1900, null, false]]), await terms(t1));
+    await set(t1, { asking_price: 1800 });
+    check('price only 1900/Off -> 1800/Off: exactly one row with both Trade sides Off', (await terms(t1)) === JSON.stringify([[null, 1900, null, false], [1900, 1800, false, false]]), await terms(t1));
+    await set(t1, { trade_enabled: true });
+    check('Trade enabled 1800/Off -> 1800/On: exactly one row', JSON.parse(await terms(t1)).length === 3 && JSON.parse(await terms(t1))[2].join() === [1800, 1800, false, true].join(), await terms(t1));
+    await set(t1, { trade_enabled: false });
+    check('Trade disabled 1800/On -> 1800/Off: exactly one row', JSON.parse(await terms(t1)).length === 4 && JSON.parse(await terms(t1))[3].join() === [1800, 1800, true, false].join(), await terms(t1));
+    await set(t1, { asking_price: 1700, trade_enabled: true });
+    check('price + Trade together 1800/Off -> 1700/On: ONE row for the transition', JSON.parse(await terms(t1)).length === 5 && JSON.parse(await terms(t1))[4].join() === [1800, 1700, false, true].join(), await terms(t1));
+    await set(t1, { asking_price: 1700, trade_enabled: true });
+    check('no-op 1700/On -> 1700/On (both columns in the SET list): no row', JSON.parse(await terms(t1)).length === 5);
+    await set(t1, { description: 'new text', title: 'new title' });
+    await set(t1, { listed_at: lastWeek });
+    check('unrelated updates (text, listed date): no row', JSON.parse(await terms(t1)).length === 5);
+    const { data: t1Hist } = await admin.from('item_listing_price_history').select('user_id, changed_at').eq('item_listing_id', t1);
+    check('every row owned by the listing owner and timestamped', (t1Hist ?? []).every((h) => h.user_id === userA && !!h.changed_at));
+
+    const t2 = await listing(KIJ, null, true);
+    check('a trade-only listing starts with no history row (initial terms live on the listing)', (await terms(t2)) === '[]');
+    await set(t2, { asking_price: 1900 });
+    check('Trade only -> Sale + Trade NULL/On -> 1900/On: one row', (await terms(t2)) === JSON.stringify([[null, 1900, true, true]]), await terms(t2));
+
+    const t3 = await listing(KIJ, null, false); // legacy unpriced Kijiji row
+    const { error: legacyToggleErr } = await admin.from('item_listings').update({ trade_enabled: true }).eq('id', t3);
+    check('Trade change on an unpriced legacy listing succeeds and is recorded (new price null)', !legacyToggleErr && (await terms(t3)) === JSON.stringify([[null, null, false, true]]), { legacyToggleErr, t: await terms(t3) });
+
+    // Legacy rows: written before Trade tracking (both Trade columns NULL).
+    const legacyListing = await listing(MKT, 1800, false);
+    await admin.from('item_listing_price_history').delete().eq('item_listing_id', legacyListing);
+    await admin.from('item_listing_price_history').insert([
+      { user_id: userA, item_listing_id: legacyListing, old_asking_price: null, new_asking_price: 1900, changed_at: '2026-10-10T15:00:00Z' },
+      { user_id: userA, item_listing_id: legacyListing, old_asking_price: 1900, new_asking_price: 1800, changed_at: '2026-10-15T15:00:00Z' },
+    ]);
+    check('legacy-shaped rows (no Trade columns given) stay NULL — no default/backfill', (await terms(legacyListing)) === JSON.stringify([[null, 1900, null, null], [1900, 1800, null, null]]));
+
+    // Read model: only changed terms are shown; legacy rows print as before.
+    const cycle = (priceHistory: ItemContextPriceChange[]) =>
+      buildItemContext(ctxItem, { ...ctxBase, listingCycles: [{ id: 1, platformName: 'Marketplace', status: 'active', listedAt: '2026-10-10', endedAt: null, cancelledAt: null, askingPrice: 1700, tradeValue: null, tradeEnabled: false, priceHistory }], leads: [] });
+    const timeline = cycle([
+      { changedAt: '2026-10-10T15:00:00Z', oldPrice: null, newPrice: 1900, oldTrade: null, newTrade: false },
+      { changedAt: '2026-10-15T15:00:00Z', oldPrice: 1900, newPrice: 1900, oldTrade: false, newTrade: true },
+      { changedAt: '2026-10-20T15:00:00Z', oldPrice: 1900, newPrice: 1800, oldTrade: true, newTrade: true },
+      { changedAt: '2026-10-24T15:00:00Z', oldPrice: 1800, newPrice: 1700, oldTrade: true, newTrade: false },
+      { changedAt: '2026-10-25T15:00:00Z', oldPrice: 1700, newPrice: 1700, oldTrade: false, newTrade: false },
+    ]);
+    const phBlock = timeline.slice(timeline.indexOf('Price History:'));
+    check('timeline: listed / Trade only / price only / both; no unchanged field printed, no empty line',
+      phBlock.startsWith(['Price History:', '- 2026-10-10: Listed at $1,900', '- 2026-10-15: Trade: Off → On', '- 2026-10-20: $1,900 → $1,800', '- 2026-10-24: $1,800 → $1,700, Trade: On → Off'].join('\n'))
+      && !/2026-10-25/.test(phBlock) && !/\$1,900 → \$1,900|Off → Off|On → On/.test(phBlock), phBlock);
+    const withTrade = cycle([
+      { changedAt: '2026-10-10T15:00:00Z', oldPrice: null, newPrice: 1900, oldTrade: null, newTrade: true },
+      { changedAt: '2026-10-12T15:00:00Z', oldPrice: 1900, newPrice: null, oldTrade: true, newTrade: true },
+      { changedAt: '2026-10-14T15:00:00Z', oldPrice: null, newPrice: 1850, oldTrade: true, newTrade: true },
+    ]);
+    check('initial terms with Trade, price removed (trade only), price set again',
+      /- 2026-10-10: Listed at \$1,900 · Trade\n- 2026-10-12: Price removed \(was \$1,900\)\n- 2026-10-14: Price set to \$1,850/.test(withTrade), withTrade);
+    const legacyCtx = buildItemContext((await admin.from('inventory_items').select('*').eq('id', (await admin.from('item_listings').select('inventory_item_id').eq('id', legacyListing).single()).data!.inventory_item_id).single()).data as InventoryItem,
+      { ...ctxBase, listingCycles: (await loadItemContextHistory(cA, (await admin.from('item_listings').select('inventory_item_id').eq('id', legacyListing).single()).data!.inventory_item_id as number)).listingCycles, leads: [] });
+    check('legacy rows render exactly as price history (no Trade / Unknown noise)', /Price History:\n- 2026-10-10: Listed at \$1,900\n- 2026-10-15: \$1,900 → \$1,800/.test(legacyCtx) && !/Trade:|Unknown/.test(legacyCtx), legacyCtx);
+
+    // UI and MCP paths produce the same history format.
+    const uiTrade = await item();
+    await applyItemListingChanges(uiTrade, [{ action: 'LIST', dealChannelId: MKT, askingPrice: 1800, tradeEnabled: false, date: today }]);
+    const uiToggle = await applyItemListingChanges(uiTrade, [{ action: 'UPDATE', dealChannelId: MKT, tradeEnabled: true }]);
+    const uiListingId = (await rows(uiTrade))[0].id as number;
+    const mcpTrade = await item();
+    await manageListing(cA, { mutation_id: uuid(), item_id: mcpTrade, actions: [{ action: 'LIST', platform: 'Marketplace', asking_price: 1800, trade_enabled: false }] });
+    const mcpToggle = await manageListing(cA, { mutation_id: uuid(), item_id: mcpTrade, actions: [{ action: 'UPDATE', platform: 'Marketplace', trade_enabled: true }] });
+    const mcpListingId = (await rows(mcpTrade))[0].id as number;
+    const expected = JSON.stringify([[null, 1800, null, false], [1800, 1800, false, true]]);
+    check('UI path (GT item page): Trade Off → On gives initial row + one Trade row', uiToggle.status === 'APPLIED' && (await terms(uiListingId)) === expected, await terms(uiListingId));
+    check('MCP path (manage_listing): identical history for the same change', mcpToggle.result === 'APPLIED' && (await terms(mcpListingId)) === expected, await terms(mcpListingId));
+    const uiCtx = buildItemContext((await admin.from('inventory_items').select('*').eq('id', uiTrade).single()).data as InventoryItem,
+      { ...ctxBase, listingCycles: (await loadItemContextHistory(cA, uiTrade)).listingCycles, leads: [] });
+    check('item context (Copy Item Context / get_item_context) shows the toggle as "Trade: Off → On"', new RegExp(`- ${today}: Trade: Off → On`).test(uiCtx), uiCtx);
+
+    // Export / get_inventory_analysis carry the Trade columns on every price_history entry.
+    const exp = await getCanonicalInventoryAnalysis(cA);
+    const expEntry = exp.listed_items.find((i) => i.item_id === mcpTrade)?.listing_history[0];
+    check('analysis export price_history entries carry old/new_trade_enabled', JSON.stringify(expEntry?.price_history.map((p) => [p.old_asking_price, p.new_asking_price, p.old_trade_enabled, p.new_trade_enabled])) === expected, expEntry?.price_history);
+    const legacyItemId = (await admin.from('item_listings').select('inventory_item_id').eq('id', legacyListing).single()).data!.inventory_item_id as number;
+    const legacyExp = exp.listed_items.find((i) => i.item_id === legacyItemId)?.listing_history[0]?.price_history ?? [];
+    check('analysis export: legacy rows keep old/new_trade_enabled null (not false)', legacyExp.length === 2 && legacyExp.every((p) => p.old_trade_enabled === null && p.new_trade_enabled === null), legacyExp);
   } finally {
     console.log('\n[cleanup]');
     await supabase.auth.signOut();

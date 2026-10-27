@@ -110,7 +110,7 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
     {
       description:
         'Returns the authoritative Guitar Tracker context for one inventory item as JSON: item_context ' +
-        '(brand/model/condition, financials, acquired/sold dates, complete listing history with price changes — the same ' +
+        '(brand/model/condition, financials, acquired/sold dates, complete listing history with price and Trade changes — the same ' +
         'assembly as the app\'s "Copy Item Context") plus every lead on the item with its COMPLETE legacy notes ' +
         '(never truncated), current snapshot (peak_stage, status/outcome, negotiation_rounds, responsiveness incl. ' +
         'waiting_on, latest buyer offer, offer_assessment, message totals, deal_id, needs_resolution, version) and its ' +
@@ -137,7 +137,9 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
         'same data behind "Copy Analysis Data" / "Download Analysis Data": every currently-open ' +
         'item (listed AND unlisted), each with channel summary, category/purpose breakdowns, and ' +
         'full listing history (every listing cycle, including ended/cancelled ones, with its ' +
-        'complete price-change history). Call with no filters for a complete weekly inventory ' +
+        'complete price_history: one row per change of the listing terms, each with old/new asking_price and ' +
+        'old/new_trade_enabled; both trade fields null = Trade not tracked yet (before 2026-10-26), not "no trade"). ' +
+        'Call with no filters for a complete weekly inventory ' +
         'review ("review my whole inventory"); use optional filters for narrower questions (e.g. ' +
         '"how are my Gibsons doing?" -> { brand: ["Gibson"] }). Calling with no filters never ' +
         'restricts to one brand, purpose, platform, or listed-only inventory — it is the full ' +

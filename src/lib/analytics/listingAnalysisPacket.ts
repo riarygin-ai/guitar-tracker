@@ -273,8 +273,9 @@ export interface ListingHistoryEntry {
   is_ai_generated: boolean;
   created_at: string;
   updated_at: string;
-  // Every asking_price change recorded for THIS listing cycle, oldest
-  // first — never collapsed to only the latest price.
+  // Every pricing-terms change (asking_price and/or trade_enabled)
+  // recorded for THIS listing cycle, oldest first — never collapsed to
+  // only the latest price.
   price_history: ListingPriceHistoryEntry[];
 }
 
@@ -282,11 +283,16 @@ export interface ListingHistoryEntry {
 // reproduced verbatim from that table. item_listing_id is kept (even
 // though the entry is already nested under its own ListingHistoryEntry)
 // so a price change remains self-describing if ever flattened/exported
-// out of context.
+// out of context. Each row is the complete before/after of both terms;
+// old/new_trade_enabled are both null on rows written before 2026-10-26
+// (Trade not tracked then — not false), and old_trade_enabled alone is
+// null on the initial-price row.
 export interface ListingPriceHistoryEntry {
   item_listing_id: number;
   old_asking_price: number | null;
-  new_asking_price: number;
+  new_asking_price: number | null;
+  old_trade_enabled: boolean | null;
+  new_trade_enabled: boolean | null;
   changed_at: string;
 }
 
@@ -359,6 +365,8 @@ export function buildAnalysisExportData({
       item_listing_id: p.item_listing_id,
       old_asking_price: p.old_asking_price,
       new_asking_price: p.new_asking_price,
+      old_trade_enabled: p.old_trade_enabled ?? null,
+      new_trade_enabled: p.new_trade_enabled ?? null,
       changed_at: p.changed_at,
     };
     const existing = priceHistoryByListingId.get(p.item_listing_id);

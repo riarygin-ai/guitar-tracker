@@ -18,11 +18,16 @@ import { fmtCad, formatOfferSummary, leadChannelLabel, outcomeReasonLabel, OFFER
 import type { LeadRow, LeadStatus } from './leads/leadTypes';
 import { LEAD_QUALITIES, LEAD_STATUSES, OFFER_TYPES } from './leads/leadTypes';
 
+/** One item_listing_price_history row: the complete before/after of the listing's pricing terms. */
 export interface ItemContextPriceChange {
   /** timestamptz from item_listing_price_history.changed_at */
   changedAt: string;
   oldPrice: number | null;
-  newPrice: number;
+  /** null = no asking price after the change. */
+  newPrice: number | null;
+  /** Both null on rows before 2026-10-26 (Trade not tracked — not false); oldTrade alone null on the initial-price row. */
+  oldTrade?: boolean | null;
+  newTrade?: boolean | null;
 }
 
 /** One item_listings row (one listing CYCLE) with its own price history. */
@@ -140,15 +145,25 @@ function cycleSortKey(c: ItemContextListingCycle): string {
   return c.listedAt ? toDateOnly(c.listedAt) : '9999-12-31';
 }
 
+const onOff = (v: boolean) => (v ? 'On' : 'Off');
+
+/** Only the terms that actually changed are printed; legacy rows (Trade not tracked) print exactly as price changes. */
 function priceHistoryLines(cycle: ItemContextListingCycle): string[] {
   const rows = [...cycle.priceHistory].sort((a, b) => (a.changedAt < b.changedAt ? -1 : a.changedAt > b.changedAt ? 1 : 0));
-  return rows.map((h, i) => {
+  return rows.flatMap((h, i) => {
     const date = toDateOnly(h.changedAt);
-    if (h.oldPrice == null) {
-      // The trigger logs the initial price as old=NULL; a later NULL->price is a price being set for the first time.
-      return i === 0 ? `- ${date}: Listed at ${fmtCurrency(h.newPrice)}` : `- ${date}: Price set to ${fmtCurrency(h.newPrice)}`;
+    const parts: string[] = [];
+    if (h.oldPrice !== h.newPrice) {
+      // The trigger logs the initial price as old=NULL (and, since Trade tracking, oldTrade=NULL with newTrade set);
+      // on legacy rows only the first old=NULL row is the initial price, a later one is a price set for the first time.
+      const initial = h.oldPrice == null && (h.newTrade != null ? h.oldTrade == null : i === 0);
+      if (initial) parts.push(`Listed at ${fmtCurrency(h.newPrice)}${h.newTrade ? ' · Trade' : ''}`);
+      else if (h.oldPrice == null) parts.push(`Price set to ${fmtCurrency(h.newPrice)}`);
+      else if (h.newPrice == null) parts.push(`Price removed (was ${fmtCurrency(h.oldPrice)})`);
+      else parts.push(`${fmtCurrency(h.oldPrice)} → ${fmtCurrency(h.newPrice)}`);
     }
-    return `- ${date}: ${fmtCurrency(h.oldPrice)} → ${fmtCurrency(h.newPrice)}`;
+    if (h.oldTrade != null && h.newTrade != null && h.oldTrade !== h.newTrade) parts.push(`Trade: ${onOff(h.oldTrade)} → ${onOff(h.newTrade)}`);
+    return parts.length > 0 ? [`- ${date}: ${parts.join(', ')}`] : [];
   });
 }
 

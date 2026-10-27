@@ -295,15 +295,21 @@ export interface ItemListing {
   updated_at: string;
 }
 
-// Append-only audit row for item_listings.asking_price changes — written
-// exclusively by the item_listings_track_price_history DB trigger
-// (20260905000000), never inserted into directly by application code.
+// Append-only history of a listing's pricing terms (asking_price +
+// trade_enabled) — written exclusively by the
+// item_listings_track_price_history DB trigger (20260905000000,
+// 20261026000001), never inserted into directly by application code.
 export interface ItemListingPriceHistory {
   id: number;
   user_id: number;
   item_listing_id: number;
   old_asking_price: number | null;
-  new_asking_price: number;
+  /** null = no asking price after the change (trade only when new_trade_enabled). */
+  new_asking_price: number | null;
+  /** null on rows before 2026-10-26 (Trade not tracked — not false) and on the initial-price row. */
+  old_trade_enabled: boolean | null;
+  /** null only on rows before 2026-10-26 (Trade not tracked — not false). */
+  new_trade_enabled: boolean | null;
   changed_at: string;
   created_at: string;
 }

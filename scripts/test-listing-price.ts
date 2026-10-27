@@ -128,7 +128,7 @@ async function main() {
     return data.id as number;
   }
 
-  async function historyFor(itemListingId: number): Promise<{ old_asking_price: number | null; new_asking_price: number }[]> {
+  async function historyFor(itemListingId: number): Promise<{ old_asking_price: number | null; new_asking_price: number | null }[]> {
     const { data, error } = await admin.from('item_listing_price_history').select('old_asking_price, new_asking_price').eq('item_listing_id', itemListingId).order('id');
     if (error) throw new Error(error.message);
     return data ?? [];
@@ -177,14 +177,15 @@ async function main() {
       check('B4: updating to the same price does not create a second row', hist.length === 1, hist);
     }
 
-    // B5 — UPDATE to NULL (clearing) -> no new row.
+    // B5 — UPDATE to NULL (clearing) -> one row, new=null. Since 20261026000001
+    // a missing price is a real pricing state (trade only), so it is recorded.
     {
       const itemId = await createTestItem();
       const { data: row } = await admin.from('item_listings').insert({ user_id: userId, inventory_item_id: itemId, deal_channel_id: marketplaceId, status: 'active', listed_at: todayDateString(), asking_price: 500 }).select('id').single();
       createdListingIds.push(row!.id as number);
       await admin.from('item_listings').update({ asking_price: null }).eq('id', row!.id);
       const hist = await historyFor(row!.id as number);
-      check('B5: clearing the price to null does not create a new history row', hist.length === 1, hist);
+      check('B5: clearing the price to null records one row old=500, new=null', hist.length === 2 && hist[1]?.old_asking_price === 500 && hist[1]?.new_asking_price === null, hist);
       const { data: after } = await admin.from('item_listings').select('asking_price').eq('id', row!.id).single();
       check('B5: asking_price is actually null after clearing (clearing IS allowed)', after?.asking_price === null, after);
     }

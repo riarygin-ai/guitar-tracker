@@ -104,7 +104,7 @@ export async function loadItemContextHistory(client: SupabaseClient, itemId: num
   const [channelsRes, historyRes] = await Promise.all([
     channelIds.length > 0 ? client.from('deal_channels').select('id, name').in('id', channelIds) : Promise.resolve({ data: [], error: null }),
     listingIds.length > 0
-      ? client.from('item_listing_price_history').select('id, item_listing_id, old_asking_price, new_asking_price, changed_at').in('item_listing_id', listingIds).order('changed_at', { ascending: true }).order('id', { ascending: true })
+      ? client.from('item_listing_price_history').select('id, item_listing_id, old_asking_price, new_asking_price, old_trade_enabled, new_trade_enabled, changed_at').in('item_listing_id', listingIds).order('changed_at', { ascending: true }).order('id', { ascending: true })
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (channelsRes.error) throw new ItemContextLoadError(`channels: ${channelsRes.error.message}`);
@@ -119,7 +119,9 @@ export async function loadItemContextHistory(client: SupabaseClient, itemId: num
     list.push({
       changedAt: h.changed_at as string,
       oldPrice: h.old_asking_price == null ? null : Number(h.old_asking_price),
-      newPrice: Number(h.new_asking_price),
+      newPrice: h.new_asking_price == null ? null : Number(h.new_asking_price),
+      oldTrade: (h.old_trade_enabled as boolean | null) ?? null,
+      newTrade: (h.new_trade_enabled as boolean | null) ?? null,
     });
     historyByListing.set(id, list);
   }
