@@ -93,6 +93,7 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   preliminary_hypothesis: 'Preliminary Hypothesis',
   listing_demand: 'Listing Demand',
   linked_deal_analytics: 'Lead → Deal Linkage',
+  negotiation_analytics: 'Negotiation Intelligence',
 };
 
 export function formatSourceType(sourceType: string | null | undefined): string {

@@ -147,7 +147,7 @@ async function main() {
       check(`${name}: Purpose-aware action policy intact`, /Personal: held primarily for enjoyment/.test(p) && /Hybrid: selective, never assume it should sell quickly/.test(p));
     }
     const oa = read('src', 'lib', 'openai.ts');
-    check('openai.ts imports the shared blocks and holds NO private copy of them', /import \{ LEAD_DEAL_RULES, LISTING_DEMAND_SEMANTICS, PURPOSE_SEMANTICS \} from/.test(oa) && !/NO canonical lead_id/.test(oa) && !/Listing Demand semantics \(apply/.test(oa) && (oa.match(/\$\{LEAD_DEAL_RULES\}/g) ?? []).length === 2);
+    check('openai.ts imports the shared blocks and holds NO private copy of them', /import \{ LEAD_DEAL_RULES, LISTING_DEMAND_SEMANTICS, NEGOTIATION_SEMANTICS, PURPOSE_SEMANTICS \} from/.test(oa) && !/NO canonical lead_id/.test(oa) && !/Listing Demand semantics \(apply/.test(oa) && (oa.match(/\$\{LEAD_DEAL_RULES\}/g) ?? []).length === 2);
     check('existing general-Coach hard rules are unchanged (sourcing, causation, no auto changes, max 3, purpose rules)', ['Use ONLY the supplied packet', 'Treat every source as a statistical ASSOCIATION, never as proof of causation', 'Never recommend an automatic database change', 'Every advice card must cite at least one source_id', 'Generate at most 3 advice_cards', '8. Never pressure the user to sell Personal-purpose inventory', '9. Treat Hybrid Purpose neutrally'].every((s) => ADVICE_SYSTEM_PROMPT.includes(s)));
     check('the general Coach is NOT forced to include a Listing Demand card', /do not force it when the evidence is thin/.test(ADVICE_SYSTEM_PROMPT) && /at most 3/.test(ADVICE_SYSTEM_PROMPT) && !/must include (a|one) (listing|demand)/i.test(ADVICE_SYSTEM_PROMPT));
   }

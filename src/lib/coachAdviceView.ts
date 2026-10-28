@@ -8,6 +8,7 @@
 
 import type { AdviceCard, AdviceInputPacket, AdviceInputPacketSource, SourceRegistryEntry } from './analytics/advice/types';
 import type { LinkedDealAnalyticsContext, LinkedDealMetrics } from './analytics/advice/linkedDealAnalytics';
+import { buildNegotiationSources } from './analytics/advice/negotiationContext';
 import { formatLimitation, humanizeCode } from './analytics/advice/presentation';
 import {
   adviceActions as demandActions, resolveEvidence as resolveDemandEvidence,
@@ -21,6 +22,7 @@ const SOURCE_BADGE: Record<string, { kind: EvidenceBlock['kind']; badge: string 
   confirmed_pattern: { kind: 'pattern', badge: 'Confirmed pattern' },
   preliminary_hypothesis: { kind: 'hypothesis', badge: 'Preliminary hypothesis' },
   linked_deal_analytics: { kind: 'linked_deal', badge: 'Lead → Deal linkage' },
+  negotiation_analytics: { kind: 'negotiation', badge: 'Negotiation intelligence' },
 };
 
 /** Every non-demand source persisted with the revision (packet first, registry fallback). */
@@ -72,6 +74,11 @@ export function resolveCoachEvidence(sourceId: string, packet: AdviceInputPacket
   if (sourceId.startsWith('linked_deal:')) {
     return packet?.linked_deal_analytics ? resolveLinkedDealEvidence(packet.linked_deal_analytics, sourceId) : null;
   }
+  if (sourceId.startsWith('negotiation:')) {
+    // Rebuilt from the persisted context with the same pure builder the packet used — never re-queried.
+    const n = packet?.negotiation_analytics ? buildNegotiationSources(packet.negotiation_analytics).find((x) => x.source_id === sourceId) : null;
+    if (n) return sourceBlock({ ...n, source_type: 'negotiation_analytics' });
+  }
   const s = persistedSources(packet, registry).find((x) => x.source_id === sourceId);
   return s ? sourceBlock(s) : null;
 }
@@ -89,6 +96,7 @@ export function coachLimitations(card: AdviceCard, packet: AdviceInputPacket | n
   for (const s of persistedSources(packet, registry)) if (cited.has(s.source_id)) (s.limitations ?? []).forEach(add);
   if (packet?.listing_demand && cited.has(packet.listing_demand.data_quality.source_id)) packet.listing_demand.data_quality.limitations.forEach(add);
   if (packet?.linked_deal_analytics && cited.has(packet.linked_deal_analytics.overall.source_id)) packet.linked_deal_analytics.limitations.forEach(add);
+  if (packet?.negotiation_analytics && card.source_ids.some((id) => id.startsWith('negotiation:'))) packet.negotiation_analytics.limitations.forEach(add);
   return out;
 }
 

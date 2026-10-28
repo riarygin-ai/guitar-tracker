@@ -158,7 +158,7 @@ async function main() {
     check('Coach (ru) still carries the shared no-conversion / Listing Demand / Purpose blocks', cp.includes(LEAD_DEAL_RULES) && cp.includes(LISTING_DEMAND_SEMANTICS) && cp.includes(PURPOSE_SEMANTICS));
     const oa = strip(read('src', 'lib', 'openai.ts'));
     check('the model calls use the persisted packet\'s language (system prompt built from packet.language)', /adviceSystemPromptFor\(packetLanguage\(packet\)\)/.test(oa) && /listingAdviceSystemPromptFor\(packetLanguage\(packet\)\)/.test(oa));
-    check('schemas and prompt versions unchanged (no enum/schema weakening for Russian)', /advice_type: \{ type: 'string', enum: \['action', 'observation', 'watch'\] \}/.test(oa) && /maxItems: 3/.test(oa) && PROMPT_TEMPLATE_VERSION === 'analytics-advice-v3' && LISTING_ADVICE_PROMPT_VERSION === 'listing-advice-v1');
+    check('schemas and prompt versions unchanged (no enum/schema weakening for Russian)', /advice_type: \{ type: 'string', enum: \['action', 'observation', 'watch'\] \}/.test(oa) && /maxItems: 3/.test(oa) && PROMPT_TEMPLATE_VERSION === 'analytics-advice-v4' && LISTING_ADVICE_PROMPT_VERSION === 'listing-advice-v1');
     check('listing-DESCRIPTION generation is untouched (no language plumbing in generateListing)', !/language/i.test(oa.slice(oa.indexOf('export async function generateListing('))));
   }
 

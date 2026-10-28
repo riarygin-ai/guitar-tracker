@@ -6,6 +6,7 @@
 
 import type { ListingDemandContext } from './listingDemandContext';
 import type { LinkedDealAnalyticsContext } from './linkedDealAnalytics';
+import type { NegotiationCoachContext } from './negotiationContext';
 import type { AdviceLanguage } from './adviceLanguage';
 
 export const ADVICE_SCHEMA_VERSION = '1.0';
@@ -14,7 +15,9 @@ export const ADVICE_SCHEMA_VERSION = '1.0';
 // v3: adds the optional linked_deal_analytics packet block, its `linked_deal:*`
 // sources, and the LEAD_DEAL_RULES update allowing a conversion claim ONLY when
 // citing a linked_deal:* source (all existing rules/fields otherwise unchanged).
-export const PROMPT_TEMPLATE_VERSION = 'analytics-advice-v3';
+// v4: adds the optional negotiation_analytics packet block, its `negotiation:*`
+// sources, the Negotiation semantics, and the no-predictive-claim guard.
+export const PROMPT_TEMPLATE_VERSION = 'analytics-advice-v4';
 export const ADVICE_PROVIDER = 'openai';
 
 export type AdviceStatus = 'pending' | 'generating' | 'completed' | 'failed';
@@ -64,7 +67,7 @@ export type AnalyticsRunAdviceMeta = Omit<AnalyticsRunAdviceRow, 'advice' | 'sou
 // target-user item_id a Business/Hybrid open-inventory insight already
 // legitimately carries.
 
-export type SourceType = 'deterministic_insight' | 'confirmed_pattern' | 'preliminary_hypothesis' | 'listing_demand' | 'linked_deal_analytics';
+export type SourceType = 'deterministic_insight' | 'confirmed_pattern' | 'preliminary_hypothesis' | 'listing_demand' | 'linked_deal_analytics' | 'negotiation_analytics';
 
 export interface SourceRegistryEntry {
   source_id: string;
@@ -138,6 +141,11 @@ export interface AdviceInputPacket {
    *  fabricated) when unavailable. Its `linked_deal:*` source ids are in
    *  allowed_source_ids — a conversion claim may only cite one of these. */
   linked_deal_analytics?: LinkedDealAnalyticsContext;
+  /** Negotiation Intelligence: the shared negotiation engine's result, gated by
+   *  evidence strength (negotiationContext.ts). Fetched live at generation time
+   *  and persisted with the packet; omitted entirely when unavailable. Its
+   *  `negotiation:*` source ids are in allowed_source_ids. */
+  negotiation_analytics?: NegotiationCoachContext;
   allowed_source_ids: string[];
 }
 

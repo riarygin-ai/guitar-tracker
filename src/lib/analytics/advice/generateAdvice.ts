@@ -16,6 +16,7 @@ import { sanitizeErrorMessage } from '@/lib/analytics/runAnalytics';
 import { buildAdviceInputPacket } from './buildInputPacket';
 import { loadListingDemandContext, type ListingDemandContext } from './listingDemandContext';
 import { loadLinkedDealAnalyticsContext, type LinkedDealAnalyticsContext } from './linkedDealAnalytics';
+import { loadNegotiationCoachContext, type NegotiationCoachContext } from './negotiationContext';
 import { hashCanonicalInputPacket } from './canonicalHash';
 import { validateAdviceResponse } from './validateAdviceResponse';
 import { getUserPreferredLanguage } from './userLanguage';
@@ -201,6 +202,15 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
     console.error('[generateAdvice] linked deal analytics unavailable for run', runId, '- continuing without it:', sanitizeErrorMessage(linkedDealError));
   }
 
+  // Negotiation Intelligence: same "enrich, never block" contract — the
+  // shared negotiation engine, computed live; a failure omits the block.
+  let negotiation: NegotiationCoachContext | null = null;
+  try {
+    negotiation = await loadNegotiationCoachContext({ appUserId: requestingUserId, serviceClient });
+  } catch (negotiationError) {
+    console.error('[generateAdvice] negotiation analytics unavailable for run', runId, '- continuing without it:', sanitizeErrorMessage(negotiationError));
+  }
+
   // ── 4. Build the deterministic packet from the SAVED snapshot (+ the optional live Listing Demand / Lead-Deal linkage blocks). ──
   const { packet, sourceRegistry, notes } = buildAdviceInputPacket({
     runId: run.id as number,
@@ -209,6 +219,7 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
     snapshot: run.snapshot,
     listingDemand,
     linkedDealAnalytics,
+    negotiation,
     language,
   });
 

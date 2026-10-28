@@ -2,7 +2,7 @@
 // The OPENAI_API_KEY env var is intentionally not prefixed with NEXT_PUBLIC_.
 
 import OpenAI from 'openai';
-import { LEAD_DEAL_RULES, LISTING_DEMAND_SEMANTICS, PURPOSE_SEMANTICS } from './analytics/advice/sharedSemantics';
+import { LEAD_DEAL_RULES, LISTING_DEMAND_SEMANTICS, NEGOTIATION_SEMANTICS, PURPOSE_SEMANTICS } from './analytics/advice/sharedSemantics';
 import { normalizeAdviceLanguage, withAdviceLanguage, type AdviceLanguage } from './analytics/advice/adviceLanguage';
 
 // ── Model configuration ────────────────────────────────────────────────────────
@@ -273,7 +273,9 @@ You will receive a JSON "Advice Input Packet" containing:
 - preliminary_hypotheses: patterns that meet only looser, exploratory thresholds — NOT confirmed;
 - pattern_selection_summary: aggregate counts only;
 - listing_demand (optional — may be absent): compact, factual buyer/listing-activity evidence for the last 4 weekly buckets (see "Listing Demand semantics" below), organised as market_trend, channels, items (highest_activity and zero_activity_high_exposure) and data_quality; each part carries a source_id beginning "demand:";
-- allowed_source_ids: the COMPLETE list of source IDs you are permitted to cite (including any demand:* ids).
+- linked_deal_analytics (optional): deterministic Lead -> Deal linkage rates; source ids begin "linked_deal:";
+- negotiation_analytics (optional): deterministic negotiation evidence (coverage, funnel, outcomes, offer type, channel, rounds, counters, counter size, month comparison, suppressed modules) — see "Negotiation semantics" below; source ids begin "negotiation:";
+- allowed_source_ids: the COMPLETE list of source IDs you are permitted to cite (including any demand:*, linked_deal:* and negotiation:* ids).
 
 Hard rules — follow every one exactly:
 1. Use ONLY the supplied packet. Do not inspect, infer, or assume any field, item, value, or pattern that is not explicitly present in the packet.
@@ -295,6 +297,8 @@ ${LEAD_DEAL_RULES}
 
 ${LISTING_DEMAND_SEMANTICS}
 - When listing_demand supports it, one of the (at most 3) cards may address buyer activity versus exposure; do not force it when the evidence is thin, and never let it crowd out the Business inventory action described in rule 13.
+
+${NEGOTIATION_SEMANTICS}
 
 ${PURPOSE_SEMANTICS}
 

@@ -418,7 +418,7 @@ async function main() {
   check('system prompt explicitly forbids causal framing', /causal|causation|caused/i.test(ADVICE_SYSTEM_PROMPT));
   check('system prompt explicitly forbids promising financial outcomes', /promise/i.test(ADVICE_SYSTEM_PROMPT));
   check('advice_schema_version constant is "1.0"', ADVICE_SCHEMA_VERSION === '1.0');
-  check('prompt_template_version constant is "analytics-advice-v2"', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v3');
+  check('prompt_template_version constant is "analytics-advice-v2"', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v4');
   check('provider constant is "openai"', ADVICE_PROVIDER === 'openai');
 
   // ══════════════════════════════════════════════════════════════════════

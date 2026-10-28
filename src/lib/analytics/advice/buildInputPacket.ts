@@ -15,6 +15,7 @@
 
 import { buildListingDemandSources, type ListingDemandContext } from './listingDemandContext';
 import { buildLinkedDealAnalyticsSources, type LinkedDealAnalyticsContext } from './linkedDealAnalytics';
+import { buildNegotiationSources, type NegotiationCoachContext } from './negotiationContext';
 import { DEFAULT_ADVICE_LANGUAGE, type AdviceLanguage } from './adviceLanguage';
 import type {
   AdviceInputPacket,
@@ -187,6 +188,9 @@ export interface BuildAdviceInputPacketParams {
    *  additive, same contract as listingDemand: absent/null yields exactly
    *  the packet this function always produced without it. */
   linkedDealAnalytics?: LinkedDealAnalyticsContext | null;
+  /** Optional Negotiation Intelligence context (negotiationContext.ts), same
+   *  purely additive contract as linkedDealAnalytics. */
+  negotiation?: NegotiationCoachContext | null;
   /** Requested advice language; part of the hashed packet. Defaults to 'en'. */
   language?: AdviceLanguage;
 }
@@ -250,6 +254,7 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
 
   const demandSources = params.listingDemand ? buildListingDemandSources(params.listingDemand) : [];
   const linkedDealSources = params.linkedDealAnalytics ? buildLinkedDealAnalyticsSources(params.linkedDealAnalytics) : [];
+  const negotiationSources = params.negotiation ? buildNegotiationSources(params.negotiation) : [];
 
   const packet: AdviceInputPacket = {
     packet_version: '1.0',
@@ -261,7 +266,11 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
     language: params.language ?? DEFAULT_ADVICE_LANGUAGE,
     ...(params.listingDemand ? { listing_demand: params.listingDemand } : {}),
     ...(params.linkedDealAnalytics ? { linked_deal_analytics: params.linkedDealAnalytics } : {}),
-    allowed_source_ids: [...allSources.map((s) => s.source_id), ...demandSources.map((s) => s.source_id), ...linkedDealSources.map((s) => s.source_id)],
+    ...(params.negotiation ? { negotiation_analytics: params.negotiation } : {}),
+    allowed_source_ids: [
+      ...allSources.map((s) => s.source_id), ...demandSources.map((s) => s.source_id),
+      ...linkedDealSources.map((s) => s.source_id), ...negotiationSources.map((s) => s.source_id),
+    ],
   };
 
   const sourceRegistry: SourceRegistryEntry[] = allSources.map((s) => {
@@ -316,6 +325,21 @@ export function buildAdviceInputPacket(params: BuildAdviceInputPacketParams): Bu
       confidence: null,
       key_metrics: l.key_metrics,
       limitations: l.limitations,
+    });
+  }
+
+  // Negotiation sources: cohort aggregates from the shared negotiation engine,
+  // never item-level.
+  for (const n of negotiationSources) {
+    sourceRegistry.push({
+      source_id: n.source_id,
+      source_type: 'negotiation_analytics',
+      item_id: null,
+      headline: n.headline,
+      summary: n.summary,
+      confidence: n.confidence,
+      key_metrics: n.key_metrics,
+      limitations: n.limitations,
     });
   }
 

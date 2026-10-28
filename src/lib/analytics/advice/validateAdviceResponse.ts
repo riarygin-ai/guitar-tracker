@@ -17,7 +17,7 @@ import type {
   StructuredAdviceResponse,
 } from './types';
 import { ADVICE_SCHEMA_VERSION, MAX_ADVICE_CARDS } from './types';
-import { collectStrings, findLeadDealViolations } from './sharedSemantics';
+import { collectStrings, findLeadDealViolations, hasPredictiveClaim } from './sharedSemantics';
 
 function toRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -190,11 +190,15 @@ export function validateAdviceResponse(rawJson: string, sourceRegistry: SourceRe
   // rejected outright.
   const globalReasons = new Set<string>();
 
-  const isLinkedDealSource = (id: string) => id.startsWith('linked_deal:');
+  // Negotiation funnel conversion is a lead's OWN outcome (peak_stage CONVERTED), so citing a
+  // negotiation:* source excuses a conversion claim the same way linked_deal:* does.
+  const isLinkedDealSource = (id: string) => id.startsWith('linked_deal:') || id.startsWith('negotiation:');
 
   const checkUnit = (texts: string[], sourceIds: string[]) => {
     const violations = new Set(texts.flatMap((t) => findLeadDealViolations(t)));
     if (violations.has('LEAD_DEAL_GAP_EXPLAINED')) globalReasons.add('LEAD_DEAL_LEAD_DEAL_GAP_EXPLAINED');
+    // Descriptive history is never a forecast — rejected whatever the unit cites.
+    if (texts.some(hasPredictiveClaim)) globalReasons.add('PREDICTIVE_CLAIM');
     if (violations.has('CONVERSION_CLAIM') && !sourceIds.some(isLinkedDealSource)) {
       globalReasons.add('LEAD_DEAL_CONVERSION_CLAIM');
     }

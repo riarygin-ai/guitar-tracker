@@ -222,7 +222,7 @@ async function main() {
     check('LEAD_DEAL_RULES: never state a lead "did not convert" merely because it has no deal_id', /Never claim a lead "did not convert" merely because it has no deal_id/.test(LEAD_DEAL_RULES));
     check('the general Coach system prompt includes the updated LEAD_DEAL_RULES verbatim', ADVICE_SYSTEM_PROMPT.includes(LEAD_DEAL_RULES));
     check('the Listing Advice system prompt ALSO includes the updated LEAD_DEAL_RULES verbatim (one shared copy)', LISTING_ADVICE_SYSTEM_PROMPT.includes(LEAD_DEAL_RULES));
-    check('prompt template version was bumped for this change (v3)', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v3');
+    check('prompt template version was bumped for this change (v3)', PROMPT_TEMPLATE_VERSION === 'analytics-advice-v4');
 
     // Listing Advice's OWN packet/validator never has linked_deal evidence to cite, so its guard must stay unconditional.
     const laRegistry = ['demand:market_trend'];
