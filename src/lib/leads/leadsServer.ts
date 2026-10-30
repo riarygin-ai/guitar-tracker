@@ -23,6 +23,9 @@ export const LEAD_COLUMNS =
   'peak_stage, peak_stage_source, peak_stage_at, negotiation_rounds, latest_cash_offer, offer_is_concrete, offer_assessment, ' +
   'offer_assessment_source, last_inbound_at, last_outbound_at, waiting_on, unanswered_followups, reopen_count, channel_detail, origin, version';
 
+/** Contact details for the owner's /leads drawer. Not in LEAD_COLUMNS, which analytics loaders share. */
+export const LEAD_CONTACT_COLUMNS = 'contact_city, contact_phone';
+
 export class LeadsLoadError extends Error {}
 
 export interface LeadAttributionRequest {
@@ -51,7 +54,7 @@ export async function loadLeadsForUser(params: {
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await db
       .from('item_leads')
-      .select(LEAD_COLUMNS)
+      .select(`${LEAD_COLUMNS}, ${LEAD_CONTACT_COLUMNS}`)
       .eq('user_id', appUserId)
       .order('id', { ascending: true })
       .range(offset, offset + PAGE - 1);

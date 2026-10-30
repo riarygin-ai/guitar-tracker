@@ -31,7 +31,7 @@ const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '
 
 function lead(over: Partial<OperationLeadCandidate> = {}): OperationLeadCandidate {
   return {
-    lead_id: 4242, item_id: 7, item_label: 'Fender Stratocaster', contact_name: 'Matt Maccallum',
+    lead_id: 4242, item_id: 7, item_label: 'Fender Stratocaster', contact_name: 'Matt Maccallum', contact_hint: null,
     channel: 'Marketplace', channel_detail: null, status: 'OPEN', outcome_reason: null,
     peak_stage: 'NEGOTIATING', offer_summary: 'C$1,700 cash', last_activity_at: '2026-10-20T15:00:00Z', ...over,
   };

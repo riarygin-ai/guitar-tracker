@@ -28,6 +28,7 @@ import { prepareLeadUpdate, recordLeadInteraction, type AgentEventInput, type Wr
 import { formatOfferSummary, leadItemName } from './leadFormat';
 import { STAGE_RANK, type LeadStage } from './semantics';
 import type { OfferType } from './leadTypes';
+import { cityKey, maskedPhone } from './contactDetails';
 
 export const OPERATION_LEAD_INITIAL_LIMIT = 6;
 export const OPERATION_LEAD_SEARCH_LIMIT = 12;
@@ -39,6 +40,11 @@ export interface OperationLeadCandidate {
   item_id: number;
   item_label: string;
   contact_name: string | null;
+  /**
+   * Only when another eligible lead has the same name: the city, or a masked
+   * phone ("…1234") when the city does not tell them apart. Never a full phone.
+   */
+  contact_hint: string | null;
   channel: string | null;
   channel_detail: string | null;
   status: string;
@@ -79,11 +85,14 @@ export interface LeadCandidateRow {
   last_contact_at: string | null;
   last_inbound_at: string | null;
   last_outbound_at: string | null;
+  contact_city: string | null;
+  contact_phone: string | null;
 }
 
 const ROW_COLUMNS =
   'id, inventory_item_id, contact_name, source_channel, channel_detail, status, outcome_reason, peak_stage, deal_id, offer_type, ' +
-  'initial_cash_offer, best_cash_offer, latest_cash_offer, trade_item, cash_component, first_contact_at, last_contact_at, last_inbound_at, last_outbound_at';
+  'initial_cash_offer, best_cash_offer, latest_cash_offer, trade_item, cash_component, first_contact_at, last_contact_at, last_inbound_at, last_outbound_at, ' +
+  'contact_city, contact_phone';
 
 /** Latest known activity (date-only values anchored at 12:00Z so the calendar day is preserved). */
 export function lastActivityAt(r: Pick<LeadCandidateRow, 'last_contact_at' | 'last_inbound_at' | 'last_outbound_at' | 'first_contact_at'>): string | null {
@@ -116,17 +125,45 @@ export function rankLeadRows<T extends Pick<LeadCandidateRow, 'id' | 'status' | 
 
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
 
-/** Search by contact name, channel, channel detail, trade item or item label; every query word must match. */
-export function matchesLeadQuery(r: Pick<LeadCandidateRow, 'contact_name' | 'source_channel' | 'channel_detail' | 'trade_item'>, itemLabel: string, q: string): boolean {
+/** Search by contact name, city, channel, channel detail, trade item or item label; every query word must match. */
+export function matchesLeadQuery(r: Pick<LeadCandidateRow, 'contact_name' | 'source_channel' | 'channel_detail' | 'trade_item'> & { contact_city?: string | null }, itemLabel: string, q: string): boolean {
   const words = norm(q).split(' ').filter(Boolean);
   if (words.length === 0) return true;
-  const hay = [r.contact_name, r.source_channel, r.channel_detail, r.trade_item, itemLabel].map(norm).join(' | ');
+  const hay = [r.contact_name, r.contact_city ?? null, r.source_channel, r.channel_detail, r.trade_item, itemLabel].map(norm).join(' | ');
   return words.every((w) => hay.includes(w));
 }
 
-function toCandidate(r: LeadCandidateRow, itemLabel: string): OperationLeadCandidate {
+/**
+ * Disambiguation hints for leads that share a name with another eligible lead:
+ * the city when it differs from every same-name sibling's, otherwise a masked
+ * phone when that differs. Unique names get no hint (no extra clutter).
+ */
+export function contactHints(rows: Pick<LeadCandidateRow, 'id' | 'contact_name' | 'contact_city' | 'contact_phone'>[]): Map<number, string | null> {
+  const groups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const k = norm(r.contact_name);
+    if (!k) continue;
+    const g = groups.get(k);
+    if (g) g.push(r); else groups.set(k, [r]);
+  }
+  const out = new Map<number, string | null>();
+  for (const g of Array.from(groups.values())) {
+    if (g.length < 2) continue;
+    for (const r of g) {
+      const others = g.filter((o) => o.id !== r.id);
+      const city = cityKey(r.contact_city);
+      const phone = maskedPhone(r.contact_phone);
+      if (r.contact_city && others.every((o) => cityKey(o.contact_city) !== city)) out.set(r.id, r.contact_city);
+      else if (phone && others.every((o) => maskedPhone(o.contact_phone) !== phone)) out.set(r.id, r.contact_city ? `${r.contact_city} · ${phone}` : phone);
+      else out.set(r.id, r.contact_city ?? null);
+    }
+  }
+  return out;
+}
+
+function toCandidate(r: LeadCandidateRow, itemLabel: string, hint: string | null = null): OperationLeadCandidate {
   return {
-    lead_id: r.id, item_id: r.inventory_item_id, item_label: itemLabel, contact_name: r.contact_name,
+    lead_id: r.id, item_id: r.inventory_item_id, item_label: itemLabel, contact_name: r.contact_name, contact_hint: hint,
     channel: r.source_channel, channel_detail: r.channel_detail, status: r.status, outcome_reason: r.outcome_reason,
     peak_stage: r.peak_stage,
     offer_summary: formatOfferSummary({ ...r, best_cash_offer: r.latest_cash_offer ?? r.best_cash_offer }),
@@ -183,10 +220,11 @@ export async function loadOperationLeadCandidates(db: SupabaseClient, appUserId:
   const q = params.q?.trim() ?? '';
   const limit = Math.max(1, Math.min(params.limit ?? (q ? OPERATION_LEAD_SEARCH_LIMIT : OPERATION_LEAD_INITIAL_LIMIT), OPERATION_LEAD_SEARCH_LIMIT));
   const matched = q ? eligible.filter((r) => matchesLeadQuery(r, labelOf(r.inventory_item_id), q)) : eligible;
+  const hints = contactHints(eligible);
 
   return {
     eligible_total: eligible.length,
-    candidates: rankLeadRows(matched).slice(0, limit).map((r) => toCandidate(r, labelOf(r.inventory_item_id))),
+    candidates: rankLeadRows(matched).slice(0, limit).map((r) => toCandidate(r, labelOf(r.inventory_item_id), hints.get(r.id) ?? null)),
     linked: linkedRow ? toCandidate(linkedRow, labelOf(linkedRow.inventory_item_id)) : null,
     blocked_item_ids: Array.from(blocked).sort((a, b) => a - b),
   };

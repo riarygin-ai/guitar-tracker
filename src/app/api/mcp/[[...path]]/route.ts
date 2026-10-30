@@ -65,7 +65,7 @@ import { getLeadActivityForUser, LeadActivityServiceError } from '@/lib/analytic
 import { findContactHistoryForUser, ContactHistoryServiceError } from '@/lib/analytics/contactHistoryService';
 import { getOperationsAnalysisForUser, getOperationContextForUser, OperationsServiceError, OPERATION_TYPES } from '@/lib/analytics/operationsService';
 import { getDealChainForUser } from '@/lib/analytics/dealChainService';
-import { recordLeadInteraction, voidLeadEvent, RESOLUTION_ACTIONS, type RecordLeadInteractionInput, type VoidLeadEventInput } from '@/lib/leads/leadWriteService';
+import { recordLeadInteraction, voidLeadEvent, CONTACT_RESOLUTIONS, RESOLUTION_ACTIONS, type RecordLeadInteractionInput, type VoidLeadEventInput } from '@/lib/leads/leadWriteService';
 import { AGENT_EVENT_TYPES, LEAD_CHANNELS, LEAD_STAGES, LEAD_STATUSES, renderLeadSemanticsForPrompt } from '@/lib/leads/semantics';
 import { manageListing, LISTING_ACTIONS, type ManageListingInput } from '@/lib/listings/listingWriteService';
 import { getLeadsForUser, GetLeadsError, GET_LEADS_DEFAULT_LIMIT, GET_LEADS_MAX_ITEM_IDS, GET_LEADS_MAX_LIMIT } from '@/lib/analytics/leadsMcp';
@@ -215,7 +215,7 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
     'find_contact_history',
     {
       description:
-        "Searches the authenticated user's full historical lead/contact history by contact name. Use this " +
+        "Searches the authenticated user's full historical lead/contact history by contact name and/or phone. Use this " +
         'when a new buyer/trader contacts the user and you want to know whether they have interacted ' +
         'before, on the same item or another item, and what happened (offers, quality, status, notes, ' +
         'linked completed deal, peak stage, responsiveness). Includes leads on sold/traded/closed inventory. No time window is ' +
@@ -223,9 +223,15 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
         'qualifier_variant possible matches). Exact matches (same name key, and same channel/channel_detail when given), same-name ' +
         'matches on OTHER channels, and conservative possible matches (with match_reason/match_score) are ' +
         'kept separate; only exact matches count as confirmed history. coverage tells how many leads have ' +
-        'no recorded contact name and therefore cannot be found. Follow linked_deal_id with get_operation_context.',
+        'no recorded contact name and therefore cannot be found. Follow linked_deal_id with get_operation_context. ' +
+        'contact_phone is the STRONGEST lookup: phone_matches are every lead with the same normalized Canada/US phone, under any ' +
+        'name, channel or item — "likely the same contact", never guaranteed and never one lead (each item stays its own lead). ' +
+        'contact_city (with contact_name) narrows name matches to that city; leads with another or no recorded city are listed ' +
+        'separately. Same name + same city supports identity but does not prove it; city alone is never searched.',
       inputSchema: z.object({
-        contact_name: z.string().trim().min(1).max(200).describe('The person\'s name as shown in the new message, e.g. "John Smith".'),
+        contact_name: z.string().trim().min(1).max(200).optional().describe('The person\'s name as shown in the new message, e.g. "John Smith". Required unless contact_phone is given.'),
+        contact_phone: z.string().trim().min(7).max(40).optional().describe('A phone number the person gave, any common format ("647-555-1234", "+1 647 555 1234").'),
+        contact_city: z.string().trim().min(1).max(80).optional().describe('With contact_name: the city the person said they live in / are based in (never a meeting place).'),
         channel: z.string().trim().max(100).optional().describe('DealChannel the new contact came from, e.g. "Marketplace". Same-name leads on other channels are returned separately, not as exact matches.'),
         channel_detail: z.string().trim().max(80).optional().describe('With channel Other / Regular Buyer / Seller: the sub-channel, e.g. "Instagram". A different detail counts as another channel.'),
         item_id: z.number().int().positive().optional().describe('The item the new contact is asking about. Only MARKS same-item history (same_item: true); never limits the search.'),
@@ -254,8 +260,8 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
         'inconsistent data (needs_resolution), and any question needing individual lead rows rather than item-level ' +
         'aggregates. Each row has the same snapshot as get_item_context (peak_stage, status/outcome, negotiation_rounds, ' +
         'responsiveness incl. waiting_on, latest_buyer_offer, offer_assessment, message counts, deal_id, needs_resolution, ' +
-        'version) plus item identity (brand/model/year/color/status/category/type/purpose), contact_name_source and ' +
-        'last_activity_date. Filters combine with AND across fields and OR within a list. summary counts describe the whole ' +
+        'version) plus item identity (brand/model/year/color/status/category/type/purpose), contact_name_source, ' +
+        'contact_city / contact_phone (only when recorded) and last_activity_date. Filters combine with AND across fields and OR within a list. summary counts describe the whole ' +
         'filtered set, not just the page; page with offset/next_offset. Ordered by last_activity_date (latest real contact) ' +
         'then lead_id, newest first. legacy_notes only with include_notes: true (then complete, never truncated). No events: ' +
         "for one lead's full event history use get_item_context with lead_id + full_history. For demand trends / lifetime " +
@@ -399,7 +405,17 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
         'ORDER, state PROPOSED|CONFIRMED|DONE|MISSED|CANCELLED, scheduled_for, at_asking_price), STATUS_CHANGE (INTERNAL; ' +
         'to + outcome_reason), DEAL_LINKED (INTERNAL; deal_id of the completed Guitar Tracker operation — moves the lead to ' +
         'COMPLETED), NOTE (INTERNAL; our valuation/research). "PRS + how much cash?" is an OFFER with cash_terms OPEN ' +
-        '(ENGAGED, not NEGOTIATING). Never invents or replaces the legacy lead notes.\n\n' + renderLeadSemanticsForPrompt(),
+        '(ENGAGED, not NEGOTIATING). Never invents or replaces the legacy lead notes. ' +
+        'Contact details: send lead.contact_city ONLY when the person states where they live / are based ("I live in Burlington", ' +
+        '"I\'m in Oakville", "based in Hamilton") — never for a meeting place or trip ("can meet in Burlington", "going to Barrie ' +
+        'tomorrow"). Send lead.contact_phone when they give a number ("text me at 647-555-1234", "my number is …"). Both go in the ' +
+        'SAME call as the events of that interaction (e.g. an INBOUND OFFER plus the city/phone from the same message). They fill ' +
+        'empty fields automatically (APPLIED_UPDATE); the same number in another format is no change; a DIFFERENT stored phone ' +
+        'or city returns REVIEW_REQUIRED (CONTACT_PHONE_CONFLICT / CONTACT_CITY_CONFLICT) — ask the user, then re-send with ' +
+        'contact_resolution KEEP_EXISTING or REPLACE (or resolution CREATE_NEW for a different person). A same phone is strong ' +
+        'evidence of the same contact (candidates carry identity: same_phone / different_phone / same_city / different_city; ' +
+        'related_contacts marks matched_on phone|name across other items), but each item remains its own lead and leads are ' +
+        'never merged. A non-unique display name (KijijiUser) still needs USE_LEAD/CREATE_NEW unless the same phone is stored.\n\n' + renderLeadSemanticsForPrompt(),
       inputSchema: z.object({
         mutation_id: z.string().uuid().describe('One new UUID per logical interaction; reuse it for retries and for the resolution follow-up.'),
         lead: z.object({
@@ -408,6 +424,8 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
           channel: z.enum(LEAD_CHANNELS).optional().describe('Required unless lead_id is given.'),
           channel_detail: z.string().trim().min(1).max(80).optional().describe('Only with Other or Regular Buyer/Seller, e.g. "Instagram", "SMS", "Facebook Group". Different details are different relationships.'),
           contact_name: z.string().trim().min(1).max(200).optional().describe('Display name exactly as shown, including disambiguating qualifiers. Required for a new lead; never a placeholder like "Unknown".'),
+          contact_city: z.string().trim().min(1).max(80).optional().describe('The contact\'s own city, ONLY when they say they live / are based there. Never a meeting place.'),
+          contact_phone: z.string().trim().min(7).max(40).optional().describe('Phone number the contact gave, as written (e.g. "(647) 555-1234").'),
         }),
         events: z.array(z.object({
           type: z.enum(AGENT_EVENT_TYPES),
@@ -423,6 +441,7 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
           action: z.enum(RESOLUTION_ACTIONS).describe('USE_LEAD (append to candidate lead_id), CREATE_NEW (separate lead/episode), CREATE_UNNAMED (user chose to log without a name), CONFIRM (user explicitly confirmed a flagged transition).'),
           lead_id: z.number().int().positive().optional(),
         }).optional().describe('Only after REVIEW_REQUIRED, with the user\'s decision.'),
+        contact_resolution: z.enum(CONTACT_RESOLUTIONS).optional().describe('Only after CONTACT_PHONE_CONFLICT / CONTACT_CITY_CONFLICT, with the user\'s decision: KEEP_EXISTING (keep the stored value) or REPLACE (store the new one).'),
         dry_run: z.boolean().optional().describe('Validate and show what would change without writing.'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },

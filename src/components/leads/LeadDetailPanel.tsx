@@ -8,7 +8,9 @@
 // shows its notes as the primary "Historical summary" instead.
 // The one edit control is the contact name (add / correct / clear) — saved
 // through /api/leads/:id/contact-name, which also updates contact_key and
-// records an audit note; nothing else about the lead changes.
+// records an audit note; nothing else about the lead changes. Contact city and
+// phone (identity signals recorded by direct writes) show under the name, only
+// when present.
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -67,6 +69,10 @@ function ContactNameField({ lead, onSaved }: { lead: LeadRow; onSaved: (patch: P
               {lead.contact_name_source && <span className="ml-1 text-[11px] text-slate-500 dark:text-slate-400">{NAME_SOURCE_LABEL[lead.contact_name_source]}</span>}
             </>
           ) : <span className="text-slate-400 dark:text-slate-500">No name recorded</span>}
+          {lead.contact_city && <span className="mt-0.5 block text-xs text-slate-600 [overflow-wrap:anywhere] dark:text-slate-300" data-contact-city>{lead.contact_city}</span>}
+          {lead.contact_phone && (
+            <a href={`tel:${lead.contact_phone.replace(/[^\d+]/g, '')}`} className="mt-0.5 block text-xs text-sky-700 [overflow-wrap:anywhere] hover:underline dark:text-sky-400" data-contact-phone>{lead.contact_phone}</a>
+          )}
         </Field>
         <button type="button" onClick={start} data-contact-name-edit className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700">
           {lead.contact_name ? 'Edit' : 'Add name'}

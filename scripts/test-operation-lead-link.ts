@@ -81,7 +81,7 @@ function row(id: number, o: Partial<LeadCandidateRow>): LeadCandidateRow {
   return {
     id, inventory_item_id: 1, contact_name: `P${id}`, source_channel: 'Marketplace', channel_detail: null, status: 'OPEN', outcome_reason: null,
     peak_stage: 'INQUIRY', deal_id: null, offer_type: 'NONE', initial_cash_offer: null, best_cash_offer: null, latest_cash_offer: null, trade_item: null,
-    cash_component: null, first_contact_at: '2026-09-01', last_contact_at: null, last_inbound_at: null, last_outbound_at: null, ...o,
+    cash_component: null, first_contact_at: '2026-09-01', last_contact_at: null, last_inbound_at: null, last_outbound_at: null, contact_city: null, contact_phone: null, ...o,
   };
 }
 function rankChecks() {

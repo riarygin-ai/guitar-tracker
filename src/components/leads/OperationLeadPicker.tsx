@@ -92,8 +92,10 @@ export function LeadLinkFailure({ message, leadName, retrying, onRetry, onSkip }
   );
 }
 
-export function leadDisplayName(c: Pick<OperationLeadCandidate, 'contact_name' | 'lead_id'>): string {
-  return c.contact_name?.trim() || `Unnamed lead #${c.lead_id}`;
+export function leadDisplayName(c: Pick<OperationLeadCandidate, 'contact_name' | 'lead_id'> & { contact_hint?: string | null }): string {
+  const name = c.contact_name?.trim() || `Unnamed lead #${c.lead_id}`;
+  // Same-name leads get a compact disambiguator ("Mike · Oakville"); everyone else just the name.
+  return c.contact_hint ? `${name} · ${c.contact_hint}` : name;
 }
 
 function channelText(c: OperationLeadCandidate): string {

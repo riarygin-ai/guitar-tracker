@@ -47,6 +47,10 @@ export interface ItemContextMcpLead {
   version: number;
   origin: string;
   contact_name: string | null;
+  /** The contact's own city — present only when recorded. */
+  contact_city?: string;
+  /** Display form of the contact's phone — present only when recorded (the normalized matching key is not exposed). */
+  contact_phone?: string;
   channel: string;
   channel_detail: string | null;
   first_contact_at: string | null;
@@ -118,6 +122,8 @@ export function leadSnapshotView(
     version: r.version,
     origin: r.origin,
     contact_name: r.contact_name,
+    ...(r.contact_city ? { contact_city: r.contact_city } : {}),
+    ...(r.contact_phone ? { contact_phone: r.contact_phone } : {}),
     channel: (r.deal_channel_id != null ? ctx.channelNames.get(r.deal_channel_id) : null) ?? r.source_channel ?? 'Unknown',
     channel_detail: r.channel_detail,
     first_contact_at: r.first_contact_at,
