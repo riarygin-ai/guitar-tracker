@@ -17,6 +17,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { formatListingTerms, fmtListingPrice, LISTING_TERMS_MESSAGE, type ListingTermsErrorCode } from './listingTerms';
+import { executeIdempotentMutation, type IdempotentMutationOptions } from '../writeRetry';
 
 export const LISTING_ACTIONS = ['LIST', 'UPDATE', 'UNLIST'] as const;
 export type ListingActionKind = (typeof LISTING_ACTIONS)[number];
@@ -110,14 +111,17 @@ function toRpcAction(a: ListingChangeAction) {
   };
 }
 
-/** The one write call. Never throws for business outcomes; a database guard error comes back as REJECTED. */
-export async function applyListingChanges(client: SupabaseClient, req: ApplyListingChangesRequest): Promise<ApplyListingChangesResult> {
-  const { data, error } = await client.rpc('apply_listing_changes', {
-    p_request: { mutation_id: req.mutationId, item_id: req.itemId, source: req.source, actions: req.actions.map(toRpcAction) },
-  });
+/**
+ * The one write call. Never throws for business outcomes; a database guard error comes back as REJECTED.
+ * Transient failures are retried with the same request (same mutation_id): a lost-response
+ * write comes back as the saved result, never applied twice.
+ */
+export async function applyListingChanges(client: SupabaseClient, req: ApplyListingChangesRequest, retry: IdempotentMutationOptions = {}): Promise<ApplyListingChangesResult> {
+  const p_request = { mutation_id: req.mutationId, item_id: req.itemId, source: req.source, actions: req.actions.map(toRpcAction) };
+  const { response: { data, error }, attempts } = await executeIdempotentMutation('apply_listing_changes', () => client.rpc('apply_listing_changes', { p_request }), retry);
   if (error) {
     const code = KNOWN_DB_CODES.find((c) => error.message.includes(c)) ?? 'WRITE_FAILED';
-    const message = code in LISTING_TERMS_MESSAGE ? LISTING_TERMS_MESSAGE[code as ListingTermsErrorCode] : code === 'WRITE_FAILED' ? `Could not save the listing: ${error.message}` : code;
+    const message = code in LISTING_TERMS_MESSAGE ? LISTING_TERMS_MESSAGE[code as ListingTermsErrorCode] : code === 'WRITE_FAILED' ? `Could not save the listing: ${error.message}${attempts > 1 ? ` (${attempts} attempts)` : ''}` : code;
     return { status: 'REJECTED', replay: false, item_id: req.itemId, actions: [], code, message };
   }
   const r = data as Record<string, unknown>;
@@ -137,7 +141,8 @@ export async function applyListingChanges(client: SupabaseClient, req: ApplyList
   });
   return {
     status: r.status as ListingChangeStatus,
-    replay: r.replay === true,
+    // A replay produced by this call's own retry (earlier attempt committed, response lost) is this call's write.
+    replay: r.replay === true && attempts === 1,
     item_id: Number(r.item_id ?? req.itemId),
     ...(r.item_status_before !== undefined ? { item_status_before: r.item_status_before as string } : {}),
     ...(r.item_status_after !== undefined ? { item_status_after: r.item_status_after as string } : {}),

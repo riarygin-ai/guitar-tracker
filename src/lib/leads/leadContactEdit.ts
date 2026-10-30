@@ -22,6 +22,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { prepareLeadUpdate, isPlaceholderName } from './leadWriteService';
 import { baseKey, channelKey, contactKey, hasQualifier } from './classification';
 import { normalizeContactName, possibleNameMatch } from './contactName';
+import { executeIdempotentMutation } from '../writeRetry';
 
 export const CONTACT_NAME_MAX = 120;
 
@@ -128,7 +129,9 @@ export async function renameLeadContact(db: SupabaseClient, appUserId: number, p
     return { result: 'INVALID', message: `Renaming would also change this lead's ${moved.join(', ')} — it has not been classified yet. Nothing was changed.` };
   }
 
-  const { data, error: rpcError } = await db.rpc('rename_lead_contact', { p_request: prepared.request, p_contact_name: name, p_contact_key: key });
+  // Retried only on transient failures, with the same request: a committed rename replays (REPLAY → treated as saved).
+  const renameArgs = { p_request: prepared.request, p_contact_name: name, p_contact_key: key };
+  const { response: { data, error: rpcError } } = await executeIdempotentMutation('rename_lead_contact', () => db.rpc('rename_lead_contact', renameArgs));
   if (rpcError) {
     const m = /CONTACT_KEY_CONFLICT: lead (\d+)/.exec(rpcError.message);
     if (m) return { result: 'BLOCKED', conflicting: { lead_id: Number(m[1]), contact_name: name, status: '', why: 'same item, channel and contact' }, message: `Lead #${m[1]} on this item and channel already has that name.` };

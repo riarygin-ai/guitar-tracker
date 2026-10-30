@@ -62,6 +62,7 @@ import {
 } from './classification';
 import { normalizeContactName, possibleNameMatch } from './contactName';
 import { cityKey, maskedPhone, samePhone, validateCity, validatePhone } from './contactDetails';
+import { executeIdempotentMutation, type IdempotentMutationOptions } from '../writeRetry';
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -137,6 +138,8 @@ export interface WriteContext {
    * re-validates it inside create_operation_with_winning_lead's transaction.
    */
   pendingDealId?: number;
+  /** Transient-failure retry policy for the write RPC (tests inject sleep/logger). */
+  retry?: IdempotentMutationOptions;
 }
 
 export type Changes = Record<string, [unknown, unknown]>;
@@ -1063,17 +1066,23 @@ type RpcResult = RpcOk | { status: 'REPLAY'; lead_id: number; result?: WriteResu
 
 class RpcRejection extends Error { constructor(public reason: RejectReason, message: string) { super(message); } }
 
-async function callRpc(client: SupabaseClient, request: Record<string, unknown>): Promise<RpcResult> {
-  const { data, error } = await client.rpc('apply_lead_interaction', { p_request: request });
+/**
+ * One apply_lead_interaction call. Transient failures are retried with the SAME
+ * request (same mutation_id): a write that committed before its response was
+ * lost comes back as REPLAY, never twice. `attempts` > 1 with REPLAY means the
+ * earlier attempt of THIS call wrote it.
+ */
+async function callRpc(client: SupabaseClient, request: Record<string, unknown>, retry: IdempotentMutationOptions = {}): Promise<{ rpc: RpcResult; attempts: number }> {
+  const { response: { data, error }, attempts } = await executeIdempotentMutation('apply_lead_interaction', () => client.rpc('apply_lead_interaction', { p_request: request }), retry);
   if (error) {
     const m = error.message ?? '';
     for (const code of ['NOT_AUTHENTICATED', 'ITEM_NOT_FOUND', 'INVALID_CHANNEL', 'DEAL_NOT_VALID', 'EVENT_NOT_FOUND', 'VALIDATION_ERROR'] as const) {
       if (m.includes(code)) throw new RpcRejection(code, m);
     }
     if (m.includes('PEAK_STAGE_REGRESSION')) throw new RpcRejection('CONCURRENT_UPDATE', m);
-    throw new Error(`apply_lead_interaction: ${m}`);
+    throw new Error(`apply_lead_interaction: ${m}${attempts > 1 ? ` (${attempts} attempts)` : ''}`);
   }
-  return data as RpcResult;
+  return { rpc: data as RpcResult, attempts };
 }
 
 function pendingForRpc(e: PendingEvent) {
@@ -1175,8 +1184,9 @@ export async function recordLeadInteraction(client: SupabaseClient, input: Recor
     if (input.dry_run) return { ...storedResult, lead_id: planned.leadId ?? undefined, dry_run: true };
 
     let rpc: RpcResult;
+    let rpcAttempts: number;
     try {
-      rpc = await callRpc(client, request);
+      ({ rpc, attempts: rpcAttempts } = await callRpc(client, request, ctx.retry));
     } catch (e) {
       if (e instanceof RpcRejection) {
         if (e.reason === 'CONCURRENT_UPDATE' && attempt === 0) continue;
@@ -1189,6 +1199,11 @@ export async function recordLeadInteraction(client: SupabaseClient, input: Recor
     }
     if (rpc.status === 'REPLAY') {
       if (rpc.request_hash && rpc.request_hash !== normalized.requestHash) return rejected('MUTATION_ID_REUSED', 'This mutation_id was already used for a different request.');
+      // An earlier attempt of THIS call committed and its response was lost: report it as this call's write.
+      if (rpcAttempts > 1) {
+        const version = (await loadLead(client, rpc.lead_id))?.version;
+        return { ...(rpc.result ?? { result: resultCode }), lead_id: rpc.lead_id, event_ids: rpc.event_ids, ...(version != null ? { version, snapshot: { ...(rpc.result?.snapshot ?? storedResult.snapshot), version } } : {}) };
+      }
       return { ...(rpc.result ?? { result: resultCode }), lead_id: rpc.lead_id, event_ids: rpc.event_ids, replayed: true };
     }
     if (rpc.status === 'NOT_FOUND') return rejected('LEAD_NOT_FOUND', 'The lead disappeared before the write.');
@@ -1264,16 +1279,22 @@ export async function voidLeadEvent(client: SupabaseClient, input: VoidLeadEvent
   const changes = diffSnapshot(row as unknown as Record<string, unknown>, derived);
 
   let rpc: RpcResult;
+  let rpcAttempts: number;
   try {
-    rpc = await callRpc(client, {
+    ({ rpc, attempts: rpcAttempts } = await callRpc(client, {
       mode: 'void', mutation_id: input.mutation_id, lead_id: row.id, expected_version: row.version,
       void_event_ids: Array.from(voidIds), void_reason: reason, snapshot: snapshotForRpc(derived), lead: {},
-    });
+    }, ctx.retry));
   } catch (e) {
     if (e instanceof RpcRejection) return rejected(e.reason, e.message);
     throw e;
   }
   if (rpc.status === 'OK') return { result: 'APPLIED_UPDATE', lead_id: rpc.lead_id, version: rpc.version, voided_event_ids: Array.from(voidIds), changes, snapshot: snapshotSummary(derived, rpc.version) };
+  if (rpc.status === 'REPLAY' && rpcAttempts > 1) {
+    // This call's own earlier attempt committed the void (response lost).
+    const version = (await loadLead(client, rpc.lead_id))?.version;
+    return { result: 'APPLIED_UPDATE', lead_id: rpc.lead_id, version, voided_event_ids: Array.from(voidIds), changes, snapshot: snapshotSummary(derived, version) };
+  }
   if (rpc.status === 'REPLAY') return { result: 'APPLIED_UPDATE', lead_id: rpc.lead_id, replayed: true };
   if (rpc.status === 'CONFLICT') return rejected('CONCURRENT_UPDATE', 'The lead changed concurrently. Re-read and retry.', { current_version: rpc.current_version });
   return rejected('LEAD_NOT_FOUND', 'Lead not found.');

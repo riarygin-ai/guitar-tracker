@@ -29,6 +29,7 @@ import { formatOfferSummary, leadItemName } from './leadFormat';
 import { STAGE_RANK, type LeadStage } from './semantics';
 import type { OfferType } from './leadTypes';
 import { cityKey, maskedPhone } from './contactDetails';
+import { executeIdempotentMutation, type IdempotentMutationOptions } from '../writeRetry';
 
 export const OPERATION_LEAD_INITIAL_LIMIT = 6;
 export const OPERATION_LEAD_SEARCH_LIMIT = 12;
@@ -301,7 +302,7 @@ export async function createOperationWithWinningLead(db: SupabaseClient, appUser
   operation: OperationParams;
   leadId: number;
   operationKey: string;
-}, now?: Date): Promise<CreateWithLeadResult> {
+}, now?: Date, retry: IdempotentMutationOptions = {}): Promise<CreateWithLeadResult> {
   const { kind, operation, leadId, operationKey } = params;
   if (!UUID_RE.test(operationKey)) return { ok: false, status: 400, message: 'operation_key must be a UUID' };
   if (typeof operation.p_deal_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(operation.p_deal_date)) {
@@ -335,12 +336,13 @@ export async function createOperationWithWinningLead(db: SupabaseClient, appUser
     }, { ...UI_CONTEXT, now, pendingDealId: dealId });
     if ('result' in prepared) return { ok: false, status: 409, message: prepared.message ?? 'The lead cannot be linked.', result: prepared };
 
-    const { data, error } = await db.rpc('create_operation_with_winning_lead', {
-      p_kind: kind, p_deal_id: dealId, p_operation: operation, p_lead_request: prepared.request,
-    });
+    // Same reserved deal id + same lead request on every attempt: an attempt that committed before its
+    // response was lost comes back as REPLAY (checked before the reservation is consumed).
+    const args = { p_kind: kind, p_deal_id: dealId, p_operation: operation, p_lead_request: prepared.request };
+    const { response: { data, error }, attempts } = await executeIdempotentMutation('create_operation_with_winning_lead', () => db.rpc('create_operation_with_winning_lead', args), retry);
     if (!error) {
       const d = data as { status: string; deal_id: number | null };
-      return { ok: true, deal_id: Number(d.deal_id ?? dealId), replayed: d.status === 'REPLAY' };
+      return { ok: true, deal_id: Number(d.deal_id ?? dealId), replayed: d.status === 'REPLAY' && attempts === 1 };
     }
     // The lead changed between planning and the transaction (all rolled back, reservation intact): re-plan once.
     if (/LEAD_LINK_CONFLICT/.test(error.message) && attempt === 0) continue;
