@@ -18,6 +18,8 @@ export interface OperationDraftItem {
   direction: 'in' | 'out';
   created_by_draft: boolean;
   position: number;
+  /** Planned value from the draft form (Value Out / Value In / sale value / cost); null = not set. */
+  planned_value: number | null;
 }
 
 export interface OperationDraft {
@@ -51,7 +53,7 @@ export const DRAFT_TYPE_LABEL: Record<DraftType, string> = { BUY: 'Buy', SELL: '
 export const DRAFT_KIND: Record<DraftType, DraftKind> = { BUY: 'purchase', SELL: 'sale', TRADE: 'trade' };
 
 const COLUMNS = 'id, operation_type, status, proposed_date, deal_channel_id, contact_name, lead_id, cash_paid, cash_received, notes, source, deal_id, '
-  + 'created_at, updated_at, finalized_at, discarded_at, discard_result, operation_draft_items(id, item_id, direction, created_by_draft, position)';
+  + 'created_at, updated_at, finalized_at, discarded_at, discard_result, operation_draft_items(id, item_id, direction, created_by_draft, position, planned_value)';
 
 function normalize(row: Record<string, unknown>): OperationDraft {
   const d = row as unknown as OperationDraft;
@@ -59,7 +61,9 @@ function normalize(row: Record<string, unknown>): OperationDraft {
     ...d,
     cash_paid: Number(d.cash_paid ?? 0),
     cash_received: Number(d.cash_received ?? 0),
-    operation_draft_items: [...(d.operation_draft_items ?? [])].sort((a, b) => a.direction.localeCompare(b.direction) || a.position - b.position),
+    operation_draft_items: [...(d.operation_draft_items ?? [])]
+      .map((x) => ({ ...x, planned_value: x.planned_value == null ? null : Number(x.planned_value) }))
+      .sort((a, b) => a.direction.localeCompare(b.direction) || a.position - b.position),
   };
 }
 
@@ -80,22 +84,6 @@ export function draftErrorMessage(message: string): string {
   const m = message.match(/^[A-Z_]+:\s*([\s\S]*)$/);
   const text = m ? m[1] : message;
   return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-export interface DraftTermsInput {
-  proposed_date: string | null;
-  deal_channel_id: number | null;
-  contact_name: string | null;
-  lead_id: number | null;
-  cash_paid: number;
-  cash_received: number;
-  notes: string | null;
-}
-
-/** Replaces the planning terms of an OPEN draft (a full PUT — retrying is harmless). */
-export async function updateDraftTerms(id: number, terms: DraftTermsInput): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { response: { error } } = await executeIdempotentMutation('update_operation_draft', () => supabase.rpc('update_operation_draft', { p_draft_id: id, p_request: terms }));
-  return error ? { ok: false, message: draftErrorMessage(error.message) } : { ok: true };
 }
 
 /** Discards an OPEN draft. No business effect; removeNewItems deletes only untouched draft-created 'new' items. */
@@ -138,4 +126,39 @@ export async function getOpenDraftForIncomingItem(itemId: number): Promise<{ id:
   if (error || !data?.length) return null;
   const d = data[0] as unknown as { draft_id: number; operation_drafts: { operation_type: DraftType } };
   return { id: d.draft_id, type: DRAFT_TYPE_LABEL[d.operation_drafts.operation_type] ?? 'Operation' };
+}
+
+/** The full operation-form state Save Draft stores (planning data only — never a deal). */
+export interface DraftFormState {
+  proposed_date: string | null;
+  deal_channel_id: number | null;
+  lead_id: number | null;
+  cash_paid: number;
+  cash_received: number;
+  notes: string | null;
+  items: { item_id: number; direction: 'in' | 'out'; planned_value: number | null }[];
+}
+
+export interface SaveDraftResult {
+  removed_item_ids: number[];
+  kept_items: { item_id: number; reasons: string[] }[];
+}
+
+/** Save Draft: replaces the OPEN draft's form state (a full PUT — retrying is harmless). */
+export async function saveDraft(id: number, state: DraftFormState): Promise<{ ok: true; result: SaveDraftResult } | { ok: false; message: string }> {
+  const { response: { data, error } } = await executeIdempotentMutation('save_operation_draft', () => supabase.rpc('save_operation_draft', { p_draft_id: id, p_request: state }));
+  if (error) return { ok: false, message: draftErrorMessage(error.message) };
+  return { ok: true, result: data as SaveDraftResult };
+}
+
+/** Planned value input text → number | null ('' = not set). */
+export function plannedValue(text: string): number | null {
+  if (text.trim() === '') return null;
+  const n = Number(text);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** Item editor link that returns to the draft after Save / Cancel / Back. */
+export function draftItemEditHref(itemId: number, draftId: number): string {
+  return `/inventory/${itemId}?returnTo=${encodeURIComponent(`/operations/drafts/${draftId}`)}`;
 }

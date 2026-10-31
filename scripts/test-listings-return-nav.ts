@@ -102,7 +102,9 @@ console.log('\n[E — Inventory-style back arrow on /leads]');
 {
   const back = read('src', 'components', 'BackLink.tsx');
   const inv = read('src', 'components', 'InventoryForm.tsx');
-  const invLink = inv.slice(inv.indexOf('Back to Inventory') - 900, inv.indexOf('Back to Inventory') + 20);
+  // The item editor renders its back label from a prop (default "Back to Inventory"; "Back to draft" with ?returnTo).
+  const invAt = inv.indexOf('{backLabel}');
+  const invLink = inv.slice(invAt - 900, invAt + 20);
   check('same arrow icon path as Inventory ("Back to Inventory")', back.includes('M19 12H5M12 19l-7-7 7-7') && invLink.includes('M19 12H5M12 19l-7-7 7-7'));
   check('same icon size (14px) and stroke width (2.5)', /width="14" height="14"/.test(back) && /strokeWidth="2.5"/.test(back) && /width="14" height="14"/.test(invLink) && /strokeWidth="2.5"/.test(invLink));
   check('same text style/spacing/hover as Inventory (gap-1.5, text-sm font-medium, slate-500 -> slate-900/white)', ['gap-1.5', 'text-sm', 'font-medium', 'text-slate-500', 'hover:text-slate-900', 'dark:text-slate-400', 'dark:hover:text-white'].every((c) => back.includes(c) && invLink.includes(c)));

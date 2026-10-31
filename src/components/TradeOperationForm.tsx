@@ -8,7 +8,8 @@ import { createTradeOperation, editTradeOperation, getBrands, getDealChannels, s
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types'
 import { todayLocalDate } from '@/lib/dateUtils'
 import OperationLeadPicker, { LeadLinkFailure, leadDisplayName, useOperationLeadLink } from '@/components/leads/OperationLeadPicker'
-import { draftErrorMessage, finalizeDraft } from '@/lib/operations/operationDraftsClient'
+import { draftErrorMessage, draftItemEditHref, finalizeDraft, plannedValue, saveDraft } from '@/lib/operations/operationDraftsClient'
+import { DraftActionBar, DraftItemHint, incompleteIncoming, type DraftFormContext } from '@/components/operations/DraftOperationControls'
 
 type TradeItem = {
     item: InventorySearchItem
@@ -24,10 +25,12 @@ interface TradeOperationFormProps {
     initialCashReceived?: number
     initialOutgoingItems?: TradeItem[]
     initialIncomingItems?: TradeItem[]
-    /** Finalizing an operation draft: saving creates the trade AND marks the draft finalized, in one transaction. */
-    draftId?: number
-    draftLeadId?: number | null
-    draftContactName?: string | null
+    /**
+     * Draft mode: the same form edits a persisted operation draft — Save draft
+     * stores the whole form state, Finalize creates the trade AND marks the
+     * draft finalized in one transaction.
+     */
+    draft?: DraftFormContext
 }
 
 export default function TradeOperationForm({
@@ -39,13 +42,12 @@ export default function TradeOperationForm({
     initialCashReceived,
     initialOutgoingItems,
     initialIncomingItems,
-    draftId,
-    draftLeadId,
-    draftContactName,
+    draft,
 }: TradeOperationFormProps = {}) {
     const router = useRouter()
     const isEdit = dealId != null
-    const isDraft = draftId != null && !isEdit
+    const isDraft = draft != null && !isEdit
+    const draftId = draft?.id
     const [brands, setBrands] = useState<Brand[]>([])
     const [channels, setChannels] = useState<DealChannel[]>([])
 
@@ -124,7 +126,66 @@ export default function TradeOperationForm({
         }
 
         loadData()
+        const preloaded = [...(initialOutgoingItems ?? []), ...(initialIncomingItems ?? [])].map((t) => t.item.id)
+        if (preloaded.length > 0) {
+            getDisplayPhotosForItems(preloaded).then((photos) => setPhotoByItemId((prev) => ({ ...prev, ...photos })))
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
+
+    // ── Draft mode ──────────────────────────────────────────────────────────
+    const draftIncomplete = isDraft ? incompleteIncoming(incomingItems.map((t) => t.item)) : 0
+
+    function draftFormState() {
+        return {
+            proposed_date: dealDate || null,
+            deal_channel_id: channelId,
+            lead_id: lead.choice.kind === 'lead' ? lead.choice.lead.lead_id : null,
+            cash_paid: Number(cashOut || 0) || 0,
+            cash_received: Number(cashIn || 0) || 0,
+            notes: notes.trim() || null,
+            items: [
+                ...outgoingItems.map((t) => ({ item_id: t.item.id, direction: 'out' as const, planned_value: plannedValue(t.value) })),
+                ...incomingItems.map((t) => ({ item_id: t.item.id, direction: 'in' as const, planned_value: plannedValue(t.value) })),
+            ],
+        }
+    }
+
+    /** Save draft: the whole form state, no business effect. */
+    async function saveDraftState(announce: boolean): Promise<boolean> {
+        if (!draftId) return false
+        const cashOutN = Number(cashOut || 0), cashInN = Number(cashIn || 0)
+        if (Number.isNaN(cashOutN) || cashOutN < 0 || Number.isNaN(cashInN) || cashInN < 0) {
+            setError('Cash amounts must be 0 or greater.')
+            return false
+        }
+        const r = await saveDraft(draftId, draftFormState())
+        if (!r.ok) { setError(r.message); return false }
+        if (announce) {
+            const removed = r.result.removed_item_ids.length ? ` Deleted unused new item${r.result.removed_item_ids.length > 1 ? 's' : ''} ${r.result.removed_item_ids.map((x) => `#${x}`).join(', ')}.` : ''
+            const kept = r.result.kept_items.map((k) => ` Item #${k.item_id} kept (${k.reasons.join(', ')}).`).join('')
+            setSuccessMessage(`Draft saved — nothing recorded yet.${removed}${kept}`)
+        }
+        return true
+    }
+
+    async function handleSaveDraft() {
+        setError(null)
+        setSuccessMessage(null)
+        setSaving(true)
+        await saveDraftState(true)
+        setSaving(false)
+    }
+
+    /** Edit an item (photos, specs) and come back to this draft — the form is saved first so nothing is lost. */
+    async function editDraftItem(itemId: number) {
+        if (!draftId) return
+        setError(null)
+        setSaving(true)
+        const ok = await saveDraftState(false)
+        setSaving(false)
+        if (ok) router.push(draftItemEditHref(itemId, draftId))
+    }
 
     const handleSearchChange = (value: string) => {
         setSearchQuery(value)
@@ -335,8 +396,10 @@ export default function TradeOperationForm({
             p_cf_description: cfDescriptionValue,
         }
 
-        // Finalizing a draft: the unchanged trade RPC + draft -> FINALIZED, in one transaction.
+        // Finalizing a draft: save the current form, then the unchanged trade RPC + draft -> FINALIZED, in one transaction.
         if (isDraft) {
+            if (draftIncomplete > 0) { setSaving(false); setError('Complete the incoming items (Edit · photos) before finalizing.'); return }
+            if (!(await saveDraftState(false))) { setSaving(false); return }
             const saved = lead.choice.kind === 'lead'
                 ? await lead.saveNewWithLead('trade', operationArgs, draftId)
                 : await finalizeDraft(draftId!, 'trade', operationArgs)
@@ -631,6 +694,7 @@ export default function TradeOperationForm({
                                                     ×
                                                 </button>
                                             </div>
+                                            {isDraft && <DraftItemHint item={tradeItem.item} incoming={false} onEdit={editDraftItem} disabled={saving} />}
                                         </div>
                                     )
                                 })}
@@ -867,6 +931,7 @@ export default function TradeOperationForm({
                                                 </div>
                                             </div>
                                         </div>
+                                        {isDraft && <DraftItemHint item={tradeItem.item} incoming onEdit={editDraftItem} disabled={saving} />}
                                     </div>
                                 ))}
                             </div>
@@ -896,11 +961,15 @@ export default function TradeOperationForm({
                             <input
                                 type="date"
                                 value={dealDate}
-                                max={todayLocalDate()}
+                                max={isDraft ? undefined : todayLocalDate()}
                                 onChange={(event) => setDealDate(event.target.value)}
                                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
                             />
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Optional. If empty, today&apos;s date will be used.</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                                {isDraft && dealDate > todayLocalDate()
+                                    ? 'Planned date — set the actual date before finalizing.'
+                                    : 'Optional. If empty, today\'s date will be used.'}
+                            </p>
                         </div>
 
                         <div className="space-y-3">
@@ -924,8 +993,8 @@ export default function TradeOperationForm({
                             onAvailabilityChange={lead.setAvailability}
                             dealId={dealId}
                             disabled={saving || lead.pendingLink != null}
-                            preferredLeadId={draftLeadId}
-                            preferredLeadQuery={draftContactName}
+                            preferredLeadId={draft?.leadId}
+                            preferredLeadQuery={draft?.contactName}
                         />
 
                         <div className="space-y-3">
@@ -988,15 +1057,26 @@ export default function TradeOperationForm({
 
                 {!isBalanced && (outgoingItems.length > 0 || incomingItems.length > 0) && (
                     <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                        Trade must be balanced before saving.
+                        {isDraft ? 'Trade must be balanced before finalizing (Save draft works anytime).' : 'Trade must be balanced before saving.'}
                     </div>
                 )}
 
+                {isDraft && draft ? (
+                    <DraftActionBar
+                        draft={draft}
+                        label="trade"
+                        busy={saving}
+                        incomplete={draftIncomplete}
+                        finalizeBlocked={!isBalanced}
+                        onSave={handleSaveDraft}
+                        onFinalize={handleSubmit}
+                    />
+                ) : (
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-                    {isEdit || isDraft ? (
+                    {isEdit ? (
                         <button
                             type="button"
-                            onClick={() => router.push(isDraft ? `/operations/drafts/${draftId}` : `/operations/${dealId}`)}
+                            onClick={() => router.push(`/operations/${dealId}`)}
                             className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
                         >
                             Cancel
@@ -1036,9 +1116,10 @@ export default function TradeOperationForm({
                         disabled={saving || !isBalanced}
                         className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                     >
-                        {saving ? 'Saving...' : isEdit ? 'Update Trade' : isDraft ? 'Finalize trade' : 'Save trade'}
+                        {saving ? 'Saving...' : isEdit ? 'Update Trade' : 'Save trade'}
                     </button>
                 </div>
+                )}
             </form>
         </div>
     )

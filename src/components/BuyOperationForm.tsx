@@ -15,7 +15,8 @@ import {
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types';
 import { todayLocalDate } from '@/lib/dateUtils';
 import { truncateDescription } from '@/lib/text';
-import { finalizeDraft } from '@/lib/operations/operationDraftsClient';
+import { draftErrorMessage, draftItemEditHref, finalizeDraft, saveDraft } from '@/lib/operations/operationDraftsClient';
+import { DraftActionBar, DraftItemHint, incompleteIncoming, type DraftFormContext } from '@/components/operations/DraftOperationControls';
 
 interface LineItem {
   item: InventorySearchItem;
@@ -28,8 +29,8 @@ interface BuyOperationFormProps {
   initialChannelId?: number | null;
   initialNotes?: string;
   initialItems?: LineItem[];
-  /** Finalizing an operation draft: saving creates the purchase AND marks the draft finalized, in one transaction. */
-  draftId?: number;
+  /** Draft mode: the same form edits a persisted operation draft (Save draft / Finalize purchase). */
+  draft?: DraftFormContext;
 }
 
 export default function BuyOperationForm({
@@ -38,11 +39,13 @@ export default function BuyOperationForm({
   initialChannelId,
   initialNotes,
   initialItems,
-  draftId,
+  draft,
 }: BuyOperationFormProps = {}) {
   const router = useRouter();
   const isEdit = dealId != null;
-  const isDraft = draftId != null && !isEdit;
+  const isDraft = draft != null && !isEdit;
+  const draftId = draft?.id;
+  const formRef = useRef<HTMLFormElement>(null);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [channels, setChannels] = useState<DealChannel[]>([]);
   const [items, setItems] = useState<LineItem[]>(initialItems ?? []);
@@ -86,7 +89,50 @@ export default function BuyOperationForm({
       setChannels((channelResult.data as DealChannel[] | null) ?? []);
     }
     loadData();
+    const preloaded = (initialItems ?? []).map((li) => li.item.id);
+    if (preloaded.length > 0) getDisplayPhotosForItems(preloaded).then((photos) => setPhotoByItemId((prev) => ({ ...prev, ...photos })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Draft mode ──────────────────────────────────────────────────────────
+  const draftIncomplete = isDraft ? incompleteIncoming(items.map((li) => li.item)) : 0;
+
+  async function saveDraftState(announce: boolean): Promise<boolean> {
+    if (!draftId) return false;
+    const r = await saveDraft(draftId, {
+      proposed_date: dealDate || null,
+      deal_channel_id: channelId,
+      lead_id: null,
+      cash_paid: items.reduce((sum, li) => sum + (li.cost || 0), 0),
+      cash_received: 0,
+      notes: notes.trim() || null,
+      items: items.map((li) => ({ item_id: li.item.id, direction: 'in' as const, planned_value: li.cost > 0 ? li.cost : null })),
+    });
+    if (!r.ok) { setError(r.message); return false; }
+    if (announce) {
+      const removed = r.result.removed_item_ids.length ? ` Deleted unused new item${r.result.removed_item_ids.length > 1 ? 's' : ''} ${r.result.removed_item_ids.map((x) => `#${x}`).join(', ')}.` : '';
+      const kept = r.result.kept_items.map((k) => ` Item #${k.item_id} kept (${k.reasons.join(', ')}).`).join('');
+      setSuccessMessage(`Draft saved — nothing recorded yet.${removed}${kept}`);
+    }
+    return true;
+  }
+
+  async function handleSaveDraft() {
+    setError(null);
+    setSuccessMessage(null);
+    setSaving(true);
+    await saveDraftState(true);
+    setSaving(false);
+  }
+
+  async function editDraftItem(itemId: number) {
+    if (!draftId) return;
+    setError(null);
+    setSaving(true);
+    const ok = await saveDraftState(false);
+    setSaving(false);
+    if (ok) router.push(draftItemEditHref(itemId, draftId));
+  }
 
   const clearSearch = () => {
     setSearchQuery('');
@@ -188,8 +234,10 @@ export default function BuyOperationForm({
 
     setSaving(true);
 
-    // Finalizing a draft: the unchanged buy RPC + draft -> FINALIZED, in one transaction.
+    // Finalizing a draft: save the current form, then the unchanged buy RPC + draft -> FINALIZED, in one transaction.
     if (isDraft) {
+      if (draftIncomplete > 0) { setSaving(false); setError('Complete the incoming items (Edit · photos) before finalizing.'); return; }
+      if (!(await saveDraftState(false))) { setSaving(false); return; }
       const saved = await finalizeDraft(draftId!, 'purchase', {
         p_deal_date: dealDateValue,
         p_channel_id: channelId!,
@@ -198,7 +246,7 @@ export default function BuyOperationForm({
         p_cf_description: cfDescription,
       });
       setSaving(false);
-      if (!saved.ok) { setError(saved.message); return; }
+      if (!saved.ok) { setError(draftErrorMessage(saved.message)); return; }
       router.push(`/operations/${saved.dealId}`);
       return;
     }
@@ -343,6 +391,7 @@ export default function BuyOperationForm({
                     </div>
                   </div>
                 </div>
+                {isDraft && <DraftItemHint item={li.item} incoming onEdit={editDraftItem} disabled={saving} />}
               </div>
             ))}
           </div>
@@ -460,6 +509,7 @@ export default function BuyOperationForm({
 
       {/* Deal details + summary */}
       <form
+        ref={formRef}
         onSubmit={handleSubmit}
         className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800"
       >
@@ -470,12 +520,12 @@ export default function BuyOperationForm({
               <input
                 type="date"
                 value={dealDate}
-                max={todayLocalDate()}
+                max={isDraft ? undefined : todayLocalDate()}
                 onChange={(e) => setDealDate(e.target.value)}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
               />
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Optional. If empty, today&apos;s date will be used.
+                {isDraft && dealDate > todayLocalDate() ? 'Planned date — set the actual date before finalizing.' : 'Optional. If empty, today\'s date will be used.'}
               </p>
             </div>
 
@@ -547,11 +597,22 @@ export default function BuyOperationForm({
           </div>
         )}
 
+        {isDraft && draft ? (
+          <DraftActionBar
+            draft={draft}
+            label="purchase"
+            busy={saving}
+            incomplete={draftIncomplete}
+            finalizeBlocked={items.length === 0}
+            onSave={handleSaveDraft}
+            onFinalize={() => formRef.current?.requestSubmit()}
+          />
+        ) : (
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-          {isEdit || isDraft ? (
+          {isEdit ? (
             <button
               type="button"
-              onClick={() => router.push(isDraft ? `/operations/drafts/${draftId}` : `/operations/${dealId}`)}
+              onClick={() => router.push(`/operations/${dealId}`)}
               className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
             >
               Cancel
@@ -579,9 +640,10 @@ export default function BuyOperationForm({
             disabled={saving}
             className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
-            {saving ? 'Saving...' : isEdit ? 'Update Purchase' : isDraft ? 'Finalize purchase' : 'Save purchase'}
+            {saving ? 'Saving...' : isEdit ? 'Update Purchase' : 'Save purchase'}
           </button>
         </div>
+        )}
       </form>
     </div>
   );

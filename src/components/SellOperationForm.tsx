@@ -18,7 +18,8 @@ import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/t
 import { todayLocalDate } from '@/lib/dateUtils';
 import { truncateDescription } from '@/lib/text';
 import OperationLeadPicker, { LeadLinkFailure, leadDisplayName, useOperationLeadLink } from '@/components/leads/OperationLeadPicker';
-import { draftErrorMessage, finalizeDraft } from '@/lib/operations/operationDraftsClient';
+import { draftErrorMessage, draftItemEditHref, finalizeDraft, plannedValue, saveDraft } from '@/lib/operations/operationDraftsClient';
+import { DraftActionBar, DraftItemHint, type DraftFormContext } from '@/components/operations/DraftOperationControls';
 
 interface SoldLineItem {
   item: InventorySearchItem;
@@ -31,10 +32,8 @@ interface SellOperationFormProps {
   initialChannelId?: number | null;
   initialNotes?: string;
   initialItems?: SoldLineItem[];
-  /** Finalizing an operation draft: saving creates the sale AND marks the draft finalized, in one transaction. */
-  draftId?: number;
-  draftLeadId?: number | null;
-  draftContactName?: string | null;
+  /** Draft mode: the same form edits a persisted operation draft (Save draft / Finalize sale). */
+  draft?: DraftFormContext;
 }
 
 export default function SellOperationForm({
@@ -43,13 +42,13 @@ export default function SellOperationForm({
   initialChannelId,
   initialNotes,
   initialItems,
-  draftId,
-  draftLeadId,
-  draftContactName,
+  draft,
 }: SellOperationFormProps = {}) {
   const router = useRouter();
   const isEdit = dealId != null;
-  const isDraft = draftId != null && !isEdit;
+  const isDraft = draft != null && !isEdit;
+  const draftId = draft?.id;
+  const formRef = useRef<HTMLFormElement>(null);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [channels, setChannels] = useState<DealChannel[]>([]);
   const [items, setItems] = useState<{ item: InventorySearchItem; value: string }[]>(
@@ -100,7 +99,45 @@ export default function SellOperationForm({
       setChannels((channelResult.data as DealChannel[] | null) ?? []);
     }
     loadData();
+    const preloaded = (initialItems ?? []).map((li) => li.item.id);
+    if (preloaded.length > 0) getDisplayPhotosForItems(preloaded).then((photos) => setPhotoByItemId((prev) => ({ ...prev, ...photos })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Draft mode ──────────────────────────────────────────────────────────
+  async function saveDraftState(announce: boolean): Promise<boolean> {
+    if (!draftId) return false;
+    const total = items.reduce((sum, li) => sum + (Number(li.value) || 0), 0);
+    const r = await saveDraft(draftId, {
+      proposed_date: dealDate || null,
+      deal_channel_id: channelId,
+      lead_id: lead.choice.kind === 'lead' ? lead.choice.lead.lead_id : null,
+      cash_paid: 0,
+      cash_received: total,
+      notes: notes.trim() || null,
+      items: items.map((li) => ({ item_id: li.item.id, direction: 'out' as const, planned_value: plannedValue(li.value) })),
+    });
+    if (!r.ok) { setError(r.message); return false; }
+    if (announce) setSuccessMessage('Draft saved — nothing recorded yet.');
+    return true;
+  }
+
+  async function handleSaveDraft() {
+    setError(null);
+    setSuccessMessage(null);
+    setSaving(true);
+    await saveDraftState(true);
+    setSaving(false);
+  }
+
+  async function editDraftItem(itemId: number) {
+    if (!draftId) return;
+    setError(null);
+    setSaving(true);
+    const ok = await saveDraftState(false);
+    setSaving(false);
+    if (ok) router.push(draftItemEditHref(itemId, draftId));
+  }
 
   const itemIdsKey = items.map((li) => li.item.id).join(',');
 
@@ -241,8 +278,9 @@ export default function SellOperationForm({
     const cfDescription = truncateDescription(`Sale: ${descParts.join(', ')}`);
     const itemsPayload = items.map((li) => ({ item_id: li.item.id, total_value: Number(li.value) }));
 
-    // Finalizing a draft: the unchanged sell RPC + draft -> FINALIZED, in one transaction.
+    // Finalizing a draft: save the current form, then the unchanged sell RPC + draft -> FINALIZED, in one transaction.
     if (isDraft) {
+      if (!(await saveDraftState(false))) { setSaving(false); return; }
       const operationArgs = {
         p_deal_date: dealDateValue,
         p_channel_id: channelId!,
@@ -426,6 +464,7 @@ export default function SellOperationForm({
                     </div>
                   </div>
                 </div>
+                {isDraft && <DraftItemHint item={li.item} incoming={false} onEdit={editDraftItem} disabled={saving} />}
               </div>
             ))}
           </div>
@@ -541,7 +580,7 @@ export default function SellOperationForm({
         ))}
       </div>
 
-      <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+      <form ref={formRef} onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2 space-y-6">
             <div className="space-y-3">
@@ -549,11 +588,13 @@ export default function SellOperationForm({
               <input
                 type="date"
                 value={dealDate}
-                max={todayLocalDate()}
+                max={isDraft ? undefined : todayLocalDate()}
                 onChange={(event) => setDealDate(event.target.value)}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:ring-slate-600"
               />
-              <p className="text-xs text-slate-500 dark:text-slate-400">Optional. If empty, today&apos;s date will be used.</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {isDraft && dealDate > todayLocalDate() ? 'Planned date — set the actual date before finalizing.' : 'Optional. If empty, today\'s date will be used.'}
+              </p>
             </div>
 
             <div className="space-y-3">
@@ -577,8 +618,8 @@ export default function SellOperationForm({
               onAvailabilityChange={lead.setAvailability}
               dealId={dealId}
               disabled={saving || lead.pendingLink != null}
-              preferredLeadId={draftLeadId}
-              preferredLeadQuery={draftContactName}
+              preferredLeadId={draft?.leadId}
+              preferredLeadQuery={draft?.contactName}
             />
 
             <div className="space-y-3">
@@ -644,11 +685,22 @@ export default function SellOperationForm({
           />
         )}
 
+        {isDraft && draft ? (
+          <DraftActionBar
+            draft={draft}
+            label="sale"
+            busy={saving}
+            incomplete={0}
+            finalizeBlocked={items.length === 0}
+            onSave={handleSaveDraft}
+            onFinalize={() => formRef.current?.requestSubmit()}
+          />
+        ) : (
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-          {isEdit || isDraft ? (
+          {isEdit ? (
             <button
               type="button"
-              onClick={() => router.push(isDraft ? `/operations/drafts/${draftId}` : `/operations/${dealId}`)}
+              onClick={() => router.push(`/operations/${dealId}`)}
               className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
             >
               Cancel
@@ -677,9 +729,10 @@ export default function SellOperationForm({
             disabled={saving}
             className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
-            {saving ? 'Saving...' : isEdit ? 'Update Sale' : isDraft ? 'Finalize sale' : 'Save sale'}
+            {saving ? 'Saving...' : isEdit ? 'Update Sale' : 'Save sale'}
           </button>
         </div>
+        )}
       </form>
     </div>
   );

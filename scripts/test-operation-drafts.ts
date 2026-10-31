@@ -35,6 +35,8 @@ import { createOperationDraft, draftDate, formatCad, resolveItemType, type Creat
 import { createOperationWithWinningLead } from '../src/lib/leads/operationLeads';
 import { recordLeadInteraction, type AgentEventInput } from '../src/lib/leads/leadWriteService';
 import type { DbErrorLike } from '../src/lib/writeRetry';
+import { itemReturnLabel, safeItemReturnTo } from '../src/lib/itemEditReturn';
+import { draftItemEditHref, plannedValue } from '../src/lib/operations/operationDraftsClient';
 
 let passed = 0;
 let failed = 0;
@@ -71,6 +73,15 @@ function pureChecks() {
   check('nothing given → nothing, no warning', resolveItemType(l, null, null).warning === null);
   check('"Other" is never picked by partial match', resolveItemType(l, 'Pedals', 'Other thing').subtype_id === null);
 
+  console.log('\n[P4 — item editor return target (no open redirect)]');
+  check('draft page accepted', safeItemReturnTo('/operations/drafts/12') === '/operations/drafts/12' && itemReturnLabel('/operations/drafts/12') === 'Back to draft');
+  for (const bad of ['https://evil.example', '//evil.example', '/operations/drafts/12?x=1', '/operations/drafts/0', '/operations/drafts/abc', '/inventory', 'javascript:alert(1)', '/operations/drafts/12/../../admin', ['/operations/drafts/1']]) {
+    check(`rejected: ${JSON.stringify(bad)}`, safeItemReturnTo(bad as string) === null);
+  }
+  check('no / invalid returnTo → normal "Back to Inventory"', itemReturnLabel(null) === 'Back to Inventory' && safeItemReturnTo(undefined) === null);
+  check('draft item edit link carries returnTo', draftItemEditHref(248, 1) === '/inventory/248?returnTo=%2Foperations%2Fdrafts%2F1');
+  check('planned value text: blank = not set, numbers kept', plannedValue('') === null && plannedValue('  ') === null && plannedValue('350') === 350 && plannedValue('0') === 0 && plannedValue('-5') === null);
+
   console.log('\n[P3 — money]');
   check('formatCad', formatCad(600) === 'C$600' && formatCad(1234.5) === 'C$1,234.5');
 }
@@ -97,14 +108,29 @@ function structureChecks() {
   check('service uses the shared executeIdempotentMutation', /executeIdempotentMutation\(\s*'create_operation_draft'/.test(svc));
   check('service never references service_role', !/service_role|SERVICE_ROLE/.test(svc));
 
-  console.log('\n[S3 — UI]');
+  console.log('\n[S3 — UI: one operation form, create + draft mode]');
   for (const f of ['TradeOperationForm', 'SellOperationForm', 'BuyOperationForm']) {
     const s = src(`src/components/${f}.tsx`);
-    check(`${f}: draft mode finalizes through finalizeDraft / the atomic lead path`, /draftId\?: number/.test(s) && /finalizeDraft\(draftId!/.test(s));
-    check(`${f}: future-date rule still applies when finalizing`, /Date cannot be in the future/.test(s));
+    check(`${f}: draft mode is a prop of the normal form (draft?: DraftFormContext)`, /draft\?: DraftFormContext/.test(s) && /const isDraft = draft != null && !isEdit/.test(s));
+    check(`${f}: draft mode → DraftActionBar (Discard · Save draft · Finalize); create/edit buttons otherwise`, /isDraft && draft \? \(\s*<DraftActionBar/.test(s) && /'Update [A-Z][a-z]+' : 'Save [a-z]+'/.test(s));
+    check(`${f}: Save draft stores the whole form through saveDraft; Finalize saves first, then finalizeDraft / atomic lead path`, /await saveDraft\(draftId, /.test(s) && /if \(!\(await saveDraftState\(false\)\)\)/.test(s) && /finalizeDraft\(draftId!/.test(s));
+    check(`${f}: item Edit saves the draft, then opens the item editor with returnTo`, /router\.push\(draftItemEditHref\(itemId, draftId\)\)/.test(s) && /<DraftItemHint/.test(s));
+    check(`${f}: future-date rule still applies when finalizing; draft may hold a planned future date`, /Date cannot be in the future/.test(s) && /max=\{isDraft \? undefined : todayLocalDate\(\)\}/.test(s));
   }
+  const trade = src('src/components/TradeOperationForm.tsx');
+  check('Trade draft: same Value Out / Value In / cash / balance UI (no draft-only economics)', /Value out/.test(trade) && /Value in/.test(trade) && /Cash Received/.test(trade) && /finalizeBlocked=\{!isBalanced\}/.test(trade) && !/plannedTerms|Planned terms/.test(trade));
+  check('Trade draft: Lead picker gets the draft lead + captured contact name (no contact textbox)', /preferredLeadId=\{draft\?\.leadId\}/.test(trade) && /preferredLeadQuery=\{draft\?\.contactName\}/.test(trade) && !/Contact<\/label>/.test(trade));
+  const page = src('src/app/operations/drafts/[id]/page.tsx');
+  check('draft page renders the normal forms in draft mode (no separate draft UI)', /<TradeOperationForm\s+draft=\{context\}/.test(page) && /<SellOperationForm\s+draft=\{context\}/.test(page) && /<BuyOperationForm\s+draft=\{context\}/.test(page) && !/Planned terms|Save terms|Review &amp; finalize/.test(page));
+  check('draft page restores saved planned values into the form', /valueText\(x\.planned_value\)/.test(page));
+  check('old /finalize URL just redirects to the draft', /redirect\(`\/operations\/drafts\//.test(src('src/app/operations/drafts/[id]/finalize/page.tsx')));
+  check('new operation page unchanged: forms rendered without draft props', /<TradeOperationForm \/>/.test(src('src/app/operations/new/page.tsx')));
+  check('draft indicator only where a draft is rendered', !/OperationDraftBadge/.test(src('src/app/operations/new/page.tsx')) && /<OperationDraftBadge type=\{draft\.operation_type\}/.test(page));
+  const picker = src('src/components/leads/OperationLeadPicker.tsx');
+  check('Lead picker: a captured name preselects only the ONE exact-name eligible lead', /sameName\.length === 1 \? sameName\[0\]/.test(picker));
+  const itemPage = src('src/app/inventory/[id]/page.tsx');
+  check('item editor: optional validated returnTo; normal Inventory back link otherwise', /safeItemReturnTo\(resolvedSearch\.returnTo\)/.test(itemPage) && /returnTo \?\? `\/inventory/.test(itemPage));
   check('Operations list renders the separate drafts block', /<OperationDraftsSection \/>/.test(src('src/app/operations/page.tsx')));
-  check('draft detail + finalize pages exist', fs.existsSync(path.join(root, 'src/app/operations/drafts/[id]/page.tsx')) && fs.existsSync(path.join(root, 'src/app/operations/drafts/[id]/finalize/page.tsx')));
   const inv = src('src/components/InventoryForm.tsx');
   check('item form: open-draft incoming item may be saved incomplete (only then)', /draftCapture = !!itemId && openDraft != null && existingItem\?\.status === 'new'/.test(inv) && /!condition && !draftCapture/.test(inv));
   const badge = src('src/components/OperationDraftBadge.tsx');
@@ -492,6 +518,106 @@ async function main() {
     check('discard without cleanup keeps the NEW items', (kRes as { removed_item_ids: number[] }).removed_item_ids.length === 0 && (await itemRow(keep.incoming_item_ids[0])).status === 'new');
     const { error: finFinal } = await cA.rpc('discard_operation_draft', { p_draft_id: r1.draft_id, p_remove_new_items: true });
     check('a finalized draft cannot be discarded', !!finFinal && /DRAFT_NOT_OPEN/.test(finFinal.message));
+
+    // ── W10: Save draft = the whole operation-form state ─────────────────
+    console.log('\n[W10 — Save draft persists the form (economics, lead, items) with no business effect]');
+    const fender2 = await item(userA, 'Partscaster Save Draft (OD)');
+    await listing(fender2, MP, 1100, true);
+    await listing(fender2, KJ, null, true);
+    const ord2 = await newLead(fender2, 'A.P. Ordonez', 'Marketplace', [cashOffer('2026-10-29T12:00:00-04:00', 600)]);
+    const other2 = await newLead(fender2, 'Other Buyer', 'Marketplace', [cashOffer('2026-10-29T13:00:00-04:00', 500)]);
+    const sd = await draft(cA, { operation_type: 'TRADE', occurred_on: '2026-10-31', channel: 'Marketplace', contact_name: 'A.P. Ordonez', outgoing_item_ids: [fender2],
+      incoming_items: [{ brand: 'Ibanez', model: 'S470 (SD)', category: 'Guitars', type: 'Electric Guitar' }, { brand: 'Boss', model: 'DS-1 (SD)', category: 'Pedals', type: 'Pedal' }, { brand: 'DOD', model: 'FX75-B (SD)', category: 'Pedals', type: 'Pedal' }],
+      cash_received: 600 });
+    const [ibz, ds1, fx75] = sd.incoming_item_ids;
+    check('captured contact name → the one exact-name lead is the draft lead', sd.lead_id === ord2);
+    const sBefore = await state();
+    const ordBefore2 = await leadRow(ord2);
+    const formState = {
+      proposed_date: '2026-11-02', deal_channel_id: MP, lead_id: ord2, cash_paid: 0, cash_received: 600, notes: 'Aurora ~1 PM',
+      items: [{ item_id: fender2, direction: 'out', planned_value: 1075 }, { item_id: ibz, direction: 'in', planned_value: 350 }, { item_id: ds1, direction: 'in', planned_value: 50 }, { item_id: fx75, direction: 'in', planned_value: 75 }],
+    };
+    const { data: saved, error: saveErr } = await cA.rpc('save_operation_draft', { p_draft_id: sd.draft_id, p_request: formState });
+    check('Save draft → OK', !saveErr && (saved as { status: string }).status === 'OK', saveErr ?? saved);
+    const reread = async () => (await cA.from('operation_drafts').select('status, proposed_date, deal_channel_id, lead_id, cash_received, notes, contact_name, operation_draft_items(item_id, direction, planned_value, position, created_by_draft)').eq('id', sd.draft_id!).single()).data as Record<string, unknown> & { operation_draft_items: { item_id: number; direction: string; planned_value: number | null; position: number; created_by_draft: boolean }[] };
+    const r1s = await reread();
+    const vals = Object.fromEntries(r1s.operation_draft_items.map((x) => [x.item_id, Number(x.planned_value)]));
+    check('reopen: Value Out 1075 / Value In 350 · 50 · 75 restored', vals[fender2] === 1075 && vals[ibz] === 350 && vals[ds1] === 50 && vals[fx75] === 75, vals);
+    check('reopen: cash 600, lead, channel, planned future date, notes restored; captured contact kept', r1s.status === 'OPEN' && Number(r1s.cash_received) === 600 && r1s.lead_id === ord2 && r1s.deal_channel_id === MP && r1s.proposed_date === '2026-11-02' && r1s.notes === 'Aurora ~1 PM' && r1s.contact_name === 'A.P. Ordonez', r1s);
+    const sAfter = await state();
+    check('Save draft: no deal / deal_items / cash / analytics change', JSON.stringify(sBefore) === JSON.stringify(sAfter), { sBefore, sAfter });
+    const ordAfter2 = await leadRow(ord2);
+    check('Save draft: outgoing still listed, listings active, lead untouched (OPEN, same version)', (await itemRow(fender2)).status === 'listed' && (await listingsOf(fender2)).every((l) => l.status === 'active') && ordAfter2.status === 'OPEN' && ordAfter2.version === ordBefore2.version);
+    check('Save draft: incoming items stay NEW', (await Promise.all([ibz, ds1, fx75].map(itemRow))).every((x) => x.status === 'new'));
+    const again2 = await cA.rpc('save_operation_draft', { p_draft_id: sd.draft_id, p_request: formState });
+    check('Save draft is a full replace: repeating it changes nothing', !again2.error && JSON.stringify((await reread()).operation_draft_items) === JSON.stringify(r1s.operation_draft_items));
+
+    // Items changed in the form.
+    const extraIn = await item(userA, 'Existing New Pedal (SD)', 'new');
+    const extraOut = await item(userA, 'Extra Out (SD)', 'owned');
+    await cA.from('inventory_item_photos').insert({ inventory_item_id: ds1, storage_path: `${authA}/${ds1}/fake.png`, file_name: 'fake.png', content_type: 'image/png', file_size: 1, is_main: true, sort_order: 0 });
+    const { data: chg, error: chgErr } = await cA.rpc('save_operation_draft', { p_draft_id: sd.draft_id, p_request: { ...formState,
+      items: [{ item_id: fender2, direction: 'out', planned_value: 1075 }, { item_id: extraOut, direction: 'out', planned_value: 100 }, { item_id: ibz, direction: 'in', planned_value: 350 }, { item_id: extraIn, direction: 'in', planned_value: 20 }] } });
+    const c = chg as { removed_item_ids: number[]; kept_items: { item_id: number; reasons: string[] }[] };
+    check('removed untouched draft-created item deleted; removed item with a photo kept (reason)', !chgErr && JSON.stringify(c.removed_item_ids) === JSON.stringify([fx75]) && c.kept_items.length === 1 && c.kept_items[0].item_id === ds1 && c.kept_items[0].reasons.includes('has photos'), chgErr ?? c);
+    check('…deleted item gone; kept item still NEW, no longer in the draft', ((await admin.from('inventory_items').select('id').eq('id', fx75)).data ?? []).length === 0 && (await itemRow(ds1)).status === 'new');
+    const r2s = await reread();
+    check('added existing items linked (not marked created-by-draft), in form order', JSON.stringify(r2s.operation_draft_items.sort((a, b) => a.position - b.position).map((x) => [x.item_id, x.direction, x.created_by_draft])) === JSON.stringify([[fender2, 'out', false], [extraOut, 'out', false], [ibz, 'in', true], [extraIn, 'in', false]]), r2s.operation_draft_items);
+    const bad = async (label: string, req: Record<string, unknown>, re: RegExp, client: SupabaseClient = cA) => {
+      const { error } = await client.rpc('save_operation_draft', { p_draft_id: sd.draft_id, p_request: { ...formState, ...req } });
+      check(label, !!error && re.test(error.message), error);
+    };
+    await bad('incoming item that is not NEW → refused', { items: [{ item_id: fender2, direction: 'out', planned_value: 1 }, { item_id: extraOut, direction: 'in', planned_value: 1 }] }, /ITEM_NOT_AVAILABLE/);
+    await bad("another user's item → refused", { items: [{ item_id: bItem, direction: 'out', planned_value: 1 }] }, /ITEM_NOT_FOUND/);
+    await bad('no items → refused (discard instead)', { items: [] }, /at least one item/);
+    await bad('duplicate item → refused', { items: [{ item_id: fender2, direction: 'out', planned_value: 1 }, { item_id: fender2, direction: 'out', planned_value: 2 }] }, /appears twice/);
+    await bad('negative value → refused', { items: [{ item_id: fender2, direction: 'out', planned_value: -1 }] }, /0 or more|planned_value/);
+    await bad('lead not on an outgoing item → refused', { lead_id: ordonez, items: [{ item_id: fender2, direction: 'out', planned_value: 1 }] }, /LEAD_NOT_ON_OUTGOING_ITEM|LEAD_NOT_ELIGIBLE/);
+    await bad("B saving A's draft → DRAFT_NOT_FOUND", {}, /DRAFT_NOT_FOUND/, cB);
+    const { error: rawDel } = await cA.from('operation_draft_items').delete().eq('draft_id', sd.draft_id!);
+    check('direct client DELETE of draft items refused (RPC-only)', !!rawDel && /OPERATION_DRAFT_RPC_ONLY/.test(rawDel.message), rawDel);
+    const { error: rawUpd } = await cA.from('operation_draft_items').update({ planned_value: 1 }).eq('draft_id', sd.draft_id!);
+    check('direct client UPDATE of draft items refused (RPC-only)', !!rawUpd && /OPERATION_DRAFT_RPC_ONLY/.test(rawUpd.message), rawUpd);
+    const { error: buyMix } = await cA.rpc('save_operation_draft', { p_draft_id: buy.draft_id, p_request: { items: [{ item_id: oneOut, direction: 'out', planned_value: 1 }] } });
+    check('finalized / other-type rules: a Buy draft cannot take outgoing items (or is no longer open)', !!buyMix);
+
+    // Back to the acceptance form state, then finalize with the persisted economics.
+    await cA.rpc('save_operation_draft', { p_draft_id: sd.draft_id, p_request: { ...formState, proposed_date: '2026-10-31',
+      items: [{ item_id: fender2, direction: 'out', planned_value: 1075 }, { item_id: ibz, direction: 'in', planned_value: 350 }, { item_id: extraIn, direction: 'in', planned_value: 125 }] } });
+    for (const id of [ibz, extraIn]) await cA.from('inventory_items').update({ condition: 'Good', purpose_id: businessId, estimated_sold_value: 400, item_subtype_id: subId('Electric Guitar') }).eq('id', id);
+    const persisted = (await reread()).operation_draft_items;
+    const pv = (dir: string) => persisted.filter((x) => x.direction === dir).sort((a, b) => a.position - b.position).map((x) => ({ item_id: x.item_id, total_value: Number(x.planned_value) }));
+    const opFromDraft = { p_deal_date: '2026-10-31', p_channel_id: MP, p_notes: 'Aurora ~1 PM', p_cash_paid: 0, p_cash_received: 600, p_outgoing_items: pv('out'), p_incoming_items: pv('in'), p_cf_transaction_date: null, p_cf_description: 'Trade: draft' };
+    const finD = await createOperationWithWinningLead(cA, userA, { kind: 'trade', operation: opFromDraft, leadId: ord2, operationKey: uuid(), draftId: sd.draft_id! }, undefined, fast.retry);
+    if (finD.ok) dealIds.push(finD.deal_id);
+    // The same values entered manually in Create Trade (no draft).
+    const twinOut = await item(userA, 'Manual Twin Out (SD)');
+    await listing(twinOut, MP, 1100, true);
+    await listing(twinOut, KJ, null, true);
+    const twinLead = await newLead(twinOut, 'A.P. Ordonez', 'Marketplace', [cashOffer('2026-10-29T12:00:00-04:00', 600)]);
+    const twinOther = await newLead(twinOut, 'Other Buyer', 'Marketplace', [cashOffer('2026-10-29T13:00:00-04:00', 500)]);
+    const twinIn1 = await item(userA, 'Manual Twin In1 (SD)', 'new');
+    const twinIn2 = await item(userA, 'Manual Twin In2 (SD)', 'new');
+    const manual = await createOperationWithWinningLead(cA, userA, { kind: 'trade', operation: { ...opFromDraft, p_outgoing_items: [{ item_id: twinOut, total_value: 1075 }], p_incoming_items: [{ item_id: twinIn1, total_value: 350 }, { item_id: twinIn2, total_value: 125 }] }, leadId: twinLead, operationKey: uuid() }, undefined, fast.retry);
+    if (manual.ok) dealIds.push(manual.deal_id);
+    check('finalize from the draft form + manual Create Trade both OK', finD.ok && manual.ok, { finD, manual });
+    if (finD.ok && manual.ok) {
+      const shape = async (dealId: number, out: number, ins: number[], winner: number, loser: number) => {
+        const d = (await admin.from('deals').select('deal_type, deal_date, deal_channel_id, cash_paid, cash_received, notes').eq('id', dealId).single()).data;
+        const di = ((await admin.from('deal_items').select('direction, total_value').eq('deal_id', dealId).order('direction').order('total_value')).data ?? []).map((x) => `${x.direction}:${Number(x.total_value)}`);
+        const cf = ((await admin.from('cash_flow').select('cash_in, cash_out').eq('deal_id', dealId)).data ?? []).map((x) => `${Number(x.cash_in)}/${Number(x.cash_out)}`);
+        const st = [(await itemRow(out)).status, ...(await Promise.all(ins.map(itemRow))).map((x) => x.status)];
+        const ls = (await listingsOf(out)).map((l) => l.status);
+        const w = await leadRow(winner); const l = await leadRow(loser);
+        return JSON.stringify({ d: { ...d, cash_paid: Number(d?.cash_paid), cash_received: Number(d?.cash_received) }, di, cf, st, ls, winner: [w.status, w.deal_id === dealId], loser: [l.status, l.outcome_reason] });
+      };
+      const a = await shape(finD.deal_id, fender2, [ibz, extraIn], ord2, other2);
+      const b = await shape(manual.deal_id, twinOut, [twinIn1, twinIn2], twinLead, twinOther);
+      check('finalized draft == equivalent manual Create Trade (deal, item values, cash once, statuses, listings ended, lead completed / others closed)', a === b, { a, b });
+      check('draft FINALIZED with that deal', (await admin.from('operation_drafts').select('status, deal_id').eq('id', sd.draft_id!).single()).data?.deal_id === finD.deal_id);
+      const { error: saveFinal } = await cA.rpc('save_operation_draft', { p_draft_id: sd.draft_id, p_request: formState });
+      check('a finalized draft can no longer be saved', !!saveFinal && /DRAFT_NOT_OPEN/.test(saveFinal.message));
+    }
 
     // ── W9: analytics isolation (open drafts) ───────────────────────────
     console.log('\n[W9 — analytics isolation for open drafts]');

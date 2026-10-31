@@ -24,6 +24,7 @@ import {
 import { invalidateListingsCache } from '@/lib/listingsCacheStore';
 import { leadSaveBlocker, type LeadPickerAvailability } from '@/lib/leads/operationLeadSave';
 import type { LeadStatus } from '@/lib/leads/leadTypes';
+import { normalizeContactName } from '@/lib/leads/contactName';
 
 export type { LeadPickerAvailability };
 
@@ -37,7 +38,7 @@ interface Props {
   disabled?: boolean;
   /** Finalizing a draft: the draft's lead, preselected when it is among the eligible candidates. */
   preferredLeadId?: number | null;
-  /** Search text (the draft's contact name) used to find the preferred lead beyond the initial list. */
+  /** The draft's captured contact name: finds the preferred lead beyond the initial list, or suggests the one exact-name match. */
   preferredLeadQuery?: string | null;
 }
 
@@ -224,11 +225,16 @@ export default function OperationLeadPicker({ itemIds, value, onChange, onAvaila
           if (isEdit) cb.current.onChange({ kind: 'none' });
           else if (preferred) cb.current.onChange({ kind: 'lead', lead: preferred });
           else if (d.eligible_total === 1 && d.candidates.length === 1) cb.current.onChange({ kind: 'lead', lead: d.candidates[0] });
-          else if (cb.current.preferredLeadId != null && cb.current.preferredLeadQuery?.trim()) {
+          else if (cb.current.preferredLeadQuery?.trim()) {
+            // Draft: its lead (beyond the initial list), or — with only a captured contact name — the ONE
+            // eligible lead with exactly that name. Anything ambiguous stays for the user to pick.
             const want = cb.current.preferredLeadId;
+            const name = normalizeContactName(cb.current.preferredLeadQuery);
             fetchOperationLeadCandidates({ itemIds: ids, q: cb.current.preferredLeadQuery, signal: ctrl.signal })
               .then((s) => {
-                const hit = s.status === 'success' ? s.data.candidates.find((c) => c.lead_id === want) : undefined;
+                const found = s.status === 'success' ? s.data.candidates : [];
+                const sameName = found.filter((c) => c.contact_name && normalizeContactName(c.contact_name) === name);
+                const hit = want != null ? found.find((c) => c.lead_id === want) : sameName.length === 1 ? sameName[0] : undefined;
                 if (hit && cb.current.value.kind === 'unset') cb.current.onChange({ kind: 'lead', lead: hit });
               })
               .catch(() => { /* the user picks the lead manually */ });

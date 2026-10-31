@@ -77,6 +77,8 @@ interface InventoryFormProps {
   hideHeader?: boolean;
   hideSidebar?: boolean;
   backHref?: string;
+  /** Text of the back link (default "Back to Inventory"). */
+  backLabel?: string;
 }
 
 export default function InventoryForm({
@@ -86,6 +88,7 @@ export default function InventoryForm({
   hideHeader = false,
   hideSidebar = false,
   backHref,
+  backLabel = 'Back to Inventory',
 }: InventoryFormProps) {
   const router = useRouter();
   const photosRef          = useRef<ItemPhotosHandle>(null);
@@ -1034,7 +1037,7 @@ export default function InventoryForm({
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M19 12H5M12 19l-7-7 7-7"/>
                     </svg>
-                    Back to Inventory
+                    {backLabel}
                   </Link>
                   {existingItem && (
                     <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${statusClasses[existingItem.status] ?? 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200'}`}>
