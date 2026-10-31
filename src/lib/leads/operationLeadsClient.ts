@@ -49,6 +49,8 @@ export async function createOperationWithLead(params: {
   operation: Record<string, unknown>;
   leadId: number;
   operationKey: string;
+  /** Finalizing an operation draft (same transaction marks it FINALIZED). */
+  draftId?: number | null;
 }): Promise<{ ok: true; dealId: number } | { ok: false; message: string }> {
   const token = await bearer();
   if (!token) return { ok: false, message: 'Not signed in — please sign in again.' };
@@ -57,7 +59,7 @@ export async function createOperationWithLead(params: {
     res = await fetch('/api/operations/create-with-lead', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: params.kind, operation: params.operation, lead_id: params.leadId, operation_key: params.operationKey }),
+      body: JSON.stringify({ kind: params.kind, operation: params.operation, lead_id: params.leadId, operation_key: params.operationKey, ...(params.draftId != null ? { draft_id: params.draftId } : {}) }),
     });
   } catch {
     return { ok: false, message: 'Could not reach the server. Nothing was saved — try again.' };

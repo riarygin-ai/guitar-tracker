@@ -35,6 +35,10 @@ interface Props {
   /** Edit flow: the saved operation. Shows its linked lead read-only, else offers adding one. */
   dealId?: number;
   disabled?: boolean;
+  /** Finalizing a draft: the draft's lead, preselected when it is among the eligible candidates. */
+  preferredLeadId?: number | null;
+  /** Search text (the draft's contact name) used to find the preferred lead beyond the initial list. */
+  preferredLeadQuery?: string | null;
 }
 
 const NONE_ID = 'none';
@@ -56,10 +60,10 @@ export function useOperationLeadLink() {
 
   const saveBlocker = leadSaveBlocker(availability, choice);
 
-  async function saveNewWithLead(kind: 'sale' | 'trade', operation: Record<string, unknown>): Promise<{ ok: true; dealId: number } | { ok: false; message: string }> {
+  async function saveNewWithLead(kind: 'sale' | 'trade', operation: Record<string, unknown>, draftId?: number | null): Promise<{ ok: true; dealId: number } | { ok: false; message: string }> {
     if (choice.kind !== 'lead') return { ok: false, message: 'No lead selected.' };
     operationKey.current ??= crypto.randomUUID();
-    const r = await createOperationWithLead({ kind, operation, leadId: choice.lead.lead_id, operationKey: operationKey.current });
+    const r = await createOperationWithLead({ kind, operation, leadId: choice.lead.lead_id, operationKey: operationKey.current, draftId });
     if (r.ok) { operationKey.current = null; invalidateListingsCache(); }
     return r;
   }
@@ -158,7 +162,7 @@ export function LeadSummary({ c, showItem, mobileAction }: { c: OperationLeadCan
   );
 }
 
-export default function OperationLeadPicker({ itemIds, value, onChange, onAvailabilityChange, dealId, disabled }: Props) {
+export default function OperationLeadPicker({ itemIds, value, onChange, onAvailabilityChange, dealId, disabled, preferredLeadId, preferredLeadQuery }: Props) {
   const isEdit = dealId != null;
   const listId = useId();
   const itemKey = useMemo(() => Array.from(new Set(itemIds)).sort((a, b) => a - b).join(','), [itemIds]);
@@ -176,8 +180,8 @@ export default function OperationLeadPicker({ itemIds, value, onChange, onAvaila
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Keep the latest callbacks without re-running the load effect.
-  const cb = useRef({ onChange, onAvailabilityChange, value });
-  cb.current = { onChange, onAvailabilityChange, value };
+  const cb = useRef({ onChange, onAvailabilityChange, value, preferredLeadId, preferredLeadQuery });
+  cb.current = { onChange, onAvailabilityChange, value, preferredLeadId, preferredLeadQuery };
 
   // Initial (unsearched) candidates for the current outgoing item set.
   useEffect(() => {
@@ -215,9 +219,20 @@ export default function OperationLeadPicker({ itemIds, value, onChange, onAvaila
           cb.current.onChange({ kind: 'unset' });
           return;
         }
+        const preferred = cb.current.preferredLeadId != null ? d.candidates.find((c) => c.lead_id === cb.current.preferredLeadId) : undefined;
         if (v.kind === 'unset') {
           if (isEdit) cb.current.onChange({ kind: 'none' });
+          else if (preferred) cb.current.onChange({ kind: 'lead', lead: preferred });
           else if (d.eligible_total === 1 && d.candidates.length === 1) cb.current.onChange({ kind: 'lead', lead: d.candidates[0] });
+          else if (cb.current.preferredLeadId != null && cb.current.preferredLeadQuery?.trim()) {
+            const want = cb.current.preferredLeadId;
+            fetchOperationLeadCandidates({ itemIds: ids, q: cb.current.preferredLeadQuery, signal: ctrl.signal })
+              .then((s) => {
+                const hit = s.status === 'success' ? s.data.candidates.find((c) => c.lead_id === want) : undefined;
+                if (hit && cb.current.value.kind === 'unset') cb.current.onChange({ kind: 'lead', lead: hit });
+              })
+              .catch(() => { /* the user picks the lead manually */ });
+          }
         }
       })
       .catch((e) => { if ((e as { name?: string }).name !== 'AbortError') fail('Could not load leads.'); });

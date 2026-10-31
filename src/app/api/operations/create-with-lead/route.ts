@@ -9,11 +9,14 @@ import { createOperationWithWinningLead, OperationLeadsError, type OperationKind
 // (→ COMPLETED) + neutral close of the other OPEN leads in one transaction
 // (create_operation_with_winning_lead). Nothing is saved unless all of it is.
 // Idempotent per operation_key. Without a chosen lead the forms keep calling
-// the operation RPC directly.
+// the operation RPC directly. With draft_id (finalizing an operation draft)
+// the same transaction also marks that draft FINALIZED
+// (finalize_operation_draft).
 export async function POST(req: NextRequest) {
   let body: unknown;
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }); }
-  const { kind, operation, lead_id, operation_key } = (body ?? {}) as { kind?: unknown; operation?: unknown; lead_id?: unknown; operation_key?: unknown };
+  const { kind, operation, lead_id, operation_key, draft_id } = (body ?? {}) as { kind?: unknown; operation?: unknown; lead_id?: unknown; operation_key?: unknown; draft_id?: unknown };
+  if (draft_id != null && (!Number.isInteger(draft_id) || (draft_id as number) <= 0)) return NextResponse.json({ error: 'draft_id must be a positive integer' }, { status: 400 });
   if (kind !== 'sale' && kind !== 'trade') return NextResponse.json({ error: "kind must be 'sale' or 'trade'" }, { status: 400 });
   if (!operation || typeof operation !== 'object' || Array.isArray(operation)) return NextResponse.json({ error: 'operation must be an object' }, { status: 400 });
   if (!Number.isInteger(lead_id) || (lead_id as number) <= 0) return NextResponse.json({ error: 'lead_id must be a positive integer' }, { status: 400 });
@@ -25,6 +28,7 @@ export async function POST(req: NextRequest) {
   try {
     const r = await createOperationWithWinningLead(auth.db, auth.appUserId, {
       kind: kind as OperationKind, operation: operation as OperationParams, leadId: lead_id as number, operationKey: operation_key,
+      draftId: (draft_id as number | undefined) ?? null,
     });
     if (r.ok) return NextResponse.json({ deal_id: r.deal_id, replayed: r.replayed });
     return NextResponse.json({ error: r.message, result: r.result ?? null }, { status: r.status });

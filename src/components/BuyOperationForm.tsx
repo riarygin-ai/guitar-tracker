@@ -15,6 +15,7 @@ import {
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types';
 import { todayLocalDate } from '@/lib/dateUtils';
 import { truncateDescription } from '@/lib/text';
+import { finalizeDraft } from '@/lib/operations/operationDraftsClient';
 
 interface LineItem {
   item: InventorySearchItem;
@@ -27,6 +28,8 @@ interface BuyOperationFormProps {
   initialChannelId?: number | null;
   initialNotes?: string;
   initialItems?: LineItem[];
+  /** Finalizing an operation draft: saving creates the purchase AND marks the draft finalized, in one transaction. */
+  draftId?: number;
 }
 
 export default function BuyOperationForm({
@@ -35,9 +38,11 @@ export default function BuyOperationForm({
   initialChannelId,
   initialNotes,
   initialItems,
+  draftId,
 }: BuyOperationFormProps = {}) {
   const router = useRouter();
   const isEdit = dealId != null;
+  const isDraft = draftId != null && !isEdit;
   const [brands, setBrands] = useState<Brand[]>([]);
   const [channels, setChannels] = useState<DealChannel[]>([]);
   const [items, setItems] = useState<LineItem[]>(initialItems ?? []);
@@ -182,6 +187,22 @@ export default function BuyOperationForm({
     const cfDescription = truncateDescription(`Purchase: ${descParts.join(', ')}`);
 
     setSaving(true);
+
+    // Finalizing a draft: the unchanged buy RPC + draft -> FINALIZED, in one transaction.
+    if (isDraft) {
+      const saved = await finalizeDraft(draftId!, 'purchase', {
+        p_deal_date: dealDateValue,
+        p_channel_id: channelId!,
+        p_incoming_items: items.map((li) => ({ item_id: li.item.id, total_value: li.cost })),
+        p_notes: notes.trim() || null,
+        p_cf_description: cfDescription,
+      });
+      setSaving(false);
+      if (!saved.ok) { setError(saved.message); return; }
+      router.push(`/operations/${saved.dealId}`);
+      return;
+    }
+
     const result = isEdit
       ? await editBuyOperation({
           dealId: dealId!,
@@ -527,10 +548,10 @@ export default function BuyOperationForm({
         )}
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-          {isEdit ? (
+          {isEdit || isDraft ? (
             <button
               type="button"
-              onClick={() => router.push(`/operations/${dealId}`)}
+              onClick={() => router.push(isDraft ? `/operations/drafts/${draftId}` : `/operations/${dealId}`)}
               className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
             >
               Cancel
@@ -558,7 +579,7 @@ export default function BuyOperationForm({
             disabled={saving}
             className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
-            {saving ? 'Saving...' : isEdit ? 'Update Purchase' : 'Save purchase'}
+            {saving ? 'Saving...' : isEdit ? 'Update Purchase' : isDraft ? 'Finalize purchase' : 'Save purchase'}
           </button>
         </div>
       </form>

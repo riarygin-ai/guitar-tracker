@@ -8,6 +8,7 @@ import ItemPhotos, { type ItemPhotosHandle } from '@/components/ItemPhotos';
 import AiAssistantCard, { type AiAssistantCardHandle } from '@/components/AiAssistantCard';
 import TagsSelector from '@/components/TagsSelector';
 import CopyItemContextButton from '@/components/CopyItemContextButton';
+import { getOpenDraftForIncomingItem } from '@/lib/operations/operationDraftsClient';
 import type {
   Brand,
   Condition,
@@ -121,6 +122,8 @@ export default function InventoryForm({
   const [saving, setSaving] = useState(false);
   const [creatingBrand, setCreatingBrand] = useState(false);
   const [existingItem, setExistingItem] = useState<InventoryItem | null>(null);
+  // Incoming item of an OPEN operation draft: may be saved incomplete (photos first); finalization requires the fields.
+  const [openDraft, setOpenDraft] = useState<{ id: number; type: string } | null>(null);
   const [mainPhotoUrl, setMainPhotoUrl] = useState<string | null>(null);
   const [showPhotos,   setShowPhotos]   = useState(false);
 
@@ -241,6 +244,7 @@ export default function InventoryForm({
 
       const item = itemResult.data;
       setExistingItem(item);
+      setOpenDraft(item.status === 'new' ? await getOpenDraftForIncomingItem(item.id) : null);
 
       // Resolve subtype
       if (item.item_subtype_id) {
@@ -363,7 +367,8 @@ export default function InventoryForm({
 
     if (!model.trim()) { setError('Model is required.'); return; }
     if (!brandInput.trim() && !selectedBrandId) { setError('Brand is required.'); return; }
-    if (!selectedSubtypeId) { setError('Item type is required.'); return; }
+    const draftCapture = !!itemId && openDraft != null && existingItem?.status === 'new';
+    if (!selectedSubtypeId && !draftCapture) { setError('Item type is required.'); return; }
     if (year) {
       const n = Number(year);
       const max = new Date().getFullYear() + 1;
@@ -386,10 +391,11 @@ export default function InventoryForm({
       }
     }
 
-    // Per-field required validation (applies to create and update)
-    const conditionErr  = !condition       ? 'Please select a Condition.'              : null;
-    const purposeErr    = purposeId == null ? 'Please select a Purpose.'               : null;
-    const estValueErr   = !estimatedSoldValue ? 'Please enter an Estimated Sold Value.' : null;
+    // Per-field required validation (applies to create and update; an open draft's incoming
+    // item may stay incomplete until the draft is finalized, which requires these fields)
+    const conditionErr  = !condition && !draftCapture       ? 'Please select a Condition.'              : null;
+    const purposeErr    = purposeId == null && !draftCapture ? 'Please select a Purpose.'               : null;
+    const estValueErr   = !estimatedSoldValue && !draftCapture ? 'Please enter an Estimated Sold Value.' : null;
     setConditionError(conditionErr);
     setPurposeError(purposeErr);
     setEstimatedSoldValueError(estValueErr);
@@ -1192,6 +1198,13 @@ export default function InventoryForm({
             {/* Right: form fields + photo management */}
             <div className="min-w-0 flex-1 space-y-6">
               <form onSubmit={handleSubmit} aria-busy={disabled}>
+                {openDraft && existingItem?.status === 'new' && (
+                  <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300" data-testid="item-draft-notice">
+                    Incoming item of{' '}
+                    <Link href={`/operations/drafts/${openDraft.id}`} className="font-semibold underline">Draft {openDraft.type} #{openDraft.id}</Link>
+                    {' '}— not acquired yet. You can save photos and details now; type, condition, purpose and estimated sold value are required to finalize the draft.
+                  </div>
+                )}
                 <div ref={formCardRef} className="scroll-mt-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
                   {formFields}
                   {error && (

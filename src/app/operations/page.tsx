@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import DateRangeFilter from '@/components/DateRangeFilter';
+import OperationDraftsSection from '@/components/OperationDraftsSection';
 import MoreFiltersToggle from '@/components/MoreFiltersToggle';
 import TagsFilter from '@/components/TagsFilter';
 import { type DatePreset, DATE_PRESETS, presetToDateRange, DEFAULT_PRESET } from '@/lib/dateRange';
@@ -522,6 +523,7 @@ export default function OperationsPage() {
 
   return (
     <div className="space-y-4">
+      <OperationDraftsSection />
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">

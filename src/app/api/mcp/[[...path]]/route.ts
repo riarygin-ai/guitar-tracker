@@ -1,4 +1,4 @@
-// Remote MCP server for Guitar Tracker — exactly twelve tools: nine read-only
+// Remote MCP server for Guitar Tracker — exactly thirteen tools: nine read-only
 // (search_inventory, get_item_context, get_inventory_analysis,
 // get_lead_activity, find_contact_history, get_leads, get_operations_analysis,
 // get_operation_context, get_deal_chain), two lead WRITE tools
@@ -7,7 +7,11 @@
 // caller's own identity) and one listing WRITE tool (manage_listing —
 // src/lib/listings/listingWriteService.ts, writing only through the SECURITY
 // INVOKER apply_listing_changes RPC, the same path the item page's listing
-// card uses); no service_role anywhere in this route. Built on Supabase's official
+// card uses) and one operation-draft WRITE tool (create_operation_draft —
+// src/lib/operations/operationDraftService.ts, writing only through the
+// SECURITY INVOKER create_operation_draft RPC: a planned Buy / Sell / Trade
+// with no completed-operation effect, finalized later in the GT UI); no
+// service_role anywhere in this route. Built on Supabase's official
 // OAuth 2.1 / MCP authentication middleware (NOT a custom /authorize,
 // /token, client registry, or JWT implementation — Supabase Auth's own
 // OAuth 2.1 server issues and verifies every token; see
@@ -69,11 +73,12 @@ import { recordLeadInteraction, voidLeadEvent, CONTACT_RESOLUTIONS, RESOLUTION_A
 import { AGENT_EVENT_TYPES, LEAD_CHANNELS, LEAD_STAGES, LEAD_STATUSES, renderLeadSemanticsForPrompt } from '@/lib/leads/semantics';
 import { manageListing, LISTING_ACTIONS, type ManageListingInput } from '@/lib/listings/listingWriteService';
 import { getLeadsForUser, GetLeadsError, GET_LEADS_DEFAULT_LIMIT, GET_LEADS_MAX_ITEM_IDS, GET_LEADS_MAX_LIMIT } from '@/lib/analytics/leadsMcp';
+import { createOperationDraft, DRAFT_MAX_ITEMS, DRAFT_OPERATION_TYPES, type CreateOperationDraftInput } from '@/lib/operations/operationDraftService';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 
-function buildMcpServer(supabase: SupabaseClient): McpServer {
+function buildMcpServer(supabase: SupabaseClient, appOrigin: string): McpServer {
   const server = new McpServer({ name: 'guitar-tracker', version: '1.0.0' });
 
   server.registerTool(
@@ -519,6 +524,65 @@ function buildMcpServer(supabase: SupabaseClient): McpServer {
       return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(result.result === 'REJECTED' ? { isError: true } : {}) };
     },
   );
+
+  // ── Operation drafts ───────────────────────────────────────────────────
+  server.registerTool(
+    'create_operation_draft',
+    {
+      description:
+        'WRITE TOOL. Captures a PLANNED Buy / Sell / Trade as a DRAFT operation in Guitar Tracker so a deal discussed in chat ' +
+        'is not lost. It never completes anything: no item status changes, listings stay active, no cash is posted, the lead ' +
+        'is not completed, nothing counts in analytics. The user later opens the draft in GT, uploads photos, completes specs, ' +
+        'allocates values and finalizes it there (finalization is a deliberate GT action; this tool cannot finalize). ' +
+        'Create a draft ONLY for the proposal the user chose to capture — never one per open proposal/negotiation. ' +
+        'Items: outgoing_item_ids = EXISTING items the user gives (ids from search_inventory / get_item_context — never a ' +
+        'description; never create a duplicate of an owned item); incoming_items = items the user will receive, created as ' +
+        'NEW inventory items (status new) with real ids right away. Incoming needs brand + model; send every other fact only ' +
+        'when actually known — omit unknown year, condition, purpose, serial, value (never "Unknown", never guesses). ' +
+        'category/type use GT names (e.g. Guitars / Electric Guitar, Pedals / Pedal, Amps / Head); finer detail ' +
+        '("distortion", "HSH, locking tremolo", "gigbag") goes in description. estimated_sold_value only for a single explicit ' +
+        'resale estimate; a range ("C$300–400") goes in notes as text. Cash: cash_received = cash the user receives, ' +
+        'cash_paid = cash the user pays (planning terms only). Value In / Value Out are NOT set here — the user allocates them ' +
+        'in GT. occurred_on = the planned date (may be in the future). Meeting place/time and "not confirmed yet" go in notes. ' +
+        'contact_name: the other party; the matching open lead on an outgoing item is attached automatically when exactly one ' +
+        'matches (or pass lead_id) — it is only completed at finalization. Contact city/phone are NOT taken here: record them ' +
+        'with record_lead_interaction. Returns result CREATED (draft_id, incoming_item_ids, outgoing_item_ids, url) or ' +
+        'REJECTED (reason + message; nothing written). Show `headline`, then `lines`, then any `warnings`. mutation_id: ONE ' +
+        'new UUID per draft; reuse it on retries (a retry never creates a second draft or second set of items).',
+      inputSchema: z.object({
+        mutation_id: z.string().uuid().describe('One new UUID per draft; reuse it for retries.'),
+        operation_type: z.enum(DRAFT_OPERATION_TYPES).describe('TRADE (give items and/or cash, receive items and/or cash), BUY (receive items for cash), SELL (give items for cash).'),
+        occurred_on: z.string().min(10).max(40).optional().describe('Planned / proposed date, YYYY-MM-DD. May be in the future. Omit if unknown.'),
+        channel: z.string().trim().min(1).max(40).optional().describe('Marketplace, Kijiji, Reverb or Regular Buyer / Seller.'),
+        contact_name: z.string().trim().min(1).max(200).optional().describe('The other party\'s name exactly as shown, e.g. "A.P. Ordonez".'),
+        lead_id: z.number().int().positive().optional().describe('The winning lead, if known (a lead on one of the outgoing items).'),
+        outgoing_item_ids: z.array(z.number().int().positive()).max(DRAFT_MAX_ITEMS).optional().describe('Existing items the user gives (TRADE / SELL).'),
+        incoming_items: z.array(z.object({
+          brand: z.string().trim().min(1).max(100),
+          model: z.string().trim().min(1).max(200),
+          year: z.number().int().min(1900).max(2100).optional(),
+          color: z.string().trim().min(1).max(80).optional(),
+          category: z.string().trim().min(1).max(80).optional().describe('GT category, e.g. Guitars, Pedals, Amps, Parts.'),
+          type: z.string().trim().min(1).max(80).optional().describe('GT type, e.g. Electric Guitar, Bass, Acoustic Guitar, Pedal, Head, Combo, Cabinet.'),
+          condition: z.enum(['Mint', 'Excellent', 'Very Good', 'Good', 'Fair']).optional(),
+          purpose: z.string().trim().min(1).max(40).optional().describe('Business, Personal or Hybrid — only if the user said so.'),
+          serial_number: z.string().trim().min(1).max(100).optional(),
+          description: z.string().trim().min(1).max(2000).optional().describe('Factual specs / what is included, e.g. "HSH, locking tremolo. Gigbag."'),
+          estimated_sold_value: z.number().positive().max(10_000_000).optional().describe('A single explicit resale estimate (CAD). Ranges go in notes.'),
+          notes: z.string().trim().min(1).max(2000).optional().describe('Seller claims, working estimate ranges, anything else known.'),
+          tags: z.array(z.string().trim().min(1).max(60)).max(10).optional().describe('Existing GT tag names only.'),
+        })).max(DRAFT_MAX_ITEMS).optional().describe('Items the user receives (TRADE / BUY) — created as NEW inventory items.'),
+        cash_paid: z.number().min(0).max(10_000_000).optional().describe('Cash the user pays (CAD).'),
+        cash_received: z.number().min(0).max(10_000_000).optional().describe('Cash the user receives (CAD).'),
+        notes: z.string().trim().min(1).max(4000).optional().describe('Deal notes: meeting place/time, what is still unconfirmed, context.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      const result = await createOperationDraft(supabase, input as CreateOperationDraftInput, { source: 'MCP', clientLabel: clientLabel(), appOrigin });
+      return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(result.result === 'REJECTED' ? { isError: true } : {}) };
+    },
+  );
   return server;
 }
 
@@ -539,7 +603,7 @@ const fetchHandler = pipeline(
     }),
   ],
   async (req, { supabase }) => {
-    const handler = createMcpHandler(() => buildMcpServer(supabase));
+    const handler = createMcpHandler(() => buildMcpServer(supabase, new URL(req.url).origin));
     return handler.fetch(req);
   },
 );

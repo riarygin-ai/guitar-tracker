@@ -18,6 +18,7 @@ import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/t
 import { todayLocalDate } from '@/lib/dateUtils';
 import { truncateDescription } from '@/lib/text';
 import OperationLeadPicker, { LeadLinkFailure, leadDisplayName, useOperationLeadLink } from '@/components/leads/OperationLeadPicker';
+import { draftErrorMessage, finalizeDraft } from '@/lib/operations/operationDraftsClient';
 
 interface SoldLineItem {
   item: InventorySearchItem;
@@ -30,6 +31,10 @@ interface SellOperationFormProps {
   initialChannelId?: number | null;
   initialNotes?: string;
   initialItems?: SoldLineItem[];
+  /** Finalizing an operation draft: saving creates the sale AND marks the draft finalized, in one transaction. */
+  draftId?: number;
+  draftLeadId?: number | null;
+  draftContactName?: string | null;
 }
 
 export default function SellOperationForm({
@@ -38,9 +43,13 @@ export default function SellOperationForm({
   initialChannelId,
   initialNotes,
   initialItems,
+  draftId,
+  draftLeadId,
+  draftContactName,
 }: SellOperationFormProps = {}) {
   const router = useRouter();
   const isEdit = dealId != null;
+  const isDraft = draftId != null && !isEdit;
   const [brands, setBrands] = useState<Brand[]>([]);
   const [channels, setChannels] = useState<DealChannel[]>([]);
   const [items, setItems] = useState<{ item: InventorySearchItem; value: string }[]>(
@@ -231,6 +240,24 @@ export default function SellOperationForm({
     const descParts = items.map((li) => [brandMap[li.item.brand_id], li.item.model].filter(Boolean).join(' '));
     const cfDescription = truncateDescription(`Sale: ${descParts.join(', ')}`);
     const itemsPayload = items.map((li) => ({ item_id: li.item.id, total_value: Number(li.value) }));
+
+    // Finalizing a draft: the unchanged sell RPC + draft -> FINALIZED, in one transaction.
+    if (isDraft) {
+      const operationArgs = {
+        p_deal_date: dealDateValue,
+        p_channel_id: channelId!,
+        p_items: itemsPayload,
+        p_notes: notes.trim() || null,
+        p_cf_description: cfDescription,
+      };
+      const saved = lead.choice.kind === 'lead'
+        ? await lead.saveNewWithLead('sale', operationArgs, draftId)
+        : await finalizeDraft(draftId!, 'sale', operationArgs);
+      setSaving(false);
+      if (!saved.ok) { setError(draftErrorMessage(saved.message)); return; }
+      router.push(`/operations/${saved.dealId}`);
+      return;
+    }
 
     // New sale with a chosen winning lead: sale + lead link in one transaction.
     if (!isEdit && lead.choice.kind === 'lead') {
@@ -550,6 +577,8 @@ export default function SellOperationForm({
               onAvailabilityChange={lead.setAvailability}
               dealId={dealId}
               disabled={saving || lead.pendingLink != null}
+              preferredLeadId={draftLeadId}
+              preferredLeadQuery={draftContactName}
             />
 
             <div className="space-y-3">
@@ -616,10 +645,10 @@ export default function SellOperationForm({
         )}
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-          {isEdit ? (
+          {isEdit || isDraft ? (
             <button
               type="button"
-              onClick={() => router.push(`/operations/${dealId}`)}
+              onClick={() => router.push(isDraft ? `/operations/drafts/${draftId}` : `/operations/${dealId}`)}
               className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
             >
               Cancel
@@ -648,7 +677,7 @@ export default function SellOperationForm({
             disabled={saving}
             className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
-            {saving ? 'Saving...' : isEdit ? 'Update Sale' : 'Save sale'}
+            {saving ? 'Saving...' : isEdit ? 'Update Sale' : isDraft ? 'Finalize sale' : 'Save sale'}
           </button>
         </div>
       </form>

@@ -8,6 +8,7 @@ import { createTradeOperation, editTradeOperation, getBrands, getDealChannels, s
 import type { Brand, DealChannel, InventoryItem, InventorySearchItem } from '@/types'
 import { todayLocalDate } from '@/lib/dateUtils'
 import OperationLeadPicker, { LeadLinkFailure, leadDisplayName, useOperationLeadLink } from '@/components/leads/OperationLeadPicker'
+import { draftErrorMessage, finalizeDraft } from '@/lib/operations/operationDraftsClient'
 
 type TradeItem = {
     item: InventorySearchItem
@@ -23,6 +24,10 @@ interface TradeOperationFormProps {
     initialCashReceived?: number
     initialOutgoingItems?: TradeItem[]
     initialIncomingItems?: TradeItem[]
+    /** Finalizing an operation draft: saving creates the trade AND marks the draft finalized, in one transaction. */
+    draftId?: number
+    draftLeadId?: number | null
+    draftContactName?: string | null
 }
 
 export default function TradeOperationForm({
@@ -34,9 +39,13 @@ export default function TradeOperationForm({
     initialCashReceived,
     initialOutgoingItems,
     initialIncomingItems,
+    draftId,
+    draftLeadId,
+    draftContactName,
 }: TradeOperationFormProps = {}) {
     const router = useRouter()
     const isEdit = dealId != null
+    const isDraft = draftId != null && !isEdit
     const [brands, setBrands] = useState<Brand[]>([])
     const [channels, setChannels] = useState<DealChannel[]>([])
 
@@ -313,6 +322,29 @@ export default function TradeOperationForm({
             total_value: Number(ti.value || 0),
         }))
         const cfDescriptionValue = parsedCashOut > 0 || parsedCashIn > 0 ? cfDescription : null
+
+        const operationArgs = {
+            p_deal_date: dealDateValue,
+            p_channel_id: channelId,
+            p_notes: notes.trim() || null,
+            p_cash_paid: parsedCashOut,
+            p_cash_received: parsedCashIn,
+            p_outgoing_items: outgoingItemsPayload,
+            p_incoming_items: incomingItemsPayload,
+            p_cf_transaction_date: null,
+            p_cf_description: cfDescriptionValue,
+        }
+
+        // Finalizing a draft: the unchanged trade RPC + draft -> FINALIZED, in one transaction.
+        if (isDraft) {
+            const saved = lead.choice.kind === 'lead'
+                ? await lead.saveNewWithLead('trade', operationArgs, draftId)
+                : await finalizeDraft(draftId!, 'trade', operationArgs)
+            setSaving(false)
+            if (!saved.ok) { setError(draftErrorMessage(saved.message)); return }
+            router.push(`/operations/${saved.dealId}`)
+            return
+        }
 
         // New trade with a chosen winning lead: trade + lead link in one transaction.
         if (!isEdit && lead.choice.kind === 'lead') {
@@ -892,6 +924,8 @@ export default function TradeOperationForm({
                             onAvailabilityChange={lead.setAvailability}
                             dealId={dealId}
                             disabled={saving || lead.pendingLink != null}
+                            preferredLeadId={draftLeadId}
+                            preferredLeadQuery={draftContactName}
                         />
 
                         <div className="space-y-3">
@@ -959,10 +993,10 @@ export default function TradeOperationForm({
                 )}
 
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-                    {isEdit ? (
+                    {isEdit || isDraft ? (
                         <button
                             type="button"
-                            onClick={() => router.push(`/operations/${dealId}`)}
+                            onClick={() => router.push(isDraft ? `/operations/drafts/${draftId}` : `/operations/${dealId}`)}
                             className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-900 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
                         >
                             Cancel
@@ -1002,7 +1036,7 @@ export default function TradeOperationForm({
                         disabled={saving || !isBalanced}
                         className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                     >
-                        {saving ? 'Saving...' : isEdit ? 'Update Trade' : 'Save trade'}
+                        {saving ? 'Saving...' : isEdit ? 'Update Trade' : isDraft ? 'Finalize trade' : 'Save trade'}
                     </button>
                 </div>
             </form>
