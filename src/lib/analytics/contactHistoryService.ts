@@ -13,13 +13,15 @@
 // rows); it never narrows the search and is never looked up, so a foreign
 // item id simply marks nothing.
 //
-// Contact phone / city (migration 20261029000000) are identity SIGNALS:
+// Contact phone / city are identity SIGNALS:
 //   - contact_phone: the strongest lookup — every lead with the same normalized
 //     phone (any name, channel, item) is "likely the same contact", never
 //     "the same lead" and never guaranteed;
-//   - contact_city (with a name): narrows name matches to that city; same name +
-//     same city supports identity, it does not prove it. City alone is never a
-//     search key.
+//   - contact_city (with a name): location evidence (migration 20261105000000).
+//     It matches the lead's current city OR any earlier observed city
+//     (lead_contact_locations) and only SUPPORTS a name match; a different city
+//     never excludes a lead (another listing location, relocation…). City alone
+//     is weak evidence and is never a search key.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { LEAD_COLUMNS } from '../leads/leadsServer';
@@ -28,7 +30,8 @@ import { LEAD_QUALITIES, type LeadRow } from '../leads/leadTypes';
 import { normalizeContactName, possibleNameMatch, type PossibleMatchReason } from '../leads/contactName';
 import { baseKey, contactKey } from '../leads/classification';
 import { STAGE_RANK, type LeadStage } from '../leads/semantics';
-import { cityKey, cleanCity, normalizePhone, phoneDigits, samePhone } from '../leads/contactDetails';
+import { cleanCity, normalizePhone, phoneDigits, samePhone, type ContactCitySource } from '../leads/contactDetails';
+import { cityEvidence, loadContactLocations, sourceLabel, sourcePhrase, type CityEvidence, type LocationObservation } from '../leads/contactLocations';
 
 export class ContactHistoryServiceError extends Error {}
 
@@ -37,7 +40,7 @@ export interface ContactHistoryQuery {
   contact_name?: string;
   /** Any common format; matched on the normalized Canada/US number (digits when it cannot be normalized). */
   contact_phone?: string;
-  /** With contact_name only: narrows name matches to this city. */
+  /** With contact_name only: supporting evidence — matches each lead's current or earlier observed city; never excludes a lead. */
   contact_city?: string;
   channel?: string;
   /** With channel Other / Regular Buyer/Seller: only that sub-channel (e.g. "Instagram") counts as the same channel. */
@@ -62,8 +65,16 @@ export interface ContactLeadRecord {
   channel: string;
   channel_detail: string | null;
   contact_name: string | null;
-  /** The contact's own city, when recorded. */
+  /** The current observed city associated with the contact (listing / profile / message / manual), when recorded. */
   contact_city: string | null;
+  /** Where contact_city was observed: LISTING | PROFILE | MESSAGE | MANUAL (null = unknown). */
+  contact_city_source: ContactCitySource | null;
+  /** Every observed city for this lead (newest first), when any history exists. */
+  location_history?: { city: string; source: ContactCitySource | null; source_context: string | null; last_observed_at: string | null }[];
+  /** Only when the query had contact_city: CURRENT (the lead's city), HISTORY (an earlier observation), DIFFERENT (other cities only — NOT evidence of another person), UNKNOWN (none recorded). */
+  city_evidence?: CityEvidence;
+  /** Plain-language explanation of city_evidence (never claims the same person). */
+  city_note?: string;
   /** Display form of the recorded phone, when recorded. */
   contact_phone: string | null;
   /** Query had a phone: true = same normalized phone, false = a DIFFERENT phone is recorded, null = not comparable. */
@@ -107,7 +118,7 @@ export interface ContactHistoryResult {
     item_id: number | null;
     include_possible_matches: boolean;
   };
-  /** What summary counts are based on: NAME (exact name matches), NAME_CITY (name narrowed to the city), PHONE (phone matches; no name given). */
+  /** What summary counts are based on: NAME (exact name matches), NAME_CITY (exact name matches, with city as supporting evidence), PHONE (phone matches; no name given). */
   basis: 'NAME' | 'NAME_CITY' | 'PHONE';
   summary: {
     exact_match_count: number;
@@ -152,10 +163,14 @@ export interface ContactHistoryResult {
     linked_deal_ids: number[];
   } | null;
   phone_matches: ContactLeadRecord[];
-  /** Only with contact_city: same-name leads with a DIFFERENT recorded city (likely other people, not counted). */
-  other_city_matches: ContactLeadRecord[];
-  /** Only with contact_city: same-name leads with no recorded city (cannot be narrowed, not counted). */
-  unknown_city_matches: ContactLeadRecord[];
+  /** Only with contact_city: how the city supports the exact (name) matches. Nothing is excluded by city. */
+  city_summary: {
+    statement: string;
+    current_city_count: number;
+    history_city_count: number;
+    different_city_count: number;
+    unknown_city_count: number;
+  } | null;
   semantics: string[];
   /** Same normalized name (and, when channel was given, same channel). Ordered newest first. */
   exact_matches: ContactLeadRecord[];
@@ -175,7 +190,7 @@ const SEMANTICS = [
   'No time window: full history, including leads on sold/traded items. Leads without a recorded contact_name cannot be found (see coverage).',
   'linked_deal_id is the completed Sell/Trade this lead was linked to; use get_operation_context(deal_id) for details.',
   'Phone is the strongest identity signal: phone_matches share the normalized Canada/US phone and are "likely the same contact" — not guaranteed, and each item/episode stays its own lead (nothing is merged). same_phone: false on a name match means a DIFFERENT phone is recorded — likely another person.',
-  'contact_city narrows name matches: exact_matches then require the same recorded city; other_city_matches (different city) and unknown_city_matches (no city recorded) are listed separately and not counted. Same name + same city supports identity but does not prove it.',
+  'contact_city is location EVIDENCE (a city seen on the contact\'s own listing or profile, stated in their message, or entered by the user — not a proven residence). With contact_name it matches each lead\'s current city or any earlier observed city (location_history): city_evidence CURRENT / HISTORY supports the name match, it does not prove the same person. DIFFERENT (only other cities recorded) is NOT evidence of a different person — people post from other cities, move, or change profiles — and nothing is excluded or uncounted because of a city. Exact matches with city support are listed first.',
 ];
 
 const PAGE = 1000;
@@ -186,7 +201,7 @@ const QUALIFIER_SCORE = 0.85;
 type LoadedLead = Omit<LeadRow, 'item_name' | 'contact_name'> & { contact_name: string; contact_name_source: string | null; contact_phone_normalized: string | null };
 type PhoneLead = Omit<LoadedLead, 'contact_name'> & { contact_name: string | null };
 
-const CONTACT_COLUMNS = 'contact_name_source, contact_city, contact_phone, contact_phone_normalized';
+const CONTACT_COLUMNS = 'contact_name_source, contact_city, contact_city_source, contact_phone, contact_phone_normalized';
 
 function num(v: unknown): number | null {
   return v == null ? null : Number(v);
@@ -311,7 +326,7 @@ export async function findContactHistoryForUser(client: SupabaseClient, query: C
   const city = cleanCity(query.contact_city);
   if (name && !normalized) throw new ContactHistoryServiceError('contact_name must contain at least one letter or digit');
   if (!name && !phone) throw new ContactHistoryServiceError('contact_name or contact_phone is required');
-  if (city && !name) throw new ContactHistoryServiceError('contact_city only narrows a name search — give contact_name too (a city alone is not an identity)');
+  if (city && !name) throw new ContactHistoryServiceError('contact_city only supports a name search — give contact_name too (a city alone is weak evidence, not an identity)');
   if (phone && phoneDigits(phone).length < 7) throw new ContactHistoryServiceError('contact_phone must contain a phone number');
   const phoneNormalized = phone ? normalizePhone(phone) : null;
 
@@ -321,24 +336,20 @@ export async function findContactHistoryForUser(client: SupabaseClient, query: C
   const classified = classifyContactLeads(leads, { ...query, contact_name: name ?? '' });
   const { otherChannel, possible } = classified;
 
-  // City narrowing: same city stays exact; a different or missing city is listed apart, never counted.
-  let exact = classified.exact;
-  const otherCity: LoadedLead[] = [];
-  const unknownCity: LoadedLead[] = [];
-  if (city) {
-    const want = cityKey(city);
-    exact = [];
-    for (const l of classified.exact) {
-      const k = cityKey(l.contact_city);
-      if (k == null) unknownCity.push(l); else if (k === want) exact.push(l); else otherCity.push(l);
-    }
-  }
-
-  const allMatched: PhoneLead[] = [...exact, ...otherChannel, ...possible.map((p) => p.lead), ...otherCity, ...unknownCity, ...phoneLeads];
+  const exact = classified.exact;
+  const allMatched: PhoneLead[] = [...exact, ...otherChannel, ...possible.map((p) => p.lead), ...phoneLeads];
   const items = await loadItems(client, Array.from(new Set(allMatched.map((l) => l.inventory_item_id))));
+  const history = await loadContactLocations(client, allMatched.map((l) => l.id));
+  const cityOf = (l: PhoneLead) => (city ? cityEvidence(l, history.get(l.id), city) : null);
 
   const samePhoneOf = (l: PhoneLead): boolean | null =>
     phone == null || !l.contact_phone ? null : samePhone({ phone, normalized: phoneNormalized }, { phone: l.contact_phone, normalized: l.contact_phone_normalized });
+
+  const cityFields = (l: PhoneLead): Pick<ContactLeadRecord, 'city_evidence' | 'city_note'> => {
+    const ev = cityOf(l);
+    if (!ev || !city) return {};
+    return { city_evidence: ev.evidence, city_note: cityNote(ev.evidence, ev.observation, l, city, leadChannelLabel(l)) };
+  };
 
   const toRecord = (l: PhoneLead): ContactLeadRecord => ({
     lead_id: l.id,
@@ -348,6 +359,9 @@ export async function findContactHistoryForUser(client: SupabaseClient, query: C
     channel_detail: l.channel_detail ?? null,
     contact_name: l.contact_name,
     contact_city: l.contact_city ?? null,
+    contact_city_source: l.contact_city_source ?? null,
+    ...(history.get(l.id)?.length ? { location_history: history.get(l.id)!.map((h) => ({ city: h.city, source: h.source, source_context: h.source_context, last_observed_at: h.last_observed_at })) } : {}),
+    ...cityFields(l),
     contact_phone: l.contact_phone ?? null,
     same_phone: samePhoneOf(l),
     contact_name_source: l.contact_name_source,
@@ -378,7 +392,11 @@ export async function findContactHistoryForUser(client: SupabaseClient, query: C
   // Summary counts: the name matches when a name was given, otherwise the phone matches.
   const basis: ContactHistoryResult['basis'] = name ? (city ? 'NAME_CITY' : 'NAME') : 'PHONE';
   const primary: PhoneLead[] = name ? exact : phoneLeads;
-  const primaryRecords = primary.map(toRecord).sort(newestFirst);
+  // With a city: city-supported matches (current, then earlier) first; nothing is dropped.
+  const CITY_RANK: Record<CityEvidence, number> = { CURRENT: 0, HISTORY: 1, DIFFERENT: 2, UNKNOWN: 2 };
+  const byCity = (a: ContactLeadRecord, b: ContactLeadRecord) =>
+    (a.city_evidence && b.city_evidence ? CITY_RANK[a.city_evidence] - CITY_RANK[b.city_evidence] : 0) || newestFirst(a, b);
+  const primaryRecords = primary.map(toRecord).sort(byCity);
   const dates = primary.flatMap((l) => [l.first_contact_at, l.last_contact_at]).filter((d): d is string => !!d).sort();
   const top = primary.reduce<string | null>((best, l) => (l.lead_quality == null ? best : best === null || QUALITY_RANK[l.lead_quality] > QUALITY_RANK[best] ? l.lead_quality : best), null);
   const topStage = primary.reduce<LeadStage | null>((best, l) => (l.peak_stage == null ? best : best === null || STAGE_RANK[l.peak_stage] > STAGE_RANK[best] ? l.peak_stage : best), null);
@@ -448,7 +466,47 @@ export async function findContactHistoryForUser(client: SupabaseClient, query: C
       .sort((a, b) => b.match_score - a.match_score || newestFirst(a, b)),
     phone_summary: phoneSummary,
     phone_matches: phoneLeads.map(toRecord).sort(newestFirst),
-    other_city_matches: otherCity.map(toRecord).sort(newestFirst),
-    unknown_city_matches: unknownCity.map(toRecord).sort(newestFirst),
+    city_summary: city && name ? citySummary(city, primaryRecords) : null,
   };
+}
+
+function citySummary(city: string, records: ContactLeadRecord[]): NonNullable<ContactHistoryResult['city_summary']> {
+  const n = (e: CityEvidence) => records.filter((r) => r.city_evidence === e).length;
+  const current = n('CURRENT');
+  const past = n('HISTORY');
+  const supported = current + past;
+  const parts = [current ? `${current} as the current city` : null, past ? `${past} in earlier location history` : null].filter(Boolean).join(', ');
+  return {
+    statement: records.length === 0 ? 'No same-name leads to compare the city with.'
+      : supported === 0 ? `${city} is not recorded on any of the ${records.length} same-name lead${records.length === 1 ? '' : 's'}. A different or missing city does not mean a different person.`
+      : `${city} is recorded on ${supported} of ${records.length} same-name lead${records.length === 1 ? '' : 's'} (${parts}) — supporting evidence, not proof of the same person.`,
+    current_city_count: current,
+    history_city_count: past,
+    different_city_count: n('DIFFERENT'),
+    unknown_city_count: n('UNKNOWN'),
+  };
+}
+
+/** Explains city evidence without overstating identity (never "same person"). */
+export function cityNote(
+  evidence: CityEvidence,
+  obs: LocationObservation | null,
+  lead: { contact_city: string | null; contact_city_source?: ContactCitySource | null },
+  city: string,
+  channel: string | null,
+): string {
+  switch (evidence) {
+    case 'CURRENT': {
+      const where = sourcePhrase(obs?.source ?? lead.contact_city_source ?? null, obs?.source_context ?? null, channel);
+      return `Likely related: same name and city (${lead.contact_city})${where ? ` observed ${where}` : ''} — supporting evidence, not proof.`;
+    }
+    case 'HISTORY': {
+      const where = sourcePhrase(obs?.source ?? null, obs?.source_context ?? null, channel);
+      return `Supporting match: ${obs?.city ?? city} appeared in this contact's previous location history${where ? ` (observed ${where})` : ''}${lead.contact_city ? `; current city is ${lead.contact_city}` : ''}.`;
+    }
+    case 'DIFFERENT':
+      return `Different city recorded${lead.contact_city ? ` (${lead.contact_city}${lead.contact_city_source ? ` · ${sourceLabel(lead.contact_city_source)}` : ''})` : ''} — not evidence of a different person.`;
+    default:
+      return 'No city recorded for this lead.';
+  }
 }

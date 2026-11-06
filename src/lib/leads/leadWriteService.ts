@@ -61,7 +61,11 @@ import {
   type OfferType,
 } from './classification';
 import { normalizeContactName, possibleNameMatch } from './contactName';
-import { cityKey, maskedPhone, samePhone, validateCity, validatePhone } from './contactDetails';
+import {
+  CONTACT_CITY_SOURCES, cityIsOnlyLogistics, cityKey, maskedPhone, samePhone, validateCity, validateCityContext, validatePhone,
+  type ContactCitySource,
+} from './contactDetails';
+import { loadContactLocations, sourceLabel, type LocationObservation } from './contactLocations';
 import { executeIdempotentMutation, type IdempotentMutationOptions } from '../writeRetry';
 
 // ── Public types ────────────────────────────────────────────────────────────
@@ -72,7 +76,7 @@ export const REVIEW_REASONS = [
   'MULTIPLE_CONTACT_MATCHES', 'POSSIBLE_DUPLICATE', 'POSSIBLE_DIFFERENT_PERSON', 'CROSS_CHANNEL_MATCH',
   'CONTACT_NAME_MISSING', 'ITEM_MISMATCH', 'CONTACT_MISMATCH', 'CHANNEL_MISMATCH', 'EVENT_ON_FINAL_LEAD',
   'DESTRUCTIVE_TRANSITION', 'GHOST_PRECONDITIONS_UNMET', 'DEAL_LINK_CONFLICT', 'CONTRADICTION',
-  'CONTACT_PHONE_CONFLICT', 'CONTACT_CITY_CONFLICT',
+  'CONTACT_PHONE_CONFLICT',
 ] as const;
 export type ReviewReason = (typeof REVIEW_REASONS)[number];
 
@@ -85,12 +89,16 @@ export type RejectReason = (typeof REJECT_REASONS)[number];
 export const RESOLUTION_ACTIONS = ['USE_LEAD', 'CREATE_NEW', 'CREATE_UNNAMED', 'CONFIRM'] as const;
 export type ResolutionAction = (typeof RESOLUTION_ACTIONS)[number];
 
-/** After CONTACT_PHONE_CONFLICT / CONTACT_CITY_CONFLICT on the lead being written: keep the stored value or replace it. */
+/** After CONTACT_PHONE_CONFLICT on the lead being written: keep the stored phone or replace it. (A different city is never a conflict.) */
 export const CONTACT_RESOLUTIONS = ['KEEP_EXISTING', 'REPLACE'] as const;
 export type ContactResolution = (typeof CONTACT_RESOLUTIONS)[number];
 
-/** Identity evidence of a candidate lead against the incoming contact details (explainable, never a score). */
-export type IdentityEvidence = 'same_phone' | 'different_phone' | 'same_city' | 'different_city';
+/**
+ * Identity evidence of a candidate lead against the incoming contact details (explainable, never a score).
+ * same_city = the lead's current city; same_city_history = an earlier observed city; different_city is
+ * informational only — never evidence of a different person.
+ */
+export type IdentityEvidence = 'same_phone' | 'different_phone' | 'same_city' | 'same_city_history' | 'different_city';
 
 export interface AgentEventInput {
   type: AgentEventType;
@@ -107,14 +115,21 @@ export interface RecordLeadInteractionInput {
   mutation_id: string;
   lead: {
     lead_id?: number; item_id?: number; channel?: LeadChannel; channel_detail?: string; contact_name?: string;
-    /** The contact's own city, only when explicitly stated ("I live in Oakville") — never a meeting place. */
+    /**
+     * A city clearly associated with the contact: their own listing / profile, their message ("I'm in Barrie"),
+     * or entered by the user. Never the user's listing location, a meeting / pickup place or a travel destination.
+     */
     contact_city?: string;
+    /** Required with contact_city: where it was observed. */
+    contact_city_source?: ContactCitySource;
+    /** Optional short reference, e.g. "Kijiji listing" — never copied message text. */
+    contact_city_source_context?: string;
     /** A phone number the contact gave ("text me at 647-555-1234"). */
     contact_phone?: string;
   };
   events: AgentEventInput[];
   resolution?: { action: ResolutionAction; lead_id?: number };
-  /** Only after a contact-detail conflict: the user's decision for the stored city/phone. */
+  /** Only after CONTACT_PHONE_CONFLICT: the user's decision for the stored phone. */
   contact_resolution?: ContactResolution;
   dry_run?: boolean;
 }
@@ -151,6 +166,7 @@ export interface LeadCandidate {
   channel_detail: string | null;
   contact_name: string | null;
   contact_city: string | null;
+  contact_city_source: ContactCitySource | null;
   /** Last four digits only ("…1234"); the full number is never echoed in candidates. */
   phone_hint: string | null;
   status: string;
@@ -176,9 +192,13 @@ export interface WriteResult {
    * (likely the same contact); 'name' = same contact name only (not proof of identity).
    * Always separate leads — never merged.
    */
-  related_contacts?: { lead_id: number; item_id: number; status: string; peak_stage: string | null; matched_on: 'phone' | 'name' }[];
+  related_contacts?: {
+    lead_id: number; item_id: number; status: string; peak_stage: string | null; matched_on: 'phone' | 'name';
+    /** The incoming city is this lead's current city / an earlier observed one (supportive, never proof). */
+    city_support?: 'same_city' | 'same_city_history';
+  }[];
   /** The lead's stored contact details after this write (only when city/phone was supplied or is stored). */
-  contact?: { contact_city: string | null; contact_phone: string | null };
+  contact?: { contact_city: string | null; contact_city_source: ContactCitySource | null; contact_phone: string | null };
   warnings?: string[];
   skipped_events?: number;
   reason?: ReviewReason | RejectReason | 'DUPLICATE_EVENTS' | 'ALREADY_VOIDED';
@@ -188,7 +208,7 @@ export interface WriteResult {
   allowed_resolutions?: ResolutionAction[];
   /** With CONTACT_*_CONFLICT: re-send with `contact_resolution` set to one of these. */
   allowed_contact_resolutions?: ContactResolution[];
-  contact_conflicts?: { field: 'contact_phone' | 'contact_city'; existing: string; incoming: string }[];
+  contact_conflicts?: { field: 'contact_phone'; existing: string; incoming: string }[];
   retryable?: boolean;
   current_version?: number;
   replayed?: boolean;
@@ -204,7 +224,7 @@ export const LEAD_SNAPSHOT_COLUMNS =
   'cash_component, trade_est_value, offer_is_concrete, offer_assessment, offer_assessment_source, buyer_message_count, ' +
   'our_message_count, first_contact_at, last_contact_at, last_inbound_at, last_outbound_at, waiting_on, unanswered_followups, ' +
   'reopen_count, peak_stage, peak_stage_source, peak_stage_at, negotiation_rounds, origin, last_write_source, version, ' +
-  'semantics_version, contact_city, contact_phone, contact_phone_normalized, notes';
+  'semantics_version, contact_city, contact_city_source, contact_phone, contact_phone_normalized, notes';
 
 export interface LeadSnapshotRow {
   id: number; user_id: number; inventory_item_id: number; lead_id: string; source_channel: string | null; deal_channel_id: number | null;
@@ -216,7 +236,7 @@ export interface LeadSnapshotRow {
   last_inbound_at: string | null; last_outbound_at: string | null; waiting_on: WaitingOn | null; unanswered_followups: number;
   reopen_count: number; peak_stage: DerivedSnapshot['peak_stage'] | null; peak_stage_source: StageSource | null; peak_stage_at: string | null;
   negotiation_rounds: number; origin: 'SHEET' | 'DIRECT'; last_write_source: string; version: number; semantics_version: number | null;
-  contact_city: string | null; contact_phone: string | null; contact_phone_normalized: string | null;
+  contact_city: string | null; contact_city_source: ContactCitySource | null; contact_phone: string | null; contact_phone_normalized: string | null;
   notes: string | null;
 }
 
@@ -525,6 +545,10 @@ function contentHash(e: Pick<PendingEvent, 'event_type' | 'direction' | 'occurre
 /** Contact details observed in this interaction (validated; phone normalized when safely possible). */
 export interface IncomingContact {
   city: string | null;
+  citySource: ContactCitySource | null;
+  cityContext: string | null;
+  /** When the city was observed: the latest event of this interaction. */
+  observedAt: string | null;
   phone: string | null;
   phoneNormalized: string | null;
 }
@@ -536,11 +560,23 @@ interface NormalizedInput {
 }
 
 function normalizeContact(lead: RecordLeadInteractionInput['lead'], contactResolution: unknown): IncomingContact | WriteResult {
-  const contact: IncomingContact = { city: null, phone: null, phoneNormalized: null };
-  if (lead.contact_city != null && String(lead.contact_city).trim() !== '') {
+  const contact: IncomingContact = { city: null, citySource: null, cityContext: null, observedAt: null, phone: null, phoneNormalized: null };
+  const hasCity = lead.contact_city != null && String(lead.contact_city).trim() !== '';
+  if (hasCity) {
     const c = validateCity(String(lead.contact_city));
     if (!c.ok) return rejected('VALIDATION_ERROR', `lead.${c.message}`);
     contact.city = c.city;
+    if (!(CONTACT_CITY_SOURCES as readonly unknown[]).includes(lead.contact_city_source)) {
+      return rejected('VALIDATION_ERROR', `lead.contact_city_source is required with contact_city: one of ${CONTACT_CITY_SOURCES.join(' / ')} (where the city was observed)`);
+    }
+    contact.citySource = lead.contact_city_source as ContactCitySource;
+    if (lead.contact_city_source_context != null && String(lead.contact_city_source_context).trim() !== '') {
+      const x = validateCityContext(String(lead.contact_city_source_context));
+      if (!x.ok) return rejected('VALIDATION_ERROR', `lead.${x.message}`);
+      contact.cityContext = x.context;
+    }
+  } else if (lead.contact_city_source != null || lead.contact_city_source_context != null) {
+    return rejected('VALIDATION_ERROR', 'lead.contact_city_source / contact_city_source_context are only allowed with contact_city');
   }
   if (lead.contact_phone != null && String(lead.contact_phone).trim() !== '') {
     const p = validatePhone(String(lead.contact_phone));
@@ -588,9 +624,20 @@ function normalizeInput(input: RecordLeadInteractionInput, ctx: WriteContext): N
     ev.content_hash = contentHash(ev);
     events.push(ev);
   }
+  if (contact.city) {
+    // A meeting / pickup / travel place is not the contact's city — only refused when the
+    // interaction itself shows the city that way and never as the contact's own location.
+    if (contact.citySource === 'MESSAGE' && cityIsOnlyLogistics(events.map((e) => e.summary), contact.city)) {
+      return rejected('VALIDATION_ERROR', `lead.contact_city "${contact.city}" appears in this interaction only as a meeting / pickup / travel location, not as the contact's own city. Omit contact_city (or use LISTING / PROFILE / MANUAL if it was observed there).`);
+    }
+    contact.observedAt = events.map((e) => e.occurred_at).sort().pop()!;
+  }
   const requestHash = sha256({
     // Contact details hash in their stored form (absent keys drop out, so hashes of requests without them are unchanged).
-    lead: { ...input.lead, contact_name: input.lead.contact_name?.trim(), channel_detail: input.lead.channel_detail?.trim(), contact_city: contact.city ?? undefined, contact_phone: contact.phone ?? undefined },
+    lead: {
+      ...input.lead, contact_name: input.lead.contact_name?.trim(), channel_detail: input.lead.channel_detail?.trim(), contact_city: contact.city ?? undefined,
+      contact_city_source: contact.citySource ?? undefined, contact_city_source_context: contact.cityContext ?? undefined, contact_phone: contact.phone ?? undefined,
+    },
     events: events.map((e) => [e.event_type, e.direction, e.occurred_at, e.occurred_at_precision, e.summary, e.message_count, e.expects_reply, e.provenance, e.payload]),
   });
   return { events, requestHash, contact };
@@ -602,49 +649,66 @@ interface CandidateRow {
   id: number; inventory_item_id: number; source_channel: string | null; channel_detail: string | null; contact_name: string | null;
   contact_key: string | null; status: string; outcome_reason: string | null; peak_stage: string | null; last_contact_at: string | null;
   deal_id: number | null; last_inbound_at: string | null; last_outbound_at: string | null;
-  contact_city: string | null; contact_phone: string | null; contact_phone_normalized: string | null;
+  contact_city: string | null; contact_city_source: ContactCitySource | null; contact_phone: string | null; contact_phone_normalized: string | null;
+  /** Earlier city observations (loaded only when an incoming city can be compared). */
+  location_history?: LocationObservation[];
 }
-const CANDIDATE_COLUMNS = 'id, inventory_item_id, source_channel, channel_detail, contact_name, contact_key, status, outcome_reason, peak_stage, last_contact_at, deal_id, last_inbound_at, last_outbound_at, contact_city, contact_phone, contact_phone_normalized';
+const CANDIDATE_COLUMNS = 'id, inventory_item_id, source_channel, channel_detail, contact_name, contact_key, status, outcome_reason, peak_stage, last_contact_at, deal_id, last_inbound_at, last_outbound_at, contact_city, contact_city_source, contact_phone, contact_phone_normalized';
 
-const NO_CONTACT: IncomingContact = { city: null, phone: null, phoneNormalized: null };
+const NO_CONTACT: IncomingContact = { city: null, citySource: null, cityContext: null, observedAt: null, phone: null, phoneNormalized: null };
+
+/** Attach location history to rows when the incoming contact has a city (history matters only then). */
+async function withLocationHistory<T extends { id: number; location_history?: LocationObservation[] }>(client: SupabaseClient, rows: T[], inc: IncomingContact): Promise<T[]> {
+  if (!inc.city || rows.length === 0) return rows;
+  const hist = await loadContactLocations(client, rows.map((r) => r.id));
+  for (const r of rows) r.location_history = hist.get(r.id) ?? [];
+  return rows;
+}
 
 /**
  * Explainable identity evidence of a stored lead against incoming contact details.
- * Phone is the strong signal (same person, possibly many leads); city only supports.
+ * Phone is the strong signal (same person, possibly many leads). City only supports — the
+ * current city or any earlier observed one — and a different city never excludes a lead.
  */
 export function identityEvidence(
-  l: { contact_city: string | null; contact_phone: string | null; contact_phone_normalized: string | null },
+  l: { contact_city: string | null; contact_phone: string | null; contact_phone_normalized: string | null; location_history?: LocationObservation[] },
   inc: IncomingContact,
 ): IdentityEvidence[] {
   const out: IdentityEvidence[] = [];
   if (inc.phone && l.contact_phone) {
     out.push(samePhone({ phone: inc.phone, normalized: inc.phoneNormalized }, { phone: l.contact_phone, normalized: l.contact_phone_normalized }) ? 'same_phone' : 'different_phone');
   }
-  if (inc.city && l.contact_city) out.push(cityKey(inc.city) === cityKey(l.contact_city) ? 'same_city' : 'different_city');
+  const key = cityKey(inc.city);
+  const history = l.location_history ?? [];
+  if (key && (l.contact_city || history.length)) {
+    out.push(cityKey(l.contact_city) === key ? 'same_city' : history.some((h) => h.city_key === key) ? 'same_city_history' : 'different_city');
+  }
   return out;
 }
 
 const EVIDENCE_ORDER = (ev: IdentityEvidence[] | undefined) =>
-  ev?.includes('same_phone') ? 0 : ev?.includes('different_phone') ? 3 : ev?.includes('same_city') ? 1 : 2;
+  ev?.includes('same_phone') ? 0 : ev?.includes('different_phone') ? 3 : ev?.includes('same_city') || ev?.includes('same_city_history') ? 1 : 2;
 
 function candidate(r: CandidateRow, match: LeadCandidate['match'], why: string, inc: IncomingContact = NO_CONTACT): LeadCandidate {
   const identity = identityEvidence(r, inc);
+  const pastObs = identity.includes('same_city_history') ? (r.location_history ?? []).find((h) => h.city_key === cityKey(inc.city)) : undefined;
   const notes = [
     identity.includes('same_phone') ? 'same normalized phone — likely the same contact' : null,
     identity.includes('different_phone') ? 'a different phone is recorded' : null,
-    identity.includes('same_city') ? 'same city (supportive, not proof)' : null,
-    identity.includes('different_city') ? 'a different city is recorded' : null,
+    identity.includes('same_city') ? `same city${r.contact_city_source ? ` (${sourceLabel(r.contact_city_source)})` : ''} — supportive, not proof` : null,
+    pastObs ? `${pastObs.city} appeared in this contact's earlier location history (${sourceLabel(pastObs.source)}) — supportive, not proof` : null,
+    identity.includes('different_city') ? 'a different city is recorded — not evidence of a different person' : null,
   ].filter(Boolean);
   return {
     lead_id: r.id, item_id: r.inventory_item_id, channel: r.source_channel, channel_detail: r.channel_detail, contact_name: r.contact_name,
-    contact_city: r.contact_city ?? null, phone_hint: maskedPhone(r.contact_phone),
+    contact_city: r.contact_city ?? null, contact_city_source: r.contact_city_source ?? null, phone_hint: maskedPhone(r.contact_phone),
     status: r.status, outcome_reason: r.outcome_reason, peak_stage: r.peak_stage, last_contact_at: r.last_contact_at, match,
     why: notes.length ? `${why}; ${notes.join('; ')}` : why,
     ...(identity.length ? { identity } : {}),
   };
 }
 
-/** Strongest identity evidence first (same phone, then same city); a conflicting phone last. Stable otherwise. */
+/** Strongest identity evidence first (same phone, then same current/earlier city); a conflicting phone last. Stable otherwise. */
 function byIdentity(cands: LeadCandidate[]): LeadCandidate[] {
   return cands.map((c, i) => ({ c, i })).sort((a, b) => EVIDENCE_ORDER(a.c.identity) - EVIDENCE_ORDER(b.c.identity) || a.i - b.i).map((x) => x.c);
 }
@@ -691,7 +755,7 @@ async function resolveLead(client: SupabaseClient, input: RecordLeadInteractionI
     const s0 = src as unknown as CandidateRow | null;
     if (!s0) return rejected('LEAD_NOT_FOUND', `Lead ${input.lead.lead_id} not found.`);
     const channelName = (Object.keys(CHANNEL_DB_NAME) as LeadChannel[]).find((c) => CHANNEL_DB_NAME[c].toLowerCase() === (s0.source_channel ?? 'Other').toLowerCase()) ?? 'Other';
-    return resolveLead(client, { ...input, lead: { item_id: input.lead.item_id ?? s0.inventory_item_id, channel: input.lead.channel ?? channelName, channel_detail: input.lead.channel_detail ?? s0.channel_detail ?? undefined, contact_name: input.lead.contact_name ?? s0.contact_name ?? undefined, contact_city: input.lead.contact_city, contact_phone: input.lead.contact_phone } }, inc);
+    return resolveLead(client, { ...input, lead: { item_id: input.lead.item_id ?? s0.inventory_item_id, channel: input.lead.channel ?? channelName, channel_detail: input.lead.channel_detail ?? s0.channel_detail ?? undefined, contact_name: input.lead.contact_name ?? s0.contact_name ?? undefined, contact_city: input.lead.contact_city, contact_city_source: input.lead.contact_city_source, contact_city_source_context: input.lead.contact_city_source_context, contact_phone: input.lead.contact_phone } }, inc);
   }
   const explicitId = input.lead.lead_id ?? (res?.action === 'USE_LEAD' ? res.lead_id : undefined);
   if (explicitId != null) {
@@ -699,6 +763,7 @@ async function resolveLead(client: SupabaseClient, input: RecordLeadInteractionI
     if (error) throw new Error(`item_leads: ${error.message}`);
     const lead = data as unknown as CandidateRow | null;
     if (!lead) return rejected('LEAD_NOT_FOUND', `Lead ${explicitId} not found.`);
+    await withLocationHistory(client, [lead], inc);
     const rc: ResolveContext = { itemId: lead.inventory_item_id, sourceChannel: lead.source_channel, dealChannelId: null, channelDetail: lead.channel_detail, contactName: name, key, related: [] };
     const viaResolution = res?.action === 'USE_LEAD' && res.lead_id === explicitId;
     if (!viaResolution) {
@@ -732,17 +797,25 @@ async function resolveLead(client: SupabaseClient, input: RecordLeadInteractionI
 
   // Same contact on OTHER items (separate leads, never merged): same normalized phone first
   // (likely the same contact), then same name. A non-unique display name is not an identity.
+  // A matching current or earlier city is noted as support (city_support), never as identity.
   const related = new Map<number, NonNullable<WriteResult['related_contacts']>[number]>();
-  type RelRow = { id: number; inventory_item_id: number; status: string; peak_stage: string | null };
+  type RelRow = { id: number; inventory_item_id: number; status: string; peak_stage: string | null; contact_city: string | null; location_history?: LocationObservation[] };
+  const relRowsAll: RelRow[] = [];
+  const REL_COLUMNS = 'id, inventory_item_id, status, peak_stage, contact_city';
   if (inc.phoneNormalized) {
-    const { data: relRows, error: relError } = await client.from('item_leads').select('id, inventory_item_id, status, peak_stage').eq('contact_phone_normalized', inc.phoneNormalized).neq('inventory_item_id', input.lead.item_id).limit(10);
+    const { data: relRows, error: relError } = await client.from('item_leads').select(REL_COLUMNS).eq('contact_phone_normalized', inc.phoneNormalized).neq('inventory_item_id', input.lead.item_id).limit(10);
     if (relError) throw new Error(`item_leads (related by phone): ${relError.message}`);
-    for (const r of (relRows ?? []) as RelRow[]) related.set(r.id, { lead_id: r.id, item_id: r.inventory_item_id, status: r.status, peak_stage: r.peak_stage, matched_on: 'phone' });
+    for (const r of (relRows ?? []) as RelRow[]) { relRowsAll.push(r); related.set(r.id, { lead_id: r.id, item_id: r.inventory_item_id, status: r.status, peak_stage: r.peak_stage, matched_on: 'phone' }); }
   }
   if (key && !isNonUniqueDisplayName(ch.sourceChannel, key)) {
-    const { data: relRows, error: relError } = await client.from('item_leads').select('id, inventory_item_id, status, peak_stage').eq('contact_key', key).neq('inventory_item_id', input.lead.item_id).limit(5);
+    const { data: relRows, error: relError } = await client.from('item_leads').select(REL_COLUMNS).eq('contact_key', key).neq('inventory_item_id', input.lead.item_id).limit(5);
     if (relError) throw new Error(`item_leads (related): ${relError.message}`);
-    for (const r of (relRows ?? []) as RelRow[]) if (!related.has(r.id)) related.set(r.id, { lead_id: r.id, item_id: r.inventory_item_id, status: r.status, peak_stage: r.peak_stage, matched_on: 'name' });
+    for (const r of (relRows ?? []) as RelRow[]) if (!related.has(r.id)) { relRowsAll.push(r); related.set(r.id, { lead_id: r.id, item_id: r.inventory_item_id, status: r.status, peak_stage: r.peak_stage, matched_on: 'name' }); }
+  }
+  for (const r of await withLocationHistory(client, relRowsAll, inc)) {
+    const ev = identityEvidence({ ...r, contact_phone: null, contact_phone_normalized: null }, { ...inc, phone: null });
+    const support = ev.includes('same_city') ? 'same_city' : ev.includes('same_city_history') ? 'same_city_history' : null;
+    if (support) related.get(r.id)!.city_support = support;
   }
   rc.related = Array.from(related.values());
 
@@ -756,7 +829,7 @@ async function resolveLead(client: SupabaseClient, input: RecordLeadInteractionI
 
   const { data: itemLeads, error: leadsError } = await client.from('item_leads').select(CANDIDATE_COLUMNS).eq('inventory_item_id', input.lead.item_id);
   if (leadsError) throw new Error(`item_leads: ${leadsError.message}`);
-  const leads = (itemLeads ?? []) as unknown as CandidateRow[];
+  const leads = await withLocationHistory(client, (itemLeads ?? []) as unknown as CandidateRow[], inc);
   const myChannel = channelKey(ch.sourceChannel, ch.channelDetail);
   const myBase = baseKey(name)!;
   const myNorm = normalizeContactName(name);
@@ -765,7 +838,7 @@ async function resolveLead(client: SupabaseClient, input: RecordLeadInteractionI
   let exact = leads.filter((l) => l.contact_key === key && channelKey(l.source_channel, l.channel_detail) === myChannel);
   if (exact.length > 1) {
     // Several same-name leads on this item/channel: a same-phone lead is the strongest evidence and
-    // selects itself when it is the only one; a shared city only orders the candidates.
+    // selects itself when it is the only one; a shared (current or earlier) city only orders the candidates.
     const byPhone = exact.filter((l) => phoneOf(l).includes('same_phone'));
     if (byPhone.length === 1) {
       exact = byPhone;
@@ -862,39 +935,51 @@ async function validateDeal(client: SupabaseClient, dealId: number, itemId: numb
 
 // ── Contact city / phone enrichment ────────────────────────────────────────
 //
-// Fill-only by default: an empty field takes the observed value; the same value
-// (normalized phone / city key) is no change; a DIFFERENT stored value is never
-// overwritten silently — REVIEW_REQUIRED until the user decides KEEP_EXISTING or
-// REPLACE. Every change is one SYSTEM NOTE event in the same mutation (audit).
+// Phone — fill-only: an empty field takes the observed value; the same number
+// (normalized) is no change; a DIFFERENT stored phone is never overwritten
+// silently — REVIEW_REQUIRED until the user decides KEEP_EXISTING or REPLACE.
+//
+// City — location EVIDENCE with history, never a conflict: every observation
+// (city + source) is kept in lead_contact_locations; the snapshot
+// (contact_city / contact_city_source) follows the NEWEST observation. A
+// snapshot city recorded before history existed is carried into the history
+// before it is replaced, so nothing is lost. A different city is not evidence
+// of a different person.
+//
+// Every snapshot change / new observation is one SYSTEM NOTE event in the same
+// mutation (audit).
 
 interface ContactNote { summary: string; payload: Record<string, unknown> }
+
+/** One lead_contact_locations upsert (RPC "contact".locations). */
+export interface LocationWrite {
+  city: string; city_key: string; source: ContactCitySource | null; source_context: string | null; observed_at: string | null;
+}
 
 interface ContactPlan {
   /** Keys for apply_lead_interaction's "contact" object (present = set). */
   set: Record<string, string | null>;
+  locations: LocationWrite[];
   changes: Changes;
   notes: ContactNote[];
   warnings: string[];
-  after: { contact_city: string | null; contact_phone: string | null };
+  after: { contact_city: string | null; contact_city_source: ContactCitySource | null; contact_phone: string | null };
 }
 
+const latest = (xs: (string | null | undefined)[]): string | null => xs.filter((x): x is string => !!x).sort().pop() ?? null;
+
 export function planContact(
-  row: Pick<LeadSnapshotRow, 'id' | 'contact_city' | 'contact_phone' | 'contact_phone_normalized'> | null,
+  row: Pick<LeadSnapshotRow, 'id' | 'contact_city' | 'contact_city_source' | 'contact_phone' | 'contact_phone_normalized'> | null,
   inc: IncomingContact,
   decision: ContactResolution | undefined,
+  /** The lead's location history (newest first). */
+  history: LocationObservation[] = [],
+  /** When the current snapshot city was recorded, if it has no history row yet (its audit NOTE). */
+  snapshotObservedAt: string | null = null,
 ): ContactPlan | WriteResult {
-  const cur = { city: row?.contact_city ?? null, phone: row?.contact_phone ?? null, normalized: row?.contact_phone_normalized ?? null };
-  const out: ContactPlan = { set: {}, changes: {}, notes: [], warnings: [], after: { contact_city: cur.city, contact_phone: cur.phone } };
+  const cur = { city: row?.contact_city ?? null, citySource: row?.contact_city_source ?? null, phone: row?.contact_phone ?? null, normalized: row?.contact_phone_normalized ?? null };
+  const out: ContactPlan = { set: {}, locations: [], changes: {}, notes: [], warnings: [], after: { contact_city: cur.city, contact_city_source: cur.citySource, contact_phone: cur.phone } };
   const conflicts: NonNullable<WriteResult['contact_conflicts']> = [];
-  const setCity = (to: string, replaced: boolean) => {
-    out.set.contact_city = to;
-    out.changes.contact_city = [cur.city, to];
-    out.after.contact_city = to;
-    out.notes.push({
-      summary: replaced ? `Contact city changed from ${cur.city} to ${to} (confirmed by the user)` : `Contact city added: ${to}`,
-      payload: { topic: 'OTHER', change: 'CONTACT_CITY', from: cur.city, to },
-    });
-  };
   const setPhone = (replaced: boolean) => {
     out.set.contact_phone = inc.phone;
     out.set.contact_phone_normalized = inc.phoneNormalized;
@@ -906,9 +991,45 @@ export function planContact(
     });
   };
 
-  if (inc.city) {
-    if (!cur.city) setCity(inc.city, false);
-    else if (cityKey(cur.city) !== cityKey(inc.city)) conflicts.push({ field: 'contact_city', existing: cur.city, incoming: inc.city });
+  if (inc.city && inc.citySource && inc.observedAt) {
+    const key = cityKey(inc.city)!;
+    const curKey = cityKey(cur.city);
+    const label = sourceLabel(inc.citySource);
+    const at = inc.observedAt;
+    // A snapshot city with no history row (recorded before history existed) is preserved first.
+    const carried = cur.city && curKey && !history.some((h) => h.city_key === curKey);
+    if (carried) out.locations.push({ city: cur.city!, city_key: curKey!, source: cur.citySource, source_context: null, observed_at: snapshotObservedAt });
+    const known = history.find((h) => h.city_key === key && h.source === inc.citySource);
+    const isNew = !known;
+    if (isNew || (known.last_observed_at != null && at > known.last_observed_at)) {
+      out.locations.push({ city: inc.city, city_key: key, source: inc.citySource, source_context: inc.cityContext, observed_at: at });
+    }
+    if (isNew) out.changes.contact_location_added = [null, `${inc.city} · ${label}`];
+    // The snapshot follows the newest observation (ties: the incoming one).
+    const curAt = curKey ? latest([...history.filter((h) => h.city_key === curKey).map((h) => h.last_observed_at), carried ? snapshotObservedAt : null]) : null;
+    const incomingIsNewest = curAt == null || at >= curAt;
+    const payload = { topic: 'OTHER', change: 'CONTACT_CITY', from: cur.city, to: inc.city, source: inc.citySource, from_source: cur.citySource, observed_at: at };
+    const setSnapshot = (city: string) => {
+      out.set.contact_city = city;
+      out.set.contact_city_source = inc.citySource;
+      if (city !== cur.city) out.changes.contact_city = [cur.city, city];
+      if (inc.citySource !== cur.citySource) out.changes.contact_city_source = [cur.citySource, inc.citySource];
+      out.after.contact_city = city;
+      out.after.contact_city_source = inc.citySource;
+    };
+    if (!cur.city) {
+      setSnapshot(inc.city);
+      out.notes.push({ summary: `Contact city added: ${inc.city} (${label})`, payload });
+    } else if (key === curKey) {
+      // Same city: keep its stored spelling; the provenance follows the newest observation.
+      if (incomingIsNewest && inc.citySource !== cur.citySource) setSnapshot(cur.city);
+      if (isNew) out.notes.push({ summary: `Contact city ${cur.city} observed again (${label})`, payload: { ...payload, to: cur.city } });
+    } else if (incomingIsNewest) {
+      setSnapshot(inc.city);
+      out.notes.push({ summary: `Contact city updated from ${cur.city} to ${inc.city} (${label}); ${cur.city} kept in location history`, payload });
+    } else if (isNew) {
+      out.notes.push({ summary: `Earlier contact city observation recorded: ${inc.city} (${label}); current city stays ${cur.city} (newer)`, payload });
+    }
   }
   if (inc.phone) {
     if (!cur.phone) setPhone(false);
@@ -920,21 +1041,13 @@ export function planContact(
   if (conflicts.length === 0) return out;
 
   if (!decision) {
-    const phone = conflicts.some((c) => c.field === 'contact_phone');
-    const what = conflicts.map((c) => c.field === 'contact_phone'
-      ? `phone ${maskedPhone(c.existing)} is stored, ${maskedPhone(c.incoming)} was just observed`
-      : `city "${c.existing}" is stored, "${c.incoming}" was just stated`).join('; ');
-    return review(phone ? 'CONTACT_PHONE_CONFLICT' : 'CONTACT_CITY_CONFLICT',
-      `Existing contact details on lead ${row?.id} differ from the new observation (${what}). Nothing was written. Ask the user, then re-send the same request with contact_resolution KEEP_EXISTING (log the interaction, keep the stored value) or REPLACE (store the new value)${phone ? ', or resolution CREATE_NEW if this is a different person' : ''}.`,
-      { lead_id: row?.id, contact_conflicts: conflicts, allowed_contact_resolutions: ['KEEP_EXISTING', 'REPLACE'], allowed_resolutions: phone ? ['CREATE_NEW'] : [] });
+    const c = conflicts[0];
+    return review('CONTACT_PHONE_CONFLICT',
+      `Existing contact details on lead ${row?.id} differ from the new observation (phone ${maskedPhone(c.existing)} is stored, ${maskedPhone(c.incoming)} was just observed). Nothing was written. Ask the user, then re-send the same request with contact_resolution KEEP_EXISTING (log the interaction, keep the stored phone) or REPLACE (store the new phone), or resolution CREATE_NEW if this is a different person.`,
+      { lead_id: row?.id, contact_conflicts: conflicts, allowed_contact_resolutions: ['KEEP_EXISTING', 'REPLACE'], allowed_resolutions: ['CREATE_NEW'] });
   }
-  for (const c of conflicts) {
-    if (decision === 'REPLACE') {
-      if (c.field === 'contact_city') setCity(c.incoming, true); else setPhone(true);
-    } else {
-      out.warnings.push(`CONTACT_KEPT_EXISTING:${c.field}`);
-    }
-  }
+  if (decision === 'REPLACE') setPhone(true);
+  else out.warnings.push('CONTACT_KEPT_EXISTING:contact_phone');
   return out;
 }
 
@@ -1132,7 +1245,16 @@ async function planMutation(client: SupabaseClient, input: RecordLeadInteraction
     rc.itemId = row.inventory_item_id;
   }
 
-  const cp = planContact(state?.row ?? null, normalized.contact, input.contact_resolution);
+  let history: LocationObservation[] = [];
+  let snapshotObservedAt: string | null = null;
+  if (state && normalized.contact.city) {
+    history = (await loadContactLocations(client, [state.row.id])).get(state.row.id) ?? [];
+    // For a snapshot city recorded before location history: when its audit NOTE says it was observed.
+    const curKey = cityKey(state.row.contact_city);
+    snapshotObservedAt = latest(state.events.filter((e) => !e.voided_at && e.event_type === 'NOTE' && (e.payload as Record<string, unknown>)?.change === 'CONTACT_CITY'
+      && cityKey(String((e.payload as Record<string, unknown>).to ?? '')) === curKey).map((e) => e.occurred_at));
+  }
+  const cp = planContact(state?.row ?? null, normalized.contact, input.contact_resolution, history, snapshotObservedAt);
   if ('result' in cp) return cp;
 
   const p = await plan(client, state, rc.itemId!, normalized, resolution, ctx, cp.notes);
@@ -1164,7 +1286,7 @@ async function planMutation(client: SupabaseClient, input: RecordLeadInteraction
     snapshot: snapshotForRpc(p.snapshot),
     events: p.pending.map(pendingForRpc),
     result: storedResult,
-    ...(Object.keys(cp.set).length ? { contact: cp.set } : {}),
+    ...(Object.keys(cp.set).length || cp.locations.length ? { contact: { ...cp.set, ...(cp.locations.length ? { locations: cp.locations } : {}) } } : {}),
   };
   return { request, storedResult, resultCode, leadId: state?.row.id ?? null };
 }

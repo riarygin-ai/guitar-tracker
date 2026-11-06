@@ -10,12 +10,24 @@
 // or exchange code) keeps its display form but gets NO normalized value — a
 // country code is never guessed.
 //
-// City: the contact's own city (residence/base), explicitly stated. A meeting
-// place is not a city. Compared case-/space-insensitively; a trailing
-// ", ON" / ", Ontario" province suffix is ignored.
+// City: the current / best observed city ASSOCIATED with the contact — shown
+// on their own listing (LISTING) or profile (PROFILE), stated in their message
+// (MESSAGE) or entered by the user (MANUAL). Location evidence, not a proven
+// residence. Never the user's own listing location, a meeting / pickup place
+// or a travel destination. Compared case-/space-insensitively; a trailing
+// ", ON" / ", Ontario" province suffix is ignored. A different city never
+// means a different person.
 
 export const CONTACT_CITY_MAX = 80;
+export const CONTACT_CITY_CONTEXT_MAX = 80;
 export const CONTACT_PHONE_MAX = 40;
+
+export const CONTACT_CITY_SOURCES = ['LISTING', 'PROFILE', 'MESSAGE', 'MANUAL'] as const;
+export type ContactCitySource = (typeof CONTACT_CITY_SOURCES)[number];
+
+export const CITY_SOURCE_LABEL: Record<ContactCitySource, string> = {
+  LISTING: 'Listing', PROFILE: 'Profile', MESSAGE: 'Message', MANUAL: 'Manual',
+};
 
 const NANP_10 = /^([2-9]\d{2})([2-9]\d{2})(\d{4})$/;
 
@@ -117,4 +129,53 @@ export function validateCity(raw: string): { ok: true; city: string } | { ok: fa
   if (c.length > CONTACT_CITY_MAX) return { ok: false, message: `contact_city must be at most ${CONTACT_CITY_MAX} characters` };
   if (!/[a-zA-ZÀ-ɏ]/.test(c) || /\d{3,}/.test(c)) return { ok: false, message: 'contact_city must be a place name' };
   return { ok: true, city: c };
+}
+
+/** A short, safe provenance reference ("Kijiji listing"); not copied message text. */
+export function validateCityContext(raw: string): { ok: true; context: string } | { ok: false; message: string } {
+  const c = cleanCity(raw);
+  if (!c) return { ok: false, message: 'contact_city_source_context must not be empty' };
+  if (c.length > CONTACT_CITY_CONTEXT_MAX) return { ok: false, message: `contact_city_source_context must be at most ${CONTACT_CITY_CONTEXT_MAX} characters (a short reference such as "Kijiji listing", not message text)` };
+  return { ok: true, context: c };
+}
+
+// ── How a city is mentioned in a message ───────────────────────────────────
+//
+// SELF: the city belongs to the contact ("I'm in Barrie", "I live in Oakville",
+// "based in Hamilton", "located in Windsor", "I'm from Belleville").
+// LOGISTICS: a meeting / pickup / delivery / shipping place ("can meet in
+// Burlington", "pickup in Barrie"). TRAVEL: somewhere they are going ("I'm
+// driving to Barrie tomorrow", "I'll be in Toronto"). Only SELF makes a
+// MESSAGE-sourced contact city; the server refuses a MESSAGE city that the
+// interaction mentions only as logistics/travel.
+
+export type CityMention = 'SELF' | 'LOGISTICS' | 'TRAVEL';
+
+const plain = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[’‘]/g, "'").toLowerCase();
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function cityMentions(text: string, city: string): CityMention[] {
+  const c = cleanCity(city);
+  if (!c) return [];
+  const t = plain(text);
+  // "St. Catharines" also matches "st catharines"; the city must end at a word boundary.
+  const C = escapeRe(plain(c)).replace(/\\\.\s*|\s+/g, String.raw`\.?\s*`) + '(?![a-z])';
+  const out = new Set<CityMention>();
+  const travel = String.raw`\b(?:going|driving|heading|travell?ing|coming|flying|commuting|visiting|trip|drive|go|head|travel|be)\s+(?:to|into|through|over to|down to|up to|in)\s+` + C;
+  const logistics = String.raw`\b(?:meet|meeting|meetup|meet-up|pick\s?-?up|drop\s?-?off|deliver|delivery|ship|shipping|shipped|halfway|exchange|handoff|hand-off)\b[^.;!?\n]{0,30}?\b(?:in|at|to|near|around)\s+` + C;
+  // Self-location needs the city right after the phrase, so "I'm driving to Barrie" never qualifies.
+  const self = [
+    String.raw`\b(?:i'?m|i am|im|we'?re|we are)\s+(?:(?:currently\s+|also\s+)?(?:in|near|from|out of|around)\s+)?` + C,
+    String.raw`\b(?:live|lives|living|based|located|reside|resides|residing|is|are)\s+(?:in|near|out of|around)\s+` + C,
+  ];
+  if (new RegExp(travel).test(t)) out.add('TRAVEL');
+  if (new RegExp(logistics).test(t)) out.add('LOGISTICS');
+  if (self.some((p) => new RegExp(p).test(t))) out.add('SELF');
+  return Array.from(out);
+}
+
+/** Does the text only place the city as logistics/travel (never as the contact's own location)? */
+export function cityIsOnlyLogistics(texts: string[], city: string): boolean {
+  const all = texts.flatMap((t) => cityMentions(t, city));
+  return all.length > 0 && !all.includes('SELF');
 }

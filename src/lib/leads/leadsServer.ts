@@ -24,7 +24,7 @@ export const LEAD_COLUMNS =
   'offer_assessment_source, last_inbound_at, last_outbound_at, waiting_on, unanswered_followups, reopen_count, channel_detail, origin, version';
 
 /** Contact details for the owner's /leads drawer. Not in LEAD_COLUMNS, which analytics loaders share. */
-export const LEAD_CONTACT_COLUMNS = 'contact_city, contact_phone';
+export const LEAD_CONTACT_COLUMNS = 'contact_city, contact_city_source, contact_phone';
 
 export class LeadsLoadError extends Error {}
 

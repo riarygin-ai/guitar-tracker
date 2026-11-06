@@ -25,6 +25,7 @@ import LeadHistorySection from '@/components/leads/LeadHistorySection';
 import { buildLeadHistory, type LeadHistory } from '@/lib/leads/leadEventHistory';
 import { fetchLeadEvents, saveLeadContactName } from '@/lib/leads/leadsClient';
 import type { LeadRow } from '@/lib/leads/leadTypes';
+import { CITY_SOURCE_LABEL } from '@/lib/leads/contactDetails';
 
 const STAGE_SOURCE_LABEL: Record<string, string> = { DERIVED: 'from events', LEGACY_AUDIT: 'legacy audit', LEGACY_STRUCTURED: 'legacy fields' };
 
@@ -69,7 +70,12 @@ function ContactNameField({ lead, onSaved }: { lead: LeadRow; onSaved: (patch: P
               {lead.contact_name_source && <span className="ml-1 text-[11px] text-slate-500 dark:text-slate-400">{NAME_SOURCE_LABEL[lead.contact_name_source]}</span>}
             </>
           ) : <span className="text-slate-400 dark:text-slate-500">No name recorded</span>}
-          {lead.contact_city && <span className="mt-0.5 block text-xs text-slate-600 [overflow-wrap:anywhere] dark:text-slate-300" data-contact-city>{lead.contact_city}</span>}
+          {lead.contact_city && (
+            <span className="mt-0.5 block text-xs text-slate-600 [overflow-wrap:anywhere] dark:text-slate-300" data-contact-city>
+              {lead.contact_city}
+              {lead.contact_city_source && <span className="text-slate-400 dark:text-slate-500" data-contact-city-source> · {CITY_SOURCE_LABEL[lead.contact_city_source]}</span>}
+            </span>
+          )}
           {lead.contact_phone && (
             <a href={`tel:${lead.contact_phone.replace(/[^\d+]/g, '')}`} className="mt-0.5 block text-xs text-sky-700 [overflow-wrap:anywhere] hover:underline dark:text-sky-400" data-contact-phone>{lead.contact_phone}</a>
           )}
