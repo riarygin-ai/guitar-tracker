@@ -3,14 +3,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { supabase, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getLatestCompletedAdviceForCurrentUser, getActiveAdviceDismissalKeysForCurrentUser } from '@/lib/supabase'
+import { supabase, getCashFlows, getInventoryItemsWithValue, getDeals, getDealItems, getInventoryExpenses, getItemCategories, getItemPurposes, getItemSubtypes, getLatestCompletedAdviceForCurrentUser, getActiveAdviceDismissalsForCurrentUser, getLatestGeneralCoachFailuresForCurrentUser } from '@/lib/supabase'
 import type { AnalyticsRunMeta } from '@/types'
 import type { AnalyticsRunAdviceRow, AdviceCard } from '@/lib/analytics/advice/types'
 import { computeAdviceKey } from '@/lib/analytics/advice/adviceKey'
 import AdviceCardView from '@/components/AdviceCardView'
 import CoachAdviceDrawer from '@/components/CoachAdviceDrawer'
-import { adviceLabels, formatAdviceTimestamp, resolveRevisionLanguage } from '@/lib/analytics/advice/adviceLabels'
+import DashboardListingActions from '@/components/DashboardListingActions'
+import HiddenAdviceList from '@/components/HiddenAdviceList'
+import { adviceLabels, formatAdviceDate, formatAdviceTimestamp, resolveRevisionLanguage } from '@/lib/analytics/advice/adviceLabels'
 import type { AdviceLanguage } from '@/lib/analytics/advice/adviceLanguage'
+import { deriveCoachModuleView, weeklyModuleFailureAt, type WeeklyCoachStatusPayload } from '@/lib/analytics/coachState'
+import { fetchWeeklyCoachStatus, refreshCoach, resurfaceAdvice } from '@/lib/analytics/listingAdvice/listingAdviceClient'
+import { invalidateListingAdviceCache } from '@/lib/listingsCacheStore'
 
 export default function HomePage() {
   const router = useRouter()
@@ -27,32 +32,41 @@ export default function HomePage() {
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
   const [inventoryGroupView, setInventoryGroupView] = useState<'category' | 'type' | 'purpose'>('category')
 
-  // ── Latest Analytics Advice (Auditable AI Advice v1.0) ──────────────────
-  // Deliberately its own independent fetch, separate from the main
-  // Promise.all above — the rest of the Dashboard must never wait on (or
-  // fail because of) analytics/advice availability. Display-only: the
-  // Dashboard neither generates nor retries advice — that now lives
-  // exclusively in Analytics History (see src/app/analytics/page.tsx).
+  // ── Business Coach (General Coach + Listing Actions) ────────────────────
+  // Deliberately its own independent fetches, separate from the main
+  // Promise.all below — the rest of the Dashboard must never wait on (or
+  // fail because of) Coach availability. The section is ONE Business Coach:
+  // weekly refresh status, the General Coach cards, and a compact Listing
+  // Actions subsection. It never renders blank: no advice yet, all cards
+  // hidden, no material advice and a failed latest refresh are each stated
+  // explicitly, and a failed refresh never hides the last successful advice
+  // (see src/lib/analytics/coachState.ts for the state model).
   const [latestCompletedAdvice, setLatestCompletedAdvice] = useState<{ run: AnalyticsRunMeta; advice: AnalyticsRunAdviceRow } | null>(null)
   const [adviceLoading, setAdviceLoading] = useState(true)
+  const [generalFailureTimes, setGeneralFailureTimes] = useState<string[]>([])
+  const [weeklyStatus, setWeeklyStatus] = useState<WeeklyCoachStatusPayload | null>(null)
 
-  // ── Advice Dismissal / Resurface v1 ────────────────────────────────────
-  // Independent fetch of the caller's currently-active dismissal keys
-  // (resurface_after in the future), loaded alongside the advice itself.
+  // ── Advice Dismissal / Resurface ───────────────────────────────────────
+  // Active dismissals (key -> resurface_after), loaded alongside the advice.
   // Rendering waits on BOTH before showing any card, so a dismissed card
   // never flashes on screen before being filtered out.
-  const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set())
+  const [dismissals, setDismissals] = useState<Map<string, string>>(new Map())
   const [dismissalsLoading, setDismissalsLoading] = useState(true)
   const [viewerLanguage, setViewerLanguage] = useState<AdviceLanguage | null>(null)
   const [openAdviceCode, setOpenAdviceCode] = useState<string | null>(null)
   const [dismissingCodes, setDismissingCodes] = useState<Set<string>>(new Set())
   const [dismissToast, setDismissToast] = useState<string | null>(null)
+  const [resurfacingKey, setResurfacingKey] = useState<string | null>(null)
+  const [coachRefreshing, setCoachRefreshing] = useState(false)
+  const [coachRefreshNotice, setCoachRefreshNotice] = useState<string | null>(null)
+  const [coachReloadToken, setCoachReloadToken] = useState(0)
 
   useEffect(() => {
     async function loadLatestCompletedAdvice() {
       setAdviceLoading(true)
-      const { data } = await getLatestCompletedAdviceForCurrentUser()
+      const [{ data }, failures] = await Promise.all([getLatestCompletedAdviceForCurrentUser(), getLatestGeneralCoachFailuresForCurrentUser().catch(() => [])])
       setLatestCompletedAdvice(data)
+      setGeneralFailureTimes(failures)
       // Only a fallback for legacy revisions that stored no language (RLS: the caller's own app_users row).
       const { data: pref } = await supabase.from('app_users').select('preferred_language').maybeSingle()
       setViewerLanguage(pref?.preferred_language === 'ru' ? 'ru' : pref?.preferred_language === 'en' ? 'en' : null)
@@ -62,17 +76,24 @@ export default function HomePage() {
 
     async function loadDismissals() {
       setDismissalsLoading(true)
-      const { data } = await getActiveAdviceDismissalKeysForCurrentUser()
-      setDismissedKeys(data ?? new Set())
+      const { data } = await getActiveAdviceDismissalsForCurrentUser()
+      setDismissals(data ?? new Map())
       setDismissalsLoading(false)
     }
     loadDismissals()
-  }, [])
 
-  const visibleAdviceCards = useMemo(() => {
-    const cards = latestCompletedAdvice?.advice.advice?.advice_cards ?? []
-    return cards.filter((card) => !dismissedKeys.has(computeAdviceKey(card)))
-  }, [latestCompletedAdvice, dismissedKeys])
+    fetchWeeklyCoachStatus().then(setWeeklyStatus).catch(() => setWeeklyStatus(null))
+  }, [coachReloadToken])
+
+  const generalView = useMemo(() => deriveCoachModuleView({
+    hasOutput: !!latestCompletedAdvice?.advice.advice,
+    cards: latestCompletedAdvice?.advice.advice?.advice_cards ?? [],
+    keyOf: computeAdviceKey,
+    dismissals,
+    generatedAt: latestCompletedAdvice?.advice.generated_at ?? latestCompletedAdvice?.run.completed_at ?? null,
+    failureTimes: [...generalFailureTimes, weeklyModuleFailureAt(weeklyStatus, 'general')],
+  }), [latestCompletedAdvice, dismissals, generalFailureTimes, weeklyStatus])
+  const visibleAdviceCards = generalView.visible
 
   // Advice chrome follows the language stored WITH the displayed revision; only legacy revisions with no stored
   // language fall back to the viewer's current preference (then English).
@@ -98,8 +119,9 @@ export default function HomePage() {
         body: JSON.stringify({ analyticsRunAdviceId: latestCompletedAdvice.advice.id, adviceCode: card.advice_code }),
       })
       if (!res.ok) throw new Error('Failed to dismiss advice')
+      const payload = (await res.json().catch(() => ({}))) as { resurface_after?: string }
 
-      setDismissedKeys((prev) => new Set(prev).add(computeAdviceKey(card)))
+      setDismissals((prev) => new Map(prev).set(computeAdviceKey(card), payload.resurface_after ?? new Date(Date.now() + 30 * 86400000).toISOString()))
       setDismissToast(AL.hiddenFor30Days)
       setTimeout(() => setDismissToast(null), 2500)
     } catch (err) {
@@ -111,6 +133,26 @@ export default function HomePage() {
         return next
       })
     }
+  }
+
+  async function handleResurface(key: string) {
+    setResurfacingKey(key)
+    const { ok } = await resurfaceAdvice(key)
+    if (ok) setDismissals((prev) => { const next = new Map(prev); next.delete(key); return next })
+    setResurfacingKey(null)
+  }
+
+  // "Refresh Coach" — the same orchestration as the weekly refresh (General Coach + Listing Advice).
+  async function handleRefreshCoach() {
+    if (coachRefreshing) return
+    setCoachRefreshing(true)
+    setCoachRefreshNotice(null)
+    const outcome = await refreshCoach()
+    if (!outcome.ok) setCoachRefreshNotice(outcome.reason === 'already_running' ? AL.refreshAlreadyRunning : AL.refreshFailed)
+    // Either way both modules may have new persisted output (Listing Advice runs even when the snapshot fails).
+    invalidateListingAdviceCache()
+    setCoachReloadToken((n) => n + 1)
+    setCoachRefreshing(false)
   }
 
   useEffect(() => {
@@ -400,62 +442,97 @@ export default function HomePage() {
         </p>
       </section>
 
-      {/* ── Latest Analytics Advice (Auditable AI Advice v1.0) ───────────
-          Display-only: no Generate/Retry control and no "View Analytics
-          History" link live here — Analytics History is the only place
-          Advice generation starts (see src/app/analytics/page.tsx). The
-          section renders nothing at all — not even an empty-state message
-          — until a completed Advice revision is actually found; a user
-          with no Advice history simply sees the rest of the Dashboard.
-          Advice Dismissal / Resurface v1 — FIXED (2026-10): a revision that
-          HAS cards but where every one is currently dismissed used to hide
-          this whole section (header included), which made a Business Coach
-          that keeps correctly re-raising the same unresolved finding every
-          week look like it had stopped producing advice entirely. The
-          section now always renders once a completed revision exists —
-          matching ListingAdviceSection.tsx's own "all dismissed" state —
-          and shows AL.allCoachAdviceDismissed instead of silently
-          vanishing, so the header/timestamp still confirm the Coach ran. */}
-      {!adviceLoading && !dismissalsLoading && latestCompletedAdvice && (
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+      {/* ── Business Coach (General Coach + Listing Actions) ─────────────
+          ONE Business Coach section: subtle weekly-refresh status, the
+          General Coach cards, and a compact Listing Actions subsection.
+          Once loaded it ALWAYS renders (regression: 2026-10 an all-dismissed
+          revision made the whole section vanish). Each state is explicit:
+          none yet / no material advice / all hidden (count + next resurface
+          + View hidden) / latest refresh failed (previous advice still
+          shown) / stale. "Refresh Coach" runs the same orchestration as the
+          weekly refresh. Detailed errors stay Admin-only. */}
+      {!adviceLoading && !dismissalsLoading && (
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800" data-business-coach>
           <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <p className="page-overline">{AL.latestAnalyticsAdvice}</p>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                {AL.fromRunGenerated} {formatAdviceTimestamp(latestCompletedAdvice.run.completed_at ?? latestCompletedAdvice.run.created_at, adviceLanguage)}.
-              </p>
+            <div className="min-w-0">
+              <p className="page-overline">{AL.businessCoach}</p>
+              {latestCompletedAdvice && (
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400" data-coach-generated>
+                  {AL.generated} {formatAdviceTimestamp(generalView.generatedAt, adviceLanguage)}
+                </p>
+              )}
+              {weeklyStatus && weeklyStatus.state !== 'next_scheduled' && (
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400" data-coach-weekly-status>
+                  {AL.weeklyRefresh}: <span className={weeklyStatus.state === 'failed' || weeklyStatus.state === 'partial' ? 'font-medium text-amber-700 dark:text-amber-400' : ''}>{AL.weeklyState[weeklyStatus.state]}</span>
+                  {weeklyStatus.periodKey ? ` ${formatAdviceDate(`${weeklyStatus.periodKey}T12:00:00`, adviceLanguage)}` : ''}
+                  {(weeklyStatus.state === 'failed' || weeklyStatus.state === 'partial') && generalView.generatedAt && ` · ${AL.lastSuccessful}: ${formatAdviceDate(generalView.generatedAt, adviceLanguage)}`}
+                </p>
+              )}
             </div>
-            {dismissToast && (
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-400">
-                {dismissToast}
-              </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {dismissToast && (
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-400">
+                  {dismissToast}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={handleRefreshCoach}
+                disabled={coachRefreshing}
+                className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+                data-refresh-coach
+              >
+                {coachRefreshing && <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-500 dark:border-t-slate-200" />}
+                {coachRefreshing ? AL.refreshing : AL.refreshCoach}
+              </button>
+            </div>
+          </div>
+
+          {coachRefreshNotice && (
+            <p role="status" className="mt-3 text-xs font-medium text-amber-700 dark:text-amber-400" data-coach-refresh-notice>{coachRefreshNotice}</p>
+          )}
+          {generalView.refreshFailedAt && (
+            <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-300" data-coach-refresh-failed>
+              {generalView.generatedAt
+                ? AL.latestRefreshFailed.replace('{date}', formatAdviceDate(generalView.refreshFailedAt, adviceLanguage)).replace('{gen}', formatAdviceDate(generalView.generatedAt, adviceLanguage))
+                : AL.refreshFailed}
+            </p>
+          )}
+
+          <div className="mt-4">
+            {generalView.content === 'none_yet' ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400" data-coach-none-yet>{AL.coachNoneYet}</p>
+            ) : generalView.content === 'no_material' ? (
+              <div className="min-w-0" data-coach-no-material>
+                <p className="break-words text-sm font-semibold text-slate-900 dark:text-white">{AL.noMaterialThisWeek}</p>
+                {latestCompletedAdvice?.advice.advice?.run_summary.headline && (
+                  <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{latestCompletedAdvice.advice.advice.run_summary.headline}</p>
+                )}
+              </div>
+            ) : visibleAdviceCards.length === 0 ? (
+              <HiddenAdviceList hidden={generalView.hidden} allHidden titleOf={(c) => c.headline} onResurface={handleResurface} resurfacingKey={resurfacingKey} L={AL} language={adviceLanguage} />
+            ) : (
+              <>
+                <div className="grid gap-3 lg:grid-cols-3">
+                  {visibleAdviceCards.map((card) => (
+                    <AdviceCardView
+                      key={card.advice_code}
+                      card={card}
+                      variant="compact"
+                      onDismiss={() => handleDismissAdvice(card)}
+                      dismissing={dismissingCodes.has(card.advice_code)}
+                      onViewDetails={() => setOpenAdviceCode(card.advice_code)}
+                      language={adviceLanguage}
+                    />
+                  ))}
+                </div>
+                <HiddenAdviceList hidden={generalView.hidden} allHidden={false} titleOf={(c) => c.headline} onResurface={handleResurface} resurfacingKey={resurfacingKey} L={AL} language={adviceLanguage} />
+              </>
             )}
           </div>
 
-          <div className="mt-4">
-            {(latestCompletedAdvice.advice.advice?.advice_cards.length ?? 0) === 0 ? (
-              <div className="min-w-0">
-                <p className="break-words text-sm font-semibold text-slate-900 dark:text-white">{latestCompletedAdvice.advice.advice?.run_summary.headline}</p>
-                <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">{latestCompletedAdvice.advice.advice?.run_summary.summary}</p>
-              </div>
-            ) : visibleAdviceCards.length === 0 ? (
-              <p className="text-sm text-slate-500 dark:text-slate-400" data-advice-all-dismissed>{AL.allCoachAdviceDismissed}</p>
-            ) : (
-              <div className="grid gap-3 lg:grid-cols-3">
-                {visibleAdviceCards.map((card) => (
-                  <AdviceCardView
-                    key={card.advice_code}
-                    card={card}
-                    variant="compact"
-                    onDismiss={() => handleDismissAdvice(card)}
-                    dismissing={dismissingCodes.has(card.advice_code)}
-                    onViewDetails={() => setOpenAdviceCode(card.advice_code)}
-                    language={adviceLanguage}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+          <DashboardListingActions key={coachReloadToken} weekly={weeklyStatus} L={AL} language={adviceLanguage} />
+
           {openAdviceCard && latestCompletedAdvice && (
             <CoachAdviceDrawer
               card={openAdviceCard}

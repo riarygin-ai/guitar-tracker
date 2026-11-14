@@ -16,7 +16,11 @@ import { runWeeklyAutomationForUser } from '@/lib/analytics/automation/runWeekly
 // Server-only: this route is not reachable as a substitute for real user
 // authentication — the ONLY accepted credential is the CRON_SECRET bearer
 // token below; no Supabase user session/JWT is ever accepted here.
-export const maxDuration = 60;
+// 300 s (Fluid compute): users are processed sequentially and each Weekly
+// Coach Refresh is snapshot + two model calls (~20-40 s). The previous 60 s
+// cap killed the second user's refresh mid-generation on 2026-11-05
+// (execution left 'running', Coach revision left 'generating').
+export const maxDuration = 300;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -66,6 +70,7 @@ export async function GET(req: NextRequest) {
   }
 
   let succeeded = 0;
+  let partial = 0;
   let skipped = 0;
   let failed = 0;
 
@@ -83,6 +88,7 @@ export async function GET(req: NextRequest) {
         serviceClient,
       });
       if (outcome.status === 'completed') succeeded++;
+      else if (outcome.status === 'partial') partial++;
       else if (outcome.status === 'skipped') skipped++;
       else failed++;
     } catch (err) {
@@ -98,6 +104,7 @@ export async function GET(req: NextRequest) {
     localPeriodKey: window.localPeriodKey,
     processed: (users ?? []).length,
     succeeded,
+    partial,
     skipped,
     failed,
   });

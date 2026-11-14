@@ -38,7 +38,8 @@ import {
 import { evaluateWeeklyTorontoWindow, getWeeklyScheduleStatusContext } from '../src/lib/analytics/automation/torontoSchedule';
 import { runWeeklyAutomationForUser, WEEKLY_AUTOMATION_CODE } from '../src/lib/analytics/automation/runWeeklyAutomation';
 import type { WeeklyAutomationOutcome } from '../src/lib/analytics/automation/runWeeklyAutomation';
-import { runAnalyticsForCurrentUser } from '../src/lib/analytics/runAnalytics';
+import { AnalyticsRunError, runAnalyticsForCurrentUser } from '../src/lib/analytics/runAnalytics';
+import type { CoachRefreshDeps } from '../src/lib/analytics/coachRefresh';
 
 let passed = 0;
 let failed = 0;
@@ -53,9 +54,23 @@ function check(label: string, condition: boolean, detail?: unknown) {
   }
 }
 
-function isCompleted(o: WeeklyAutomationOutcome): o is Extract<WeeklyAutomationOutcome, { status: 'completed' }> {
+type RanOutcome = Exclude<WeeklyAutomationOutcome, { status: 'skipped' }>;
+function isCompleted(o: WeeklyAutomationOutcome): o is RanOutcome & { status: 'completed' } {
   return o.status === 'completed';
 }
+function ran(o: WeeklyAutomationOutcome): o is RanOutcome {
+  return o.status !== 'skipped';
+}
+
+// Claim/concurrency/isolation cases (C1-C5) exercise the REAL Analytics snapshot with deterministic module
+// stubs: both AI modules report "nothing new attempted" (skipped, no rows, no model), so the execution's
+// completed/skipped semantics are tested independently of model availability. C6 and section G cover the
+// real generators and module failure isolation.
+const STUB_DEPS: CoachRefreshDeps = {
+  loadListingDemand: async () => { throw new Error('stubbed: no listing demand in claim tests'); },
+  generateCoachAdvice: async () => ({ status: 'skipped', reason: 'TEST_STUB' }),
+  generateListingAdvice: async () => ({ status: 'already_generating' }),
+};
 function isSkipped(o: WeeklyAutomationOutcome): o is Extract<WeeklyAutomationOutcome, { status: 'skipped' }> {
   return o.status === 'skipped';
 }
@@ -163,17 +178,17 @@ async function main() {
 
   // C1 — first claim for (userA, P1) actually runs.
   const P1 = 'test-weekly-automation-2026-08-05';
-  const c1 = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P1, serviceClient });
+  const c1 = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P1, serviceClient, deps: STUB_DEPS });
   check('C1: first claim for (userA, P1) runs Analytics and completes the execution', isCompleted(c1), c1);
   if (isCompleted(c1)) {
     createdExecutionIds.push(c1.executionId);
-    createdRunIds.push(c1.analyticsRunId);
+    createdRunIds.push(c1.analyticsRunId!);
     const { data: c1Run } = await serviceClient.from('analytics_runs').select('recommendation_target_user_id, status').eq('id', c1.analyticsRunId).maybeSingle();
     check('C1: the created run is owned by userA and completed', c1Run?.recommendation_target_user_id === userAId && c1Run?.status === 'completed', c1Run);
   }
 
   // C2 — rerunning the same Toronto weekly period is skipped.
-  const c2 = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P1, serviceClient });
+  const c2 = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P1, serviceClient, deps: STUB_DEPS });
   check('C2: rerunning the same (userA, P1) weekly period is skipped, not a duplicate run', isSkipped(c2) && isCompleted(c1) && c2.executionId === c1.executionId, { c1, c2 });
   const { count: p1Count } = await serviceClient.from('analytics_automation_executions').select('id', { count: 'exact', head: true }).eq('target_user_id', userAId).eq('local_period_key', P1);
   check('C2: exactly one execution row exists for (userA, P1) after the rerun attempt', p1Count === 1, p1Count);
@@ -182,7 +197,7 @@ async function main() {
   const P3 = 'test-weekly-automation-2026-08-12';
   const CONCURRENT_CLAIMS = 10;
   const c3results = await Promise.all(
-    Array.from({ length: CONCURRENT_CLAIMS }, () => runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P3, serviceClient })),
+    Array.from({ length: CONCURRENT_CLAIMS }, () => runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P3, serviceClient, deps: STUB_DEPS })),
   );
   const c3completed = c3results.filter(isCompleted);
   const c3skipped = c3results.filter(isSkipped);
@@ -193,19 +208,19 @@ async function main() {
   );
   if (c3completed[0]) {
     createdExecutionIds.push(c3completed[0].executionId);
-    createdRunIds.push(c3completed[0].analyticsRunId);
+    createdRunIds.push(c3completed[0].analyticsRunId!);
   }
   const { count: p3Count } = await serviceClient.from('analytics_automation_executions').select('id', { count: 'exact', head: true }).eq('target_user_id', userAId).eq('local_period_key', P3);
   check('C3: exactly one execution row persisted for (userA, P3) despite the concurrent claims', p3Count === 1, p3Count);
 
   // C4 — separate users get separate runs; no cross-contamination.
   const P4 = 'test-weekly-automation-2026-08-19';
-  const c4a = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P4, serviceClient });
-  const c4b = await runWeeklyAutomationForUser({ targetUserId: userBId, localPeriodKey: P4, serviceClient });
+  const c4a = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P4, serviceClient, deps: STUB_DEPS });
+  const c4b = await runWeeklyAutomationForUser({ targetUserId: userBId, localPeriodKey: P4, serviceClient, deps: STUB_DEPS });
   check('C4: userA gets their own completed execution for P4', isCompleted(c4a), c4a);
   check('C4: userB gets their own completed execution for P4', isCompleted(c4b), c4b);
-  if (isCompleted(c4a)) { createdExecutionIds.push(c4a.executionId); createdRunIds.push(c4a.analyticsRunId); }
-  if (isCompleted(c4b)) { createdExecutionIds.push(c4b.executionId); createdRunIds.push(c4b.analyticsRunId); }
+  if (isCompleted(c4a)) { createdExecutionIds.push(c4a.executionId); createdRunIds.push(c4a.analyticsRunId!); }
+  if (isCompleted(c4b)) { createdExecutionIds.push(c4b.executionId); createdRunIds.push(c4b.analyticsRunId!); }
   check(
     'C4: userA and userB received DIFFERENT analytics_run_id values for the same period',
     isCompleted(c4a) && isCompleted(c4b) && c4a.analyticsRunId !== c4b.analyticsRunId,
@@ -231,7 +246,7 @@ async function main() {
   const BOGUS_TARGET_USER_ID = 999999999;
   let c5Threw = false;
   try {
-    await runWeeklyAutomationForUser({ targetUserId: BOGUS_TARGET_USER_ID, localPeriodKey: P5, serviceClient });
+    await runWeeklyAutomationForUser({ targetUserId: BOGUS_TARGET_USER_ID, localPeriodKey: P5, serviceClient, deps: STUB_DEPS });
   } catch {
     c5Threw = true;
   }
@@ -242,9 +257,9 @@ async function main() {
     .eq('target_user_id', BOGUS_TARGET_USER_ID);
   check('C5: no execution row was created for the invalid claim attempt (claiming itself never succeeded)', bogusExecutionCount === 0, bogusExecutionCount);
 
-  const c5ok = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P5, serviceClient });
+  const c5ok = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: P5, serviceClient, deps: STUB_DEPS });
   check('C5: a DIFFERENT (real) user for the SAME period still succeeds after the other one threw — one user\'s failure never blocks another', isCompleted(c5ok), c5ok);
-  if (isCompleted(c5ok)) { createdExecutionIds.push(c5ok.executionId); createdRunIds.push(c5ok.analyticsRunId); }
+  if (isCompleted(c5ok)) { createdExecutionIds.push(c5ok.executionId); createdRunIds.push(c5ok.analyticsRunId!); }
 
   // "Analytics failure prevents OpenAI generation" is enforced
   // structurally in runWeeklyAutomationForUser: the catch block around
@@ -279,16 +294,24 @@ async function main() {
 
   const P6 = 'test-weekly-automation-2026-09-02';
   const c6 = await runWeeklyAutomationForUser({ targetUserId: bareAppUserId, localPeriodKey: P6, serviceClient });
-  check('C6: a zero-inventory user still completes the EXECUTION itself (Analytics has no evidence requirement)', isCompleted(c6), c6);
-  if (isCompleted(c6)) {
+  // Real generators: the General Coach has no citable evidence and Listing Advice has no model in this shell,
+  // so both modules fail — recorded, never a crash, and the snapshot run itself still completed.
+  check('C6: a zero-inventory user still runs the refresh and records the execution (never a throw)', ran(c6) && c6.analyticsRunId !== null, c6);
+  if (ran(c6)) {
     createdExecutionIds.push(c6.executionId);
-    createdRunIds.push(c6.analyticsRunId);
+    if (c6.analyticsRunId !== null) createdRunIds.push(c6.analyticsRunId!);
+    const { data: c6Run } = await serviceClient.from('analytics_runs').select('status').eq('id', c6.analyticsRunId!).maybeSingle();
+    check('C6: the Analytics snapshot itself completed (Analytics has no evidence requirement)', c6Run?.status === 'completed', c6Run);
     check('C6: an advice row WAS recorded for the attempt (never silently skipped)', c6.adviceRowId !== null, c6);
     if (c6.adviceRowId !== null) {
       const { data: c6Advice } = await serviceClient.from('analytics_run_advice').select('status, error_code').eq('id', c6.adviceRowId).maybeSingle();
       check('C6: the resulting advice row is failed/NO_VALID_EVIDENCE, never a crash', c6Advice?.status === 'failed' && c6Advice?.error_code === 'NO_VALID_EVIDENCE', c6Advice);
     }
+    check('C6: the General module result is failed/NO_VALID_EVIDENCE on the execution', c6.general.status === 'failed' && c6.general.code === 'NO_VALID_EVIDENCE', c6.general);
+    const { data: c6Exec } = await serviceClient.from('analytics_automation_executions').select('status, general_status, general_error_code, listing_status').eq('id', c6.executionId).single();
+    check('C6: execution row records both module results independently', c6Exec?.general_status === 'failed' && c6Exec?.general_error_code === 'NO_VALID_EVIDENCE' && typeof c6Exec?.listing_status === 'string' && c6Exec?.status === (c6Exec?.listing_status === 'failed' ? 'failed' : 'partial'), c6Exec);
   }
+
 
   // ══════════════════════════════════════════════════════════════════════
   // Section D — weekly status: grace-period boundary (pure, no DB)
@@ -339,7 +362,7 @@ async function main() {
   const nowStatusContext = getWeeklyScheduleStatusContext();
   const statusTestPeriodKey = nowStatusContext.currentPeriodKey;
 
-  async function insertExecutionRow(targetUserId: number, status: 'running' | 'completed' | 'failed', extra: Record<string, unknown> = {}) {
+  async function insertExecutionRow(targetUserId: number, status: 'running' | 'completed' | 'partial' | 'failed', extra: Record<string, unknown> = {}) {
     const { data, error } = await serviceClient
       .from('analytics_automation_executions')
       .insert({
@@ -422,6 +445,74 @@ async function main() {
     noRowRes.status === 200 && noRowBody.state === expectedState,
     { noRowBody, nowStatusContext },
   );
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Section G — Weekly Coach Refresh: independent General / Listing results
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('\n[G — Weekly Coach Refresh: General + Listing Advice are independent modules]');
+  {
+    const gDeps = (over: Partial<CoachRefreshDeps>): CoachRefreshDeps => ({ ...STUB_DEPS, ...over });
+    const execRow = async (id: number) => (await serviceClient.from('analytics_automation_executions')
+      .select('status, general_status, general_error_code, listing_status, listing_error_code, error_code, analytics_run_id').eq('id', id).single()).data;
+
+    // G1 — General snapshot fails; Listing Advice is still invoked automatically by the weekly refresh.
+    const listingCalls: number[] = [];
+    const g1 = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: 'test-weekly-automation-g1', serviceClient, deps: gDeps({
+      runAnalytics: async () => { throw new AnalyticsRunError('Analytics run failed', 500); },
+      generateListingAdvice: async (p) => { listingCalls.push(p.appUserId); return { status: 'already_generating' }; },
+    }) });
+    if (ran(g1)) createdExecutionIds.push(g1.executionId);
+    check('G1: the weekly refresh invokes Listing Advice automatically for the user', listingCalls.join() === String(userAId), listingCalls);
+    check('G1: a failed General snapshot does NOT stop Listing Advice (partial, not failed)', ran(g1) && g1.status === 'partial' && g1.general.status === 'failed' && g1.general.code === 'ANALYTICS_RUN_FAILED' && g1.listings.status === 'skipped', g1);
+    const g1Row = ran(g1) ? await execRow(g1.executionId) : null;
+    check('G1: execution row records General failed + Listing result separately', g1Row?.status === 'partial' && g1Row?.general_status === 'failed' && g1Row?.general_error_code === 'ANALYTICS_RUN_FAILED' && g1Row?.listing_status === 'skipped' && g1Row?.error_code === 'ANALYTICS_RUN_FAILED', g1Row);
+
+    // G2 — Listing Advice fails; the successful General run is untouched.
+    const g2 = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: 'test-weekly-automation-g2', serviceClient, deps: gDeps({
+      generateCoachAdvice: async () => ({ status: 'completed', row: { id: null, advice: { advice_cards: [{}, {}] } } as never }),
+      generateListingAdvice: async () => ({ status: 'context_unavailable', message: 'down' }),
+    }) });
+    if (ran(g2)) { createdExecutionIds.push(g2.executionId); if (g2.analyticsRunId) createdRunIds.push(g2.analyticsRunId); }
+    check('G2: a failed Listing Advice never invalidates a successful General run', ran(g2) && g2.status === 'partial' && g2.general.status === 'completed' && g2.general.cardCount === 2 && g2.listings.status === 'failed' && g2.listings.code === 'CONTEXT_UNAVAILABLE', g2);
+    const g2Row = ran(g2) ? await execRow(g2.executionId) : null;
+    check('G2: execution row: General completed (with its real run), Listing failed/CONTEXT_UNAVAILABLE', g2Row?.status === 'partial' && g2Row?.general_status === 'completed' && typeof g2Row?.analytics_run_id === 'number' && g2Row?.listing_status === 'failed' && g2Row?.listing_error_code === 'CONTEXT_UNAVAILABLE', g2Row);
+    const g2RunId = ran(g2) ? g2.analyticsRunId : null;
+    const { data: g2Run } = g2RunId ? await serviceClient.from('analytics_runs').select('status').eq('id', g2RunId).single() : { data: null };
+    check('G2: the General Analytics run stays completed', g2Run?.status === 'completed', g2Run);
+
+    // G3 — both modules fine; zero General cards is no_material_advice, not a failure.
+    const g3 = await runWeeklyAutomationForUser({ targetUserId: userAId, localPeriodKey: 'test-weekly-automation-g3', serviceClient, deps: gDeps({
+      generateCoachAdvice: async () => ({ status: 'completed', row: { id: null, advice: { advice_cards: [] } } as never }),
+    }) });
+    if (ran(g3)) { createdExecutionIds.push(g3.executionId); if (g3.analyticsRunId) createdRunIds.push(g3.analyticsRunId); }
+    const g3Row = ran(g3) ? await execRow(g3.executionId) : null;
+    check('G3: completed refresh with zero General cards = no_material_advice (distinct from failed)', ran(g3) && g3.status === 'completed' && g3Row?.status === 'completed' && g3Row?.general_status === 'no_material_advice', { g3, g3Row });
+
+    // G4 — status endpoint: partial state with per-module results and a SAFE message only.
+    const RAW = 'Snapshot builder error: canceling statement due to statement timeout';
+    const partialId = await insertExecutionRow(userAId, 'partial', { completed_at: new Date().toISOString(), error_code: 'ANALYTICS_RUN_FAILED', error_message: RAW, general_status: 'failed', general_error_code: 'ANALYTICS_RUN_FAILED', listing_status: 'completed' });
+    createdExecutionIds.push(partialId);
+    const pRes = await statusGet(new NextRequest(STATUS_URL, { headers: { authorization: `Bearer ${userATokenForStatus}` } }));
+    const pText = await pRes.clone().text();
+    const pBody = JSON.parse(pText);
+    check('G4: a partial execution reports state "partial" with both module results', pBody.state === 'partial' && pBody.modules?.general === 'failed' && pBody.modules?.listings === 'completed', pBody);
+    check('G4: the partial message is safe (never the raw error)', !pText.includes(RAW) && /General Coach refresh failed/.test(pBody.message), pBody);
+    await serviceClient.from('analytics_automation_executions').delete().eq('id', partialId);
+    createdExecutionIds.splice(createdExecutionIds.indexOf(partialId), 1);
+
+    // G5 — a 'running' execution older than the function limit (killed mid-way, as on 2026-11-05) reads as
+    // failed; the audit row itself is not rewritten by the read.
+    const staleStart = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const staleId = await insertExecutionRow(userAId, 'running', { started_at: staleStart });
+    createdExecutionIds.push(staleId);
+    const before = await execRow(staleId);
+    const sBody = await (await statusGet(new NextRequest(STATUS_URL, { headers: { authorization: `Bearer ${userATokenForStatus}` } }))).json();
+    const after = await execRow(staleId);
+    check('G5: an abandoned running execution is reported as failed ("did not finish")', sBody.state === 'failed' && /did not finish/.test(sBody.message), sBody);
+    check('G5: the read never mutates the audit row', JSON.stringify(before) === JSON.stringify(after) && after?.status === 'running', { before, after });
+    await serviceClient.from('analytics_automation_executions').delete().eq('id', staleId);
+    createdExecutionIds.splice(createdExecutionIds.indexOf(staleId), 1);
+  }
 
   // ══════════════════════════════════════════════════════════════════════
   // Section F — a manual Analytics run must never alter a failed weekly

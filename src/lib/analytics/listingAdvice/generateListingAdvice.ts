@@ -53,6 +53,9 @@ const RUN_COLUMNS =
 
 export type GenerateListingAdviceOutcome =
   | { status: 'completed'; run: ListingAdviceRunRow }
+  /** The latest completed run was built from the IDENTICAL packet (same hash + prompt/schema/model): no new
+   *  row and no model call — that run is still current. */
+  | { status: 'unchanged'; run: ListingAdviceRunRow }
   | { status: 'failed'; run: ListingAdviceRunRow }
   | { status: 'already_generating' }
   | { status: 'context_unavailable'; message: string }
@@ -81,12 +84,21 @@ async function markFailed(serviceClient: SupabaseClient, id: number, code: strin
 export async function generateListingAdvice(params: {
   appUserId: number;
   serviceClient: SupabaseClient;
-  /** Advice prose language; resolved once by runAnalyticsWorkflow. When omitted it is read server-side from app_users. */
+  /** Advice prose language; resolved once by runCoachRefresh. When omitted it is read server-side from app_users. */
   language?: AdviceLanguage;
+  /** Canonical Listing Demand context already loaded by runCoachRefresh (shared with the General Coach, never
+   *  recomputed differently). Null/undefined = load it here (Listing Advice can always build its own evidence). */
+  sharedContext?: ListingDemandContext | null;
+  /** When the latest completed run was built from the identical packet, return it as 'unchanged' instead of
+   *  calling the model again (weekly refresh + manual refresh). Off by default. */
+  skipIfUnchanged?: boolean;
   deps?: GenerateListingAdviceDeps;
 }): Promise<GenerateListingAdviceOutcome> {
   const { appUserId, serviceClient } = params;
-  const loadContext = params.deps?.loadContext ?? ((p) => loadListingDemandContext(p));
+  const shared = params.sharedContext ?? null;
+  const loadContext = shared
+    ? async () => shared
+    : params.deps?.loadContext ?? ((p: { appUserId: number; serviceClient: SupabaseClient }) => loadListingDemandContext(p));
   const callModel = params.deps?.callModel ?? ((packet: ListingAdvicePacket) => generateListingAdviceFromModel(packet));
   const now = params.deps?.now ?? (() => new Date());
 
@@ -112,6 +124,13 @@ export async function generateListingAdvice(params: {
   const language = params.language ?? await getUserPreferredLanguage(serviceClient, appUserId);
   const packet = buildListingAdvicePacket(ctx, language);
   const inputHash = hashListingAdvicePacket(packet);
+
+  // 2b. Same input as the latest completed run -> that run is still current (no duplicate model call).
+  const latest = params.skipIfUnchanged ? await latestCompletedRun(serviceClient, appUserId).catch(() => null) : null;
+  if (latest && latest.input_hash === inputHash && latest.prompt_version === LISTING_ADVICE_PROMPT_VERSION
+    && latest.schema_version === LISTING_ADVICE_SCHEMA_VERSION && latest.model === LISTING_ADVICE_MODEL_ID) {
+    return { status: 'unchanged', run: latest };
+  }
 
   const { data: inserted, error: insertError } = await serviceClient
     .from('listing_advice_runs')
@@ -178,8 +197,8 @@ export interface LatestListingAdvice {
   last_failure: { error_code: string; error_message: string; created_at: string } | null;
 }
 
-/** Runs through the given client — pass the caller's own RLS client so only their rows are visible. */
-export async function getLatestListingAdvice(client: SupabaseClient, userId: number): Promise<LatestListingAdvice> {
+/** Newest COMPLETED run (generated_at DESC, id DESC) through the given client. */
+async function latestCompletedRun(client: SupabaseClient, userId: number): Promise<ListingAdviceRunRow | null> {
   const { data: latestRows, error } = await client
     .from('listing_advice_runs')
     .select(RUN_COLUMNS)
@@ -189,7 +208,12 @@ export async function getLatestListingAdvice(client: SupabaseClient, userId: num
     .order('id', { ascending: false })
     .limit(1);
   if (error) throw new Error(`listing_advice_runs: ${error.message}`);
-  const latest = ((latestRows ?? [])[0] as unknown as ListingAdviceRunRow | undefined) ?? null;
+  return ((latestRows ?? [])[0] as unknown as ListingAdviceRunRow | undefined) ?? null;
+}
+
+/** Runs through the given client — pass the caller's own RLS client so only their rows are visible. */
+export async function getLatestListingAdvice(client: SupabaseClient, userId: number): Promise<LatestListingAdvice> {
+  const latest = await latestCompletedRun(client, userId);
 
   const { data: generatingRows } = await client
     .from('listing_advice_runs').select('id').eq('user_id', userId).eq('status', 'generating').limit(1);

@@ -1,5 +1,5 @@
 // Server-only. The ONE resolver of a user's preferred AI Advice language,
-// used by runAnalyticsWorkflow (so manual Run Analytics and the weekly
+// used by runCoachRefresh (so manual Run Analytics and the weekly
 // automation cannot drift) and by the generators' own fallback. Reads the
 // app-owned public.app_users row through the service client, keyed by the
 // authenticated caller's server-resolved app_users.id — never a browser value.

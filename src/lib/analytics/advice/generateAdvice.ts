@@ -42,9 +42,12 @@ export interface GenerateAdviceForRunParams {
    *  Regenerate: always creates revision_number + 1, regardless of how
    *  many revisions already exist. */
   mode: 'auto' | 'retry';
-  /** Advice prose language. runAnalyticsWorkflow resolves it once and passes it to both AI stages; when omitted
+  /** Advice prose language. runCoachRefresh resolves it once and passes it to both modules; when omitted
    *  (e.g. a direct retry) it is resolved server-side from the caller's own app_users row. */
   language?: AdviceLanguage;
+  /** The canonical Listing Demand context, already loaded ONCE by runCoachRefresh and shared with Listing
+   *  Advice (null = that load failed; the block is omitted). Undefined = load it here (direct retry). */
+  listingDemand?: ListingDemandContext | null;
   /** Test seam: replaces the OpenAI call. Production callers pass nothing. */
   deps?: { callModel?: (packet: AdviceInputPacket) => Promise<{ raw: string }> };
 }
@@ -185,11 +188,13 @@ export async function generateAdviceForRun(params: GenerateAdviceForRunParams): 
   // ever fabricated. The exact block used is persisted inside input_packet.
   const language = params.language ?? await getUserPreferredLanguage(serviceClient, requestingUserId);
 
-  let listingDemand: ListingDemandContext | null = null;
-  try {
-    listingDemand = await loadListingDemandContext({ appUserId: requestingUserId, serviceClient });
-  } catch (demandError) {
-    console.error('[generateAdvice] listing demand enrichment unavailable for run', runId, '- continuing without it:', sanitizeErrorMessage(demandError));
+  let listingDemand: ListingDemandContext | null = params.listingDemand ?? null;
+  if (params.listingDemand === undefined) {
+    try {
+      listingDemand = await loadListingDemandContext({ appUserId: requestingUserId, serviceClient });
+    } catch (demandError) {
+      console.error('[generateAdvice] listing demand enrichment unavailable for run', runId, '- continuing without it:', sanitizeErrorMessage(demandError));
+    }
   }
 
   // Lead -> Deal linkage analytics: same "enrich, never block" contract as

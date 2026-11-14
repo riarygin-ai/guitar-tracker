@@ -39,7 +39,7 @@ import {
   LISTING_ADVICE_PROMPT_VERSION, buildListingAdvicePacket, hashListingAdvicePacket, validateListingAdviceResponse, type ListingAdvicePacket,
 } from '../src/lib/analytics/listingAdvice/listingAdvice';
 import { generateListingAdvice } from '../src/lib/analytics/listingAdvice/generateListingAdvice';
-import { runAnalyticsWorkflow, type AnalyticsWorkflowDeps } from '../src/lib/analytics/runAnalyticsWorkflow';
+import { runCoachRefresh, type CoachRefreshDeps } from '../src/lib/analytics/coachRefresh';
 import { listingAdviceKey } from '../src/lib/listingAdviceKey';
 import { coachActions, coachLimitations, resolveCoachCardEvidence } from '../src/lib/coachAdviceView';
 import type { ListingDemandEvidence, DemandWeeklyTrendEntry } from '../src/lib/analytics/listingDemandEvidence';
@@ -270,14 +270,14 @@ async function main() {
   console.log('\n[H — server-side resolver + workflow wiring (structure)]');
   {
     const ul = strip(read('src', 'lib', 'analytics', 'advice', 'userLanguage.ts'));
-    const wf = strip(read('src', 'lib', 'analytics', 'runAnalyticsWorkflow.ts'));
+    const wf = strip(read('src', 'lib', 'analytics', 'coachRefresh.ts'));
     const cg = strip(read('src', 'lib', 'analytics', 'advice', 'generateAdvice.ts'));
     const lg = strip(read('src', 'lib', 'analytics', 'listingAdvice', 'generateListingAdvice.ts'));
     check('one server-side resolver reads app_users.preferred_language and never throws (falls back to en)', /from\('app_users'\)/.test(ul) && /preferred_language/.test(ul) && /catch/.test(ul) && /normalizeAdviceLanguage/.test(ul));
-    check('the workflow resolves the language ONCE and hands it to BOTH stages', (wf.match(/getUserPreferredLanguage\(/g) ?? []).length === 1 && /mode: 'auto', language/.test(wf) && /listing\(\{ appUserId, serviceClient, language \}\)/.test(wf));
+    check('the workflow resolves the language ONCE and hands it to BOTH stages', (wf.match(/getUserPreferredLanguage\(/g) ?? []).length === 1 && /mode: 'auto', language/.test(wf) && /listing\(\{ appUserId, serviceClient, language, /.test(wf));
     check('generators only fall back to the same resolver when no language is passed (no second implementation)', /params\.language \?\? await getUserPreferredLanguage/.test(cg) && /params\.language \?\? await getUserPreferredLanguage/.test(lg) && !/from\('app_users'\)/.test(cg + lg));
     check('language is never taken from a request body/query in the advice routes', !/preferredLanguage|preferred_language|language/.test(strip(read('src', 'app', 'api', 'analytics', 'runs', 'route.ts'))) && !/language/.test(strip(read('src', 'app', 'api', 'cron', 'weekly-analytics-advice', 'route.ts'))));
-    check('runAnalyticsWorkflow architecture unchanged: still sequences snapshot -> Coach -> Listing Advice with failure isolation', /Promise\.all\(\[/.test(wf) && /THREW/.test(wf));
+    check('runCoachRefresh: General + Listing Advice modules run with failure isolation', /Promise\.all\(\[/.test(wf) && /THREW/.test(wf));
   }
 
   // ── Real DB ────────────────────────────────────────────────────────────
@@ -341,19 +341,20 @@ async function main() {
 
     console.log('\n[J — unified workflow: language reaches BOTH stages, per user, no leakage]');
     const seen: { coach: Record<number, unknown>; listing: Record<number, unknown> } = { coach: {}, listing: {} };
-    const depsFor = (): AnalyticsWorkflowDeps => ({
+    const depsFor = (): CoachRefreshDeps => ({
+      loadListingDemand: async () => { throw new Error('not needed'); },
       runAnalytics: async ({ appUserId }) => ({ id: 5000 + appUserId } as never),
       generateCoachAdvice: async (p) => { seen.coach[p.requestingUserId] = p.language; return { status: 'skipped', reason: 'TEST' } as never; },
       generateListingAdvice: async (p) => { seen.listing[p.appUserId] = p.language; return { status: 'already_generating' } as never; },
     });
-    await runAnalyticsWorkflow({ appUserId: uRu, serviceClient: admin, deps: depsFor() });
-    await runAnalyticsWorkflow({ appUserId: uEn, serviceClient: admin, deps: depsFor() });
+    await runCoachRefresh({ appUserId: uRu, serviceClient: admin, deps: depsFor() });
+    await runCoachRefresh({ appUserId: uEn, serviceClient: admin, deps: depsFor() });
     check('Run Analytics for a Russian user: snapshot succeeds; Coach AND Listing Advice receive "ru"', seen.coach[uRu] === 'ru' && seen.listing[uRu] === 'ru', seen);
     check('Run Analytics for an English user: both receive "en"', seen.coach[uEn] === 'en' && seen.listing[uEn] === 'en');
-    const [a, b] = await Promise.all([runAnalyticsWorkflow({ appUserId: uRu, serviceClient: admin, deps: depsFor() }), runAnalyticsWorkflow({ appUserId: uEn, serviceClient: admin, deps: depsFor() })]);
-    check('two users with different languages in the same batch do not leak language state', a.run.id === 5000 + uRu && b.run.id === 5000 + uEn && seen.coach[uRu] === 'ru' && seen.coach[uEn] === 'en' && seen.listing[uRu] === 'ru' && seen.listing[uEn] === 'en');
+    const [a, b] = await Promise.all([runCoachRefresh({ appUserId: uRu, serviceClient: admin, deps: depsFor() }), runCoachRefresh({ appUserId: uEn, serviceClient: admin, deps: depsFor() })]);
+    check('two users with different languages in the same batch do not leak language state', a.run?.id === 5000 + uRu && b.run?.id === 5000 + uEn && seen.coach[uRu] === 'ru' && seen.coach[uEn] === 'en' && seen.listing[uRu] === 'ru' && seen.listing[uEn] === 'en');
     const wfSrc = strip(read('src', 'lib', 'analytics', 'automation', 'runWeeklyAutomation.ts').toString());
-    check('scheduled weekly automation goes through the SAME workflow (each user resolved by their own id)', /runAnalyticsWorkflow\(/.test(wfSrc));
+    check('scheduled weekly automation goes through the SAME orchestration (each user resolved by their own id)', /runCoachRefresh\(/.test(wfSrc));
 
     console.log('\n[K — Listing Advice end-to-end (real DB, injected model): exact prompt/packet, persistence, immutability]');
     const modelCalls: { language: unknown; prompt: string }[] = [];

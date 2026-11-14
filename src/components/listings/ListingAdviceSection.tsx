@@ -3,24 +3,28 @@
 // "Listing Advice" section on /listings — persisted AI interpretation of the
 // 4-week Listing Demand evidence, shown right after Overview.
 //
-// DISPLAY-ONLY with respect to AI generation: this page shows the latest
-// completed persisted advice and lets the user dismiss cards, but it can never
-// generate or refresh advice. Listing Advice is produced solely by the
-// Analytics workflow (Admin "Run Analytics" and the scheduled weekly run). It
-// is optional enrichment: its own cache key/fetch/error state, and it never
+// Shows the latest COMPLETED persisted advice with its freshness (generated
+// date, 4-week window, stale after the weekly cadence, failed latest refresh)
+// and lets the user dismiss / resurface cards. Listing Advice is generated
+// automatically by the Weekly Coach Refresh (and "Refresh Coach"); the
+// "Refresh Advice" button here re-runs only the Listing Advice module (same
+// service, same identical-input dedupe and one-in-flight guard). It is
+// optional enrichment: its own cache key/fetch/error state, and it never
 // gates any other Listings section.
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ConfidencePill, PriorityBadge } from '@/components/AdviceCardView';
 import ListingAdviceDrawer from '@/components/listings/ListingAdviceDrawer';
-import { dismissListingAdvice, fetchLatestListingAdvice } from '@/lib/analytics/listingAdvice/listingAdviceClient';
+import { dismissListingAdvice, fetchLatestListingAdvice, refreshListingAdvice, resurfaceAdvice } from '@/lib/analytics/listingAdvice/listingAdviceClient';
+import { deriveCoachModuleView } from '@/lib/analytics/coachState';
+import HiddenAdviceList from '@/components/HiddenAdviceList';
 import { LISTING_ADVICE_KEY } from '@/lib/listingsCacheKeys';
 import { listingsCache } from '@/lib/listingsCacheStore';
 import { useSwrResource } from '@/lib/useSwrResource';
 import { listingAdviceKey } from '@/lib/listingAdviceKey';
 import { formatWindowLabel } from '@/lib/listingAdviceView';
-import { adviceLabels, formatAdviceTimestamp, resolveRevisionLanguage } from '@/lib/analytics/advice/adviceLabels';
+import { adviceLabels, formatAdviceDate, formatAdviceTimestamp, resolveRevisionLanguage } from '@/lib/analytics/advice/adviceLabels';
 import type { ListingAdviceCard } from '@/lib/analytics/listingAdvice/listingAdvice';
 
 const TYPE_TONE: Record<string, string> = {
@@ -36,6 +40,9 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
   const [hiddenKeys, setHiddenKeys] = useState<string[]>([]);
   const [dismissError, setDismissError] = useState<string | null>(null);
   const [openCard, setOpenCard] = useState<ListingAdviceCard | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
+  const [resurfacingKey, setResurfacingKey] = useState<string | null>(null);
 
   const data = res.data;
   const latest = data?.latest ?? null;
@@ -45,6 +52,38 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
   const L = adviceLabels(language);
   const dismissed = new Set([...(data?.dismissed_keys ?? []), ...hiddenKeys]);
   const cards = allCards.filter((c) => !dismissed.has(listingAdviceKey(c)));
+  // Freshness / failure / hidden-with-dates (same state model as the Dashboard).
+  const view = useMemo(() => deriveCoachModuleView({
+    hasOutput: !!latest?.output,
+    cards: allCards,
+    keyOf: listingAdviceKey,
+    dismissals: new Map([
+      ...(data?.dismissals ?? []).map((d) => [d.advice_key, d.resurface_after] as [string, string]),
+      ...hiddenKeys.map((k) => [k, new Date(Date.now() + 30 * 86400000).toISOString()] as [string, string]),
+    ]),
+    generatedAt: latest?.generated_at ?? null,
+    failureTimes: [data?.last_failure?.created_at],
+  }), [latest, allCards, data, hiddenKeys]);
+  const weeks = view.ageDays !== null ? Math.floor(view.ageDays / 7) : 0;
+
+  const reload = useCallback(() => listingsCache.load(LISTING_ADVICE_KEY, fetchLatestListingAdvice, { force: true }).catch(() => undefined), []);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshNotice(null);
+    const outcome = await refreshListingAdvice();
+    if (outcome.ok) setRefreshNotice(outcome.unchanged ? L.adviceUnchanged : null);
+    else setRefreshNotice(outcome.reason === 'already_running' ? L.refreshAlreadyRunning : L.listingRefreshFailed);
+    await reload();
+    setRefreshing(false);
+  }, [L, reload]);
+
+  const resurface = useCallback(async (key: string) => {
+    setResurfacingKey(key);
+    const { ok } = await resurfaceAdvice(key);
+    if (ok) { setHiddenKeys((prev) => prev.filter((k) => k !== key)); await reload(); }
+    setResurfacingKey(null);
+  }, [reload]);
 
   const dismiss = useCallback(async (card: ListingAdviceCard) => {
     if (!latest) return;
@@ -65,16 +104,33 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
 
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:p-5" data-listing-advice>
-      <div className="min-w-0">
-        <p className="section-title">{L.listingAdviceTitle}</p>
-        {latest ? (
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            {L.generated} {formatAdviceTimestamp(latest.generated_at, language)} · {L.demandWindow}: {formatWindowLabel(latest.window_start, latest.window_end)}
-          </p>
-        ) : (
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{L.listingAdviceSubtitle}</p>
-        )}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="section-title">{L.listingAdviceTitle}</p>
+          {latest ? (
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400" data-advice-freshness>
+              {L.generated} {formatAdviceTimestamp(latest.generated_at, language)} · {L.demandWindow}: {formatWindowLabel(latest.window_start, latest.window_end)}
+            </p>
+          ) : (
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{L.listingAdviceSubtitle}</p>
+          )}
+          {view.stale && view.generatedAt && (
+            <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400" data-advice-stale>
+              {weeks >= 2 ? L.listingAdviceAge.replace('{n}', String(weeks)) : L.listingNotRefreshedSince.replace('{date}', formatAdviceDate(view.generatedAt, language))}
+            </p>
+          )}
+          {view.refreshFailedAt && (
+            <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400" data-advice-refresh-failed>{L.listingRefreshFailed}</p>
+          )}
+        </div>
+        <button type="button" className={BTN} onClick={refresh} disabled={refreshing || !!data?.generating} data-advice-refresh>
+          {refreshing ? L.refreshing : L.refreshAdvice}
+        </button>
       </div>
+
+      {refreshNotice && (
+        <p role="status" className="mt-3 text-xs text-slate-500 dark:text-slate-400" data-advice-refresh-notice>{refreshNotice}</p>
+      )}
 
       {dismissError && (
         <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-900/20 dark:text-rose-300" data-advice-error>
@@ -105,9 +161,9 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
       )}
 
       {latest && allCards.length > 0 && cards.length === 0 && (
-        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400" data-advice-all-dismissed>
-          {L.allDismissed}
-        </p>
+        <div className="mt-3">
+          <HiddenAdviceList hidden={view.hidden} allHidden titleOf={(c) => c.title} onResurface={resurface} resurfacingKey={resurfacingKey} L={L} language={language} />
+        </div>
       )}
 
       {latest && cards.length > 0 && (
@@ -143,6 +199,9 @@ export default function ListingAdviceSection({ returnTo }: { returnTo: string })
             </div>
           ))}
         </div>
+      )}
+      {latest && cards.length > 0 && (
+        <HiddenAdviceList hidden={view.hidden} allHidden={false} titleOf={(c) => c.title} onResurface={resurface} resurfacingKey={resurfacingKey} L={L} language={language} />
       )}
 
       {latest && data?.viewer_is_admin && data.last_failure && (

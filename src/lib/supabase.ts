@@ -1473,3 +1473,31 @@ export async function getActiveAdviceDismissalKeysForCurrentUser(): Promise<{
   return { data: new Set((data ?? []).map((row) => row.advice_key as string)), error: null };
 }
 
+/** Active dismissals (both namespaces) with their resurface instants: advice_key -> resurface_after. */
+export async function getActiveAdviceDismissalsForCurrentUser(): Promise<{ data: Map<string, string> | null; error: unknown }> {
+  const { data, error } = await supabase
+    .from('analytics_advice_dismissals')
+    .select('advice_key, resurface_after')
+    .gt('resurface_after', new Date().toISOString());
+  if (error) return { data: null, error };
+  return { data: new Map((data ?? []).map((row) => [row.advice_key as string, row.resurface_after as string])), error: null };
+}
+
+/**
+ * Instants of the caller's most recent FAILED General Coach attempts — the newest Analytics run and the newest
+ * Coach revision, when either failed. The Dashboard compares them with the shown advice's generation time, so a
+ * failed refresh is announced next to the previous advice instead of silently leaving stale cards.
+ */
+export async function getLatestGeneralCoachFailuresForCurrentUser(): Promise<string[]> {
+  const [{ data: runs }, { data: revisions }] = await Promise.all([
+    supabase.from('analytics_runs').select('status, created_at, completed_at').order('created_at', { ascending: false }).limit(1),
+    supabase.from('analytics_run_advice').select('status, created_at, updated_at').order('created_at', { ascending: false }).limit(1),
+  ]);
+  const out: string[] = [];
+  const run = (runs ?? [])[0] as { status: string; created_at: string; completed_at: string | null } | undefined;
+  if (run?.status === 'failed') out.push(run.completed_at ?? run.created_at);
+  const rev = (revisions ?? [])[0] as { status: string; created_at: string; updated_at: string } | undefined;
+  if (rev?.status === 'failed') out.push(rev.updated_at ?? rev.created_at);
+  return out;
+}
+

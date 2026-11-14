@@ -54,13 +54,38 @@ export async function dismissListingAdviceCard(params: {
   return { status: 'dismissed', adviceKey, resurfaceAfter };
 }
 
-/** The caller's currently active (not yet resurfaced) Listing Advice dismissal keys — read through their RLS client. */
-export async function getActiveListingDismissalKeys(db: SupabaseClient, now: Date = new Date()): Promise<string[]> {
+/** The caller's currently active Listing Advice dismissals (key + resurface instant) — read through their RLS client. */
+export async function getActiveListingDismissals(db: SupabaseClient, now: Date = new Date()): Promise<{ advice_key: string; resurface_after: string }[]> {
   const { data, error } = await db
     .from('analytics_advice_dismissals')
-    .select('advice_key')
+    .select('advice_key, resurface_after')
     .like('advice_key', `${LISTING_ADVICE_KEY_PREFIX}%`)
     .gt('resurface_after', now.toISOString());
   if (error) throw new Error(`analytics_advice_dismissals: ${error.message}`);
-  return (data ?? []).map((r) => r.advice_key as string);
+  return (data ?? []).map((r) => ({ advice_key: r.advice_key as string, resurface_after: r.resurface_after as string }));
+}
+
+/** The caller's currently active (not yet resurfaced) Listing Advice dismissal keys — read through their RLS client. */
+export async function getActiveListingDismissalKeys(db: SupabaseClient, now: Date = new Date()): Promise<string[]> {
+  return (await getActiveListingDismissals(db, now)).map((d) => d.advice_key);
+}
+
+export type ResurfaceAdviceResult = { status: 'resurfaced' } | { status: 'not_found' } | { status: 'error'; message: string };
+
+/**
+ * "Resurface" — ends the caller's own active dismissal NOW, for either namespace (general `v2:` or `listing:v1:`).
+ * The row is kept (dismissed_at history intact) and only resurface_after moves to now, exactly the state a
+ * dismissal reaches when its 30-day window ends. Only the caller's own row can match (user_id is server-resolved).
+ */
+export async function resurfaceAdvice(params: { serviceClient: SupabaseClient; appUserId: number; adviceKey: string; now?: Date }): Promise<ResurfaceAdviceResult> {
+  const now = (params.now ?? new Date()).toISOString();
+  const { data, error } = await params.serviceClient
+    .from('analytics_advice_dismissals')
+    .update({ resurface_after: now })
+    .eq('user_id', params.appUserId)
+    .eq('advice_key', params.adviceKey)
+    .gt('resurface_after', now)
+    .select('id');
+  if (error) return { status: 'error', message: 'Failed to resurface advice' };
+  return (data ?? []).length > 0 ? { status: 'resurfaced' } : { status: 'not_found' };
 }

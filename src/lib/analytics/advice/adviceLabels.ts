@@ -55,6 +55,34 @@ export interface AdviceLabels {
   allDismissed: string;
   allCoachAdviceDismissed: string;
   lastFailure: string;
+  // Business Coach lifecycle (Dashboard + /listings) — {date}/{n}/{gen} placeholders
+  businessCoach: string;
+  weeklyRefresh: string;
+  weeklyState: Record<'completed' | 'partial' | 'failed' | 'running' | 'did_not_run' | 'next_scheduled', string>;
+  lastSuccessful: string;
+  refreshCoach: string;
+  refreshing: string;
+  refreshAlreadyRunning: string;
+  refreshFailed: string;
+  latestRefreshFailed: string;
+  coachNoneYet: string;
+  noVisibleAdvice: string;
+  hiddenCountOne: string;
+  hiddenCountMany: string;
+  nextResurface: string;
+  viewHidden: string;
+  hideHidden: string;
+  hiddenUntil: string;
+  resurface: string;
+  noMaterialThisWeek: string;
+  listingActions: string;
+  viewAllInListings: string;
+  noMaterialListingActions: string;
+  listingNotRefreshedSince: string;
+  listingAdviceAge: string;
+  listingRefreshFailed: string;
+  refreshAdvice: string;
+  adviceUnchanged: string;
   // debug / audit
   debugAudit: string;
   model: string;
@@ -107,6 +135,33 @@ const EN: AdviceLabels = {
   allDismissed: "You've dismissed all current Listing Advice. New advice appears after the next Analytics run.",
   allCoachAdviceDismissed: "You've dismissed every card from the latest Business Coach run. New advice appears after the next Analytics run; previously dismissed items stay hidden until their 30-day period ends.",
   lastFailure: 'The most recent Listing Advice update failed ({code}); the previous advice is shown.',
+  businessCoach: 'Business Coach',
+  weeklyRefresh: 'Weekly refresh',
+  weeklyState: { completed: 'Completed', partial: 'Partially failed', failed: 'Failed', running: 'Running', did_not_run: 'Did not run', next_scheduled: 'Next' },
+  lastSuccessful: 'Last successful',
+  refreshCoach: 'Refresh Coach',
+  refreshing: 'Refreshing…',
+  refreshAlreadyRunning: 'A Coach refresh is already running.',
+  refreshFailed: 'Refresh failed. Previous advice is still shown.',
+  latestRefreshFailed: 'Latest refresh failed {date}. Using advice generated {gen}.',
+  coachNoneYet: 'No Business Coach advice has been generated yet.',
+  noVisibleAdvice: 'No new visible advice',
+  hiddenCountOne: '1 current suggestion is hidden.',
+  hiddenCountMany: '{n} current suggestions are hidden.',
+  nextResurface: 'Next suggestion may resurface {date}.',
+  viewHidden: 'View hidden suggestions',
+  hideHidden: 'Hide list',
+  hiddenUntil: 'Hidden until {date}',
+  resurface: 'Resurface',
+  noMaterialThisWeek: 'No material new advice this week.',
+  listingActions: 'Listing Actions',
+  viewAllInListings: 'View all in Listings',
+  noMaterialListingActions: 'No material listing actions this week.',
+  listingNotRefreshedSince: 'Listing advice has not refreshed since {date}.',
+  listingAdviceAge: 'Listing advice is {n} weeks old.',
+  listingRefreshFailed: 'Listing advice refresh failed. Previous advice is still shown.',
+  refreshAdvice: 'Refresh Advice',
+  adviceUnchanged: 'Already up to date for the current evidence.',
   debugAudit: 'Debug / audit',
   model: 'Model',
   prompt: 'Prompt',
@@ -158,6 +213,33 @@ const RU: AdviceLabels = {
   allDismissed: 'Вы скрыли все текущие советы по объявлениям. Новые появятся после следующего запуска аналитики.',
   allCoachAdviceDismissed: 'Вы скрыли все карточки из последнего запуска Бизнес-коуча. Новые советы появятся после следующего запуска аналитики; ранее скрытые карточки останутся скрытыми до истечения их 30-дневного периода.',
   lastFailure: 'Последнее обновление советов по объявлениям не удалось ({code}); показаны предыдущие советы.',
+  businessCoach: 'Бизнес-коуч',
+  weeklyRefresh: 'Еженедельное обновление',
+  weeklyState: { completed: 'Выполнено', partial: 'Частично не удалось', failed: 'Не удалось', running: 'Выполняется', did_not_run: 'Не запускалось', next_scheduled: 'Следующее' },
+  lastSuccessful: 'Последнее успешное',
+  refreshCoach: 'Обновить коуча',
+  refreshing: 'Обновляю…',
+  refreshAlreadyRunning: 'Обновление коуча уже выполняется.',
+  refreshFailed: 'Обновление не удалось. Показаны предыдущие советы.',
+  latestRefreshFailed: 'Последнее обновление не удалось {date}. Показаны советы от {gen}.',
+  coachNoneYet: 'Советы Бизнес-коуча ещё не создавались.',
+  noVisibleAdvice: 'Нет новых видимых советов',
+  hiddenCountOne: 'Скрыт 1 текущий совет.',
+  hiddenCountMany: 'Скрыто текущих советов: {n}.',
+  nextResurface: 'Следующий совет может вернуться {date}.',
+  viewHidden: 'Показать скрытые советы',
+  hideHidden: 'Свернуть',
+  hiddenUntil: 'Скрыто до {date}',
+  resurface: 'Вернуть',
+  noMaterialThisWeek: 'На этой неделе существенных новых советов нет.',
+  listingActions: 'Действия по объявлениям',
+  viewAllInListings: 'Все в разделе «Объявления»',
+  noMaterialListingActions: 'На этой неделе существенных действий по объявлениям нет.',
+  listingNotRefreshedSince: 'Советы по объявлениям не обновлялись с {date}.',
+  listingAdviceAge: 'Советам по объявлениям {n} нед.',
+  listingRefreshFailed: 'Обновление советов по объявлениям не удалось. Показаны предыдущие.',
+  refreshAdvice: 'Обновить советы',
+  adviceUnchanged: 'Советы уже актуальны для текущих данных.',
   debugAudit: 'Отладка / аудит',
   model: 'Модель',
   prompt: 'Промпт',
@@ -185,6 +267,19 @@ export function resolveRevisionLanguage(stored: unknown, viewerPreference?: unkn
 }
 
 const DATE_LOCALE: Record<AdviceLanguage, string> = { en: 'en-US', ru: 'ru-RU' };
+
+/** Date only ("Nov 5" / "5 нояб."), for freshness lines. */
+export function formatAdviceDate(value: string | null | undefined, language: AdviceLanguage): string {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString(DATE_LOCALE[language], { month: 'short', day: 'numeric' });
+}
+
+/** "{n} current suggestions are hidden." with the right singular/plural form. */
+export function hiddenCountLabel(L: AdviceLabels, n: number): string {
+  return n === 1 ? L.hiddenCountOne : L.hiddenCountMany.replace('{n}', String(n));
+}
 
 /** Date/time in the advice language (the existing English format is unchanged). */
 export function formatAdviceTimestamp(value: string | null | undefined, language: AdviceLanguage): string {

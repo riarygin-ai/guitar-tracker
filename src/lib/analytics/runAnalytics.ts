@@ -117,6 +117,10 @@ const SNAPSHOT_SCHEMA_VERSION = '2.13';
 const ANALYTICS_DEFINITION_VERSION = '2.13';
 const SNAPSHOT_BUILDER_RPC = 'build_analytics_snapshot_v2_13';
 
+/** A pending/running run older than this was abandoned by a killed function (routes cap at 300 s). */
+export const STALE_INFLIGHT_RUN_MS = 10 * 60 * 1000;
+export const ANALYTICS_RUN_ALREADY_IN_PROGRESS = 'An Analytics run is already in progress for this account.';
+
 // ── Types ────────────────────────────────────────────────────────────────
 
 export type AnalyticsRunStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -279,10 +283,10 @@ export interface RunAnalyticsParams {
  * requested_by_user_id and recommendation_target_user_id are ALWAYS
  * appUserId — there is no code path that accepts a different target.
  *
- * Concurrency note: this function does not lock, queue, deduplicate, or
- * cancel runs. Calling it twice for the same user creates two independent
- * rows that both run to completion (or failure) independently. See
- * analytics/README.md for this documented, deliberate limitation.
+ * Concurrency: at most one pending/running run per user (DB partial unique
+ * index). A second concurrent call throws AnalyticsRunError 409
+ * (ANALYTICS_RUN_ALREADY_IN_PROGRESS) without creating a row; abandoned
+ * in-flight rows older than STALE_INFLIGHT_RUN_MS are failed out first.
  *
  * Throws AnalyticsRunError on any failure that should be reported to the
  * caller (HTTP layer maps `.status`/`.publicMessage` to the response).
@@ -291,6 +295,16 @@ export async function runAnalyticsForCurrentUser(
   params: RunAnalyticsParams,
 ): Promise<AnalyticsRun> {
   const { appUserId, serviceClient } = params;
+
+  // ── 0. One in-flight run per user (uq_analytics_runs_one_inflight_per_user,
+  // 20261113000000). Rows a killed serverless function left pending/running
+  // are failed out first so they can never block this user permanently. ──
+  await serviceClient
+    .from('analytics_runs')
+    .update({ status: 'failed', completed_at: new Date().toISOString(), error_message: 'Run did not finish and was abandoned.' })
+    .eq('requested_by_user_id', appUserId)
+    .in('status', ['pending', 'running'])
+    .lt('created_at', new Date(Date.now() - STALE_INFLIGHT_RUN_MS).toISOString());
 
   // ── 1. Insert pending row ────────────────────────────────────────────
   const { data: inserted, error: insertError } = await serviceClient
@@ -305,6 +319,9 @@ export async function runAnalyticsForCurrentUser(
     .select('id')
     .single();
 
+  if (insertError && (insertError as { code?: string }).code === '23505') {
+    throw new AnalyticsRunError(ANALYTICS_RUN_ALREADY_IN_PROGRESS, 409);
+  }
   if (insertError || !inserted) {
     console.error('[runAnalytics] failed to insert pending run:', sanitizeErrorMessage(insertError));
     throw new AnalyticsRunError('Failed to create analytics run', 500);

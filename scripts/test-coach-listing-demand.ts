@@ -285,7 +285,7 @@ async function main() {
   console.log('\n[I — failure isolation & freshness]');
   {
     const gen = strip(read('src', 'lib', 'analytics', 'advice', 'generateAdvice.ts'));
-    check('generateAdviceForRun wraps the enrichment in try/catch and continues without it', /let listingDemand: ListingDemandContext \| null = null;\s*try \{\s*listingDemand = await loadListingDemandContext\(/.test(gen) && /catch \(demandError\)/.test(gen));
+    check('generateAdviceForRun uses the refresh\'s shared context when given, else wraps its own load in try/catch and continues without it', /let listingDemand: ListingDemandContext \| null = params\.listingDemand \?\? null;\s*if \(params\.listingDemand === undefined\) \{\s*try \{\s*listingDemand = await loadListingDemandContext\(/.test(gen) && /catch \(demandError\)/.test(gen));
     check('the failure is logged, and no fallback metrics are fabricated', /console\.error\('\[generateAdvice\] listing demand enrichment unavailable/.test(gen) && /listingDemand,\s*linkedDealAnalytics,\s*negotiation,\s*language,\s*\}\)/.test(gen));
     check('the demand context is fetched server-side, at generation time (not from the /listings client cache)', /loadListingDemandContext\(\{ appUserId: requestingUserId, serviceClient \}\)/.test(gen) && !/listingsCache|swrCache/.test(gen + strip(read('src', 'lib', 'analytics', 'advice', 'listingDemandContext.ts'))));
     let rejected = false;

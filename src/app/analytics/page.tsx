@@ -97,7 +97,7 @@ function ConfidencePill({ confidence }: { confidence: string | null }) {
 }
 
 interface RunStage {
-  status: 'completed' | 'failed' | 'skipped';
+  status: 'completed' | 'no_material_advice' | 'failed' | 'skipped';
   code: string | null;
   message: string | null;
   rowId: number | null;
@@ -105,7 +105,9 @@ interface RunStage {
 
 /** One lightweight status word; a failed/skipped AI stage shows its code + detail without implying the snapshot was lost. */
 function StageStatus({ stage }: { stage: RunStage }) {
-  if (stage.status === 'completed') return <span className="text-emerald-600 dark:text-emerald-400">completed</span>;
+  if (stage.status === 'completed' || stage.status === 'no_material_advice') {
+    return <span className="text-emerald-600 dark:text-emerald-400">{stage.status === 'completed' ? 'completed' : 'completed, no material advice'}{stage.code ? ` (${stage.code})` : ''}</span>;
+  }
   const tone = stage.status === 'failed' ? 'text-amber-700 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400';
   return (
     <span className={tone} title={stage.message ?? undefined}>
@@ -277,14 +279,25 @@ function JsonBlock({ value }: { value: unknown }) {
 // independent manual action and never touches the weekly audit row.
 
 type WeeklyAutomationStatus =
-  | { state: 'completed'; periodKey: string; completedAt: string | null; analyticsRunId: number | null }
+  | { state: 'completed'; periodKey: string; completedAt: string | null; analyticsRunId: number | null; modules?: WeeklyModules }
+  | { state: 'partial'; periodKey: string; completedAt: string | null; analyticsRunId: number | null; message: string; modules?: WeeklyModules }
   | { state: 'running'; periodKey: string; startedAt: string | null }
-  | { state: 'failed'; periodKey: string; completedAt: string | null; message: string }
+  | { state: 'failed'; periodKey: string; completedAt: string | null; message: string; modules?: WeeklyModules }
   | { state: 'did_not_run'; periodKey: string }
   | { state: 'next_scheduled'; periodKey: string; nextScheduledAtUtc: string };
 
+type WeeklyModules = { general: string | null; listings: string | null };
+
+/** "General: completed · Listings: failed" — omitted for executions recorded before per-module tracking. */
+function WeeklyModuleLine({ modules }: { modules?: WeeklyModules }) {
+  if (!modules || (!modules.general && !modules.listings)) return null;
+  const word = (s: string | null) => (s ?? 'not run').replace(/_/g, ' ');
+  return <p className="break-words text-xs text-slate-500 dark:text-slate-400" data-weekly-modules>General Coach: {word(modules.general)} · Listing Advice: {word(modules.listings)}</p>;
+}
+
 const WEEKLY_AUTOMATION_STATE_LABELS: Record<WeeklyAutomationStatus['state'], string> = {
   completed: 'Completed',
+  partial: 'Partially failed',
   running: 'Running',
   failed: 'Failed',
   did_not_run: 'Did not run',
@@ -293,6 +306,7 @@ const WEEKLY_AUTOMATION_STATE_LABELS: Record<WeeklyAutomationStatus['state'], st
 
 const WEEKLY_AUTOMATION_STATE_BADGE_CLASSES: Record<WeeklyAutomationStatus['state'], string> = {
   completed: 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700',
+  partial: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700',
   running: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700',
   failed: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700',
   did_not_run: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700',
@@ -357,6 +371,12 @@ function WeeklyAutomationStatusPanel() {
                 View this week&apos;s Analytics Run
               </Link>
             )}
+            <WeeklyModuleLine modules={status.modules} />
+          </div>
+        ) : status.state === 'partial' ? (
+          <div className="space-y-1">
+            <p className="break-words text-sm text-amber-700 dark:text-amber-400">{status.message}</p>
+            <WeeklyModuleLine modules={status.modules} />
           </div>
         ) : status.state === 'running' ? (
           <div className="flex items-center gap-2">
@@ -366,6 +386,7 @@ function WeeklyAutomationStatusPanel() {
         ) : status.state === 'failed' ? (
           <div className="space-y-1">
             <p className="break-words text-sm text-rose-700 dark:text-rose-400">{status.message}</p>
+            <WeeklyModuleLine modules={status.modules} />
             <p className="break-words text-xs text-slate-500 dark:text-slate-400">
               This period will not be retried automatically. Use the Run Analytics button above whenever you&apos;d like fresh Analytics and Advice.
             </p>
@@ -392,7 +413,7 @@ export default function AnalyticsPage() {
   const [runningAnalytics, setRunningAnalytics] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   // Outcome of the AI stages of the last manual run (Business Coach / Listing Advice) — shown as one compact line.
-  const [lastStages, setLastStages] = useState<{ business_coach: RunStage; listing_advice: RunStage } | null>(null);
+  const [lastStages, setLastStages] = useState<{ snapshotFailed: boolean; business_coach: RunStage; listing_advice: RunStage } | null>(null);
 
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [selectedSnapshot, setSelectedSnapshot] = useState<AnalyticsSnapshot | null>(null);
@@ -625,12 +646,14 @@ export default function AnalyticsPage() {
         // history so it's visible, and select it if we know its id.
         await loadHistory();
         const failedRunId = typeof payload.runId === 'number' ? payload.runId : null;
+        // Listing Advice runs even when the snapshot failed — show its outcome too.
+        if (payload.stages?.business_coach && payload.stages?.listing_advice) { setLastStages({ snapshotFailed: true, business_coach: payload.stages.business_coach, listing_advice: payload.stages.listing_advice }); invalidateListingAdviceCache(); }
         if (failedRunId !== null) selectRun(failedRunId);
         throw new Error(typeof payload.error === 'string' ? payload.error : `Server error (${res.status})`);
       }
 
       const run = payload.run as AnalyticsRun;
-      if (payload.stages?.business_coach && payload.stages?.listing_advice) setLastStages({ business_coach: payload.stages.business_coach, listing_advice: payload.stages.listing_advice });
+      if (payload.stages?.business_coach && payload.stages?.listing_advice) setLastStages({ snapshotFailed: false, business_coach: payload.stages.business_coach, listing_advice: payload.stages.listing_advice });
       // A new Listing Advice may now exist: make /listings resolve the latest persisted advice next time it is shown.
       invalidateListingAdviceCache();
       const nextRuns = [toMetaFromRun(run), ...runs.filter((r) => r.id !== run.id)].slice(0, HISTORY_LIMIT);
@@ -695,7 +718,7 @@ export default function AnalyticsPage() {
       {lastStages && (
         <p className="text-xs text-slate-500 dark:text-slate-400" data-run-stages>
           <span className="font-medium text-slate-600 dark:text-slate-300">Last run:</span>{' '}
-          Analytics snapshot <span className="text-emerald-600 dark:text-emerald-400">completed</span>
+          Analytics snapshot {lastStages.snapshotFailed ? <span className="text-amber-700 dark:text-amber-400">failed</span> : <span className="text-emerald-600 dark:text-emerald-400">completed</span>}
           {' · '}Business Coach <StageStatus stage={lastStages.business_coach} />
           {' · '}Listing Advice <StageStatus stage={lastStages.listing_advice} />
         </p>

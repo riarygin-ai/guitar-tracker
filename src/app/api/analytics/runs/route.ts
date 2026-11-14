@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { AnalyticsRunError } from '@/lib/analytics/runAnalytics';
-import { runAnalyticsWorkflow } from '@/lib/analytics/runAnalyticsWorkflow';
+import { isCoachRefreshInFlight, runCoachRefresh } from '@/lib/analytics/coachRefresh';
 
 const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// Manual Coach refresh: Dashboard "Refresh Coach" and Admin "Run Analytics".
+// Snapshot + two model calls; Fluid compute budget like the weekly cron.
+export const maxDuration = 300;
 
 // Deliberately no request-body parsing: the normal flow accepts no client
 // input at all, so there is no field a client could use to supply a
@@ -51,25 +54,23 @@ export async function POST(req: NextRequest) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // ── Run the full workflow for the authenticated user only ───────────────────
-  // Analytics snapshot -> Business Coach -> Listing Advice: the SAME shared
-  // workflow the scheduled weekly automation runs (runAnalyticsWorkflow). The
-  // snapshot is saved as completed before either AI stage starts, and an AI
-  // stage failure can never fail or roll back the run response — each stage's
-  // outcome is returned in `stages` (and persisted in its own table).
-  try {
-    const { run, businessCoach, listingAdvice } = await runAnalyticsWorkflow({
-      appUserId: appUser.id as number,
-      serviceClient,
-    });
-
-    return NextResponse.json({ run, stages: { analytics: { status: 'completed' }, business_coach: businessCoach, listing_advice: listingAdvice } });
-  } catch (err) {
-    if (err instanceof AnalyticsRunError) {
-      return NextResponse.json({ error: err.publicMessage, runId: err.runId }, { status: err.status });
-    }
-
-    console.error('[api/analytics/runs] unexpected error:', err instanceof Error ? err.message : String(err));
-    return NextResponse.json({ error: 'Unexpected server error' }, { status: 500 });
+  // ── One refresh at a time per user (double-click / during the weekly run) ──
+  if (await isCoachRefreshInFlight(serviceClient, appUser.id as number)) {
+    return NextResponse.json({ error: 'A Coach refresh is already running. Try again in a minute.', code: 'ALREADY_RUNNING' }, { status: 409 });
   }
+
+  // ── The SAME orchestration as the Weekly Coach Refresh (runCoachRefresh):
+  // General Coach + Listing Advice, independent. A failed snapshot fails only
+  // the General module — Listing Advice still runs and is reported. Never
+  // throws; every module outcome is persisted in its own table. ───────────
+  const { run, analyticsRunId, general, listings } = await runCoachRefresh({ appUserId: appUser.id as number, serviceClient });
+  const stages = { analytics: { status: run ? 'completed' : general.status }, business_coach: general, listing_advice: listings };
+
+  if (!run) {
+    const status = general.code === 'ALREADY_RUNNING' ? 409 : 500;
+    // ANALYTICS_RUN_FAILED / ALREADY_RUNNING carry AnalyticsRunError's public message; anything else stays generic.
+    const error = general.code === 'ANALYTICS_RUN_FAILED' || general.code === 'ALREADY_RUNNING' ? general.message ?? 'Analytics run failed' : 'Unexpected server error';
+    return NextResponse.json({ error, code: general.code, runId: analyticsRunId, stages }, { status });
+  }
+  return NextResponse.json({ run, stages });
 }
