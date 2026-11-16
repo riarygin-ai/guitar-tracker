@@ -118,7 +118,7 @@ function structureChecks() {
     check(`${f}: future-date rule still applies when finalizing; draft may hold a planned future date`, /Date cannot be in the future/.test(s) && /max=\{isDraft \? undefined : todayLocalDate\(\)\}/.test(s));
   }
   const trade = src('src/components/TradeOperationForm.tsx');
-  check('Trade draft: same Value Out / Value In / cash / balance UI (no draft-only economics)', /Value out/.test(trade) && /Value in/.test(trade) && /Cash Received/.test(trade) && /finalizeBlocked=\{!isBalanced\}/.test(trade) && !/plannedTerms|Planned terms/.test(trade));
+  check('Trade draft: same Value Out / Value In / cash / balance UI (no draft-only economics)', /valueLabel=\{ECON_LABEL\.valueOut\}/.test(trade) && /valueLabel=\{ECON_LABEL\.valueIn\}/.test(trade) && /<OperationItemCard/.test(trade) && /Cash Received/.test(trade) && /finalizeBlocked=\{!isBalanced\}/.test(trade) && !/plannedTerms|Planned terms/.test(trade));
   check('Trade draft: Lead picker gets the draft lead + captured contact name (no contact textbox)', /preferredLeadId=\{draft\?\.leadId\}/.test(trade) && /preferredLeadQuery=\{draft\?\.contactName\}/.test(trade) && !/Contact<\/label>/.test(trade));
   const page = src('src/app/operations/drafts/[id]/page.tsx');
   check('draft page renders the normal forms in draft mode (no separate draft UI)', /<TradeOperationForm\s+draft=\{context\}/.test(page) && /<SellOperationForm\s+draft=\{context\}/.test(page) && /<BuyOperationForm\s+draft=\{context\}/.test(page) && !/Planned terms|Save terms|Review &amp; finalize/.test(page));

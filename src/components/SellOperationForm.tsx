@@ -9,8 +9,6 @@ import {
   editSellOperation,
   getBrands,
   getDealChannels,
-  getInventoryItemWithValueById,
-  getInventoryExpensesByItemIds,
   searchInventoryItems,
   getDisplayPhotosForItems,
 } from '@/lib/supabase';
@@ -20,6 +18,10 @@ import { truncateDescription } from '@/lib/text';
 import OperationLeadPicker, { LeadLinkFailure, leadDisplayName, useOperationLeadLink } from '@/components/leads/OperationLeadPicker';
 import { draftErrorMessage, draftItemEditHref, finalizeDraft, plannedValue, saveDraft } from '@/lib/operations/operationDraftsClient';
 import { DraftActionBar, DraftItemHint, type DraftFormContext } from '@/components/operations/DraftOperationControls';
+import OperationItemCard from '@/components/operations/OperationItemCard';
+import { ECON_LABEL } from '@/lib/operations/itemEconomics';
+import { useItemEconomicsInputs } from '@/lib/operations/useItemEconomicsInputs';
+import { calculateItemProfitMetrics } from '@/lib/profit';
 
 interface SoldLineItem {
   item: InventorySearchItem;
@@ -65,7 +67,6 @@ export default function SellOperationForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [itemMetrics, setItemMetrics] = useState<Record<number, { valueIn: number | null; expenses: number }>>({});
   const [photoByItemId, setPhotoByItemId] = useState<Record<number, string>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lead = useOperationLeadLink();
@@ -139,41 +140,8 @@ export default function SellOperationForm({
     if (ok) router.push(draftItemEditHref(itemId, draftId));
   }
 
-  const itemIdsKey = items.map((li) => li.item.id).join(',');
-
-  useEffect(() => {
-    const ids = items.map((li) => li.item.id);
-    if (ids.length === 0) {
-      setItemMetrics({});
-      return;
-    }
-
-    Promise.all(ids.map((id) => getInventoryItemWithValueById(id))).then((results) => {
-      setItemMetrics((prev) => {
-        const next = { ...prev };
-        results.forEach((r, i) => {
-          const valueIn = !r.error && r.data ? ((r.data as any).value_in ?? null) : null;
-          next[ids[i]] = { valueIn, expenses: next[ids[i]]?.expenses ?? 0 };
-        });
-        return next;
-      });
-    });
-
-    getInventoryExpensesByItemIds(ids).then((r) => {
-      if (r.error || !r.data) return;
-      const expByItem: Record<number, number> = {};
-      r.data.forEach((exp) => {
-        if (exp.item_id != null) expByItem[exp.item_id] = (expByItem[exp.item_id] ?? 0) + exp.amount;
-      });
-      setItemMetrics((prev) => {
-        const next = { ...prev };
-        ids.forEach((id) => {
-          next[id] = { valueIn: next[id]?.valueIn ?? null, expenses: expByItem[id] ?? 0 };
-        });
-        return next;
-      });
-    });
-  }, [itemIdsKey]);
+  // Stored Value In + expenses per sold item (useItemEconomicsInputs — same sources as the completed operation).
+  const economics = useItemEconomicsInputs(outgoingItemIds);
 
   const clearSearch = () => {
     setSearchQuery('');
@@ -350,13 +318,14 @@ export default function SellOperationForm({
   };
 
   const totalCashReceived = items.reduce((sum, li) => sum + (Number(li.value) || 0), 0);
-  const totalCostBasis = items.reduce((sum, li) => sum + (itemMetrics[li.item.id]?.valueIn ?? 0), 0);
-  const totalItemExpenses = items.reduce((sum, li) => sum + (itemMetrics[li.item.id]?.expenses ?? 0), 0);
-  const totalRealizedProfit = items.length > 0 ? totalCashReceived - totalCostBasis - totalItemExpenses : null;
-  const totalRealizedRoi =
-    totalRealizedProfit == null ? null :
-    totalCostBasis === 0 ? (totalRealizedProfit > 0 ? 100 : null) :
-    (totalRealizedProfit / totalCostBasis) * 100;
+  const totalCostBasis = items.reduce((sum, li) => sum + (economics.byItemId[li.item.id]?.valueIn ?? 0), 0);
+  const totalItemExpenses = items.reduce((sum, li) => sum + (economics.byItemId[li.item.id]?.expenses ?? 0), 0);
+  // Operation totals through the canonical formula (calculateItemProfitMetrics) — same as dealRealizedProfit.
+  const totals = items.length > 0
+    ? calculateItemProfitMetrics({ valueIn: totalCostBasis, valueOut: totalCashReceived, totalExpenses: totalItemExpenses })
+    : null;
+  const totalRealizedProfit = totals?.realizedGain ?? null;
+  const totalRealizedRoi = totals?.realizedROI ?? null;
 
   const fmt = (v: number | null) => (v != null ? `$${v.toFixed(2)}` : '—');
   const fmtPct = (v: number | null) => (v != null ? `${v.toFixed(2)}%` : '—');
@@ -397,75 +366,22 @@ export default function SellOperationForm({
         {items.length > 0 && (
           <div className="mb-4 space-y-3">
             {items.map((li) => (
-              <div
+              <OperationItemCard
                 key={li.item.id}
-                className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-900/20"
-              >
-                <div className="flex gap-4">
-                  <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
-                    {photoByItemId[li.item.id] ? (
-                      <Image
-                        src={photoByItemId[li.item.id]}
-                        alt={formatItemLabel(li.item)}
-                        fill
-                        className="object-cover"
-                        unoptimized
-                        sizes="64px"
-                      />
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-6 w-6 text-slate-300 dark:text-slate-500">
-                        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-                      </svg>
-                    )}
-                  </div>
-
-                  <div className="min-w-0 flex-1 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                        {formatItemLabel(li.item)}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {li.item.condition && (
-                          <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                            {li.item.condition}
-                          </span>
-                        )}
-                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                          {li.item.item_subtype_name ?? ''}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex w-full gap-2 sm:w-48">
-                      <div className="flex-1">
-                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                          Sale price
-                        </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={li.value}
-                          onChange={(e) => handleValueChange(li.item.id, e.target.value)}
-                          placeholder="0.00"
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
-                        />
-                      </div>
-                      {!isEdit && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveItem(li.item.id)}
-                          aria-label="Remove item"
-                          className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-rose-50 hover:text-rose-600 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-rose-900/20 dark:hover:text-rose-400"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                {isDraft && <DraftItemHint item={li.item} incoming={false} onEdit={editDraftItem} disabled={saving} />}
-              </div>
+                itemId={li.item.id}
+                direction="out"
+                tone="sell"
+                label={formatItemLabel(li.item)}
+                photoUrl={photoByItemId[li.item.id]}
+                chips={[li.item.condition, li.item.item_subtype_name]}
+                estimatedSoldValue={li.item.estimated_sold_value}
+                stored={economics.byItemId[li.item.id]}
+                valueLabel={ECON_LABEL.saleValue}
+                value={li.value}
+                onValueChange={(value) => handleValueChange(li.item.id, value)}
+                onRemove={isEdit ? undefined : () => handleRemoveItem(li.item.id)}
+                footer={isDraft ? <DraftItemHint item={li.item} incoming={false} onEdit={editDraftItem} disabled={saving} /> : undefined}
+              />
             ))}
           </div>
         )}
@@ -648,15 +564,21 @@ export default function SellOperationForm({
                 <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{totalCashReceived > 0 ? fmt(totalCashReceived) : '—'}</p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Cost Basis</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Value In</p>
                 <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{items.length > 0 ? fmt(totalCostBasis) : '—'}</p>
               </div>
+              {totalItemExpenses > 0 && (
+                <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Expenses</p>
+                  <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">{fmt(totalItemExpenses)}</p>
+                </div>
+              )}
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Realized Profit</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Gain</p>
                 <p className={`mt-2 text-sm font-semibold ${metricColor(totalRealizedProfit)}`}>{fmt(totalRealizedProfit)}</p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Realized ROI</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">ROI</p>
                 <p className={`mt-2 text-sm font-semibold ${metricColor(totalRealizedRoi)}`}>{fmtPct(totalRealizedRoi)}</p>
               </div>
             </div>

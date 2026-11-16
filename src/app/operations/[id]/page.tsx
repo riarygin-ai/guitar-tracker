@@ -17,6 +17,8 @@ import {
 } from '@/lib/supabase';
 import type { Brand, Deal, DealChannel, DealItem, InventoryItemWithValue, CashFlow, InventoryExpense } from '@/types';
 import { formatCalendarDate } from '@/lib/dateUtils';
+import { ECON_LABEL, sumExpensesByItem, fmtMoney, fmtPct, fmtSignedMoney, incomingEconomics, outgoingEconomics, signTone } from '@/lib/operations/itemEconomics';
+import { EconStat } from '@/components/operations/OperationItemCard';
 
 const editableDealTypes = new Set(['purchase', 'sale', 'trade', 'expense']);
 
@@ -89,15 +91,7 @@ export default function OperationDetailPage() {
     const outgoingItemIds = (dealItemsResult.data || []).map((di: any) => di.item_id as number);
     if (outgoingItemIds.length > 0) {
       getInventoryExpensesByItemIds(outgoingItemIds).then((result) => {
-        if (!result.error && result.data) {
-          const map: Record<number, number> = {};
-          for (const exp of result.data) {
-            if (exp.item_id != null) {
-              map[exp.item_id] = (map[exp.item_id] ?? 0) + exp.amount;
-            }
-          }
-          setItemExpensesByItemId(map);
-        }
+        if (!result.error && result.data) setItemExpensesByItemId(sumExpensesByItem(result.data));
       });
     }
   }, [dealId]);
@@ -247,16 +241,22 @@ export default function OperationDetailPage() {
           {/* Gave / Outgoing Items */}
           {outgoingItems.length > 0 && (
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Gave / Outgoing</h2>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                {deal.deal_type === 'sale' ? 'Items sold' : deal.deal_type === 'trade' ? 'What I gave' : 'Gave / Outgoing'}
+              </h2>
               <div className="mt-4 space-y-3">
                 {outgoingItems.map((di) => {
                   const item = itemMap[di.item_id];
                   if (!item) return null;
                   const brand = brandMap[item.brand_id] || 'Unknown';
-                  const valueIn = Number(item.value_in ?? 0);
-                  const valueOut = Number(di.total_value ?? 0);
-                  const itemExpenses = itemExpensesByItemId[item.id] ?? 0;
-                  const realizedGain = valueOut - valueIn - itemExpenses;
+                  // Canonical per-item realized gain (outgoingItemGain) — same numbers as the operations list / MCP tools.
+                  const econ = outgoingEconomics({
+                    itemId: item.id,
+                    valueIn: item.value_in != null ? Number(item.value_in) : null,
+                    expenses: itemExpensesByItemId[item.id] ?? 0,
+                    estimatedSoldValue: null,
+                    valueOut: Number(di.total_value ?? 0),
+                  });
                   return (
                     <ItemCardLink key={di.id} href={`/inventory/${item.id}`}>
                       <div className="flex gap-4">
@@ -272,27 +272,12 @@ export default function OperationDetailPage() {
                               {item.year && `${item.year} • `}{item.color && `${item.color} • `}{item.condition}
                             </p>
                           </div>
-                          <div className="grid gap-3 sm:grid-cols-3">
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value In</p>
-                              <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Value Out</p>
-                              <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueOut)}</p>
-                            </div>
-                            {itemExpenses > 0 && (
-                              <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Expenses</p>
-                                <p className="mt-1 text-sm font-semibold text-rose-600">−{formatCurrency(itemExpenses)}</p>
-                              </div>
-                            )}
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Realized Profit</p>
-                              <p className={`mt-1 text-sm font-semibold ${realizedGain > 0 ? 'text-green-600' : realizedGain < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
-                                {formatCurrency(realizedGain)}
-                              </p>
-                            </div>
+                          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" data-testid={`completed-out-${item.id}`}>
+                            <EconStat label={ECON_LABEL.valueIn} value={fmtMoney(econ.valueIn)} />
+                            {econ.expenses > 0 && <EconStat label={ECON_LABEL.expenses} value={fmtMoney(econ.expenses)} />}
+                            <EconStat label={deal.deal_type === 'sale' ? ECON_LABEL.saleValue : ECON_LABEL.valueOut} value={fmtMoney(econ.valueOut)} />
+                            <EconStat label={ECON_LABEL.realizedGain} value={fmtSignedMoney(econ.gain)} tone={signTone(econ.gain)} />
+                            <EconStat label={ECON_LABEL.roi} value={fmtPct(econ.roiPercent)} tone={signTone(econ.roiPercent)} />
                           </div>
                         </div>
                       </div>
@@ -307,17 +292,20 @@ export default function OperationDetailPage() {
           {incomingItems.length > 0 && (
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                {deal.deal_type === 'purchase' ? 'Purchased Items' : 'Received / Incoming'}
+                {deal.deal_type === 'purchase' ? 'Purchased items' : deal.deal_type === 'trade' ? 'What I received' : 'Received / Incoming'}
               </h2>
               <div className="mt-4 space-y-3">
                 {incomingItems.map((di) => {
                   const item = itemMap[di.item_id];
                   if (!item) return null;
                   const brand = brandMap[item.brand_id] || 'Unknown';
-                  const valueIn = Number(di.total_value ?? 0);
-                  const estimatedSold = Number(item.estimated_sold_value ?? 0);
-                  const incomingItemExpenses = itemExpensesByItemId[item.id] ?? 0;
-                  const potentialReward = estimatedSold - valueIn - incomingItemExpenses;
+                  // Prospective only (calculateItemProfitMetrics) — never shown as realized.
+                  const econ = incomingEconomics({
+                    valueIn: Number(di.total_value ?? 0),
+                    expenses: itemExpensesByItemId[item.id] ?? 0,
+                    estimatedSoldValue: item.estimated_sold_value != null ? Number(item.estimated_sold_value) : null,
+                  });
+                  const exited = item.status === 'sold' || item.status === 'traded';
                   return (
                     <ItemCardLink key={di.id} href={`/inventory/${item.id}`}>
                       <div className="flex gap-4">
@@ -333,24 +321,22 @@ export default function OperationDetailPage() {
                               {item.year && `${item.year} • `}{item.color && `${item.color} • `}{item.condition}
                             </p>
                           </div>
-                          <div className="grid gap-3 sm:grid-cols-3">
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">
-                                {deal.deal_type === 'purchase' ? 'Purchase Cost' : 'Value In'}
-                              </p>
-                              <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(valueIn)}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Estimated Sold</p>
-                              <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(estimatedSold)}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-400">Est. Profit</p>
-                              <p className={`mt-1 text-sm font-semibold ${potentialReward > 0 ? 'text-green-600' : potentialReward < 0 ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
-                                {formatCurrency(potentialReward)}
-                              </p>
-                            </div>
+                          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" data-testid={`completed-in-${item.id}`}>
+                            <EconStat label={ECON_LABEL.valueIn} value={fmtMoney(econ.valueIn)} />
+                            {econ.expenses > 0 && <EconStat label={ECON_LABEL.expenses} value={fmtMoney(econ.expenses)} />}
+                            {!exited && (
+                              <>
+                                <EconStat label={ECON_LABEL.estSoldValue} value={fmtMoney(econ.estimatedSoldValue)} />
+                                <EconStat label={ECON_LABEL.potentialReward} value={fmtSignedMoney(econ.potentialReward)} tone={signTone(econ.potentialReward)} />
+                                <EconStat label={ECON_LABEL.potentialRoi} value={fmtPct(econ.potentialRoiPercent)} tone={signTone(econ.potentialRoiPercent)} />
+                              </>
+                            )}
                           </div>
+                          {exited && (
+                            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                              Since {item.status} — its realized gain is on the operation where it left inventory.
+                            </p>
+                          )}
                         </div>
                       </div>
                     </ItemCardLink>

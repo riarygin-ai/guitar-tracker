@@ -17,6 +17,10 @@ import { todayLocalDate } from '@/lib/dateUtils';
 import { truncateDescription } from '@/lib/text';
 import { draftErrorMessage, draftItemEditHref, finalizeDraft, saveDraft } from '@/lib/operations/operationDraftsClient';
 import { DraftActionBar, DraftItemHint, incompleteIncoming, type DraftFormContext } from '@/components/operations/DraftOperationControls';
+import OperationItemCard from '@/components/operations/OperationItemCard';
+import { ECON_LABEL } from '@/lib/operations/itemEconomics';
+import { useItemEconomicsInputs } from '@/lib/operations/useItemEconomicsInputs';
+import { calculateItemProfitMetrics } from '@/lib/profit';
 
 interface LineItem {
   item: InventorySearchItem;
@@ -195,11 +199,13 @@ export default function BuyOperationForm({
   const totalEstimated = allHaveEstimated
     ? items.reduce((sum, li) => sum + (li.item.estimated_sold_value ?? 0), 0)
     : null;
-  const potentialReward = totalEstimated != null ? totalEstimated - totalCost : null;
-  const potentialRoi =
-    potentialReward != null && totalCost === 0 ? (potentialReward > 0 ? 100 : null) :
-    potentialReward != null && totalCost > 0 ? (potentialReward / totalCost) * 100 :
-    null;
+  // Expenses already on incoming items (rare for new items) reduce potential reward, as on the completed operation.
+  const economics = useItemEconomicsInputs(items.map((li) => li.item.id));
+  const totalIncomingExpenses = items.reduce((sum, li) => sum + (economics.byItemId[li.item.id]?.expenses ?? 0), 0);
+  // Canonical formula (calculateItemProfitMetrics) on the operation totals.
+  const totalsPotential = calculateItemProfitMetrics({ valueIn: totalCost, estimatedSoldValue: totalEstimated, totalExpenses: totalIncomingExpenses });
+  const potentialReward = totalsPotential.potentialReward;
+  const potentialRoi = totalsPotential.potentialROI;
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -314,85 +320,22 @@ export default function BuyOperationForm({
         {items.length > 0 && (
           <div className="mb-4 space-y-3">
             {items.map((li) => (
-              <div
+              <OperationItemCard
                 key={li.item.id}
-                className="rounded-2xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-700 dark:bg-blue-900/20"
-              >
-                <div className="flex gap-4">
-                  {/* Photo */}
-                  <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
-                    {photoByItemId[li.item.id] ? (
-                      <Image
-                        src={photoByItemId[li.item.id]}
-                        alt={formatItemLabel(li.item)}
-                        fill
-                        className="object-cover"
-                        unoptimized
-                        sizes="64px"
-                      />
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="absolute inset-0 m-auto h-6 w-6 text-slate-300 dark:text-slate-500">
-                        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-                      </svg>
-                    )}
-                  </div>
-
-                  {/* Info + cost + remove — stacks on mobile, row on sm+ */}
-                  <div className="min-w-0 flex-1 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    {/* Item info */}
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                        {formatItemLabel(li.item)}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {li.item.condition && (
-                          <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                            {li.item.condition}
-                          </span>
-                        )}
-                        <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                          {li.item.item_subtype_name ?? ''}
-                        </span>
-                      </div>
-                      {li.item.estimated_sold_value != null && (
-                        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                          Est. sold:{' '}
-                          <span className="font-medium text-slate-700 dark:text-slate-200">
-                            ${li.item.estimated_sold_value.toFixed(0)}
-                          </span>
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Purchase cost + remove button */}
-                    <div className="flex w-full gap-2 sm:w-48">
-                      <div className="flex-1">
-                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                          Purchase cost
-                        </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={li.cost > 0 ? li.cost : ''}
-                          onChange={(e) => handleCostChange(li.item.id, e.target.value)}
-                          placeholder="0.00"
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(li.item.id)}
-                        aria-label="Remove item"
-                        className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-rose-50 hover:text-rose-600 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-rose-900/20 dark:hover:text-rose-400"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                {isDraft && <DraftItemHint item={li.item} incoming onEdit={editDraftItem} disabled={saving} />}
-              </div>
+                itemId={li.item.id}
+                direction="in"
+                tone="buy"
+                label={formatItemLabel(li.item)}
+                photoUrl={photoByItemId[li.item.id]}
+                chips={[li.item.condition, li.item.item_subtype_name]}
+                estimatedSoldValue={li.item.estimated_sold_value}
+                stored={economics.byItemId[li.item.id]}
+                valueLabel={ECON_LABEL.valueIn}
+                value={li.cost > 0 ? String(li.cost) : ''}
+                onValueChange={(value) => handleCostChange(li.item.id, value)}
+                onRemove={() => handleRemoveItem(li.item.id)}
+                footer={isDraft ? <DraftItemHint item={li.item} incoming onEdit={editDraftItem} disabled={saving} /> : undefined}
+              />
             ))}
           </div>
         )}
@@ -564,20 +507,31 @@ export default function BuyOperationForm({
                   {items.length === 0 ? '—' : items.length}
                 </p>
               </div>
-              <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Cost</p>
+              <div className="rounded-2xl bg-white p-4 dark:bg-slate-600" data-testid="buy-cash-paid">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Cash Paid</p>
                 <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">
                   {items.length === 0 ? '—' : fmt(totalCost)}
                 </p>
+                {items.length > 1 && (
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    Allocated as Value In across {items.length} items — cash paid is the sum of their Value In.
+                  </p>
+                )}
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Est. Value</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Total Est. Sold Value</p>
                 <p className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-100">
                   {fmt(totalEstimated)}
                 </p>
               </div>
               <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Est. ROI</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Potential Reward</p>
+                <p className={`mt-2 text-sm font-semibold ${metricColor(potentialReward)}`}>
+                  {fmt(potentialReward)}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white p-4 dark:bg-slate-600">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Potential ROI</p>
                 <p className={`mt-2 text-sm font-semibold ${metricColor(potentialRoi)}`}>
                   {fmtPct(potentialRoi)}
                 </p>

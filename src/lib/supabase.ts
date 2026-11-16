@@ -270,6 +270,12 @@ export async function getInventoryItemWithValueById(id: number) {
   return supabase.from('inventory_items_with_value').select('*').eq('id', id).single();
 }
 
+/** Batch form of getInventoryItemWithValueById — value_in = the item's acquisition deal_items.total_value. */
+export async function getInventoryItemsWithValueByIds(ids: number[]) {
+  if (ids.length === 0) return { data: [] as { id: number; value_in: number | null }[], error: null };
+  return supabase.from('inventory_items_with_value').select('id, value_in').in('id', ids);
+}
+
 export async function getDealItemsByItemId(itemId: number) {
   return supabase.from('deal_items').select('*').eq('item_id', itemId);
 }

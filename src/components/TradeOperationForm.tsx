@@ -10,6 +10,9 @@ import { todayLocalDate } from '@/lib/dateUtils'
 import OperationLeadPicker, { LeadLinkFailure, leadDisplayName, useOperationLeadLink } from '@/components/leads/OperationLeadPicker'
 import { draftErrorMessage, draftItemEditHref, finalizeDraft, plannedValue, saveDraft } from '@/lib/operations/operationDraftsClient'
 import { DraftActionBar, DraftItemHint, incompleteIncoming, type DraftFormContext } from '@/components/operations/DraftOperationControls'
+import OperationItemCard from '@/components/operations/OperationItemCard'
+import { ECON_LABEL } from '@/lib/operations/itemEconomics'
+import { useItemEconomicsInputs } from '@/lib/operations/useItemEconomicsInputs'
 
 type TradeItem = {
     item: InventorySearchItem
@@ -79,6 +82,8 @@ export default function TradeOperationForm({
     const [saving, setSaving] = useState(false)
     const lead = useOperationLeadLink()
     const outgoingItemIds = useMemo(() => outgoingItems.map((ti) => ti.item.id), [outgoingItems])
+    // Stored Value In + expenses for every item on the form (display only — never sent with the trade).
+    const economics = useItemEconomicsInputs([...outgoingItemIds, ...incomingItems.map((ti) => ti.item.id)])
 
     const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -577,127 +582,28 @@ export default function TradeOperationForm({
 
                         {outgoingItems.length > 0 && (
                             <div className="space-y-3">
-                                {outgoingItems.map((tradeItem, index) => {
-                                    const estVal = tradeItem.item.estimated_sold_value
-                                    const fmtEstVal = estVal != null
-                                        ? `$${Number(estVal).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
-                                        : null
-                                    const onChangeValue = (event: React.ChangeEvent<HTMLInputElement>) => {
-                                        const value = event.target.value
-                                        setOutgoingItems((current) =>
-                                            current.map((entry, entryIndex) =>
-                                                entryIndex === index ? { ...entry, value } : entry
+                                {outgoingItems.map((tradeItem, index) => (
+                                    <OperationItemCard
+                                        key={`${tradeItem.item.id}-${index}`}
+                                        itemId={tradeItem.item.id}
+                                        direction="out"
+                                        tone="trade"
+                                        label={formatItemLabel(tradeItem.item)}
+                                        photoUrl={photoByItemId[tradeItem.item.id]}
+                                        chips={[tradeItem.item.status, tradeItem.item.condition]}
+                                        estimatedSoldValue={tradeItem.item.estimated_sold_value}
+                                        stored={economics.byItemId[tradeItem.item.id]}
+                                        valueLabel={ECON_LABEL.valueOut}
+                                        value={tradeItem.value}
+                                        onValueChange={(value) =>
+                                            setOutgoingItems((current) =>
+                                                current.map((entry, entryIndex) => (entryIndex === index ? { ...entry, value } : entry))
                                             )
-                                        )
-                                    }
-                                    const onRemove = () => {
-                                        setOutgoingItems((current) =>
-                                            current.filter((_, entryIndex) => entryIndex !== index)
-                                        )
-                                    }
-                                    return (
-                                        <div
-                                            key={`${tradeItem.item.id}-${index}`}
-                                            className="rounded-2xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-700 dark:bg-purple-900/20"
-                                        >
-                                            {/* Top row: photo | info (+ right group on desktop) */}
-                                            <div className="flex items-start gap-4">
-                                                {/* Photo */}
-                                                <div className="shrink-0">
-                                                    {photoByItemId[tradeItem.item.id] ? (
-                                                        <div className="relative h-16 w-16 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
-                                                            <Image src={photoByItemId[tradeItem.item.id]} alt={formatItemLabel(tradeItem.item)} fill className="object-cover" unoptimized sizes="64px" />
-                                                        </div>
-                                                    ) : (
-                                                        <div className="h-16 w-16 rounded-xl bg-slate-100 dark:bg-slate-700" />
-                                                    )}
-                                                </div>
-
-                                                {/* Item info — Est. Value visible here on mobile only */}
-                                                <div className="min-w-0 flex-1">
-                                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                                                        {formatItemLabel(tradeItem.item)}
-                                                    </p>
-                                                    <div className="mt-2 flex flex-wrap gap-2">
-                                                        <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                                            {tradeItem.item.status}
-                                                        </span>
-                                                        {tradeItem.item.condition && (
-                                                            <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                                                                {tradeItem.item.condition}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    {fmtEstVal && (
-                                                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 sm:hidden">
-                                                            Est. Value:{' '}
-                                                            <span className="font-semibold text-slate-700 dark:text-slate-300">{fmtEstVal}</span>
-                                                        </p>
-                                                    )}
-                                                </div>
-
-                                                {/* Right group — desktop only: Est. Value + Value Out + × */}
-                                                <div className="hidden shrink-0 sm:flex sm:flex-col sm:gap-3">
-                                                    {fmtEstVal && (
-                                                        <div>
-                                                            <p className="text-xs text-slate-500 dark:text-slate-400">Est. Value</p>
-                                                            <p className="mt-0.5 text-sm font-semibold text-slate-700 dark:text-slate-300">{fmtEstVal}</p>
-                                                        </div>
-                                                    )}
-                                                    <div>
-                                                        <label className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                                                            Value out
-                                                        </label>
-                                                        <div className="flex items-center gap-2">
-                                                            <input
-                                                                type="number"
-                                                                step="0.01"
-                                                                min="0"
-                                                                value={tradeItem.value}
-                                                                onChange={onChangeValue}
-                                                                className="w-28 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
-                                                                placeholder="0.00"
-                                                            />
-                                                            <button
-                                                                type="button"
-                                                                onClick={onRemove}
-                                                                className="h-9 shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
-                                                            >
-                                                                ×
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {/* Value Out row — mobile only */}
-                                            <div className="mt-3 flex items-end gap-2 sm:hidden">
-                                                <div className="flex-1">
-                                                    <label className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                                                        Value out
-                                                    </label>
-                                                    <input
-                                                        type="number"
-                                                        step="0.01"
-                                                        min="0"
-                                                        value={tradeItem.value}
-                                                        onChange={onChangeValue}
-                                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
-                                                        placeholder="0.00"
-                                                    />
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={onRemove}
-                                                    className="h-9 shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
-                                                >
-                                                    ×
-                                                </button>
-                                            </div>
-                                            {isDraft && <DraftItemHint item={tradeItem.item} incoming={false} onEdit={editDraftItem} disabled={saving} />}
-                                        </div>
-                                    )
-                                })}
+                                        }
+                                        onRemove={() => setOutgoingItems((current) => current.filter((_, entryIndex) => entryIndex !== index))}
+                                        footer={isDraft ? <DraftItemHint item={tradeItem.item} incoming={false} onEdit={editDraftItem} disabled={saving} /> : undefined}
+                                    />
+                                ))}
                             </div>
                         )}
 
@@ -863,76 +769,26 @@ export default function TradeOperationForm({
                         {incomingItems.length > 0 && (
                             <div className="space-y-3">
                                 {incomingItems.map((tradeItem, index) => (
-                                    <div
+                                    <OperationItemCard
                                         key={`${tradeItem.item.id}-${index}`}
-                                        className="rounded-2xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-700 dark:bg-purple-900/20"
-                                    >
-                                        <div className="flex gap-4">
-                                            {photoByItemId[tradeItem.item.id] && (
-                                                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-600">
-                                                    <Image src={photoByItemId[tradeItem.item.id]} alt={formatItemLabel(tradeItem.item)} fill className="object-cover" unoptimized sizes="64px" />
-                                                </div>
-                                            )}
-                                            <div className="min-w-0 flex-1 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                                                <div>
-                                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                                                        {formatItemLabel(tradeItem.item)}
-                                                    </p>
-
-                                                    <div className="mt-2 flex flex-wrap gap-2">
-                                                        <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                                            {tradeItem.item.status}
-                                                        </span>
-
-                                                        {tradeItem.item.condition && (
-                                                            <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-600 dark:text-slate-300">
-                                                                {tradeItem.item.condition}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                <div className="flex w-full gap-2 sm:w-48">
-                                                    <div className="flex-1">
-                                                        <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                                                            Value in
-                                                        </label>
-
-                                                        <input
-                                                            type="number"
-                                                            step="0.01"
-                                                            min="0"
-                                                            value={tradeItem.value}
-                                                            onChange={(event) => {
-                                                                const value = event.target.value
-
-                                                                setIncomingItems((current) =>
-                                                                    current.map((entry, entryIndex) =>
-                                                                        entryIndex === index ? { ...entry, value } : entry
-                                                                    )
-                                                                )
-                                                            }}
-                                                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-600 dark:bg-slate-600 dark:text-slate-100 dark:focus:ring-slate-600"
-                                                            placeholder="0.00"
-                                                        />
-                                                    </div>
-
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setIncomingItems((current) =>
-                                                                current.filter((_, entryIndex) => entryIndex !== index)
-                                                            )
-                                                        }}
-                                                        className="mt-7 h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-600 dark:text-slate-300 dark:hover:bg-slate-500"
-                                                    >
-                                                        ×
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        {isDraft && <DraftItemHint item={tradeItem.item} incoming onEdit={editDraftItem} disabled={saving} />}
-                                    </div>
+                                        itemId={tradeItem.item.id}
+                                        direction="in"
+                                        tone="trade"
+                                        label={formatItemLabel(tradeItem.item)}
+                                        photoUrl={photoByItemId[tradeItem.item.id]}
+                                        chips={[tradeItem.item.status, tradeItem.item.condition]}
+                                        estimatedSoldValue={tradeItem.item.estimated_sold_value}
+                                        stored={economics.byItemId[tradeItem.item.id]}
+                                        valueLabel={ECON_LABEL.valueIn}
+                                        value={tradeItem.value}
+                                        onValueChange={(value) =>
+                                            setIncomingItems((current) =>
+                                                current.map((entry, entryIndex) => (entryIndex === index ? { ...entry, value } : entry))
+                                            )
+                                        }
+                                        onRemove={() => setIncomingItems((current) => current.filter((_, entryIndex) => entryIndex !== index))}
+                                        footer={isDraft ? <DraftItemHint item={tradeItem.item} incoming onEdit={editDraftItem} disabled={saving} /> : undefined}
+                                    />
                                 ))}
                             </div>
                         )}
